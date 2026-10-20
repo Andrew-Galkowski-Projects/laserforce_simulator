@@ -12,7 +12,7 @@ from matches.models import (
     SeasonPhase,
     Tournament,
 )
-from matches.tournament_services.detail import format_label, is_embedded
+from matches.tournament_services.detail import tournament_fields
 
 _GAME_ROUND_FIELDS = [
     "id",
@@ -199,16 +199,13 @@ class SeasonSerializer(SeasonListSerializer):
 class TournamentSerializer(serializers.ModelSerializer):
     """ANG-01f — a Tournament's own fields (output only).
 
-    ``format_label`` is the derived display label ("Random Draw" for a
-    Player-pool draw played as RR->DE); ``embedded`` is true for an in-League
-    Tournament, whose ``season`` ref is set (null for a sandbox Tournament).
+    Rendered by ``tournament_services.detail.tournament_fields``, the same
+    top-level fields ``build_tournament_detail`` carries: ``format_label`` is
+    the derived display label ("Random Draw" for a Player-pool draw played as
+    RR->DE); ``embedded`` is true for an in-League Tournament, whose
+    ``season`` ref is set (null for a sandbox Tournament).
     ``active_play_job_id`` is play-run state and is not exposed here.
     """
-
-    format_label = serializers.SerializerMethodField()
-    champion = serializers.SerializerMethodField()
-    embedded = serializers.SerializerMethodField()
-    season = serializers.SerializerMethodField()
 
     class Meta:
         model = Tournament
@@ -234,24 +231,7 @@ class TournamentSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
-    def get_format_label(self, obj: Tournament) -> str:
-        return format_label(obj)
-
-    def get_champion(self, obj: Tournament) -> dict | None:
-        return team_ref(obj.champion) if obj.champion_id is not None else None
-
-    def get_embedded(self, obj: Tournament) -> bool:
-        # The list queryset annotates it; a lone instance (detail) asks.
-        annotated = getattr(obj, "annotated_embedded", None)
-        return is_embedded(obj) if annotated is None else bool(annotated)
-
-    def get_season(self, obj: Tournament) -> dict | None:
-        if obj.season_phase_id is not None:
-            return season_ref(obj.season_phase.season)
-        if "season_phases" in getattr(obj, "_prefetched_objects_cache", {}):
-            # Prefetched (list): already ordered by ``ordinal`` with the Season.
-            phases = list(obj.season_phases.all())
-            phase = phases[0] if phases else None
-        else:
-            phase = obj.season_phases.select_related("season").first()
-        return season_ref(phase.season) if phase is not None else None
+    def to_representation(self, instance: Tournament) -> dict:
+        # The one builder the detail payload uses too (byte-identical keys /
+        # values, in ``Meta.fields`` order).
+        return tournament_fields(instance)

@@ -49,6 +49,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ANG01e-D1 | 🟡 | League player page | The awards section recomputes the full Season award set for every Season the Player appeared in |
 | ANG01e-D2 | 🟡 | Team History | The Team History builders scan every Season of every League to find the Team's enrolments |
 | ANG01e-D3 | ℹ️ | Screen builders | `build_team_stats`, `build_power_rankings` and `build_playoffs` mix querying with row assembly |
+| ANG01f-D3 | ℹ️ | Tournament detail builders | `build_detail_context` and `build_tournament_detail` mix several jobs in one function |
 
 ### 🟡 ANG01e-D1 — League player page recomputes whole-Season awards per Season (perf)
 `matches/league_screen_services.py::build_player_detail` calls `compute_season_award_set(season)` for
@@ -71,6 +72,14 @@ database, not with the Team's own history, on both the HTML Team History tabs an
 `matches/league_screen_services.py` each run several queries and assemble the rows in one long function.
 Split candidates: a query step that returns plain dicts and a pure assembly step (the
 `team_stats_logic` / `power_rankings_logic` pattern), so the assembly is unit-testable without the ORM.
+
+### ℹ️ ANG01f-D3 — Long Tournament detail builders mix several jobs (refactor)
+Logged from the ANG-01f code review (spec #190). In `matches/tournament_services/detail.py`,
+`build_detail_context` (~90 lines: participants, bracket rounds, stage, RR crosstable / standings / cut
+labels, Swiss sections and the Player-pool surface) and `build_tournament_detail` (~40 lines: fields,
+participants, brackets, standings, cut labels and pool counts) each do several jobs in one function. Split
+candidates: one small builder per section shared by the HTML context and the API payload, so each is
+testable on its own and the two surfaces cannot drift.
 
 # Web testing — ANG-01d-2 (League play loop on a shared service + Active-play-run guards)
 

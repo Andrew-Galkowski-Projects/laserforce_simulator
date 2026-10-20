@@ -30,13 +30,6 @@ from teams.models import Team
 #: Celery states of a finished Job; only these release a stale run.
 _TERMINAL_JOB_STATES = frozenset({"SUCCESS", "FAILURE", "REVOKED"})
 
-#: The HTML play-all 503 message (kept verbatim; the API uses it too).
-BROKER_UNAVAILABLE_MESSAGE = (
-    "Couldn't start the Play All job — the background task queue is "
-    "unavailable. Start a Celery worker + broker, or run the server with "
-    "LF_CELERY_EAGER=1 for local play."
-)
-
 
 @dataclass(frozen=True)
 class PlayedNode:
@@ -127,7 +120,7 @@ def enqueue_play_all(tournament: Tournament) -> str:
             active_play_job_id=None
         )
         tournament.active_play_job_id = None
-        raise BrokerUnavailableError(BROKER_UNAVAILABLE_MESSAGE) from exc
+        raise BrokerUnavailableError() from exc
     return job_id
 
 

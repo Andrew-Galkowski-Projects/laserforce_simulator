@@ -11,12 +11,13 @@ from dataclasses import asdict
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.models import AnonymousUser
 from django.db.models import QuerySet
+from rest_framework.fields import DateTimeField
 
 from accounts.permissions import owned_queryset
 from teams.forms import RosterImportForm
 from teams.models import Player, Team
 
-from matches.api_refs import team_ref
+from matches.api_refs import player_ref, season_ref, team_ref
 from matches.models import (
     BracketNode,
     Tournament,
@@ -89,7 +90,7 @@ def _series_games(node: BracketNode, series_matches: list) -> list:
     return games
 
 
-def _node_view(node: BracketNode) -> dict:
+def node_view(node: BracketNode) -> dict:
     """The node-card view dict shared by the elimination tree, RR and Swiss
     sections (one shape, so the ``_tournament_round.html`` include is reused).
     """
@@ -123,7 +124,7 @@ def _rounds_by_type(nodes) -> dict[str, list]:
     by_section: dict[str, dict[int, list]] = {bt: {} for bt in _ELIM_BRACKET_TYPES}
     for node in nodes:
         section = by_section.setdefault(node.bracket_type, {})
-        section.setdefault(node.bracket_round, []).append(_node_view(node))
+        section.setdefault(node.bracket_round, []).append(node_view(node))
     return {
         bt: [{"bracket_round": r, "nodes": rounds[r]} for r in sorted(rounds)]
         for bt, rounds in by_section.items()
@@ -476,21 +477,22 @@ def _team_ref_or_none(team: Team | None) -> dict | None:
     return team_ref(team) if team is not None else None
 
 
-def _node_payload(node: dict) -> dict:
-    """A node-card view dict as refs, with the ANG-01e ``bracket_payload``
-    node keys."""
+def node_payload(node_view: dict) -> dict:
+    """A :func:`node_view` dict as refs: the one node payload shared by the
+    Tournament detail API, play-next and the League playoffs API
+    (``bracket_payload``)."""
     return {
-        "position": node["position"],
-        "team_a": _team_ref_or_none(node["team_a"]),
-        "team_b": _team_ref_or_none(node["team_b"]),
-        "seed_a": node["seed_a"],
-        "seed_b": node["seed_b"],
-        "is_bye": node["is_bye"],
-        "wins_a": node["wins_a"],
-        "wins_b": node["wins_b"],
-        "series_length": node["series_length"],
-        "winner": _team_ref_or_none(node["winner"]),
-        "games": [dict(game) for game in node["games"]],
+        "position": node_view["position"],
+        "team_a": _team_ref_or_none(node_view["team_a"]),
+        "team_b": _team_ref_or_none(node_view["team_b"]),
+        "seed_a": node_view["seed_a"],
+        "seed_b": node_view["seed_b"],
+        "is_bye": node_view["is_bye"],
+        "wins_a": node_view["wins_a"],
+        "wins_b": node_view["wins_b"],
+        "series_length": node_view["series_length"],
+        "winner": _team_ref_or_none(node_view["winner"]),
+        "games": [dict(game) for game in node_view["games"]],
     }
 
 
@@ -504,7 +506,7 @@ def _brackets_payload(tournament: Tournament) -> list[dict]:
             "rounds": [
                 {
                     "bracket_round": section["bracket_round"],
-                    "nodes": [_node_payload(node) for node in section["nodes"]],
+                    "nodes": [node_payload(node) for node in section["nodes"]],
                 }
                 for section in rounds_by_type[bracket_type]
             ],
@@ -522,17 +524,71 @@ def _standings_payload(rows: list, team_by_id: dict) -> list[dict]:
     ]
 
 
+def _embedded(tournament: Tournament) -> bool:
+    """The list queryset's ``annotated_embedded`` when present, else
+    :func:`is_embedded` (a lone instance, e.g. the detail)."""
+    annotated = getattr(tournament, "annotated_embedded", None)
+    return is_embedded(tournament) if annotated is None else bool(annotated)
+
+
+def _season(tournament: Tournament) -> dict | None:
+    """The owning Season's ref: through ``season_phase`` (regional / Worlds),
+    else the first referencing ``SeasonPhase`` (prefetched on the list)."""
+    if tournament.season_phase_id is not None:
+        return season_ref(tournament.season_phase.season)
+    if "season_phases" in getattr(tournament, "_prefetched_objects_cache", {}):
+        # Prefetched (list): already ordered by ``ordinal`` with the Season.
+        phases = list(tournament.season_phases.all())
+        phase = phases[0] if phases else None
+    else:
+        phase = tournament.season_phases.select_related("season").first()
+    return season_ref(phase.season) if phase is not None else None
+
+
+def tournament_fields(tournament: Tournament) -> dict:
+    """A Tournament's own top-level fields (JSON-ready), shared by the list
+    rows (``TournamentSerializer``) and :func:`build_tournament_detail`.
+
+    ``format_label`` is the derived display label; ``embedded`` is true for an
+    in-League Tournament, whose ``season`` ref is set (null for a sandbox
+    one). ``active_play_job_id`` is play-run state and is not exposed.
+    """
+    return {
+        "id": tournament.id,
+        "name": tournament.name,
+        "format": tournament.format,
+        "format_label": format_label(tournament),
+        "state": tournament.state,
+        "team_assembly": tournament.team_assembly,
+        "role_assignment_mode": tournament.role_assignment_mode,
+        "champion": (
+            team_ref(tournament.champion)
+            if tournament.champion_id is not None
+            else None
+        ),
+        "embedded": _embedded(tournament),
+        "season": _season(tournament),
+        "final_series_length": tournament.final_series_length,
+        "semifinal_series_length": tournament.semifinal_series_length,
+        "quarterfinal_series_length": tournament.quarterfinal_series_length,
+        "earlier_series_length": tournament.earlier_series_length,
+        "wb_advancers": tournament.wb_advancers,
+        "lb_advancers": tournament.lb_advancers,
+        "swiss_rounds": tournament.swiss_rounds,
+        "manager": tournament.manager_id,
+        # DRF's ISO-8601 rendering, so list rows and the detail match exactly.
+        "created_at": DateTimeField().to_representation(tournament.created_at),
+    }
+
+
 def build_tournament_detail(tournament: Tournament) -> dict:
     """The ``GET /api/tournaments/<id>/`` payload (JSON-ready).
 
-    ``TournamentSerializer`` fields plus ``participants`` (``[{team, seed}]``
-    by seed), ``brackets``, ``rr_standings``, ``swiss_standings``, ``stage``,
+    :func:`tournament_fields` plus ``participants`` (``[{team, seed}]`` by
+    seed), ``brackets``, ``rr_standings``, ``swiss_standings``, ``stage``,
     ``cut_labels`` (``{team_id (str): "wb" | "lb" | "out"}``, RR->DE seeding
     stage only), ``pool_size`` and ``is_drawn``.
     """
-    # Imported here: ``matches.serializers`` imports this module's labels.
-    from matches.serializers import TournamentSerializer
-
     participants = list(tournament.participants.select_related("team").order_by("seed"))
     team_by_id = {p.team_id: p.team for p in participants}
     has_finals = tournament.nodes.exclude(bracket_type="round_robin").exists()
@@ -554,7 +610,7 @@ def build_tournament_detail(tournament: Tournament) -> dict:
 
     entries = tournament.player_entries
     return {
-        **TournamentSerializer(tournament).data,
+        **tournament_fields(tournament),
         "participants": [
             {"team": team_ref(p.team), "seed": p.seed} for p in participants
         ],
@@ -574,3 +630,15 @@ def pool_entries(tournament: Tournament) -> QuerySet[TournamentPlayerEntry]:
     return tournament.player_entries.select_related(
         "player__team", "drawn_team"
     ).order_by("tier", "player_id")
+
+
+def pool_entry_payload(entry: TournamentPlayerEntry) -> dict:
+    """One pool entry: ``{player: player_ref, tier, drawn_team: team_ref | None}``
+    (the ``pool/`` GET row and every pool-write response)."""
+    return {
+        "player": player_ref(entry.player),
+        "tier": entry.tier,
+        "drawn_team": (
+            team_ref(entry.drawn_team) if entry.drawn_team_id is not None else None
+        ),
+    }

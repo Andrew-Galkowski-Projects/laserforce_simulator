@@ -1,6 +1,7 @@
-"""ANG-01f — ``TournamentViewSet`` (``/api/tournaments/``), its conflict
-``APIException``s and the one translator from the ``tournament_services``
-domain errors.
+"""ANG-01f — ``TournamentViewSet`` (``/api/tournaments/``).
+
+The conflict ``APIException``s and the service-error translator live in the
+leaf module ``tournament_api_views.errors``.
 
 Follows ADR-0039: one envelope, Form-bound writes, output-only serializers,
 views raise (never hand-build a 4xx ``Response``). Every row resolves through
@@ -11,12 +12,9 @@ then the guards (409), then the Form (400), then the service.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
-from contextlib import contextmanager
 from typing import Any
 
 from django.contrib.auth.decorators import login_not_required
-from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db.models import (
     BooleanField,
     Exists,
@@ -29,7 +27,6 @@ from django.db.models import (
 from django.utils.decorators import method_decorator
 from rest_framework import mixins, viewsets
 from rest_framework.decorators import action
-from rest_framework.exceptions import APIException, ValidationError
 from rest_framework.negotiation import DefaultContentNegotiation
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -37,128 +34,18 @@ from rest_framework.settings import api_settings
 
 from accounts.permissions import owned_queryset
 from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
-from matches.api_refs import player_ref, team_ref
 from matches.filters import TournamentFilterSet
-from matches.models import SeasonPhase, Tournament, TournamentPlayerEntry
+from matches.models import SeasonPhase, Tournament
 from matches.serializers import TournamentSerializer
 from matches.tournament_api_views.create import CreateActionsMixin
 from matches.tournament_api_views.draw import DrawActionsMixin
 from matches.tournament_api_views.play import PlayActionsMixin
 from matches.tournament_api_views.setup import SetupActionsMixin
-from matches.tournament_services.detail import build_tournament_detail, pool_entries
-from matches.tournament_services.errors import (
-    BrokerUnavailableError,
-    DrawNotReadyError,
-    NoPlayableNodeError,
-    PlayInProgressError,
-    TournamentEmbeddedError,
-    TournamentNotActiveError,
-    TournamentNotSetupError,
+from matches.tournament_services.detail import (
+    build_tournament_detail,
+    pool_entries,
+    pool_entry_payload,
 )
-
-# ---------------------------------------------------------------------------
-# State conflicts (named codes; the envelope handler shapes them).
-# ---------------------------------------------------------------------------
-
-
-class TournamentEmbedded(APIException):
-    """409 — a write on an in-League Tournament (played through its Season)."""
-
-    status_code = 409
-    default_code = "tournament_embedded"
-    default_detail = str(TournamentEmbeddedError())
-
-
-class TournamentNotSetup(APIException):
-    """409 — a setup-only write on a locked or completed Tournament."""
-
-    status_code = 409
-    default_code = "tournament_not_setup"
-    default_detail = str(TournamentNotSetupError())
-
-
-class TournamentNotActive(APIException):
-    """409 — a play action on a Tournament that is not active."""
-
-    status_code = 409
-    default_code = "tournament_not_active"
-    default_detail = str(TournamentNotActiveError())
-
-
-class NoPlayableNode(APIException):
-    """409 — play-next found no ready Match."""
-
-    status_code = 409
-    default_code = "no_playable_node"
-    default_detail = str(NoPlayableNodeError())
-
-
-class PlayInProgress(APIException):
-    """409 — the Tournament already has an active play run (ADR-0040).
-
-    The detail is keyed ``job:<id>`` so the envelope ``field`` names the live
-    Job the client should poll instead.
-    """
-
-    status_code = 409
-    default_code = "play_in_progress"
-    default_detail = "The Tournament already has a play run in progress."
-
-    def __init__(self, job_id: str) -> None:
-        super().__init__(detail={f"job:{job_id}": self.default_detail})
-
-
-class BrokerUnavailable(APIException):
-    """503 — the Celery broker refused the play-all enqueue (nothing started)."""
-
-    status_code = 503
-    default_code = "broker_unavailable"
-    default_detail = str(BrokerUnavailableError())
-
-
-# One mapping from each ``tournament_services.errors`` exception to its API
-# exception (each factory takes the caught error).
-_SERVICE_ERRORS: dict[type[Exception], Callable[[Any], APIException]] = {
-    TournamentEmbeddedError: lambda exc: TournamentEmbedded(str(exc)),
-    TournamentNotSetupError: lambda exc: TournamentNotSetup(str(exc)),
-    TournamentNotActiveError: lambda exc: TournamentNotActive(str(exc)),
-    NoPlayableNodeError: lambda exc: NoPlayableNode(str(exc)),
-    PlayInProgressError: lambda exc: PlayInProgress(exc.job_id),
-    BrokerUnavailableError: lambda exc: BrokerUnavailable(str(exc)),
-    DrawNotReadyError: lambda exc: ValidationError(str(exc)),
-    # The lock's model ValidationError (format rules) — 400 ``invalid``, field null.
-    DjangoValidationError: lambda exc: ValidationError(exc.messages),
-}
-
-
-@contextmanager
-def translate_tournament_errors() -> Iterator[None]:
-    """Re-raise a Tournament service error as its API exception.
-
-    409 ``tournament_embedded`` / ``tournament_not_setup`` /
-    ``tournament_not_active`` / ``no_playable_node``; 409 ``play_in_progress``
-    with ``field = job:<id>``; 503 ``broker_unavailable``; ``DrawNotReadyError``
-    and the lock's ``ValidationError`` ⇒ 400 ``invalid`` with field null.
-    Anything else propagates unchanged.
-    """
-    try:
-        yield
-    except tuple(_SERVICE_ERRORS) as exc:
-        factory = next(
-            _SERVICE_ERRORS[cls] for cls in type(exc).__mro__ if cls in _SERVICE_ERRORS
-        )
-        raise factory(exc) from exc
-
-
-def _pool_entry(entry: TournamentPlayerEntry) -> dict:
-    """One pool entry: ``{player: player_ref, tier, drawn_team: team_ref | None}``."""
-    return {
-        "player": player_ref(entry.player),
-        "tier": entry.tier,
-        "drawn_team": (
-            team_ref(entry.drawn_team) if entry.drawn_team_id is not None else None
-        ),
-    }
 
 
 class _NoFormatOverrideSettings:
@@ -204,7 +91,7 @@ class TournamentViewSet(
 
     def get_queryset(self) -> QuerySet[Tournament]:
         # ``embedded`` is annotated and the Season-wide phases prefetched so a
-        # list page runs a constant number of queries (TournamentSerializer
+        # list page runs a constant number of queries (``tournament_fields``
         # reads both when present).
         embedded = ExpressionWrapper(
             Q(season_phase__isnull=False)
@@ -231,4 +118,6 @@ class TournamentViewSet(
     def pool(self, request: Request, pk: str | None = None) -> Response:
         """The Player pool, paginated: ``{player, tier, drawn_team}`` entries."""
         page = self.paginate_queryset(pool_entries(self.get_object()))
-        return self.get_paginated_response([_pool_entry(entry) for entry in page])
+        return self.get_paginated_response(
+            [pool_entry_payload(entry) for entry in page]
+        )

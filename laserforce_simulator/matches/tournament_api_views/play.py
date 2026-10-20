@@ -17,7 +17,8 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 
 from matches.api_refs import team_ref
-from matches.tournament_services.detail import _node_payload, _node_view
+from matches.tournament_api_views.errors import translate_tournament_errors
+from matches.tournament_services.detail import node_payload, node_view
 from matches.tournament_services.play import (
     PlayedNode,
     build_play_status,
@@ -37,7 +38,7 @@ def _played_node_payload(played: PlayedNode) -> dict:
             "id": node.id,
             "bracket_type": node.bracket_type,
             "bracket_round": node.bracket_round,
-            **_node_payload(_node_view(node)),
+            **node_payload(node_view(node)),
         },
         "match_ids": played.match_ids,
         "state": played.state,
@@ -56,8 +57,6 @@ class PlayActionsMixin:
     def play_next(self, request: Request, pk: str | None = None) -> Response:
         """Play the next ready Match synchronously: 200 ``{node, match_ids,
         state, champion}``."""
-        from matches.tournament_api_views.base import translate_tournament_errors
-
         tournament = self.get_object()
         with translate_tournament_errors():
             played = play_next(tournament)
@@ -66,8 +65,6 @@ class PlayActionsMixin:
     @action(detail=True, methods=["post"], url_path="play-all", url_name="play-all")
     def play_all(self, request: Request, pk: str | None = None) -> Response:
         """Start the play-all Job: 200 ``{job_id, tournament_id, status_url}``."""
-        from matches.tournament_api_views.base import translate_tournament_errors
-
         tournament = self.get_object()
         with translate_tournament_errors():
             job_id = enqueue_play_all(tournament)

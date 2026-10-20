@@ -1,5 +1,5 @@
-"""ANG-01f — the setup actions of ``TournamentViewSet``: create, seeds, lock and
-participant import (tickets ANG-01f-3 / ANG-01f-4).
+"""ANG-01f — the setup actions of ``TournamentViewSet``: seeds, lock and
+participant import (ticket ANG-01f-4). Create lives in ``create``.
 
 Each write runs ``get_object()`` (404 cross-Account), then the guards through
 ``translate_tournament_errors()`` (409), then the Form (400), then the
@@ -22,6 +22,7 @@ from laserforce_simulator.api.exceptions import (
     validate_form_or_raise,
 )
 from laserforce_simulator.api.forms import plain_form_data
+from matches.tournament_api_views.errors import translate_tournament_errors
 from matches.tournament_services.detail import build_tournament_detail
 from matches.tournament_services.errors import require_setup
 from matches.tournament_services.setup import SeedsForm, apply_seeds
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
 
 
 class SetupActionsMixin:
-    """Create / seeds / lock / import-participants actions."""
+    """Seeds / lock / import-participants actions."""
 
     if TYPE_CHECKING:
         # Provided by ``TournamentViewSet`` (``GenericViewSet``).
@@ -47,8 +48,6 @@ class SetupActionsMixin:
     @action(detail=True, methods=["put"], url_path="seeds", url_name="seeds")
     def seeds(self, request: Request, pk: str | None = None) -> Response:
         """Replace the whole Seeding with a ``{team_id: seed}`` map (1..N)."""
-        from matches.tournament_api_views.base import translate_tournament_errors
-
         tournament = self.get_object()
         with translate_tournament_errors():
             require_setup(tournament)
@@ -66,8 +65,6 @@ class SetupActionsMixin:
 
         A format-rule failure is a 400 ``invalid`` (field null) with the reason.
         """
-        from matches.tournament_api_views.base import translate_tournament_errors
-
         tournament = self.get_object()
         with translate_tournament_errors():
             require_setup(tournament)
@@ -84,10 +81,9 @@ class SetupActionsMixin:
     def import_participants(self, request: Request, pk: str | None = None) -> Response:
         """Import participant Teams from a roster CSV (201 with the detail).
 
-        CSV errors are 400 ``roster_invalid`` with ``row:<n>[:<column>]`` fields.
+        CSV errors are 400 ``roster_invalid`` with ``row:<n>[:<column>]`` fields;
+        a Player-pool Tournament is 400 ``invalid`` with field null.
         """
-        from matches.tournament_api_views.base import translate_tournament_errors
-
         tournament = self.get_object()
         with translate_tournament_errors():
             require_setup(tournament)

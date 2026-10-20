@@ -14,6 +14,8 @@ Draw itself returns 200 with the ``build_tournament_detail`` payload.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.parsers import FormParser, MultiPartParser
@@ -27,7 +29,11 @@ from laserforce_simulator.api.exceptions import (
 )
 from laserforce_simulator.api.forms import plain_form_data
 from matches.models import Tournament, TournamentPlayerEntry
-from matches.tournament_services.detail import build_tournament_detail
+from matches.tournament_api_views.errors import translate_tournament_errors
+from matches.tournament_services.detail import (
+    build_tournament_detail,
+    pool_entry_payload,
+)
 from matches.tournament_services.draw import (
     DrawEntryForm,
     PoolAddPlayersForm,
@@ -46,20 +52,19 @@ from teams.roster_importer import RosterImportError
 
 
 def _entries_payload(entries: list[TournamentPlayerEntry]) -> list[dict]:
-    # Imported lazily: ``base`` imports this module to compose the viewset.
-    from matches.tournament_api_views.base import _pool_entry
-
-    return [_pool_entry(entry) for entry in entries]
+    return [pool_entry_payload(entry) for entry in entries]
 
 
 class DrawActionsMixin:
     """Pool add / generate / import / remove, run the Draw, edit a draw entry."""
 
+    if TYPE_CHECKING:
+        # Provided by ``TournamentViewSet`` (``GenericViewSet``).
+        def get_object(self) -> Tournament: ...
+
     def _pool_tournament(self) -> Tournament:
         """``get_object()`` (404), then the pool-setup guards (409 / 400)."""
-        from matches.tournament_api_views.base import translate_tournament_errors
-
-        tournament = self.get_object()  # type: ignore[attr-defined]
+        tournament = self.get_object()
         with translate_tournament_errors():
             require_pool_setup(tournament)
         return tournament
@@ -100,8 +105,6 @@ class DrawActionsMixin:
     def draw(self, request: Request, pk: str | None = None) -> Response:
         """Run (or re-roll) the Draw: 200 with the ``build_tournament_detail``
         payload. A bad pool size is 400 ``invalid`` with the rule."""
-        from matches.tournament_api_views.base import translate_tournament_errors
-
         tournament = self._pool_tournament()
         with translate_tournament_errors():
             run_draw(tournament, user=manager_or_none(request))

@@ -76,6 +76,7 @@ from matches.league_screen_services import (
 from matches.league_services import pick_displayed_season
 from matches.models import GameRound, League, Season
 from matches.season_player_stats import PlayerStatRow
+from matches.tournament_services.detail import node_payload
 from teams.models import Player, Team
 
 
@@ -917,22 +918,7 @@ def bracket_payload(bracket: dict) -> dict:
         "rounds": [
             {
                 "bracket_round": bracket_round["bracket_round"],
-                "nodes": [
-                    {
-                        "position": node["position"],
-                        "team_a": _team_ref_or_none(node["team_a"]),
-                        "team_b": _team_ref_or_none(node["team_b"]),
-                        "seed_a": node["seed_a"],
-                        "seed_b": node["seed_b"],
-                        "is_bye": node["is_bye"],
-                        "wins_a": node["wins_a"],
-                        "wins_b": node["wins_b"],
-                        "series_length": node["series_length"],
-                        "winner": _team_ref_or_none(node["winner"]),
-                        "games": [dict(game) for game in node["games"]],
-                    }
-                    for node in bracket_round["nodes"]
-                ],
+                "nodes": [node_payload(node) for node in bracket_round["nodes"]],
             }
             for bracket_round in bracket["rounds"]
         ],

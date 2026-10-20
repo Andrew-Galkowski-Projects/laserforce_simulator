@@ -58,12 +58,19 @@ class PlayInProgressError(Exception):
         self.job_id = job_id
 
 
+#: The play-all broker-down message (the HTML 503 text, verbatim); every
+#: surface -- the HTML JSON 503 and the API 503 -- uses it.
+BROKER_UNAVAILABLE_MESSAGE = (
+    "Couldn't start the Play All job — the background task queue is "
+    "unavailable. Start a Celery worker + broker, or run the server with "
+    "LF_CELERY_EAGER=1 for local play."
+)
+
+
 class BrokerUnavailableError(Exception):
     """The task broker refused the play-all enqueue (nothing started)."""
 
-    def __init__(
-        self, message: str = "The background task queue is unavailable."
-    ) -> None:
+    def __init__(self, message: str = BROKER_UNAVAILABLE_MESSAGE) -> None:
         super().__init__(message)
 
 

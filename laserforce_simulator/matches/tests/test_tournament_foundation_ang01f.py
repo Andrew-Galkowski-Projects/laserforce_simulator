@@ -20,7 +20,7 @@ from rest_framework.exceptions import APIException
 
 from laserforce_simulator.api.exceptions import envelope_exception_handler
 from matches.models import Season, SeasonPhase, Tournament
-from matches.tournament_api_views.base import translate_tournament_errors
+from matches.tournament_api_views.errors import translate_tournament_errors
 from matches.tests.league_api_fixtures import make_league
 from matches.tournament_services.detail import format_label, is_embedded
 from matches.tournament_services.errors import (
@@ -239,6 +239,20 @@ class TranslatorTests(TestCase):
 
     def test_broker_unavailable_is_503(self) -> None:
         self.assert_maps(BrokerUnavailableError(), 503, "broker_unavailable")
+
+    def test_broker_unavailable_uses_the_one_html_message(self) -> None:
+        # ANG-01f review (S7): one message (the old HTML 503 text) everywhere.
+        from matches.tournament_api_views.errors import BrokerUnavailable
+
+        html_text = (
+            "Couldn't start the Play All job — the background task queue is "
+            "unavailable. Start a Celery worker + broker, or run the server "
+            "with LF_CELERY_EAGER=1 for local play."
+        )
+        self.assertEqual(str(BrokerUnavailableError()), html_text)
+        self.assertEqual(str(BrokerUnavailable.default_detail), html_text)
+        errors = self.assert_maps(BrokerUnavailableError(), 503, "broker_unavailable")
+        self.assertEqual(errors[0]["message"], html_text)
 
     def test_draw_not_ready_is_400_invalid(self) -> None:
         errors = self.assert_maps(DrawNotReadyError("Pool too small."), 400, "invalid")
