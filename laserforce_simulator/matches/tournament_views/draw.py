@@ -125,7 +125,7 @@ def tournament_pool_import(request: HttpRequest, tournament_id: int) -> HttpResp
     form = RosterImportForm(request.POST, request.FILES)
 
     def _render_error(pool_import_row_errors: list) -> HttpResponse:
-        ctx = build_detail_context(tournament)
+        ctx = build_detail_context(tournament, user=request.user)
         ctx["pool_import_form"] = form
         ctx["pool_import_row_errors"] = pool_import_row_errors
         return render(request, "matches/tournament_detail.html", ctx)
