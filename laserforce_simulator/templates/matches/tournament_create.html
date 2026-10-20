@@ -42,7 +42,7 @@
     <div class="mb-3">
         <label for="tournament-create-team-assembly" class="form-label">Team assembly</label>
         <select class="form-select" id="tournament-create-team-assembly" name="team_assembly"
-                onchange="tournamentAssemblyToggle(this.value)">
+                onchange="tournamentAssemblyChanged(this.value)">
             <option value="preset" selected>Preset teams</option>
             <option value="player_pool">Player pool draw</option>
         </select>
@@ -164,5 +164,17 @@ function tournamentAssemblyToggle(value) {
     });
 }
 tournamentAssemblyToggle(document.getElementById("tournament-create-team-assembly").value);
+
+function tournamentAssemblyChanged(value) {
+    "use strict";
+    // ANG-01f — picking "Player pool draw" preselects RR->DE (a Random Draw),
+    // the common case; the Manager can still change the format afterwards.
+    tournamentAssemblyToggle(value);
+    if (value === "player_pool") {
+        var format = document.getElementById("tournament-create-format");
+        format.value = "round_robin_double_elim";
+        tournamentCreateToggle(format.value);
+    }
+}
 </script>
 {% endblock %}

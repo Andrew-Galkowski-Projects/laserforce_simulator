@@ -1,4 +1,11 @@
-"""LG-02a / LG-02a-2 — setup writes: reseed, lock and participant CSV import."""
+"""LG-02a / LG-02a-2 / ANG-01f-4 — setup writes: reseed, lock and participant
+CSV import.
+
+Each view delegates to ``matches.tournament_services.setup`` (shared with the
+API). The embedded / not-setup guards and every validation failure flash and
+redirect back to the detail page with nothing written; a bad import CSV
+re-renders the detail page with ``import_row_errors``.
+"""
 
 from django.contrib import messages
 from django.core.exceptions import ValidationError
@@ -8,65 +15,84 @@ from django.shortcuts import redirect, render
 
 from accounts.permissions import get_owned_or_404, manager_or_none
 from teams.forms import RosterImportForm
-from teams.roster_importer import RosterImportError, parse_roster_csv
-from teams.views import _apply_roster, _check_db_slot_collisions
+from teams.roster_importer import RosterImportError
 
-from matches.bracket import default_seed_order
-from matches.models import Tournament, TournamentParticipant
+from matches.models import Tournament
 from matches.tournament_services.detail import build_detail_context
-from matches.tournament_services.seeding import team_mean_rating
+from matches.tournament_services.errors import (
+    TournamentEmbeddedError,
+    TournamentNotSetupError,
+    require_setup,
+)
+from matches.tournament_services.setup import (
+    SeedsForm,
+    apply_seeds,
+    import_participants,
+    lock_tournament,
+)
+
+# The guard flashes kept from LG-02a (the embedded guard uses its own text).
+_RESEED_LOCKED = "Seeding cannot be edited once the bracket is locked."
+_IMPORT_LOCKED = "Participants can only be imported during setup."
 
 
-@transaction.atomic
-def tournament_reseed(request: HttpRequest, tournament_id: int) -> HttpResponse:
-    """Persist a manually reordered Seeding (new seed ints from POST)."""
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
-    if tournament.is_locked:
-        messages.error(request, "Seeding cannot be edited once the bracket is locked.")
-        return redirect("tournament_detail", tournament_id=tournament.id)
-
-    participants = list(tournament.participants.all())
-    # Collect (participant, new_seed) from POST keys seed_<team_id>.
-    new_seeds: dict[int, int] = {}
-    for participant in participants:
-        raw = request.POST.get(f"seed_{participant.team_id}")
-        if raw is None:
-            continue
-        try:
-            new_seeds[participant.id] = int(raw)
-        except (TypeError, ValueError):
-            continue
-
-    # Two-phase write to dodge the unique (tournament, seed) constraint: offset
-    # every seed first, then write the final values.
-    offset = 1000000
-    for participant in participants:
-        participant.seed = participant.seed + offset
-        participant.save(update_fields=["seed"])
-    for participant in participants:
-        if participant.id in new_seeds:
-            participant.seed = new_seeds[participant.id]
-        else:
-            participant.seed = participant.seed - offset
-        participant.save(update_fields=["seed"])
-
+def _guard_error(
+    request: HttpRequest, tournament: Tournament, *, locked_message: str | None = None
+) -> HttpResponse | None:
+    """Run ``require_setup``; on failure flash and return the detail redirect."""
+    try:
+        require_setup(tournament)
+    except TournamentEmbeddedError as exc:
+        messages.error(request, str(exc))
+    except TournamentNotSetupError as exc:
+        messages.error(request, locked_message or str(exc))
+    else:
+        return None
     return redirect("tournament_detail", tournament_id=tournament.id)
 
 
-@transaction.atomic
-def tournament_lock(request: HttpRequest, tournament_id: int) -> HttpResponse:
-    """Call ``tournament.lock_and_build()`` (setup->active, builds + persists
-    nodes). On ValidationError redirect back with a flash.
+def tournament_reseed(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """Persist a manually reordered Seeding (``seed_<team_id>`` POST fields).
+
+    The fields are bound to ``SeedsForm``: anything but exactly 1..N over the
+    current participants flashes the error and writes nothing.
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
+    tournament: Tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
+    blocked = _guard_error(request, tournament, locked_message=_RESEED_LOCKED)
+    if blocked is not None:
+        return blocked
+
+    # Rebuild the API's {team_id: seed} map from the seed_<team_id> fields.
+    seeds = {
+        key.removeprefix("seed_"): value
+        for key, value in request.POST.items()
+        if key.startswith("seed_")
+    }
+    form = SeedsForm({"seeds": seeds}, tournament=tournament)
+    if not form.is_valid():
+        for error in form.errors.get("seeds", []):
+            messages.error(request, error)
+    else:
+        apply_seeds(tournament, form)
+    return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+def tournament_lock(request: HttpRequest, tournament_id: int) -> HttpResponse:
+    """``lock_tournament`` (setup->active, builds + persists nodes). A guard or
+    format-rule failure redirects back with a flash.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    tournament: Tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
+    blocked = _guard_error(request, tournament)
+    if blocked is not None:
+        return blocked
     try:
-        tournament.lock_and_build()
+        lock_tournament(tournament)
     except ValidationError as exc:
         messages.error(request, "; ".join(exc.messages))
     return redirect("tournament_detail", tournament_id=tournament.id)
@@ -78,17 +104,16 @@ def tournament_import_participants(
 ) -> HttpResponse:
     """Import participants from a roster CSV (LG-00b reuse). Setup-only.
 
-    Only brand-new Teams (``created_teams``) become participants; appended
-    Teams are created/extended but NOT auto-added. The whole field is then
-    re-seeded by talent.
+    Only brand-new Teams become participants (owned by the requester); the
+    whole field is then re-seeded by talent (``import_participants``).
     """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
-    if tournament.is_locked:
-        messages.error(request, "Participants can only be imported during setup.")
-        return redirect("tournament_detail", tournament_id=tournament.id)
+    tournament: Tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
+    blocked = _guard_error(request, tournament, locked_message=_IMPORT_LOCKED)
+    if blocked is not None:
+        return blocked
 
     form = RosterImportForm(request.POST, request.FILES)
 
@@ -104,42 +129,8 @@ def tournament_import_participants(
 
     if not form.is_valid():
         return _render_error([])
-
     try:
-        parsed = parse_roster_csv(form.cleaned_data["csv_file"])
-        # ANG-01a — ownership-scoped: a name matching only another Account's
-        # Team creates a new Team (stamped) rather than appending to theirs.
-        _check_db_slot_collisions(parsed, manager=manager_or_none(request))
-        created_teams, _appended_teams, _player_count = _apply_roster(
-            parsed, manager=manager_or_none(request)
-        )
+        import_participants(tournament, form, user=manager_or_none(request))
     except RosterImportError as exc:
         return _render_error(exc.errors)
-
-    # Only brand-new Teams become participants (no uniq collision possible).
-    existing_team_ids = set(tournament.participants.values_list("team_id", flat=True))
-    next_seed = tournament.participants.count() + 1
-    for team in created_teams:
-        if team.id in existing_team_ids:
-            continue
-        TournamentParticipant.objects.create(
-            tournament=tournament, team=team, seed=next_seed
-        )
-        next_seed += 1
-
-    # Re-seed the WHOLE field by talent.
-    participants = list(tournament.participants.select_related("team"))
-    team_ratings = [(p.team_id, team_mean_rating(p.team)) for p in participants]
-    seed_order = default_seed_order(team_ratings)
-    seed_by_team = {team_id: idx for idx, team_id in enumerate(seed_order, start=1)}
-
-    # Two-phase offset write to dodge the uniq (tournament, seed) constraint.
-    offset = 1000000
-    for participant in participants:
-        participant.seed = participant.seed + offset
-        participant.save(update_fields=["seed"])
-    for participant in participants:
-        participant.seed = seed_by_team[participant.team_id]
-        participant.save(update_fields=["seed"])
-
     return redirect("tournament_detail", tournament_id=tournament.id)

@@ -33,6 +33,7 @@ from matches.api_refs import player_ref, team_ref
 from matches.filters import TournamentFilterSet
 from matches.models import Tournament, TournamentPlayerEntry
 from matches.serializers import TournamentSerializer
+from matches.tournament_api_views.create import CreateActionsMixin
 from matches.tournament_api_views.draw import DrawActionsMixin
 from matches.tournament_api_views.play import PlayActionsMixin
 from matches.tournament_api_views.setup import SetupActionsMixin
@@ -176,6 +177,7 @@ class _FormatFilterNegotiation(DefaultContentNegotiation):
 # `partial_update` / `destroy`, so PUT / PATCH / DELETE on the detail are 405.
 @method_decorator(login_not_required, name="dispatch")
 class TournamentViewSet(
+    CreateActionsMixin,
     SetupActionsMixin,
     DrawActionsMixin,
     PlayActionsMixin,
