@@ -762,21 +762,26 @@ class TestTournamentPlayAll(TestCase):
         t = _active_tournament(4, name="PlayAll202")
         # Patch the task's .delay so we assert the enqueue shape without running
         # the (EAGER) task body here — the task is covered in test_tournament_tasks.
-        with patch("matches.tournament_views.play.play_tournament_task") as task_mock:
-            fake_result = task_mock.apply_async.return_value
-            fake_result.id = "job-abc-123"
+        # ANG-01f-6: the enqueue lives in ``tournament_services.play`` and passes
+        # its own pre-claimed ``task_id`` (ADR-0040), which the 202 echoes.
+        with patch(
+            "matches.tournament_services.play.play_tournament_task"
+        ) as task_mock:
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 202)
         payload = response.json()
         self.assertEqual(set(payload.keys()), {"job_id", "tournament_id"})
-        self.assertEqual(payload["job_id"], "job-abc-123")
         self.assertEqual(payload["tournament_id"], t.id)
         # apply_async(..., retry=False) so a dead broker fails fast, not hangs.
-        task_mock.apply_async.assert_called_once_with((t.id,), retry=False)
+        task_mock.apply_async.assert_called_once_with(
+            (t.id,), task_id=payload["job_id"], retry=False
+        )
 
     def test_play_all_on_non_active_returns_409(self) -> None:
         t = _setup_tournament(4, name="PlayAll409")  # setup state, not active
-        with patch("matches.tournament_views.play.play_tournament_task") as task_mock:
+        with patch(
+            "matches.tournament_services.play.play_tournament_task"
+        ) as task_mock:
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 409)
         payload = response.json()
@@ -796,7 +801,9 @@ class TestTournamentPlayAll(TestCase):
         from kombu.exceptions import OperationalError
 
         t = _active_tournament(4, name="PlayAllBrokerDown")
-        with patch("matches.tournament_views.play.play_tournament_task") as task_mock:
+        with patch(
+            "matches.tournament_services.play.play_tournament_task"
+        ) as task_mock:
             task_mock.apply_async.side_effect = OperationalError("broker unreachable")
             response = self.client.post(reverse("tournament_play_all", args=[t.id]))
         self.assertEqual(response.status_code, 503)

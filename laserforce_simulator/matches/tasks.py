@@ -783,4 +783,11 @@ def play_tournament_task(self, tournament_id: int) -> dict:
         completed, total = _stage_counts()
         return {"completed": completed, "total": total}
     finally:
+        from matches.models import Tournament
+
+        # ANG-01f-6 (ADR-0040, Tournaments) -- release the active play run ONLY
+        # while the column still holds this task's own id.
+        Tournament.objects.filter(
+            id=tournament_id, active_play_job_id=self.request.id
+        ).update(active_play_job_id=None)
         django.db.close_old_connections()

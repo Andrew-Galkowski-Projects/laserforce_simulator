@@ -2206,6 +2206,13 @@ The following were explicitly scoped out and should not be implemented until re-
   page 1). Deliberate; revisit only if the Angular history screen needs the pinned row
 - **`LeagueSerializer.active_season` is one query per League** (ANG-01d-1 follow-up) — acceptable at
   page size 20; prefetch non-completed Seasons if the League list grows
+- **A never-consumed Tournament play run stays stuck** (ANG-01f-6 follow-up) — a sandbox
+  Tournament's run guard releases `active_play_job_id` only when `AsyncResult` reports `SUCCESS`,
+  `FAILURE` or `REVOKED` ([ADR-0040](docs/adr/0040-single-active-play-run-per-season.md),
+  Tournaments). A Play All message that no worker ever consumes reads `PENDING` forever, so that
+  bracket's play-next and play-all stay a 409 `play_in_progress`. The fix is a Tournament Cancel
+  (the Season `request_play_cancel` pattern: set a cancel flag and release a `PENDING` run with an
+  update filtered on its id)
 
 ---
 
