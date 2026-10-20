@@ -273,7 +273,7 @@ of `get_self_insert(user)` or `null` — the raw column is never serialized, so 
 | Method | Path | URL name | Behaviour |
 |---|---|---|---|
 | GET | `accounts/me/` | `api_accounts_me` | 200 `me` |
-| POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm`; 201 `me` of the new Account. **Does not log in** (login is ANG-03); an authenticated caller keeps its own session. |
+| POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm`; 201 `me` of the new Account. **Does not log in** (the client then calls `POST /api/token/`); an authenticated caller keeps its own session. |
 | POST | `accounts/me/password/` | `api_accounts_password` | Binds `StyledPasswordChangeForm(request.user, ...)`; 204, then `update_session_auth_hash` so the session survives. |
 | PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`, bound through **`SelfInsertParamsForm`** (`accounts/api_forms.py`); 200 `me`. An integer string (`"5"`) is accepted, as on the HTML route; a missing `player` ⇒ 400 `required`, and `null` / a bool / a fractional float / a list / a non-numeric string ⇒ 400 `invalid`, both on `field: "player"`; a non-object body ⇒ 400 `parse_error`; missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with `NOT_ELIGIBLE_MESSAGE`, nothing written. |
 | DELETE | `accounts/me/self-insert/` | `api_accounts_self_insert` | 204, idempotent; clears a drifted link too. |
@@ -287,7 +287,17 @@ Anonymous calls to everything except register are an enveloped 401 `not_authenti
 **CSRF.** DRF's `SessionAuthentication` enforces CSRF only for an *authenticated* session. An
 anonymous register POST therefore needs no token, but a logged-in browser caller (the ANG-04 client)
 must send the CSRF token on every unsafe method -- **including register**. `APIClient` does not
-enforce CSRF, so the tests do not cover this.
+enforce CSRF, so the tests do not cover this. A JWT (`Authorization: Bearer`) caller needs no CSRF token.
+
+## JWT token endpoints (ANG-03, `accounts/token_api_views.py`)
+
+`POST /api/token/` (login, `{"email", "password"}`), `/api/token/refresh/` and `/api/token/logout/`.
+The access token (15 min) comes back in the body; the refresh token (7 days, rotated and blacklisted
+on every refresh) lives only in the httpOnly `refresh_token` cookie scoped to `/api/token/`. No CSRF,
+no session. Full contract: `docs/agents/matches/api.md` **ANG-03**; decision:
+[ADR-0041](../../docs/adr/0041-jwt-api-auth-with-httponly-refresh-cookie.md). Tests:
+`accounts/tests/test_api_token.py`. The three views are in the login-exemption guard's
+`ANONYMOUS_API_VIEWS`. A password change does **not** revoke outstanding refresh tokens (deferred).
 
 ## Stamping — where `manager` is set
 

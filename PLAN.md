@@ -2080,9 +2080,24 @@ During development Angular runs on `http://localhost:4200` and Django runs on `h
    **Out of scope:** JWT (ANG-03), cookie SameSite / Secure changes, nginx, and HTTPS hardening.
 9. **One ticket.** No ADR, no glossary terms, no migration, no simulation impact.
 
-### ANG-03 · JWT authentication
+### ANG-03 · [DONE] JWT authentication
 
 Spec: #207 (ticket #208)
+
+**[DONE] Shipped (2026-10-20).** It shipped as specified. What the work found:
+
+- **Token views need `get_authenticate_header`.** With `authentication_classes = []`, DRF has no
+  challenge to send and turns every 401 into a 403. Each token view returns `Bearer realm="api"`,
+  as simplejwt's own views do.
+- **simplejwt errors needed one envelope entry.** Their detail is a `{"detail", "code", "messages"}`
+  dict, which the envelope handler expanded into five entries. The handler now collapses it for
+  `InvalidToken` / `AuthenticationFailed` only; other dict details still expand per key (tested).
+- **The 401 switch touched about 35 test files.** Every anonymous-`/api/` 403 became 401 with an
+  `ADR-0041` comment; CSRF 403s and cross-Account 404s were left alone. Putting the session class
+  first turns four of them red (mutation-checked).
+- **No missing-cookie vs bad-cookie split for the client:** a missing refresh cookie is 401
+  `not_authenticated`, a bad / expired / reused one 401 `token_not_valid`; both mean "log in again".
+- Detail: `docs/agents/matches/api.md` **ANG-03**.
 
 - Add `djangorestframework-simplejwt` to `requirements.txt`
 - Add `/api/token/` (login) and `/api/token/refresh/` endpoints
