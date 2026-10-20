@@ -151,6 +151,10 @@ than pasting them. Add these constraints to every implementer prompt:
 - Follow `mattpocock-skills:tdd` at the spec's agreed seams: one failing
   test, then just enough code, one slice at a time. Tests and code for a
   ticket come from the **same** agent. Test placement is in `CLAUDE.md`.
+- Every Implementation Decision gets a test you have seen go **red**: write it
+  first, or mutate the code back, before reporting done. Name each pairing in
+  your report. Config-only tickets need this most, because their tests pass
+  the moment the setting lands.
 - Run only your own test files, with pytest run from the nested Django dir
   (`laserforce_simulator/`). The full suite is the orchestrator's job.
 - Write files with Write and Edit, never a heredoc. Glob before creating a
@@ -198,7 +202,9 @@ mismatches, field-name drift between spec and code, missing seam methods.
 
 Call `mattpocock-skills:code-review` with fixed point `main`. The Spec axis
 reads the spec issue and its tickets; the Standards axis reads
-`CODING_STANDARDS.md` plus Fowler's smells. Show both reports. Fix the
+`CODING_STANDARDS.md` plus Fowler's smells. Give both reviewers the main
+checkout's `.venv\Scripts\python.exe` for any Python or pip call, so they can
+verify installs and runtime claims. Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
 tests, and review again only if a fix changed behaviour.
 
