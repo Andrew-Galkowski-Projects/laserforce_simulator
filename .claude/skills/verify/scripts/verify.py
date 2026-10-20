@@ -52,6 +52,8 @@ TEXT_SUFFIXES: tuple[str, ...] = (
     ".json",
     ".js",
     ".css",
+    ".ts",
+    ".scss",
 )
 
 
