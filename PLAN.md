@@ -520,6 +520,32 @@ the **CRE-02 tiered generation** subsection in
 **CRE-02 league spread** subsection in
 [`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 
+### CI-01 · [NOT STARTED] Make the test suite green on PostgreSQL in CI
+
+Found by ANG-04 (PR #213). ANG-04 fixed `ci.yml`, which GitHub had rejected since at least 2026-06,
+so the `test` job ran on CI's `postgres:16` service for the first time in months. It failed with
+4087 failed / 504 errors, all `InterfaceError: connection already closed`. Locally the suite is green
+because it runs on SQLite. PostgreSQL is canonical (ADR-0025), so this is a real gap.
+
+- **First cause:** six Celery tasks in `matches/tasks.py` (the batch, save, play-season, play-playoffs,
+  tournament and member-night tasks, added from API-03 onwards) end with
+  `finally: django.db.close_old_connections()`. Tests run them eagerly inside `TestCase`'s
+  transaction, where autocommit is off, and Django's `close_if_unusable_or_obsolete` closes any
+  connection whose autocommit differs from the settings. On SQLite's in-memory test DB that close
+  is a no-op. On Postgres it closes the shared test connection, so the first such test
+  (`test_setup_form_scoping.py`, about 30% in) breaks every test after it.
+- **Fix direction (for the grill):** clean up connections only when not inside an atomic block (or
+  only on a real worker, not under `CELERY_TASK_ALWAYS_EAGER`). Add a regression test that fails
+  on Postgres.
+- **Then:** run the full suite against the `docker compose` Postgres until it is green. More
+  Postgres-only failures may be hidden behind this one (ordering without `order_by`, case-sensitive
+  `LIKE`, sequence resets, `select_for_update`).
+- **Also:** actionlint reports that `codecov/codecov-action@v5` has no `path` input (it takes
+  `files`).
+- **Deploy gate:** while `test` is red, the `docker` job (and the Fly deploy) is skipped. When it
+  goes green, the first merge to `main` deploys. If the Fly Postgres predates UX-01, re-provision it
+  first (`CLAUDE.md` *Database*, the `AUTH_USER_MODEL` hazard).
+
 ---
 
 ## Phase 5 — Infrastructure & League System
@@ -2160,8 +2186,10 @@ and ADR-0042. What the work found:
 - **Prettier needs `endOfLine: auto`** because `core.autocrlf` gives a Windows checkout CRLF endings.
 - **Plain `npm test` does a single run when `CI` is set**, but CI uses an explicit `test:ci`
   (`ng test --watch=false`).
-- **Open:** actionlint reports that `codecov/codecov-action@v5` has no `path` input (it takes
-  `files`), so the coverage upload may be ignoring its path. This predates ANG-04.
+- **Open, now CI-01:** once the workflow ran, the `test` job failed on Postgres (the suite's
+  `close_old_connections` problem; see **CI-01**), so `docker` / the Fly deploy are skipped. The
+  `frontend` job passes. actionlint also reports that `codecov/codecov-action@v5` has no `path`
+  input (it takes `files`). Both predate ANG-04.
 
 One-time setup in a `/frontend/` directory at the repo root.
 
@@ -2205,6 +2233,28 @@ ng add @angular/material
     (ANG-06), Docker / nginx / Fly serving (ANG-07), template removal (ANG-08), E2E tests, i18n,
     PWA. **One ticket.** No Django code, migration, ownership or simulation change.
 
+### ANG-04b · [NOT STARTED] Visual style samples (pick a look before migrating)
+
+The Angular migration is the chance to clean up the UI, not copy the Django templates one-for-one.
+Before ANG-06 builds its first real component, produce **several (3–4) clearly different visual
+style samples** and pick one. Each sample should be a real alternative, not a small variation on
+another sample's palette. Examples: a dense data-dashboard look, a dark arena/neon look, and a
+clean minimal Material look.
+
+- **Same screens in every sample**, so the comparison is fair: the Teams list, a Round detail
+  per-player stat table with MVP scores, and a slice of the event timeline. Use realistic data
+  (fetched from the API or pasted in as fixtures), not lorem ipsum.
+- **Each sample sets** a colour palette (including the red / blue team colours), typography,
+  spacing / density, and the table and card treatment. Each sample also says whether it keeps
+  Angular Material's components or replaces them.
+- **Throwaway.** The samples live on a branch or in a scratch route, built with the `prototype`
+  skill. They are never merged as production code.
+- **Deliverable:** the maintainer picks one. That choice (and whether ANG-04's
+  `@angular/material` stays) is recorded in an ADR. The chosen sample's tokens become the app-wide
+  theme (an SCSS theme file / CSS custom properties) that every ANG-06 component uses.
+
+Depends on ANG-04. Blocks ANG-06.
+
 ### ANG-05 · Angular API services
 
 One Angular service per Django API resource. Components never call `HttpClient` directly.
@@ -2227,6 +2277,8 @@ MapsService      → GET/POST       /api/maps/
 
 Migrate one area at a time in order of complexity. Each item: build the Angular route/component,
 verify feature parity with the existing Django template, then remove the Django template + view.
+"Parity" means the same features, not the same look. Every component uses the theme chosen in
+ANG-04b.
 
 1. **Teams list & detail** — simple CRUD table + form; good first Angular component to build
 2. **Player add/edit** — stat form with live `overall_rating` preview
