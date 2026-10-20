@@ -8,13 +8,10 @@ HTML 302. The settings-level ``IsAuthenticated`` gates every view except
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-
 from django.contrib.auth import update_session_auth_hash
 from django.contrib.auth.decorators import login_not_required
 from django.utils.decorators import method_decorator
 from rest_framework import status, views
-from rest_framework.exceptions import ParseError
 from rest_framework.permissions import AllowAny
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -26,9 +23,11 @@ from laserforce_simulator.api.exceptions import (
 from laserforce_simulator.api.forms import plain_form_data
 from teams.models import Player
 
+from .api_forms import SelfInsertParamsForm
 from .forms import RegisterForm, StyledPasswordChangeForm
 from .permissions import get_owned_or_404
 from .self_insert import (
+    NOT_ELIGIBLE_MESSAGE,
     clear_self_insert,
     is_self_insert_eligible,
     set_self_insert,
@@ -36,16 +35,12 @@ from .self_insert import (
 from .serializers import MeSerializer
 
 
-def _me(user: object) -> dict:
-    return MeSerializer(user).data
-
-
 @method_decorator(login_not_required, name="dispatch")
 class MeAPIView(views.APIView):
     """GET /api/accounts/me/ -> the logged-in Account in the ``me`` shape."""
 
     def get(self, request: Request) -> Response:
-        return Response(_me(request.user))
+        return Response(MeSerializer(request.user).data)
 
 
 @method_decorator(login_not_required, name="dispatch")
@@ -62,7 +57,7 @@ class RegisterAPIView(views.APIView):
         form = RegisterForm(data=plain_form_data(RegisterForm, request.data))
         validate_form_or_raise(form)
         user = form.save()
-        return Response(_me(user), status=status.HTTP_201_CREATED)
+        return Response(MeSerializer(user).data, status=status.HTTP_201_CREATED)
 
 
 @method_decorator(login_not_required, name="dispatch")
@@ -80,41 +75,17 @@ class PasswordChangeAPIView(views.APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
-# Byte-identical to the HTML ``self_insert_link`` error flash (accounts/views.py).
-NOT_ELIGIBLE_MESSAGE = "Only a Player on a Team you manage can be your Self-insert."
+def _player_id_param(request: Request) -> int:
+    """``{"player": <id>}`` validated by ``SelfInsertParamsForm``.
 
-
-def _player_id(data: object) -> int:
-    """The ``player`` key of a JSON object body, as a strict integer.
-
-    A non-object body is a 400 ``parse_error``; a missing key is a 400
-    ``required`` and a non-integer value (bools included) a 400 ``invalid``,
-    both on ``field: "player"``.
+    A non-object body is a 400 ``parse_error`` (``plain_form_data``); a bad
+    ``player`` is a 400 ``required`` / ``invalid`` on ``field: "player"``.
     """
-    if not isinstance(data, Mapping):
-        raise ParseError("Expected a JSON object.")
-    if "player" not in data:
-        raise EnvelopeValidationError(
-            [
-                {
-                    "code": "required",
-                    "message": "This field is required.",
-                    "field": "player",
-                }
-            ]
-        )
-    value = data["player"]
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise EnvelopeValidationError(
-            [
-                {
-                    "code": "invalid",
-                    "message": "A valid integer is required.",
-                    "field": "player",
-                }
-            ]
-        )
-    return value
+    form = SelfInsertParamsForm(
+        data=plain_form_data(SelfInsertParamsForm, request.data)
+    )
+    validate_form_or_raise(form)
+    return form.cleaned_data["player"]
 
 
 @method_decorator(login_not_required, name="dispatch")
@@ -130,7 +101,7 @@ class SelfInsertAPIView(views.APIView):
         player = get_owned_or_404(
             Player.objects.select_related("team"),
             request,
-            pk=_player_id(request.data),
+            pk=_player_id_param(request),
         )
         if not is_self_insert_eligible(player, request.user):
             raise EnvelopeValidationError(
@@ -143,7 +114,7 @@ class SelfInsertAPIView(views.APIView):
                 ]
             )
         set_self_insert(request.user, player)  # type: ignore[arg-type]
-        return Response(_me(request.user))
+        return Response(MeSerializer(request.user).data)
 
     def delete(self, request: Request) -> Response:
         """-> 204, idempotent; clears the stored column even when it drifted."""

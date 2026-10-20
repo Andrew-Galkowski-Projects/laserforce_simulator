@@ -16,6 +16,8 @@ from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
+from accounts.forms import RegisterForm
+from accounts.models import User as UserModel
 from conftest import get_shared_manager
 from teams.models import Player, Team
 
@@ -30,7 +32,9 @@ class _Base(TestCase):
         self.api = APIClient()
         self.api.force_login(self.user)
 
-    def _managed_player(self, name: str = "Mine", manager: object = None) -> Player:
+    def _managed_player(
+        self, name: str = "Mine", manager: UserModel | None = None
+    ) -> Player:
         team = Team.objects.create(name=f"{name} Team", manager=manager or self.user)
         return Player.objects.create(team=team, name=name)
 
@@ -71,7 +75,7 @@ REGISTER_URL = reverse("api_accounts_register")
 _GOOD_PASSWORD = "Sturdy-Passw0rd-42"
 
 
-def _register_body(email: str = "new@example.com", **overrides: str) -> dict:
+def _register_body(email: str = "new@example.com", **overrides: str) -> dict[str, str]:
     body = {"email": email, "password1": _GOOD_PASSWORD, "password2": _GOOD_PASSWORD}
     body.update(overrides)
     return body
@@ -98,12 +102,28 @@ class RegisterTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertIn("email", [e["field"] for e in response.json()["errors"]])
 
+    def test_duplicate_email_creates_no_second_account(self) -> None:
+        User.objects.create_user("new@example.com", "whatever-pass-1")
+        self.api.post(REGISTER_URL, _register_body(), format="json")
+        self.assertEqual(User.objects.filter(email="new@example.com").count(), 1)
+
     def test_mismatched_passwords_is_400_on_password2(self) -> None:
         body = _register_body(password2="Different-Passw0rd-42")
         response = self.api.post(REGISTER_URL, body, format="json")
         self.assertEqual(response.status_code, 400)
         self.assertIn("password2", [e["field"] for e in response.json()["errors"]])
         self.assertFalse(User.objects.filter(email="new@example.com").exists())
+
+    def test_mismatched_passwords_message_matches_register_form(self) -> None:
+        body = _register_body(password2="Different-Passw0rd-42")
+        form = RegisterForm(data=body)
+        self.assertFalse(form.is_valid())
+        expected = form.errors["password2"]
+        response = self.api.post(REGISTER_URL, body, format="json")
+        messages = [
+            e["message"] for e in response.json()["errors"] if e["field"] == "password2"
+        ]
+        self.assertEqual(messages, list(expected))
 
     def test_weak_password_is_400(self) -> None:
         body = _register_body(password1="123", password2="123")
@@ -135,7 +155,7 @@ class PasswordChangeTests(TestCase):
         self.api = APIClient()
         self.api.force_login(self.user)
 
-    def _body(self, old: str = _OLD_PASSWORD, **overrides: str) -> dict:
+    def _body(self, old: str = _OLD_PASSWORD, **overrides: str) -> dict[str, str]:
         body = {
             "old_password": old,
             "new_password1": _NEW_PASSWORD,
@@ -169,6 +189,14 @@ class PasswordChangeTests(TestCase):
         self.assertIn("new_password2", fields)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password(_OLD_PASSWORD))
+
+    def test_weak_new_password_is_400_and_old_password_still_works(self) -> None:
+        body = self._body(new_password1="123", new_password2="123")
+        response = self.api.post(PASSWORD_URL, body, format="json")
+        self.assertEqual(response.status_code, 400)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(_OLD_PASSWORD))
+        self.assertFalse(self.user.check_password("123"))
 
 
 SELF_INSERT_URL = reverse("api_accounts_self_insert")
@@ -214,8 +242,28 @@ class SelfInsertPutTests(_Base):
         self._assert_player_field_error(response)
         self.assertEqual(response.json()["errors"][0]["code"], "required")
 
+    def test_string_integer_player_links(self) -> None:
+        player = self._managed_player()
+        response = self._put({"player": str(player.pk)})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["self_insert"]["id"], player.pk)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.self_insert_id, player.pk)
+
+    def test_bool_player_is_400_invalid_even_when_a_player_has_that_id(
+        self,
+    ) -> None:
+        self._managed_player()
+        for bad in (True, False):
+            with self.subTest(bad=bad):
+                response = self._put({"player": bad})
+                self._assert_player_field_error(response)
+                self.assertEqual(response.json()["errors"][0]["code"], "invalid")
+        self.user.refresh_from_db()
+        self.assertIsNone(self.user.self_insert_id)
+
     def test_non_integer_player_is_400_invalid(self) -> None:
-        for bad in ("abc", "5", 1.5, True, None, [1]):
+        for bad in ("abc", "", 1.5, True, False, None, [1]):
             with self.subTest(bad=bad):
                 response = self._put({"player": bad})
                 self._assert_player_field_error(response)

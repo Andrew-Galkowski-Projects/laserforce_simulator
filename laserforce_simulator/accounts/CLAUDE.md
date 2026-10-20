@@ -276,11 +276,19 @@ of `get_self_insert(user)` or `null` — the raw column is never serialized, so 
 | GET | `accounts/me/` | `api_accounts_me` | 200 `me` |
 | POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm`; 201 `me` of the new Account. **Does not log in** (login is ANG-03); an authenticated caller keeps its own session. |
 | POST | `accounts/me/password/` | `api_accounts_password` | Binds `StyledPasswordChangeForm(request.user, ...)`; 204, then `update_session_auth_hash` so the session survives. |
-| PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`; 200 `me`. Missing / non-integer (bools rejected) `player` ⇒ 400 on `field: "player"` (`required` / `invalid`); missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with the HTML flash text, nothing written. |
+| PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`, bound through **`SelfInsertParamsForm`** (`accounts/api_forms.py`); 200 `me`. An integer string (`"5"`) is accepted, as on the HTML route; a missing `player` ⇒ 400 `required`, and `null` / a bool / a fractional float / a list / a non-numeric string ⇒ 400 `invalid`, both on `field: "player"`; a non-object body ⇒ 400 `parse_error`; missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with `NOT_ELIGIBLE_MESSAGE`, nothing written. |
 | DELETE | `accounts/me/self-insert/` | `api_accounts_self_insert` | 204, idempotent; clears a drifted link too. |
+
+`NOT_ELIGIBLE_MESSAGE` lives in `accounts/self_insert.py`; the HTML `self_insert_link` error flash and
+the API `not_eligible` error both import it, so the text is identical on both surfaces.
 
 Anonymous calls to everything except register are an enveloped 403 `not_authenticated`. The HTML
 `/accounts/` views are unchanged. Tests: `accounts/tests/test_api_accounts.py`.
+
+**CSRF.** DRF's `SessionAuthentication` enforces CSRF only for an *authenticated* session. An
+anonymous register POST therefore needs no token, but a logged-in browser caller (the ANG-04 client)
+must send the CSRF token on every unsafe method -- **including register**. `APIClient` does not
+enforce CSRF, so the tests do not cover this.
 
 ## Stamping — where `manager` is set
 
