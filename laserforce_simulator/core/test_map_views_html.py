@@ -466,11 +466,11 @@ class TestHtmlReads(_HtmlMapTestCase):
 
     def test_processed_image_png(self) -> None:
         response = self.client.get(reverse("processed_image", args=[self.map.pk]))
-        try:
-            self.assertEqual(response["Content-Type"], "image/png")
-            body = b"".join(response.streaming_content)
-        finally:
-            response.close()
+        # Read to exhaustion first: the test client then closes the response
+        # (and its file). A manual close() would fire request_finished inside
+        # the test transaction (CI-01).
+        body = b"".join(response.streaming_content)
+        self.assertEqual(response["Content-Type"], "image/png")
         self.assertTrue(body.startswith(b"\x89PNG"))
 
 

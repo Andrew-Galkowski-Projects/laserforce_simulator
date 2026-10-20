@@ -36,6 +36,25 @@ Report the exact pass/fail counts (e.g. `877 passed, 0 failed`), not a vague
 "tests pass". If anything fails, surface the failing test names and stop —
 the PR is not ready until the suite is green.
 
+## Step 2b - Run the full suite on PostgreSQL (when Docker is available)
+
+CI runs the suite on `postgres:16`, the canonical database. If `docker info`
+succeeds, reuse the throwaway container (`docker start lf-test-pg`) or, when
+it does not exist yet, create it:
+
+```powershell
+docker run -d --name lf-test-pg -e POSTGRES_USER=laserforce -e POSTGRES_PASSWORD=laserforce -e POSTGRES_DB=laserforce_test -p 5433:5432 postgres:16
+```
+
+Then run the suite against it through the **Bash tool**:
+
+```bash
+DATABASE_URL=postgres://laserforce:laserforce@localhost:5433/laserforce_test python -m pytest laserforce_simulator
+```
+
+Report the exact counts, as in Step 2. A failure stops the PR. If Docker is
+not available, say so plainly: `Postgres run skipped: Docker unavailable`.
+
 ## Step 3 — Check for missing migrations
 
 ```powershell
@@ -83,6 +102,7 @@ PR TITLE: <short imperative, <70 chars>
 
 ## Test plan
 - [ ] pytest: <N passed, M failed>
+- [ ] pytest on Postgres: <N passed, M failed / skipped: Docker unavailable>
 - [ ] makemigrations --check: <clean / drift in app X>
 - [ ] frontend: lint / format:check / test:ci <N passed> / build (omit if
       `frontend/` is untouched)

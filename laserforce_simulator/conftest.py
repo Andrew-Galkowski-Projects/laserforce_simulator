@@ -19,11 +19,57 @@ import os
 os.environ.setdefault("LF_CELERY_EAGER", "1")
 
 
+# CI-01: closing the DB connection inside a test transaction is harmless on
+# SQLite's in-memory test DB but, on PostgreSQL, kills the connection every
+# later test on that xdist worker shares (``InterfaceError: connection already
+# closed``). The guard makes it fail loudly on every backend.
+CLOSE_IN_TRANSACTION_MESSAGE = (
+    "DB connection closed inside a test transaction. On PostgreSQL this kills "
+    "the connection for every later test on this worker (InterfaceError: "
+    "connection already closed). Usual culprits: close_old_connections() "
+    "called from code under test (e.g. a Celery task's finally block -- leave "
+    "connection cleanup to Celery's worker fixup), or request_finished fired "
+    "by a manual response.close() in a test (read streaming_content to "
+    "exhaustion instead; the test client closes the response)."
+)
+
+
+def install_close_in_transaction_guard() -> None:
+    """Make ``close()`` raise while a connection is inside an atomic block.
+
+    Wraps ``close`` on the concrete backend class of every configured
+    connection: SQLite's wrapper overrides ``close()`` without calling the
+    base, so patching ``BaseDatabaseWrapper`` alone never fires there. Outside
+    an atomic block the real ``close`` runs unchanged, so Django's own
+    ``tearDownClass`` close (after rollback) and test DB teardown are
+    unaffected. Idempotent.
+    """
+    import functools
+
+    from django.db import connections
+
+    for alias in connections:
+        backend_class = type(connections[alias])
+        original_close = backend_class.close
+        if getattr(original_close, "_close_in_transaction_guard", False):
+            continue
+
+        @functools.wraps(original_close)
+        def guarded_close(self, _original=original_close):
+            if self.in_atomic_block:
+                raise AssertionError(CLOSE_IN_TRANSACTION_MESSAGE)
+            return _original(self)
+
+        guarded_close._close_in_transaction_guard = True  # type: ignore[attr-defined]
+        backend_class.close = guarded_close
+
+
 def pytest_configure(config):
     from laserforce_simulator.celery_app import celery_app
 
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True
+    install_close_in_transaction_guard()
 
 
 # ---------------------------------------------------------------------------
