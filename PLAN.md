@@ -2391,9 +2391,29 @@ Depends on ANG-04. Blocks ANG-06.
   inert), the player side sheet, per-player expandable timelines, momentum and score charts,
   replay controls and log search.
 
-### ANG-05 · Angular API services
+### ANG-05 · [DONE] Angular API services
 
-Spec: #257
+Spec: #257 (tickets #258, #259)
+
+**[DONE] Shipped (2026-10-21).** As specified: `ApiClient` (the only `HttpClient` user), an
+`AuthService` + functional `authInterceptor` + bootstrap initializer, a `/login` placeholder, and the
+Teams / Players / Matches / Rounds / Maps services. Detail in `frontend/CLAUDE.md` (**API and
+auth**). What the work found:
+
+- **Restore could redirect.** Review caught that a 401 from `accounts/me/` during the startup
+  restore went through the interceptor's refresh-and-redirect path. Fixed with a
+  `SKIP_AUTH_REFRESH` `HttpContextToken` on the `me/` call (login and restore share it).
+- **The table below was wrong** against the real API (players have no create; maps are a
+  multipart upload + delete). Grill item 7 is the shipped surface.
+- **Smaller departures:** `ListParams` is an `interface` (ESLint `consistent-type-definitions`);
+  the interceptor, not `AuthService`, sets `withCredentials` on `token/*`; `AuthService` exposes
+  `clearSession()`; a 401 with no token held still tries one refresh, so a signed-out visitor hitting
+  a protected endpoint lands on `/login`; `login` clears a half-made session if `me/` fails.
+- **Real serializer quirks** the models mirror: `Offensive_synergy` (capital O); `MatchSerializer`
+  is `__all__` (adds `manager`, `season_phase`, `conference`, `leg`); `PlayerSerializer` has no
+  `overall_rating`; `DELETE /api/maps/{id}/` can be 409 `map_in_use`.
+- **Live check off the owner's ports works** (grill item 18): sign-in, Bearer on `teams/`, three
+  concurrent 401s -> one refresh, reload restores, logout -> `/login`.
 
 One Angular service per Django API resource. Components never call `HttpClient` directly.
 
@@ -2403,15 +2423,15 @@ localStorage) and attaches `Authorization: Bearer <token>` to every `/api/` requ
 retries; a second 401 goes to login. On app start it tries one refresh to restore the session.
 
 ```
-TeamsService     → GET/POST/PATCH /api/teams/
-PlayersService   → GET/POST/PATCH /api/players/
-MatchesService   → GET/POST       /api/matches/
-RoundsService    → GET            /api/rounds/<id>/
-EventsService    → GET            /api/rounds/<id>/events/
-MapsService      → GET/POST       /api/maps/
+TeamsService     → list / get / create / PATCH / addPlayer (POST teams/{id}/players/)
+PlayersService   → list / get / PATCH / DELETE           (no create)
+MatchesService   → list / get / create
+RoundsService    → list / get / create / events(roundId) (rounds/{id}/events/)
+MapsService      → list / get / upload (multipart) / DELETE
 ```
 
-**Grill (2026-10-21).** Settled answers. The table above predates ANG-01; the real surface is item 7.
+**Grill (2026-10-21).** Settled answers. The original table predated ANG-01 (corrected above at
+ship); the real surface is item 7.
 
 1. **Scope:** the five resource services below plus an `AuthService`. League / Season, Tournament,
    batch and analytics services are added by the ANG-06 item that first uses them.
@@ -2575,16 +2595,15 @@ Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found
 top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
 
 **Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
-so is the look (ANG-04b, ADR-0043). Remaining, in order:
+so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
 
 ```
-ANG-05  Angular API services + JWT interceptor   <- NEXT
-    -> ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)
-               + still to scope: League / Season, League screens,
-                 Tournaments, Accounts
-      -> ANG-07  Serve Angular from an nginx sidecar
-        -> ANG-08  Remove Django template views (Admin stays)
-          -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
+ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)   <- NEXT
+        + still to scope: League / Season, League screens,
+          Tournaments, Accounts
+    -> ANG-07  Serve Angular from an nginx sidecar
+      -> ANG-08  Remove Django template views (Admin stays)
+        -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
