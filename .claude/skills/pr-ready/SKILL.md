@@ -100,9 +100,25 @@ PR TITLE: <short imperative, <70 chars>
 - [ ] <any manual verification the change needs — UI flows, management
       commands, etc. Omit if purely internal.>
 
+## Screenshots / Demo
+<before / after screenshots, or a video for a flow; or
+ "No visual change: <reason>". Omit only when no UI file changed.>
+
 ## Files changed
 <paste `git diff --stat` output verbatim>
 ```
+
+**UI changes need visual evidence.** When the diff touches `templates/`, CSS,
+static assets or `frontend/src/` (the `PR evidence` CI check fails the PR
+otherwise), capture it while the branch runs locally: Chrome DevTools MCP
+`take_screenshot` with a `filePath` in the scratchpad (a before shot from
+`main` and an after shot), or `screencast_start` / `screencast_stop` for a
+multi-step flow, playback or a phone layout (`resize_page`). List the files in
+the draft. After the "go", publish them with
+`python scripts/pr_assets.py <files>` (it pushes to the `pr-assets` branch and
+prints markdown) and paste its output into the Screenshots section before
+`gh pr create`. If a UI file changed but nothing visible did, write
+`No visual change: <reason>` instead.
 
 Keep the summary focused on intent. The reviewer can read the diff for the
 "what"; the PR body's job is the "why".

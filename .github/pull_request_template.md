@@ -18,8 +18,15 @@ Closes #
 2. 
 3. 
 
-## 📸 Screenshots / Demo (if applicable)
-<!-- UI changes, gameplay features, dashboards, etc. -->
+## 📸 Screenshots / Demo
+<!--
+Required when the PR touches templates, CSS, static assets or frontend/src
+(the "PR evidence" check fails otherwise). Drag images or a short video into
+this box, ideally a before and an after. For a flow (a multi-step form,
+playback, a mobile layout), a video beats a screenshot.
+If a UI file changed but nothing visible did, replace this comment with:
+No visual change: <reason>
+-->
 - 
 
 ## ⚠️ Risks / Edge Cases
@@ -29,6 +36,7 @@ Closes #
 ## ✅ Checklist
 - [ ] Code builds and runs
 - [ ] Tests added/updated (if applicable)
+- [ ] Screenshots / video added for UI changes (or "No visual change: <reason>")
 - [ ] Documentation updated
 - [ ] No sensitive data exposed
 - [ ] Follows project conventions

@@ -135,6 +135,15 @@ CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci
 - **Never use `cd` (or `-C`) before git commands.** Run `git` directly from the
   session cwd — see `## Tooling` above for the full rationale (a stray
   `cd`-then-git sequence has corrupted the working tree before).
+- **UI changes need screenshots or a video in the PR body.** Any PR touching
+  `templates/`, CSS, static assets or `frontend/src/` must show the result: a
+  before / after screenshot, or a short video for a flow. The `PR evidence`
+  workflow (`scripts/check_pr_evidence.py`) fails the PR otherwise; a line
+  `No visual change: <reason>` is the only opt-out. Capture with the Chrome
+  DevTools MCP (`take_screenshot` with `filePath`, or `screencast_start` /
+  `screencast_stop`), then run `python scripts/pr_assets.py <files>`: it
+  publishes them to the never-merged `pr-assets` branch and prints the markdown
+  to paste. Publishing pushes, so it waits for the same "go" as the PR.
 
 ## Test-Driven Development
 
