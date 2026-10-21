@@ -4,7 +4,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
-import { signIn } from '../api/testing/auth-fixtures';
+import { releaseTeamsLoads, signIn } from '../api/testing/auth-fixtures';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
 
@@ -53,6 +53,7 @@ describe('App shell (layout B)', () => {
   }
 
   afterEach(() => {
+    releaseTeamsLoads();
     http.verify();
     delete (window as Partial<Window>).matchMedia;
   });
