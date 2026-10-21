@@ -7,6 +7,7 @@ import { authInterceptor } from '../auth/auth.interceptor';
 import { ApiError } from './api-client';
 import { Player } from './players.models';
 import { PlayersService } from './players.service';
+import { STATS } from './testing/player-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -15,25 +16,7 @@ const PLAYER: Player = {
   team: 3,
   name: 'Ace',
   preferred_roles: ['commander'],
-  player_awareness: 50,
-  game_awareness: 50,
-  resource_awareness: 50,
-  decision_making: 50,
-  positioning: 50,
-  stamina: 50,
-  speed: 50,
-  flexibility: 50,
-  adaptability: 50,
-  communication: 50,
-  teamwork: 50,
-  Offensive_synergy: 50,
-  defensive_synergy: 50,
-  midfield_synergy: 50,
-  resupply_synergy: 50,
-  resupply_efficiency: 50,
-  accuracy: 50,
-  survival: 50,
-  special_usage: 50,
+  ...STATS,
 };
 
 describe('PlayersService', () => {

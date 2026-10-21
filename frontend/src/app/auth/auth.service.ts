@@ -1,3 +1,4 @@
+import { HttpContext } from '@angular/common/http';
 import { Injectable, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import {
@@ -12,6 +13,7 @@ import {
   tap,
 } from 'rxjs';
 import { ApiClient } from '../api/api-client';
+import { SKIP_AUTH_REFRESH, TOKEN_PATH } from './auth.tokens';
 import { RegisterInput, User } from './user';
 
 interface AccessToken {
@@ -37,11 +39,12 @@ export class AuthService {
     return this.token;
   }
 
+  /** Signs in. If loading the user fails, the half-made session is cleared and the error rethrown. */
   login(email: string, password: string): Observable<User> {
-    return this.api.post<AccessToken>('token/', { email, password }).pipe(
+    return this.api.post<AccessToken>(TOKEN_PATH, { email, password }).pipe(
       tap(({ access }) => (this.token = access)),
-      switchMap(() => this.api.get<User>('accounts/me/')),
-      tap((user) => this.user.set(user)),
+      switchMap(() => this.loadUser()),
+      tap({ error: () => this.clearSession() }),
     );
   }
 
@@ -51,7 +54,7 @@ export class AuthService {
    * never spent twice (a second use would be blacklisted).
    */
   refresh(): Observable<string> {
-    this.inflightRefresh ??= this.api.post<AccessToken>('token/refresh/', null).pipe(
+    this.inflightRefresh ??= this.api.post<AccessToken>(`${TOKEN_PATH}refresh/`, null).pipe(
       map(({ access }) => access),
       tap((access) => (this.token = access)),
       finalize(() => (this.inflightRefresh = null)),
@@ -64,7 +67,7 @@ export class AuthService {
   async restoreSession(): Promise<void> {
     try {
       await firstValueFrom(this.refresh());
-      this.user.set(await firstValueFrom(this.api.get<User>('accounts/me/')));
+      await firstValueFrom(this.loadUser());
     } catch {
       this.clearSession();
     }
@@ -72,9 +75,9 @@ export class AuthService {
 
   /** Blacklists the refresh cookie; the session is forgotten even if the call fails. */
   logout(): Observable<void> {
-    return this.api.post<void>('token/logout/', null).pipe(
+    return this.api.post<void>(`${TOKEN_PATH}logout/`, null).pipe(
       catchError(() => of(undefined)),
-      map(() => {
+      finalize(() => {
         this.clearSession();
         void this.router.navigateByUrl('/login');
       }),
@@ -84,6 +87,17 @@ export class AuthService {
   /** Creates the Account. Does not sign in: call `login` afterwards. */
   register(body: RegisterInput): Observable<User> {
     return this.api.post<User>('accounts/register/', body);
+  }
+
+  /**
+   * `GET accounts/me/` with the token just obtained, and sets `currentUser`.
+   * A 401 here comes straight back (no second refresh, no redirect).
+   */
+  private loadUser(): Observable<User> {
+    const context = new HttpContext().set(SKIP_AUTH_REFRESH, true);
+    return this.api
+      .get<User>('accounts/me/', undefined, { context })
+      .pipe(tap((user) => this.user.set(user)));
   }
 
   /** Forgets the access token and the user (no request, no navigation). */

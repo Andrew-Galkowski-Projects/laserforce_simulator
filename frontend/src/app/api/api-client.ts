@@ -1,4 +1,4 @@
-import { HttpClient, HttpErrorResponse, HttpParams } from '@angular/common/http';
+import { HttpClient, HttpContext, HttpErrorResponse, HttpParams } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 import { Observable, OperatorFunction, catchError, map, pipe, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
@@ -38,6 +38,11 @@ export interface ListParams {
   page?: number;
   page_size?: number;
   [filter: string]: string | number | boolean | undefined;
+}
+
+/** Per-request extras, e.g. an `HttpContext` read by the interceptors. */
+export interface RequestOptions {
+  context?: HttpContext;
 }
 
 interface Envelope<T, M = Record<string, unknown>> {
@@ -100,33 +105,42 @@ function unwrap<B, T>(project: (body: B) => T): OperatorFunction<B | null, T> {
 export class ApiClient {
   private readonly http = inject(HttpClient);
 
-  get<T>(path: string, params?: ListParams): Observable<T> {
+  get<T>(path: string, params?: ListParams, options: RequestOptions = {}): Observable<T> {
     return this.http
-      .get<Envelope<T>>(this.url(path), { params: toHttpParams(params) })
+      .get<Envelope<T>>(this.url(path), { params: toHttpParams(params), context: options.context })
       .pipe(unwrap((body) => body.data));
   }
 
-  list<T>(path: string, params?: ListParams): Observable<Page<T>> {
+  list<T>(path: string, params?: ListParams, options: RequestOptions = {}): Observable<Page<T>> {
     return this.http
-      .get<Envelope<T[], PageMeta>>(this.url(path), { params: toHttpParams(params) })
+      .get<Envelope<T[], PageMeta>>(this.url(path), {
+        params: toHttpParams(params),
+        context: options.context,
+      })
       .pipe(unwrap((body) => ({ items: body.data, meta: body.meta })));
   }
 
-  post<T>(path: string, body: unknown): Observable<T> {
-    return this.http.post<Envelope<T>>(this.url(path), body).pipe(unwrap((res) => res.data));
+  post<T>(path: string, body: unknown, options: RequestOptions = {}): Observable<T> {
+    return this.http
+      .post<Envelope<T>>(this.url(path), body, { context: options.context })
+      .pipe(unwrap((res) => res.data));
   }
 
-  patch<T>(path: string, body: unknown): Observable<T> {
-    return this.http.patch<Envelope<T>>(this.url(path), body).pipe(unwrap((res) => res.data));
+  patch<T>(path: string, body: unknown, options: RequestOptions = {}): Observable<T> {
+    return this.http
+      .patch<Envelope<T>>(this.url(path), body, { context: options.context })
+      .pipe(unwrap((res) => res.data));
   }
 
-  delete(path: string): Observable<void> {
-    return this.http.delete<null>(this.url(path)).pipe(unwrap(() => undefined));
+  delete(path: string, options: RequestOptions = {}): Observable<void> {
+    return this.http
+      .delete<null>(this.url(path), { context: options.context })
+      .pipe(unwrap(() => undefined));
   }
 
   /** Multipart POST: the browser sets the multipart boundary header itself. */
-  upload<T>(path: string, formData: FormData): Observable<T> {
-    return this.http.post<Envelope<T>>(this.url(path), formData).pipe(unwrap((res) => res.data));
+  upload<T>(path: string, formData: FormData, options: RequestOptions = {}): Observable<T> {
+    return this.post<T>(path, formData, options);
   }
 
   private url(path: string): string {

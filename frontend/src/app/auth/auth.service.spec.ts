@@ -80,6 +80,21 @@ describe('AuthService', () => {
     expect(auth.accessToken()).toBeNull();
   });
 
+  it('login clears the session and fails when accounts/me/ fails after the token was issued', async () => {
+    const result = firstValueFrom(auth.login('ann@example.com', 'pw')).catch((e: unknown) => e);
+    http.expectOne(`${BASE}/token/`).flush({ data: { access: 'acc-1' }, meta: {} });
+    http
+      .expectOne(`${BASE}/accounts/me/`)
+      .flush(
+        { errors: [{ code: 'server_error', message: 'Boom.', field: null }], meta: {} },
+        { status: 500, statusText: 'Server Error' },
+      );
+    expect(await result).toMatchObject({ status: 500 });
+    expect(auth.accessToken()).toBeNull();
+    expect(auth.currentUser()).toBeNull();
+    expect(auth.isSignedIn()).toBe(false);
+  });
+
   async function signIn(): Promise<void> {
     const result = firstValueFrom(auth.login('ann@example.com', 'pw'));
     http.expectOne(`${BASE}/token/`).flush({ data: { access: 'acc-1' }, meta: {} });
@@ -178,6 +193,26 @@ describe('AuthService', () => {
           { status: 401, statusText: 'Unauthorized' },
         );
       await expect(done).resolves.toBeUndefined();
+      await harness.fixture.whenStable();
+      expect(auth.currentUser()).toBeNull();
+      expect(auth.accessToken()).toBeNull();
+      expect(TestBed.inject(Router).url).toBe('/');
+    });
+
+    it('a 401 from accounts/me/ during restore leaves the app signed out, makes no second refresh, and does not navigate', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/');
+      const done = auth.restoreSession();
+      http.expectOne(`${BASE}/token/refresh/`).flush({ data: { access: 'acc-r' }, meta: {} });
+      await Promise.resolve();
+      const me = http.expectOne(`${BASE}/accounts/me/`);
+      expect(me.request.headers.get('Authorization')).toBe('Bearer acc-r');
+      me.flush(
+        { errors: [{ code: 'token_not_valid', message: 'Bad token.', field: null }], meta: {} },
+        { status: 401, statusText: 'Unauthorized' },
+      );
+      await expect(done).resolves.toBeUndefined();
+      http.expectNone(`${BASE}/token/refresh/`);
       await harness.fixture.whenStable();
       expect(auth.currentUser()).toBeNull();
       expect(auth.accessToken()).toBeNull();

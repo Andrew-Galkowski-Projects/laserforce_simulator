@@ -178,6 +178,31 @@ describe('authInterceptor', () => {
       expect(auth.accessToken()).toBeNull();
     });
 
+    it('keeps the existing returnUrl when the person is already on /login', async () => {
+      await harness.navigateByUrl('/login?returnUrl=%2F%3Fpage%3D2');
+      await holdToken('old');
+      const result = failure(firstValueFrom(api.get('teams/')));
+      http.expectOne(`${BASE}/teams/`).flush(EXPIRED, UNAUTHORIZED);
+      http.expectOne(`${BASE}/token/refresh/`).flush(EXPIRED, UNAUTHORIZED);
+
+      expect((await result).status).toBe(401);
+      await harness.fixture.whenStable();
+      expect(routerUrl()).toBe('/login?returnUrl=%2F%3Fpage%3D2');
+      expect(auth.accessToken()).toBeNull();
+    });
+
+    it('adds no returnUrl when the person is on a bare /login', async () => {
+      await harness.navigateByUrl('/login');
+      await holdToken('old');
+      const result = failure(firstValueFrom(api.get('teams/')));
+      http.expectOne(`${BASE}/teams/`).flush(EXPIRED, UNAUTHORIZED);
+      http.expectOne(`${BASE}/token/refresh/`).flush(EXPIRED, UNAUTHORIZED);
+
+      expect((await result).status).toBe(401);
+      await harness.fixture.whenStable();
+      expect(routerUrl()).toBe('/login');
+    });
+
     it('never refreshes for a 401 from a token endpoint', async () => {
       const result = failure(firstValueFrom(api.post('token/', { email: 'a@b.c', password: 'x' })));
       http.expectOne(`${BASE}/token/`).flush(EXPIRED, UNAUTHORIZED);

@@ -4,6 +4,7 @@ import { Router } from '@angular/router';
 import { Observable, catchError, switchMap, throwError } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { AuthService } from './auth.service';
+import { SKIP_AUTH_REFRESH, TOKEN_PATH } from './auth.tokens';
 
 const API_PREFIX = `${environment.apiBaseUrl}/`;
 
@@ -22,13 +23,14 @@ function isUnauthorized(error: unknown): error is HttpErrorResponse {
  * - A 401 refreshes once (single-flight, shared by concurrent 401s) and replays
  *   the request once; a failed refresh or a second 401 signs out and lands on
  *   `/login?returnUrl=...`, and the caller still sees the 401.
+ * - A request carrying `SKIP_AUTH_REFRESH` gets its 401 back as-is.
  * - Anything outside `apiBaseUrl` passes through untouched.
  */
 export const authInterceptor: HttpInterceptorFn = (req, next) => {
   if (!req.url.startsWith(API_PREFIX)) {
     return next(req);
   }
-  if (req.url.slice(API_PREFIX.length).startsWith('token/')) {
+  if (req.url.slice(API_PREFIX.length).startsWith(TOKEN_PATH)) {
     // The refresh cookie (Path=/api/token/) only needs to travel here.
     return next(req.clone({ withCredentials: true }));
   }
@@ -38,13 +40,17 @@ export const authInterceptor: HttpInterceptorFn = (req, next) => {
 
   const sendToLogin = (error: HttpErrorResponse): Observable<never> => {
     auth.clearSession();
-    void router.navigate(['/login'], { queryParams: { returnUrl: router.url } });
+    const onLogin = router.url === '/login' || router.url.startsWith('/login?');
+    // Already on /login: stay there with its query, rather than a returnUrl pointing at /login.
+    void (onLogin
+      ? router.navigateByUrl(router.url)
+      : router.navigate(['/login'], { queryParams: { returnUrl: router.url } }));
     return throwError(() => error);
   };
 
   return next(withBearer(req, auth.accessToken())).pipe(
     catchError((error: unknown) => {
-      if (!isUnauthorized(error)) {
+      if (!isUnauthorized(error) || req.context.get(SKIP_AUTH_REFRESH)) {
         return throwError(() => error);
       }
       return auth.refresh().pipe(
