@@ -206,16 +206,24 @@ bounce; both are only reachable post-login in practice.
 
 ## Invites (`accounts.models.Invite`, `accounts/admin.py::InviteAdmin`)
 
-Registration is **invite-only**. An `Invite` is a single-use row: `code` (random
-`secrets.token_urlsafe(16)`, unique, not editable), optional `email` (only that address may redeem
-it), `note`, `created_at`, `used_by` (`OneToOneField(User, SET_NULL)`) and `used_at`. `is_used` is
-true once either `used_at` or `used_by` is set, so deleting the Account that redeemed it never
-re-opens the invite.
+Registration is **invite-only**. An `Invite` row: `code` (random `secrets.token_urlsafe(16)`,
+unique, not editable), optional `email` (only that address may redeem it), `note`, `max_uses`
+(default **1**, at least 1), `use_count` (not editable), optional `expires_at` (blank = never) and
+`created_at`. Properties: `uses_left`, `is_expired` (`expires_at <= now`) and `is_redeemable`
+(uses left and not expired). `Invite.clean` refuses an email lock with `max_uses > 1`: that
+address can register only once, so the extra uses could never be spent.
 
-Staff create invites in Django admin (`/admin/accounts/invite/`). The add page asks only for
-`email` and `note`; after saving, a success message shows the absolute sign-up link
-(`/accounts/register/?invite=<code>`), and the changelist keeps a *Sign-up link* column for every
-unused invite. Tests: `accounts/tests/test_invites.py`.
+Each sign-up through an invite writes an **`InviteRedemption`** (`invite` FK `CASCADE`,
+`related_name="redemptions"`; `user` `OneToOneField(User, SET_NULL)`, `related_name=
+"invite_redemption"`; `redeemed_at`). `use_count` only ever grows, so deleting the Account leaves
+the redemption with `user = NULL` and never gives the use back. Migration `0004` copied each
+used 0003 invite into one redemption plus `use_count = 1` before dropping `used_by` / `used_at`.
+
+Staff create invites in Django admin (`/admin/accounts/invite/`). The add page asks for `email`,
+`note`, `max_uses` and `expires_at`; after saving, a success message shows the absolute sign-up
+link (`/accounts/register/?invite=<code>`). The changelist shows *Uses* (`3 / 10`), *Status*
+(Active / Used up / Expired) and a *Sign-up link* column while the invite is redeemable; the
+change page lists its redemptions in a read-only inline. Tests: `accounts/tests/test_invites.py`.
 
 ## Auth surfaces (`accounts/urls.py`, `accounts/forms.py`, `accounts/views.py`)
 
@@ -245,10 +253,11 @@ Forms — three classes, `accounts/forms.py`:
   **Invite-only** self-registration: email + password + confirm + `invite` (a code). Password
   matching and `AUTH_PASSWORD_VALIDATORS` come from `UserCreationForm`; email uniqueness from the
   model's `unique=True`. `clean_invite` returns the `Invite` row, or `INVALID_INVITE_MESSAGE` for a
-  missing / unknown / used code; `clean` adds `WRONG_EMAIL_INVITE_MESSAGE` on `invite` when an
-  email-locked invite meets another address (case-insensitive). `save` is atomic and claims the
-  invite with a conditional `UPDATE ... WHERE used_at IS NULL`, so of two racing redemptions only
-  one Account survives. Both the HTML view and `POST /api/accounts/register/` bind this form, so
+  missing / unknown / used-up code and `EXPIRED_INVITE_MESSAGE` past `expires_at`; `clean` adds `WRONG_EMAIL_INVITE_MESSAGE` on `invite` when an
+  email-locked invite meets another address (case-insensitive). `save` is atomic: it spends a
+  use with a conditional `UPDATE ... SET use_count = use_count + 1 WHERE use_count < max_uses`
+  (racing sign-ups for the last use cannot both win; the loser's Account rolls back), then writes
+  the `InviteRedemption`. Both the HTML view and `POST /api/accounts/register/` bind this form, so
   the rule cannot drift between them.
 - **`StyledPasswordChangeForm(PasswordChangeForm)`** — the house DOM ids only.
 
@@ -481,7 +490,7 @@ Player names.
 
 ## Migrations
 
-Five files, no `RunPython` in any of them:
+Six files; only `0004_invite_max_uses_expiry` has a `RunPython`:
 
 - `accounts/migrations/0001_initial.py` — `CreateModel` for `User` with
   `managers = [("objects", accounts.models.UserManager())]`; dep
@@ -498,6 +507,9 @@ Five files, no `RunPython` in any of them:
   `0002`. The reverse relation generates **no** `teams` / `matches` / `core` migration.
 
 - `accounts/migrations/0003_invite.py` — one `CreateModel` (`Invite`); dep `accounts.0002_user_self_insert`.
+- `accounts/migrations/0004_invite_max_uses_expiry.py` — adds `max_uses` / `use_count` / `expires_at`,
+  creates `InviteRedemption`, **one `RunPython`** copying used invites into redemptions, then drops
+  `used_by` / `used_at`. Reversing it restores the columns empty (the copy's reverse is a no-op).
 
 `core` is untouched and stays at `0004_map05_cell_ranking_and_strong_spots`.
 

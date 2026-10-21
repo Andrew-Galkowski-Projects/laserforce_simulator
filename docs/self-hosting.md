@@ -74,7 +74,12 @@ Then, once the node appears under *Machines* in the admin console:
 Registration is invite-only. Sign in as a superuser, open `/admin/accounts/invite/` and **Add
 invite** (optionally lock it to the person's email). The confirmation message shows the sign-up
 link, `https://<name>.<tailnet>.ts.net/accounts/register/?invite=<code>`, and the invite list keeps
-it until it is used. Each invite works once.
+it while it still works.
+
+An invite is single-use by default. For a group, set **Max uses** (say 10) and an **Expires at**, and
+share one link; it stops working once it is used up or expired. The invite list shows uses
+(`3 / 10`) and status, and each invite's page lists who signed up with it. An email-locked invite
+is always single-use.
 
 ## Day two
 

@@ -28,8 +28,9 @@ from .self_insert import (
 
 @login_not_required
 def register(request: HttpRequest) -> HttpResponse:
-    """UX-01 — open self-registration. On success, log the new Account in and
-    redirect to ``LOGIN_REDIRECT_URL``.
+    """UX-01 — invite-only self-registration. ``?invite=<code>`` prefills the
+    invite field (the link Django admin shows). On success, log the new Account
+    in and redirect to ``LOGIN_REDIRECT_URL``.
     """
     if request.method == "POST":
         form = RegisterForm(request.POST)
