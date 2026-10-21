@@ -9,12 +9,14 @@ Seam contract: ``.claude/worktrees/lg-00-seam-contract.md`` §3 + §11.2.
 
 from __future__ import annotations
 
+import re
 from unittest import mock
 
 from django.test import TestCase
 from django.urls import reverse
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
+from teams.forms import GenerateLeagueForm
 from teams.models import Player, Team, get_free_agents_team
 
 # ---------------------------------------------------------------------------
@@ -53,7 +55,7 @@ class TestGenerateGet(TestCase):
 class TestGeneratePostHappyPathTeams(TestCase):
     """POST 3 teams × 6 players — happy path."""
 
-    def _post(self) -> "object":
+    def _post(self, follow: bool = False) -> "object":
         return self.client.post(
             reverse("generate_players"),
             {
@@ -62,6 +64,7 @@ class TestGeneratePostHappyPathTeams(TestCase):
                 "mean": "50",
                 "std_dev": "15",
             },
+            follow=follow,
         )
 
     def test_post_3_teams_6_players_creates_18_players_3_teams(self) -> None:
@@ -82,7 +85,7 @@ class TestGeneratePostHappyPathTeams(TestCase):
             )
 
     def test_post_response_is_confirmation_page_with_team_links(self) -> None:
-        """200 + ``generate-confirm-teams-list`` id + 3 team_detail anchors.
+        """The result page (after the UXP-16 redirect) lists 3 team_detail anchors.
 
         The project's root urlconf includes ``teams.urls`` at both ``/teams/``
         and ``""`` (homepage), so ``reverse('team_detail', ...)`` resolves to
@@ -90,7 +93,7 @@ class TestGeneratePostHappyPathTeams(TestCase):
         uses ``reverse()`` rather than a hard-coded ``/teams/<id>/`` regex so
         it remains correct regardless of which prefix wins.
         """
-        response = self._post()
+        response = self._post(follow=True)
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
         self.assertIn("generate-confirm-teams-list", body)
@@ -149,7 +152,7 @@ class TestGeneratePostHappyPathBenchPlayers(TestCase):
 class TestGeneratePostHappyPathFreeAgents(TestCase):
     """POST 0 teams × 20 — free-agent pool mode."""
 
-    def _post(self) -> "object":
+    def _post(self, follow: bool = False) -> "object":
         return self.client.post(
             reverse("generate_players"),
             {
@@ -158,6 +161,7 @@ class TestGeneratePostHappyPathFreeAgents(TestCase):
                 "mean": "50",
                 "std_dev": "15",
             },
+            follow=follow,
         )
 
     def test_post_0_teams_20_pool_creates_20_free_agents(self) -> None:
@@ -170,7 +174,7 @@ class TestGeneratePostHappyPathFreeAgents(TestCase):
 
     def test_post_0_teams_response_contains_free_agents_notice(self) -> None:
         """The confirmation page contains the locked DOM ids + the count 20."""
-        response = self._post()
+        response = self._post(follow=True)
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
         self.assertIn("generate-confirm-free-agents-notice", body)
@@ -459,3 +463,142 @@ class TestFreeAgentsTeamAutoCreated(TestCase):
         self.assertEqual(Team.objects.filter(name="Free Agents").count(), 1)
         second = Team.objects.get(name="Free Agents")
         self.assertEqual(second.pk, first_pk)
+
+
+# ---------------------------------------------------------------------------
+# UXP-16 -- per-mode "Players per team" ranges + Post/Redirect/Get
+# ---------------------------------------------------------------------------
+
+_VALID_TEAMS = {
+    "num_teams": "3",
+    "players_per_team": "6",
+    "mean": "50",
+    "std_dev": "15",
+}
+
+
+def _option_values(body: str, select_id: str) -> list[str]:
+    """The ``<option value>`` list of the ``<select id=select_id>`` in ``body``."""
+    match = re.search(rf'<select[^>]*id="{select_id}"[^>]*>(.*?)</select>', body, re.S)
+    assert match is not None, f"no <select id={select_id!r}>"
+    return re.findall(r'<option value="([^"]*)"', match.group(1))
+
+
+def _select_tag(body: str, select_id: str) -> str:
+    """The opening ``<select ...>`` tag with id ``select_id``."""
+    match = re.search(rf'<select[^>]*id="{select_id}"[^>]*>', body)
+    assert match is not None, f"no <select id={select_id!r}>"
+    return match.group(0)
+
+
+class TestGeneratePlayersPerModeControls(TestCase):
+    """UXP-16 -- each mode's control offers only its own range."""
+
+    TEAM_VALUES = ["6", "7", "8", "9", "random_team"]
+    POOL_VALUES = [str(n) for n in range(12, 101)] + ["random_pool"]
+
+    def test_team_select_offers_only_the_team_range(self) -> None:
+        body = self.client.get(reverse("generate_players")).content.decode()
+        self.assertEqual(
+            _option_values(body, "generate-players-per-team"), self.TEAM_VALUES
+        )
+
+    def test_pool_select_offers_only_the_pool_range(self) -> None:
+        body = self.client.get(reverse("generate_players")).content.decode()
+        self.assertEqual(
+            _option_values(body, "generate-players-per-pool"), self.POOL_VALUES
+        )
+
+    def test_default_team_mode_disables_the_pool_select(self) -> None:
+        body = self.client.get(reverse("generate_players")).content.decode()
+        self.assertNotIn("disabled", _select_tag(body, "generate-players-per-team"))
+        self.assertIn("disabled", _select_tag(body, "generate-players-per-pool"))
+
+    def test_invalid_pool_post_rerenders_pool_select_enabled_with_value(self) -> None:
+        response = self.client.post(
+            reverse("generate_players"),
+            {**_VALID_TEAMS, "num_teams": "0", "players_per_team": "40", "mean": "999"},
+        )
+        body = response.content.decode()
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("disabled", _select_tag(body, "generate-players-per-pool"))
+        self.assertIn("disabled", _select_tag(body, "generate-players-per-team"))
+        self.assertIn('<option value="40" selected>', body)
+
+
+class TestGenerateFormPerModeValidation(TestCase):
+    """UXP-16 -- the server enforces the right range per mode (form-level)."""
+
+    def _form(self, num_teams: str, ppt: str) -> GenerateLeagueForm:
+        return GenerateLeagueForm(
+            data={**_VALID_TEAMS, "num_teams": num_teams, "players_per_team": ppt}
+        )
+
+    def test_team_mode_accepts_6_to_9_and_random_team(self) -> None:
+        for ppt in ("6", "9", "random_team"):
+            with self.subTest(ppt=ppt):
+                self.assertTrue(self._form("4", ppt).is_valid())
+
+    def test_team_mode_rejects_out_of_range(self) -> None:
+        for ppt in ("5", "10", "12", "random_pool"):
+            with self.subTest(ppt=ppt):
+                self.assertFalse(self._form("4", ppt).is_valid())
+
+    def test_pool_mode_accepts_12_to_100_and_random_pool(self) -> None:
+        for ppt in ("12", "100", "random_pool"):
+            with self.subTest(ppt=ppt):
+                self.assertTrue(self._form("0", ppt).is_valid())
+
+    def test_pool_mode_rejects_out_of_range(self) -> None:
+        for ppt in ("9", "11", "101", "random_team"):
+            with self.subTest(ppt=ppt):
+                self.assertFalse(self._form("0", ppt).is_valid())
+
+
+class TestGeneratePostRedirectGet(TestCase):
+    """UXP-16 -- a successful POST redirects; refreshing the result page is safe."""
+
+    def test_successful_post_redirects_to_result_page(self) -> None:
+        response = self.client.post(reverse("generate_players"), _VALID_TEAMS)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("generate_players_done"))
+
+    def test_result_page_lists_the_generated_teams(self) -> None:
+        before = set(Team.objects.values_list("id", flat=True))
+        self.client.post(reverse("generate_players"), _VALID_TEAMS)
+        created = Team.objects.exclude(id__in=before)
+        self.assertEqual(created.count(), 3)
+        body = self.client.get(reverse("generate_players_done")).content.decode()
+        for team in created:
+            self.assertIn(f'href="{reverse("team_detail", args=[team.id])}"', body)
+
+    def test_refreshing_the_result_page_generates_nothing(self) -> None:
+        self.client.post(reverse("generate_players"), _VALID_TEAMS)
+        teams_after_post = Team.objects.count()
+        players_after_post = Player.objects.count()
+        for _ in range(2):
+            response = self.client.get(reverse("generate_players_done"))
+            self.assertEqual(response.status_code, 200)
+            self.assertIn("generate-confirm-teams-list", response.content.decode())
+        self.assertEqual(Team.objects.count(), teams_after_post)
+        self.assertEqual(Player.objects.count(), players_after_post)
+
+    def test_pool_result_page_shows_the_free_agent_count(self) -> None:
+        self.client.post(
+            reverse("generate_players"),
+            {**_VALID_TEAMS, "num_teams": "0", "players_per_team": "17"},
+        )
+        body = self.client.get(reverse("generate_players_done")).content.decode()
+        self.assertIn('<span id="generate-confirm-free-agent-count">17</span>', body)
+
+    def test_result_page_without_a_generation_redirects_to_the_form(self) -> None:
+        response = self.client.get(reverse("generate_players_done"))
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response["Location"], reverse("generate_players"))
+
+    def test_invalid_post_rerenders_the_form_without_redirect(self) -> None:
+        response = self.client.post(
+            reverse("generate_players"), {**_VALID_TEAMS, "players_per_team": "50"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("generate-players-form", response.content.decode())

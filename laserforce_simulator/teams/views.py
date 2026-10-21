@@ -1,6 +1,6 @@
 from django.core.paginator import Paginator, EmptyPage, PageNotAnInteger
 from django.db import transaction
-from django.http import HttpResponse
+from django.http import HttpRequest, HttpResponse
 from django.shortcuts import render, redirect
 from django.views.decorators.http import require_GET
 from django.contrib import messages
@@ -433,16 +433,20 @@ def role_benchmarks(request):
     return render(request, "teams/role_benchmarks.html", context)
 
 
+# UXP-16: session key holding the last generation's result for the PRG page.
+_GENERATE_RESULT_SESSION_KEY = "generate_players_result"
+
+
 @transaction.atomic
-def generate_players(request):
+def generate_players(request: HttpRequest) -> HttpResponse:
     """LG-00 player/team generation surface.
 
     GET → render `templates/teams/generate_players.html` with an empty form.
     POST → validate the form; on success, generate the Teams (or the Free
     Agents pool) via :func:`teams.services.run_player_generation` inside a
-    single transaction, and re-render
-    `templates/teams/generate_players_done.html` directly (no redirect, no
-    session round-trip). On invalid form, re-render the form page with
+    single transaction, stash the result ids in the session and redirect to
+    :func:`generate_players_done` (UXP-16 Post/Redirect/Get, so a refresh
+    never generates again). On invalid form, re-render the form page with
     errors (status 200).
     """
     if request.method == "GET":
@@ -457,13 +461,32 @@ def generate_players(request):
         return render(request, "teams/generate_players.html", {"form": form})
 
     result = run_player_generation(form.cleaned_data, manager=manager_or_none(request))
+    request.session[_GENERATE_RESULT_SESSION_KEY] = {
+        "team_ids": [team.pk for team in result.created_teams],
+        "free_agent_count": result.free_agent_count,
+    }
+    return redirect("generate_players_done")
 
+
+def generate_players_done(request: HttpRequest) -> HttpResponse:
+    """UXP-16 — GET result page for the last generation (read-only).
+
+    Renders `templates/teams/generate_players_done.html` from the ids
+    :func:`generate_players` stashed in the session; refreshing it writes
+    nothing. With no stashed result, redirect to the form.
+    """
+    stashed = request.session.get(_GENERATE_RESULT_SESSION_KEY)
+    if not stashed:
+        return redirect("generate_players")
+    team_ids = stashed.get("team_ids", [])
+    teams_by_id = owned_queryset(Team.objects.all(), request.user).in_bulk(team_ids)
+    created_teams = [teams_by_id[pk] for pk in team_ids if pk in teams_by_id]
     return render(
         request,
         "teams/generate_players_done.html",
         {
-            "created_teams": result.created_teams,
-            "free_agent_count": result.free_agent_count,
+            "created_teams": created_teams,
+            "free_agent_count": stashed.get("free_agent_count", 0),
         },
     )
 
