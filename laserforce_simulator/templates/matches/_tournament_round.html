@@ -28,7 +28,7 @@
                 {% for game in node.games %}
                 <div>
                     <a href="{% url 'match_detail' game.match_id %}">Game {{ game.game_number }}</a>
-                    <small class="match-score">{{ game.score_a }}–{{ game.score_b }}</small>
+                    <small class="match-score" title="Match score: 2 per Round won + 2 for winning the Match (max 6)">{{ game.score_a }}–{{ game.score_b }} match pts</small>
                 </div>
                 {% endfor %}
             </div>

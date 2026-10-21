@@ -2983,3 +2983,20 @@ class TestRandomDrawDetailContextAndDom(TestCase):
             reverse("tournament_detail", args=[t.id])
         ).content.decode()
         self.assertNotIn('id="tournament-pool-section"', body)
+
+
+class TestUxp15MatchScoreLabel(TestCase):
+    """UXP-15 — "Game 1 6–0" next to Round scores in the tens of thousands read
+    as a points total; the per-game number is the 6-point Match score."""
+
+    def test_played_node_labels_the_match_score(self) -> None:
+        t = _active_tournament(4, name="U15Label")
+        _play_one_node(t)
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertIn(
+            'title="Match score: 2 per Round won + 2 for winning the Match (max 6)"',
+            body,
+        )
+        self.assertIn("match pts", body)

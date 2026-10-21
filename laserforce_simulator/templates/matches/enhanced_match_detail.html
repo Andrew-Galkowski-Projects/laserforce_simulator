@@ -34,8 +34,8 @@
                         <thead>
                             <tr>
                                 <th>Round</th>
-                                <th>{{ match.team_red.name }} (Red)</th>
-                                <th>{{ match.team_blue.name }} (Blue)</th>
+                                <th>{{ match.team_red.name }} (Red in Round 1)</th>
+                                <th>{{ match.team_blue.name }} (Blue in Round 1)</th>
                                 <th>Winner</th>
                                 <th>Details</th>
                             </tr>
@@ -109,6 +109,10 @@
                         </tbody>
                     </table>
                 </div>
+                {# UXP-15 — explain the colour swap and a points tiebreak. #}
+                <p class="small text-muted mb-0">Teams swap colours for Round 2.
+                    {% if match.winner and match.red_rounds_won == match.blue_rounds_won %}Rounds split {{ match.red_rounds_won }}–{{ match.blue_rounds_won }}, so total points decided the Match.{% endif %}
+                </p>
             </div>
         </div>
     </div>
