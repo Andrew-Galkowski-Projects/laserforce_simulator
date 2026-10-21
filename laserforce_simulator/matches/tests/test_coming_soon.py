@@ -244,13 +244,16 @@ class TestComingSoonRouting(TestCase):
         self.assertContains(response, 'id="coming-soon-message"')
         self.assertIn("Coming soon", response.content.decode())
 
-    # -- LG-01z: blocked placeholders render a blocker note -----------------
+    # -- UXP-12: the blocker note is developer-facing, never rendered -------
+    # (LG-01z rendered it; the registry still carries it as documentation.)
 
-    def test_blocker_note_rendered_for_blocked_league_screen(self) -> None:
+    def test_blocker_note_not_rendered_for_blocked_league_screen(self) -> None:
         url = reverse("coming_soon_trade", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
-        self.assertContains(response, 'id="coming-soon-blocker"')
-        self.assertIn("Blocked:", response.content.decode())
+        self.assertNotContains(response, 'id="coming-soon-blocker"')
+        self.assertNotIn("Blocked:", response.content.decode())
+        # Nor the internal feature key.
+        self.assertNotContains(response, "players_trade")
 
     def test_no_blocker_note_for_help_screen(self) -> None:
         response = self.client.get(reverse("coming_soon_help_overview"))

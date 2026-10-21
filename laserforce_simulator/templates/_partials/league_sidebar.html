@@ -22,7 +22,7 @@ the entry whose `key` matches `sidebar_active` gets an `active` class.
             {% if entry.disabled %}
                 <span id="sidebar-{{ entry.section }}-{{ entry.key }}" class="list-group-item list-group-item-action sidebar-link disabled text-muted{% if entry.active %} active{% endif %}">{{ entry.label }}</span>
             {% else %}
-                <a id="sidebar-{{ entry.section }}-{{ entry.key }}" href="{{ entry.url }}" class="list-group-item list-group-item-action sidebar-link{% if entry.active %} active{% endif %}">{{ entry.label }}</a>
+                <a id="sidebar-{{ entry.section }}-{{ entry.key }}" href="{{ entry.url }}" class="list-group-item list-group-item-action sidebar-link{% if entry.placeholder %} text-muted{% endif %}{% if entry.active %} active{% endif %}">{{ entry.label }}{% if entry.placeholder %}<span class="badge bg-light text-muted border ms-1 placeholder-soon-badge">Soon</span>{% endif %}</a>
             {% endif %}
         {% endfor %}
     {% endfor %}

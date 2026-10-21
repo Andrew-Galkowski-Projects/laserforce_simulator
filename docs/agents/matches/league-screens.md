@@ -66,8 +66,12 @@ LG-01f sidebar AND the LG-01k topbar, both surfaces flip live at once. The 11
 now-live `coming_soon_*` routes + `_FEATURE_REGISTRY` entries are removed,
 leaving the registry at **17 entries** (7 still-blocked LEAGUE/TEAM/PLAYERS
 placeholders + 6 Help + 4 Tools). The 7 blocked placeholder entries gain a
-`blocker` string rendered by `coming_soon` into `_placeholder.html` (DOM id
-`coming-soon-blocker`).
+`blocker` string, which `coming_soon` passes to `_placeholder.html`. **UXP-12:** the
+template no longer renders it (it was developer-facing; the registry keeps it as
+documentation), nor the `coming-soon-feature-key` debug line. Sidebar / top-bar entries carry a
+`placeholder` flag (`_PLACEHOLDER_SIDEBAR_KEYS` in `league_views.py`: trade, trading_block,
+prospects, hall_of_fame) and render greyed (`text-muted`) with a `placeholder-soon-badge` "Soon"
+badge; every Tools / Help item gets the same treatment.
 
 **Tests:** `matches/tests/test_league_<screen>.py` per screen (view 200 / 405 /
 404 / session-write / empty-state / DOM ids + sort/toggle behaviour, plus

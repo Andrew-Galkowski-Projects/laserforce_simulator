@@ -254,7 +254,15 @@ class TestSidebarLinkShape(TestCase):
     def test_each_entry_has_exactly_6_keys(self) -> None:
         league = _make_league("Shape6Keys")
         links = _build_league_sidebar_links(league, None, None)
-        expected_keys = {"key", "label", "section", "url", "disabled", "active"}
+        expected_keys = {
+            "key",
+            "label",
+            "section",
+            "url",
+            "disabled",
+            "active",
+            "placeholder",  # UXP-12
+        }
         for entry in links:
             self.assertEqual(set(entry.keys()), expected_keys)
 
@@ -327,6 +335,42 @@ class TestSidebarLinkShape(TestCase):
         keys = [e["key"] for e in team_section]
         self.assertIn("history_team", keys)
         self.assertNotIn("history", keys)
+
+
+# ---------------------------------------------------------------------------
+# UXP-12 — unbuilt (coming-soon) entries are flagged and greyed out
+# ---------------------------------------------------------------------------
+
+
+class TestUxp12PlaceholderEntries(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league("Uxp12")
+        _make_active_season(self.league)
+
+    def test_only_coming_soon_entries_are_placeholders(self) -> None:
+        links = _build_league_sidebar_links(self.league, None, None)
+        flagged = {e["key"] for e in links if e["placeholder"]}
+        self.assertEqual(
+            flagged, {"trade", "trading_block", "prospects", "hall_of_fame"}
+        )
+
+    def test_sidebar_and_topbar_mark_placeholders_soon(self) -> None:
+        html = self.client.get(
+            reverse("league_dashboard", args=[self.league.id])
+        ).content.decode()
+        # Sidebar entry and its top-bar twin both carry the badge.
+        self.assertRegex(html, r'id="sidebar-players-trade"[^>]*class="[^"]*text-muted')
+        self.assertRegex(
+            html, r'class="dropdown-item text-muted" id="topbar-players-trade"'
+        )
+        self.assertGreaterEqual(html.count("placeholder-soon-badge"), 2 * 4 + 10)
+
+    def test_live_entry_has_no_badge(self) -> None:
+        html = self.client.get(
+            reverse("league_dashboard", args=[self.league.id])
+        ).content.decode()
+        start = html.index('id="sidebar-players-free_agents"')
+        self.assertNotIn("placeholder-soon-badge", html[start : start + 300])
 
 
 # ---------------------------------------------------------------------------
