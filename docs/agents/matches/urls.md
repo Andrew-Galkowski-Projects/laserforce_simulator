@@ -11,6 +11,7 @@ Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index ther
 /matches/single-round/create/        → create a standalone game round (always detailed)
 /matches/game-round/<id>/            → detailed round view
 /matches/game-round/<id>/events/     → event timeline/filtering
+/matches/game-round/<id>/events/data/ → JSON {events, playback_map} fetched by the events page (UXP-06)
 /matches/game-round/<id>/missile-log/ → RES-03 missile usage log (URL name "missile_log")
 /matches/game-round/<id>/heatmap/    → RES-04 per-round movement heatmap (URL name "movement_heatmap")
 /matches/game-round/<id>/export/     → RV-03 round report PDF download (URL name "export_round_report")

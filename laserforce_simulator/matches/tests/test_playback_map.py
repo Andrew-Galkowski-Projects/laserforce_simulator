@@ -227,7 +227,13 @@ class TestEventsScreenOverlay(TestCase):
         body = client.get(url).content.decode("utf-8")
         self.assertIn('id="pb-map-canvas"', body)
         self.assertIn('id="pb-map-bg"', body)
-        self.assertIn('id="pb-map-data"', body)
+        # UXP-06: the route payload is served by the events data endpoint,
+        # not inlined into the page.
+        self.assertNotIn('id="pb-map-data"', body)
+        data_url = reverse("game_round_events_data", kwargs={"round_id": gr.id})
+        pb_map = client.get(data_url).json()["playback_map"]
+        self.assertEqual(pb_map["zone_size"], zone_size)
+        self.assertEqual([p["id"] for p in pb_map["players"]], [commander.id])
         self.assertIn('id="pb-live-feed"', body)
         # Scoreboard + feed are matched-height columns (sized client-side).
         self.assertIn('id="pb-scoreboard-col"', body)
@@ -241,6 +247,8 @@ class TestEventsScreenOverlay(TestCase):
         body = client.get(url).content.decode("utf-8")
         self.assertIn('id="pb-no-map-notice"', body)
         self.assertNotIn('id="pb-map-canvas"', body)
+        data_url = reverse("game_round_events_data", kwargs={"round_id": gr.id})
+        self.assertIsNone(client.get(data_url).json()["playback_map"])
         # The live feed is still present for map-less rounds.
         self.assertIn('id="pb-live-feed"', body)
         self.assertIn('id="pb-feed-card"', body)

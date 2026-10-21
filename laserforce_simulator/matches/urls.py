@@ -20,6 +20,11 @@ urlpatterns = [
         name="game_round_events",
     ),
     path(
+        "game-round/<int:round_id>/events/data/",
+        views.game_round_events_data,
+        name="game_round_events_data",
+    ),
+    path(
         "game-round/<int:round_id>/missile-log/",
         views.missile_log,
         name="missile_log",

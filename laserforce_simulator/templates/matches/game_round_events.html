@@ -4,14 +4,14 @@
 {% block title %}Event Log - {{ round.team_red.name }} vs {{ round.team_blue.name }}{% endblock %}
 
 {% block content %}
-{# M-1: events are emitted ONCE as JSON (below) instead of one server- #}
-{# rendered DOM row each. The timeline is windowed client-side; the    #}
-{# charts and the SIM-05 playback engine read the same JSON array, so  #}
-{# the page stays bounded regardless of round length.                  #}
+{# M-1: events are never server-rendered as DOM rows; the timeline is  #}
+{# windowed client-side. UXP-06: the events (and the playback routes)  #}
+{# are not inlined either -- the script below fetches them once from   #}
+{# events_data_url and feeds the same array to the timeline, the       #}
+{# charts and the SIM-05 playback engine.                              #}
 {# RES-02b: per-chart filter UI + per-player series rebuilt from the   #}
 {# universal actor/target snapshot metadata server-side. The 4 charts  #}
 {# (Shots, Lives, Points, SP) are constructed by a single factory.    #}
-{{ events_data|json_script:"events-data" }}
 {{ players_data|json_script:"players-data" }}
 {# RV-02: auto-flagged highlights, rendered client-side into #highlights-list. #}
 {{ highlights_json|json_script:"highlights-data" }}
@@ -268,7 +268,7 @@
                 <button id="tl-next" class="btn btn-sm btn-outline-secondary">Older &raquo;</button>
             </div>
             <div class="card-body" style="max-height: 400px; overflow-y: auto;" id="timeline-scroll">
-                <div id="timeline-list"></div>
+                <div id="timeline-list" data-events-url="{{ events_data_url }}"></div>
             </div>
         </div>
     </div>
@@ -296,7 +296,7 @@
         </div>
     </div>
     <div class="card-body py-2">
-        {% if playback_map_json %}
+        {% if processed_image_url %}
         {# Map above: player markers + comet trails drawn on the processed PNG #}
         <div id="pb-map-stage" class="mb-3 mx-auto"
              style="position:relative; display:block; width:fit-content; max-width:100%;">
@@ -328,7 +328,6 @@
         </div>
     </div>
 </div>
-{{ playback_map_json|json_script:"pb-map-data" }}
 
 {# ===================== RES-02b CHART CARDS =====================        #}
 {# Four symmetric stacked cards: Shots, Lives, Points, SP. Each card has #}
@@ -394,9 +393,31 @@
 
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+    // UXP-06: fetch the round's events + playback routes once, then build
+    // the timeline, kill feed, charts and playback from that one array.
     document.addEventListener('DOMContentLoaded', function () {
+        const listEl0 = document.getElementById('timeline-list');
+        listEl0.innerHTML = '<div class="text-muted p-3" id="events-loading">Loading events...</div>';
+        fetch(listEl0.dataset.eventsUrl, {
+            credentials: 'same-origin',
+            headers: { 'Accept': 'application/json' },
+        })
+            .then(r => {
+                if (!r.ok) throw new Error('HTTP ' + r.status);
+                return r.json();
+            })
+            .then(payload => initEventLog(payload.events || [], payload.playback_map || null))
+            .catch(err => {
+                const msg = document.createElement('div');
+                msg.className = 'text-danger p-3';
+                msg.id = 'events-load-error';
+                msg.textContent = 'Could not load events (' + String(err.message || err) + '). Reload to retry.';
+                listEl0.replaceChildren(msg);
+            });
+    });
+
+    function initEventLog(ALL, PB_MAP_DATA) {
         // ===== Data (M-1: read once from JSON, never from the DOM) =====
-        const ALL = JSON.parse(document.getElementById('events-data').textContent);
         const PLAYERS = JSON.parse(document.getElementById('players-data').textContent);
         // ALL is emitted in chronological (timestamp) order by the view.
         ALL.forEach((e, i) => { e.idx = i; e.sec = e.ts / 2; });
@@ -1376,11 +1397,18 @@
 
         let pbMap = null, pbZone = 0, pbIconCache = {}, pbMapInit = false;
         (function pbInitMap() {
-            const dataEl = document.getElementById('pb-map-data');
-            if (!dataEl) return;
-            let parsed = null;
-            try { parsed = JSON.parse(dataEl.textContent || 'null'); } catch (e) { parsed = null; }
-            if (!parsed || !parsed.players) return;
+            const parsed = PB_MAP_DATA;
+            if (!parsed || !parsed.players) {
+                // The page laid out a map stage (the round has a map) but its
+                // config could not be resolved server-side: fall back to the
+                // no-map notice instead of an empty canvas.
+                const stage = document.getElementById('pb-map-stage');
+                if (stage) {
+                    stage.outerHTML = '<div class="alert alert-secondary py-2 mb-3" id="pb-no-map-notice">' +
+                        'No map for this round &mdash; scoreboard and live feed only.</div>';
+                }
+                return;
+            }
             pbZone = parsed.zone_size || 0;
             pbDeact = pbComputeDeact();
             // Build per-player keyframes in seconds from spawn + moves.
@@ -1531,7 +1559,7 @@
         recomputeFiltered();
         renderWindow();
         pbSetTime(0);
-    });
+    }
 </script>
 <div class="mt-4">
     <a href="{% url 'game_round_detail' round.id %}" class="btn btn-secondary">&larr; Back to Round Details</a>

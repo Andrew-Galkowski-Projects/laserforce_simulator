@@ -742,6 +742,22 @@ def save_batch_status(request, job_id):
     return JsonResponse(build_save_status_response(async_result))
 
 
+def _round_players_data(game_round: GameRound) -> list[dict]:
+    """The 6-key SIM-05 player rows (the ``players_data`` half of
+    ``round_playback_payload``), built without serializing any events."""
+    return [
+        {
+            "id": ps.player_id,
+            "name": ps.player.name,
+            "team": ps.team_color,
+            "role": ps.role,
+            "sl": ps.starting_lives,
+            "ss": ps.starting_shots,
+        }
+        for ps in game_round.player_states.select_related("player").all()
+    ]
+
+
 def round_playback_payload(game_round, *, include_movement: bool = True):
     """Build the SIM-05 ``(events_data, players_data)`` JSON payload from a
     persisted ``GameRound`` — the 13-key event shape + 6-key player shape the
@@ -753,8 +769,11 @@ def round_playback_payload(game_round, *, include_movement: bool = True):
     watch surfaces only gameplay events on its timeline; the scoreboard
     reconstruction ignores movement either way).
     """
-    events_qs = game_round.events.all().select_related(
-        "actor", "target", "actor__team", "target__team"
+    # UXP-06: ``team_id`` lives on the Player row, so no Team join is needed.
+    # UXP-06: GameEvent.Meta orders by timestamp only, so same-tick events came
+    # back in arbitrary order on Postgres; ``id`` is the insertion order.
+    events_qs = game_round.events.order_by("timestamp", "id").select_related(
+        "actor", "target"
     )
     if not include_movement:
         events_qs = events_qs.exclude(event_type="movement")
@@ -776,18 +795,7 @@ def round_playback_payload(game_round, *, include_movement: bool = True):
         }
         for e in events_qs
     ]
-    players_data = [
-        {
-            "id": ps.player_id,
-            "name": ps.player.name,
-            "team": ps.team_color,
-            "role": ps.role,
-            "sl": ps.starting_lives,
-            "ss": ps.starting_shots,
-        }
-        for ps in game_round.player_states.select_related("player").all()
-    ]
-    return events_data, players_data
+    return events_data, _round_players_data(game_round)
 
 
 def _build_playback_map(game_round: GameRound) -> dict | None:
@@ -885,47 +893,63 @@ def _build_playback_map(game_round: GameRound) -> dict | None:
     return {"zone_size": zone_size, "players": players}
 
 
-def game_round_events(request, round_id):
+def game_round_events(request: HttpRequest, round_id: int) -> HttpResponse:
     """Display the detailed event log for a game round.
 
-    M-1: every event is emitted **once** as a compact JSON list
-    (``events_data``) instead of one server-rendered DOM row each. The
-    template renders only a window of the timeline client-side and feeds
-    the same JSON to the charts and the SIM-05 playback engine, so the
-    page stays bounded regardless of round length (the old design emitted
-    ~20k DOM nodes for a single round). Keep the per-event keys short —
-    they are read directly by ``game_round_events.html``; the shape is
-    pinned by ``TestM1EventLogWindowing``.
+    M-1: events are never server-rendered as one DOM row each; the timeline
+    is windowed client-side. UXP-06: the events (and the map-playback
+    routes) are no longer inlined into the page either — a 1,300-event
+    round made the HTML ~600 KB. The page carries only the summary, the
+    small player roster and the highlights; its script fetches the event
+    list from ``game_round_events_data`` and feeds it to the timeline, the
+    charts and the SIM-05 playback engine.
     """
     game_round = get_owned_or_404(GameRound, request, id=round_id)
     # GEN-01: this surface needs the full event log + movement + cell
     # occupancy. Lazily upgrade the round to ``full`` (no-op if already
     # there); the first click pays the re-sim + backfill once.
     BatchSimulator().ensure_fidelity(game_round, "full")
-    events_data, players_data = round_playback_payload(game_round)
 
-    # Map playback overlay: corridor-faithful routes drawn on the processed
-    # map PNG. None when the round ran on the 3-zone fallback (no map).
-    playback_map = _build_playback_map(game_round)
+    # Map playback overlay: the routes arrive with the events JSON; the page
+    # only needs to know whether to lay out the map stage.
     processed_image_url = (
         reverse("processed_image", args=[game_round.arena_map_id])
-        if playback_map is not None
+        if game_round.arena_map_id is not None
         else None
     )
 
     context = {
         "round": game_round,
-        "events_data": events_data,
-        "players_data": players_data,
+        "events_data_url": reverse(
+            "game_round_events_data", kwargs={"round_id": game_round.id}
+        ),
+        "players_data": _round_players_data(game_round),
         "event_summary": game_round.get_event_summary(),
         # RV-02: auto-flagged highlights (built at round completion). Coalesce
         # null (pre-RV-02 rounds) to [] so the template/JS always sees a list.
         "highlights_json": game_round.highlights_json or [],
-        "playback_map_json": playback_map,
         "processed_image_url": processed_image_url,
     }
 
     return render(request, "matches/game_round_events.html", context)
+
+
+def game_round_events_data(request: HttpRequest, round_id: int) -> HttpResponse:
+    """UXP-06: the Round Event Log's data, fetched by its page script.
+
+    Returns ``{"events": [...], "playback_map": {...} | None}``: ``events``
+    is the 13-key M-1 / SIM-05 event list from ``round_playback_payload``
+    (chronological), ``playback_map`` the ``_build_playback_map`` routes
+    (``None`` for a map-less round). GET only; a cross-Account round is 404.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    game_round: GameRound = get_owned_or_404(GameRound, request, id=round_id)
+    BatchSimulator().ensure_fidelity(game_round, "full")
+    events_data, _players = round_playback_payload(game_round)
+    return JsonResponse(
+        {"events": events_data, "playback_map": _build_playback_map(game_round)}
+    )
 
 
 def missile_log(request, round_id):
