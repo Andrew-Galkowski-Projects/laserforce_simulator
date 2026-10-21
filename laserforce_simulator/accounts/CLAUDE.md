@@ -204,6 +204,19 @@ API-03 batch POST's team lookup is still not ownership-scoped (ANG-01b follow-up
 `password_change_done` is exempt alongside `password_change` purely so the redirect target cannot
 bounce; both are only reachable post-login in practice.
 
+## Invites (`accounts.models.Invite`, `accounts/admin.py::InviteAdmin`)
+
+Registration is **invite-only**. An `Invite` is a single-use row: `code` (random
+`secrets.token_urlsafe(16)`, unique, not editable), optional `email` (only that address may redeem
+it), `note`, `created_at`, `used_by` (`OneToOneField(User, SET_NULL)`) and `used_at`. `is_used` is
+true once either `used_at` or `used_by` is set, so deleting the Account that redeemed it never
+re-opens the invite.
+
+Staff create invites in Django admin (`/admin/accounts/invite/`). The add page asks only for
+`email` and `note`; after saving, a success message shows the absolute sign-up link
+(`/accounts/register/?invite=<code>`), and the changelist keeps a *Sign-up link* column for every
+unused invite. Tests: `accounts/tests/test_invites.py`.
+
 ## Auth surfaces (`accounts/urls.py`, `accounts/forms.py`, `accounts/views.py`)
 
 Mounted at `/accounts/` from the project URLconf, immediately after the `admin/` entry. **No
@@ -228,12 +241,19 @@ Forms — three classes, `accounts/forms.py`:
 - **`EmailAuthenticationForm(AuthenticationForm)`**. ⚠️ Django keeps the field **name** `username`
   even when `USERNAME_FIELD` is `email`; only the widget and label change. **The login POST key is
   `username`, carrying an email value** — tests post `{"username": <email>, "password": ...}`.
-- **`RegisterForm(UserCreationForm)`** — `Meta.model = User`, `fields = ("email",)`. Open
-  self-registration: email + password + confirm. Password matching and `AUTH_PASSWORD_VALIDATORS`
-  come from `UserCreationForm`; email uniqueness from the model's `unique=True`.
+- **`RegisterForm(UserCreationForm)`** — `Meta.model = User`, `fields = ("email",)`.
+  **Invite-only** self-registration: email + password + confirm + `invite` (a code). Password
+  matching and `AUTH_PASSWORD_VALIDATORS` come from `UserCreationForm`; email uniqueness from the
+  model's `unique=True`. `clean_invite` returns the `Invite` row, or `INVALID_INVITE_MESSAGE` for a
+  missing / unknown / used code; `clean` adds `WRONG_EMAIL_INVITE_MESSAGE` on `invite` when an
+  email-locked invite meets another address (case-insensitive). `save` is atomic and claims the
+  invite with a conditional `UPDATE ... WHERE used_at IS NULL`, so of two racing redemptions only
+  one Account survives. Both the HTML view and `POST /api/accounts/register/` bind this form, so
+  the rule cannot drift between them.
 - **`StyledPasswordChangeForm(PasswordChangeForm)`** — the house DOM ids only.
 
-`accounts.views.register` is the one function view: GET renders the empty form; a valid POST calls
+`accounts.views.register` is the one function view: GET renders the empty form, prefilling
+`invite` from `?invite=<code>` (the link the admin shows); a valid POST calls
 `form.save()`, `django.contrib.auth.login(request, user)` and redirects to `landing`; an invalid POST
 re-renders the bound form at **status 200**.
 
@@ -246,7 +266,7 @@ and its label hardcodes `for=` to that id; `<h1>` headings carry no id.
 | Template | Locked ids |
 |---|---|
 | `accounts/login.html` | `login-form`, `login-email`, `login-password`, `login-submit` (*Sign in*), `login-errors`, `login-register-link` |
-| `accounts/register.html` | `register-form`, `register-email`, `register-password1`, `register-password2`, `register-submit` (*Create account*), `register-errors`, `register-login-link` |
+| `accounts/register.html` | `register-form`, `register-invite`, `register-email`, `register-password1`, `register-password2`, `register-submit` (*Create account*), `register-errors`, `register-login-link` |
 | `accounts/password_change.html` | `password-change-form`, `password-change-old-password`, `password-change-new-password1`, `password-change-new-password2`, `password-change-submit`, `password-change-errors` |
 | `accounts/password_change_done.html` | `password-change-done-notice`, `password-change-done-home-link` |
 | `_partials/topnav_auth.html` | authenticated: `account-nav-link`, `account-signed-in-as`, `account-password-change-link`, `account-sign-out-form`, `account-sign-out-button`, plus `account-my-player-link` (UX-02, only when a Self-insert resolves) — anonymous: `account-sign-in-link`, `account-register-link` |
@@ -273,7 +293,7 @@ of `get_self_insert(user)` or `null` — the raw column is never serialized, so 
 | Method | Path | URL name | Behaviour |
 |---|---|---|---|
 | GET | `accounts/me/` | `api_accounts_me` | 200 `me` |
-| POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm`; 201 `me` of the new Account. **Does not log in** (the client then calls `POST /api/token/`); an authenticated caller keeps its own session. |
+| POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm` (so `invite` is required: 400 on `field: "invite"` when missing / invalid); 201 `me` of the new Account. **Does not log in** (the client then calls `POST /api/token/`); an authenticated caller keeps its own session. |
 | POST | `accounts/me/password/` | `api_accounts_password` | Binds `StyledPasswordChangeForm(request.user, ...)`; 204, then `update_session_auth_hash` so the session survives. |
 | PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`, bound through **`SelfInsertParamsForm`** (`accounts/api_forms.py`); 200 `me`. An integer string (`"5"`) is accepted, as on the HTML route; a missing `player` ⇒ 400 `required`, and `null` / a bool / a fractional float / a list / a non-numeric string ⇒ 400 `invalid`, both on `field: "player"`; a non-object body ⇒ 400 `parse_error`; missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with `NOT_ELIGIBLE_MESSAGE`, nothing written. |
 | DELETE | `accounts/me/self-insert/` | `api_accounts_self_insert` | 204, idempotent; clears a drifted link too. |
@@ -461,7 +481,7 @@ Player names.
 
 ## Migrations
 
-Four files, no `RunPython` in any of them:
+Five files, no `RunPython` in any of them:
 
 - `accounts/migrations/0001_initial.py` — `CreateModel` for `User` with
   `managers = [("objects", accounts.models.UserManager())]`; dep
@@ -476,6 +496,8 @@ Four files, no `RunPython` in any of them:
   deps `accounts.0001_initial` + `teams.0015_team_manager`. **No cycle:** `teams.0015` depends on
   `swappable_dependency(AUTH_USER_MODEL)`, which resolves to `accounts.__first__` = `0001`, not
   `0002`. The reverse relation generates **no** `teams` / `matches` / `core` migration.
+
+- `accounts/migrations/0003_invite.py` — one `CreateModel` (`Invite`); dep `accounts.0002_user_self_insert`.
 
 `core` is untouched and stays at `0004_map05_cell_ranking_and_strong_spots`.
 

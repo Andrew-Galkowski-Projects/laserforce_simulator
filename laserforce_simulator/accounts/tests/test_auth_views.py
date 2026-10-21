@@ -22,6 +22,7 @@ from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.urls import reverse
 
+from accounts.models import Invite
 from conftest import get_shared_manager
 
 User = get_user_model()
@@ -36,6 +37,7 @@ LOGIN_IDS: tuple[str, ...] = (
 )
 REGISTER_IDS: tuple[str, ...] = (
     "register-form",
+    "register-invite",
     "register-email",
     "register-password1",
     "register-password2",
@@ -140,6 +142,7 @@ class TestRegisterView(TestCase):
                 "email": "brand-new@example.com",
                 "password1": "Str0ng-Passphrase-9",
                 "password2": "Str0ng-Passphrase-9",
+                "invite": Invite.objects.create().code,
             },
         )
         self.assertEqual(response.status_code, 302)
@@ -152,6 +155,7 @@ class TestRegisterView(TestCase):
                 "email": "redirect@example.com",
                 "password1": "Str0ng-Passphrase-9",
                 "password2": "Str0ng-Passphrase-9",
+                "invite": Invite.objects.create().code,
             },
         )
         self.assertRedirects(response, reverse("landing"))
@@ -163,6 +167,7 @@ class TestRegisterView(TestCase):
                 "email": "auto-login@example.com",
                 "password1": "Str0ng-Passphrase-9",
                 "password2": "Str0ng-Passphrase-9",
+                "invite": Invite.objects.create().code,
             },
         )
         response = self.client.get(reverse("landing"))

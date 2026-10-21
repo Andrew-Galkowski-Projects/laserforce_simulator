@@ -38,7 +38,7 @@ def register(request: HttpRequest) -> HttpResponse:
             login(request, user)
             return redirect("landing")
     else:
-        form = RegisterForm()
+        form = RegisterForm(initial={"invite": request.GET.get("invite", "")})
     return render(request, "accounts/register.html", {"form": form})
 
 

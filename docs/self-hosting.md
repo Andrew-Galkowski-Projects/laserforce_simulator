@@ -33,10 +33,14 @@ different route (Cloudflare Tunnel or a reverse proxy) instead of Funnel.
      ```json
      "nodeAttrs": [{ "target": ["autogroup:member"], "attr": ["funnel"] }]
      ```
-4. **Auth key.** *Settings > Keys > Generate auth key*. A one-off key is fine, because the node
-   identity is kept in the `tsstate` volume after first boot. Once the node shows up under
-   *Machines*, open its menu and choose **Disable key expiry**, or the URL stops working after
-   180 days.
+4. **Auth key (recommended).** *Settings > Keys > Generate auth key*. A one-off key is fine,
+   because the node identity is kept in the `tsstate` volume after first boot; after that the key
+   is never read again.
+
+   *Alternative: no key.* Leave `TS_AUTHKEY` empty and the container prints a sign-in link
+   (`dc logs tailscale | grep login.tailscale.com`). The catch: the container waits only about
+   **60 seconds** for you to approve it, then restarts with a **new** link, forever. Approve the
+   newest link within that minute (be signed in to Tailscale first, so it is one click).
 5. **Env file.** `cp .env.selfhost.example .env.selfhost` (git-ignored) and fill in:
    - `TS_AUTHKEY`: the key from step 4.
    - `SECRET_KEY`: `python -c "import secrets; print(secrets.token_urlsafe(50))"`.
@@ -45,6 +49,8 @@ different route (Cloudflare Tunnel or a reverse proxy) instead of Funnel.
    - `R2_*`: optional, but see *Media files* below.
 
 ## Start it
+
+Abbreviate the command prefix as `dc = docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml`.
 
 ```bash
 docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml up -d --build
@@ -55,9 +61,22 @@ docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml exec app 
 The app container runs `migrate` on every start (`entrypoint.sh`); the worker skips it. The site
 is also reachable at <http://localhost:8000> on the PC itself, bound to loopback only.
 
-## Day two
+Then, once the node appears under *Machines* in the admin console:
 
-Abbreviate the command prefix as `dc = docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml`.
+- open its menu and choose **Disable key expiry**, or the URL stops working after 180 days;
+- confirm Funnel is up: `dc exec tailscale tailscale funnel status` should print
+  `https://<name>.<tailnet>.ts.net (Funnel on)`. If it prints `No serve config` and the logs say
+  *"not able to issue TLS certs"*, HTTPS certificates are off for the tailnet (step 3): enable
+  them, then `dc restart tailscale`. No new sign-in is needed.
+
+## Inviting people
+
+Registration is invite-only. Sign in as a superuser, open `/admin/accounts/invite/` and **Add
+invite** (optionally lock it to the person's email). The confirmation message shows the sign-up
+link, `https://<name>.<tailnet>.ts.net/accounts/register/?invite=<code>`, and the invite list keeps
+it until it is used. Each invite works once.
+
+## Day two
 
 | Task | Command |
 |---|---|
@@ -66,6 +85,7 @@ Abbreviate the command prefix as `dc = docker compose --env-file .env.selfhost -
 | Funnel status / URL | `dc exec tailscale tailscale funnel status` |
 | Back up the DB | `dc exec -T db pg_dump -U laserforce laserforce > backup.sql` |
 | Restore a backup | `dc exec -T db psql -U laserforce laserforce < backup.sql` |
+| Rename the URL | set `TS_HOSTNAME` and the matching `ALLOWED_HOSTS` entry in `.env.selfhost`, then `dc up -d`. The node keeps its identity, gets a new certificate, and the old name stops resolving |
 | Stop (keeps data) | `dc down` |
 | Wipe everything | `dc down -v` (deletes the database **and** the Tailscale node identity) |
 

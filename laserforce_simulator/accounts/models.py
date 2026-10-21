@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from django.contrib.auth.base_user import BaseUserManager
@@ -74,3 +75,43 @@ class User(AbstractUser):
 
     def __str__(self) -> str:
         return self.email
+
+
+def _new_invite_code() -> str:
+    return secrets.token_urlsafe(16)
+
+
+class Invite(models.Model):
+    """A single-use code that lets one person register an Account.
+
+    Registration is invite-only: ``RegisterForm`` refuses a missing, unknown or
+    used code, and an ``email``-locked invite only for that address. Staff
+    create invites in Django admin, which shows the sign-up link to send.
+    """
+
+    code = models.CharField(
+        max_length=64, unique=True, default=_new_invite_code, editable=False
+    )
+    email = models.EmailField(
+        blank=True, help_text="Optional: only this address may use the invite."
+    )
+    note = models.CharField(max_length=200, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    used_by = models.OneToOneField(
+        User,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="invite_used",
+    )
+    used_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.email or self.note or self.code
+
+    @property
+    def is_used(self) -> bool:
+        return self.used_at is not None or self.used_by_id is not None

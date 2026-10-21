@@ -16,6 +16,13 @@
         {% endif %}
 
         <div class="mb-3">
+            <label for="register-invite" class="form-label">Invite code</label>
+            {{ form.invite }}
+            <div class="form-text">Registration is invite-only. Use the link or code you were sent.</div>
+            {{ form.invite.errors }}
+        </div>
+
+        <div class="mb-3">
             <label for="register-email" class="form-label">Email</label>
             {{ form.email }}
             <div class="form-text">Your email address is how you sign in.</div>
