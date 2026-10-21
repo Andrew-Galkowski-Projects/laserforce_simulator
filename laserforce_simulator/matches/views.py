@@ -770,7 +770,11 @@ def round_playback_payload(game_round, *, include_movement: bool = True):
     reconstruction ignores movement either way).
     """
     # UXP-06: ``team_id`` lives on the Player row, so no Team join is needed.
-    events_qs = game_round.events.all().select_related("actor", "target")
+    # UXP-06: GameEvent.Meta orders by timestamp only, so same-tick events came
+    # back in arbitrary order on Postgres; ``id`` is the insertion order.
+    events_qs = game_round.events.order_by("timestamp", "id").select_related(
+        "actor", "target"
+    )
     if not include_movement:
         events_qs = events_qs.exclude(event_type="movement")
     events_data = [
