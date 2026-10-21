@@ -2262,7 +2262,9 @@ ng add @angular/material
     (ANG-06), Docker / nginx / Fly serving (ANG-07), template removal (ANG-08), E2E tests, i18n,
     PWA. **One ticket.** No Django code, migration, ownership or simulation change.
 
-### ANG-04b · [NOT STARTED] Visual style samples (pick a look before migrating)
+### ANG-04b · [IN PROGRESS] Visual style samples (pick a look before migrating)
+
+Spec: #246
 
 The Angular migration is the chance to clean up the UI, not copy the Django templates one-for-one.
 Before ANG-06 builds its first real component, produce **several (3–4) clearly different visual
@@ -2283,6 +2285,94 @@ clean minimal Material look.
   theme (an SCSS theme file / CSS custom properties) that every ANG-06 component uses.
 
 Depends on ANG-04. Blocks ANG-06.
+
+**Grill — settled (2026-10-21, round 1):**
+- **Four samples:** A Dense dashboard, B Arena neon (dark), C Clean Material (light),
+  D Esports broadcast.
+- **Where:** in the real Angular app, on one route `/prototype/style-samples?variant=a..d` with a
+  floating variant switcher (the `prototype` skill's convention), one component per variant. They
+  live only on the unmerged, pushed branch `prototype/ang-04b-samples`.
+- **Data:** no live API calls (there's no JWT interceptor until ANG-05). Instead, a one-off script
+  simulates a real round locally and dumps one JSON fixture: the team list, the round with
+  per-player states plus `get_mvp()`, and its events with player names resolved. Exposing MVP in
+  the API is **out of scope** (ANG-05 / ANG-06).
+- **What merges:** the ADR recording the pick; the chosen sample's tokens as the theme (CSS custom
+  properties plus Material 3 overrides in `frontend/src/styles.scss` or a partial); a token-usage
+  spec test; and the PLAN.md / GLOSSARY.md updates. Sample components never merge.
+- **Evidence:** screenshots of every sample at 1440px and 390px, published via
+  `scripts/pr_assets.py` and linked from the ADR and the PR.
+- **Modes:** each sample is built in its native mode only. The chosen theme lands with both light
+  and dark tokens and keeps `color-scheme: light dark`.
+- **Every sample must:** keep red and blue **Side** colours; tell the Sides apart by more than hue;
+  meet WCAG AA text contrast; and work at 390px with no horizontal page scroll (wide tables scroll
+  inside their own container).
+- **No backend change:** no models, migrations, simulation, API or ownership changes.
+- **Timeline:** a static slice of about 40 events, colour-coded by type, showing time, actor,
+  target and points. No playback controls (SIM-05 replay comes in ANG-06 item 5).
+- **Fonts:** samples may use any free Google Font. The chosen font is self-hosted through an
+  `@fontsource/*` npm package, with no external font CDN in production.
+
+**Grill — settled (2026-10-21, round 2):**
+- **Layout and palette are independent axes.** The owner picks the best layout and the best
+  palette separately (e.g. layout A with palette B). So the route takes
+  `?layout=a..d&palette=a..d`, with two switchers. Each **layout** (a component per screen set:
+  shell, Teams list, Round detail, timeline) varies structure and reads colour **only** from tokens.
+  Each **palette** is a token set (with Side colours, event-type colours, surface/text, font and
+  density). Any layout must render correctly under any palette. *Superseded:* "four
+  self-contained samples".
+- **Layout sketches:** A dense tables with a sticky header and a team sidebar; B cards with
+  glowing Side edges and a vertical timeline rail; C standard Material tables and cards; D a
+  broadcast scoreboard header with a red-vs-blue score bar and a ticker-style feed.
+- **The shell is part of each layout.** The global toolbar is hidden on the prototype route.
+- **Fixture:** seed 42, two teams from `/teams/generate/`, a completed round with at least one
+  tag, missile, special, nuke, resupply and elimination (otherwise try the next seed). The
+  timeline slice is ~40 events around the first elimination.
+- **Tokens:** `--lf-*` app tokens on top of `--mat-sys-*`: `--lf-side-red` / `--lf-side-blue`
+  (plus dimmed) and one per event type (elimination, missile, special, nuke, miss, resupply, tag),
+  in light and dark.
+- **The CDK always stays.** Any `@angular/material` removal is done in ANG-06, not here.
+- **Picking:** screenshots shown in-session (and the branch is runnable). A hybrid pick is
+  expected, and the ADR records it. There's no second round of samples unless asked.
+- **Token test:** a Vitest spec checks every `--lf-*` token resolves to a non-empty value, and
+  that `styles.scss` has no hard-coded Side hex outside the token block.
+- **Reference UI:** https://github.com/zmaniacz/lfstats (the current lfstats codebase; it shows
+  the same SM5 information). `lfstats-next` is an older prototype, so don't use it as the reference.
+
+**Grill — settled (2026-10-21, round 3):**
+- **Ownership split.** A **palette** owns all colour, typography (body, heading and numeric
+  fonts), radius and effects (glow, shadow). A **layout** owns structure, spacing and density.
+- **Token contract** (every palette defines exactly this list; layouts use nothing else):
+  - surfaces and text: `--lf-bg`, `--lf-surface`, `--lf-surface-alt`, `--lf-text`,
+    `--lf-text-muted`, `--lf-border`, `--lf-accent`;
+  - Sides: `--lf-side-{red,blue}` plus `-text`, `-bg` and `-dim`;
+  - event types: `--lf-ev-{elimination,missile,special,nuke,miss,resupply,tag}`;
+  - shape and fonts: `--lf-font-{body,heading,numeric}`, `--lf-radius`, `--lf-glow`.
+
+  Each palette also sets the `--mat-sys-*` variables, so Material components follow it.
+- **`--side` convention.** Every team container sets `--side` (with `-text`, `-bg` and `-dim`) to
+  its Side's tokens, and nothing inside picks red or blue itself.
+- **Layouts:**
+  - **A Dense dashboard:** compact tables, sticky header, team sidebar.
+  - **B LFstats-like:** a top header plus a collapsible sidebar (a drawer on phones). Each Side
+    gets a team strip (a 4px Side-coloured left border, the name, a Win/Loss/ELIMINATED badge, and
+    the score with the elimination bonus broken out) above a flat per-team table with lfstats'
+    columns, including a **Survived** bar. The timeline is an `m:ss` log with Side-coloured names.
+    It adds what lfstats lacks: sortable columns, a sticky header, a highlighted top-MVP row and
+    an event-type marker.
+  - **C Clean Material:** standard Material tables and cards.
+  - **D Esports broadcast:** a scoreboard header with a red-vs-blue score bar and a ticker-style
+    feed.
+- **Palettes:**
+  - **A Dense dashboard:** neutral greys.
+  - **B LFstats-like:** indigo/slate OKLCH, all-monospace body. It's the only all-mono palette.
+  - **C Clean Material:** light.
+  - **D Arena neon:** dark, glow.
+
+  The other palettes use a proportional body font and a mono `--lf-font-numeric` for stat columns.
+- **Roles** display as CMD / HVY / SCT / AMO / MED abbreviations. Icons are left to ANG-06.
+- **Out of scope (ANG-06 candidates):** the MVP breakdown dialog (MVP is styled as a link but
+  inert), the player side sheet, per-player expandable timelines, momentum and score charts,
+  replay controls and log search.
 
 ### ANG-05 · Angular API services
 
@@ -2407,24 +2497,36 @@ re-simulate, show diff vs original. Forked scenario is temporary, not a permanen
 
 ## Sequencing Summary
 
+Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found Issues at the
+top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
+
+**Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done.
+Remaining, in order:
+
 ```
-Phase 0 (Fixes) ← complete
-  → Phase 7 (Docker & Deployment) ← do this first; ship the Django template UI to prod early
-  → Phase 1 (Map Integration)
-    → Phase 2 (Stats Integration)
-      → Phase 3 (Simulation Mechanics)
-        → Phase 4 (Analytics — most items can run in parallel with Phase 3)
-          → Phase 5 (Infrastructure & League)
-            → Phase 5.5 (Single-Player Career Mode)
-              → Phase 6 (Users and Multiplayer)
-                → Phase 8 (Angular Frontend Migration)
-                  (requires Phase 5 API-02 REST API)
+ANG-04b  Visual style samples -> ADR picks the look   <- NEXT; blocks ANG-06
+  -> ANG-05  Angular API services + JWT interceptor
+    -> ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)
+               + still to scope: League / Season, League screens,
+                 Tournaments, Accounts
+      -> ANG-07  Serve Angular from an nginx sidecar
+        -> ANG-08  Remove Django template views (Admin stays)
+          -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
 ```
 
-Phase 4 items RES-01 (accuracy %), RES-02 (SP chart), RES-03 (missile log), and SIM-01 (document weights)
-are quick wins that can be done any time after Phase 0.
+**Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
+Mechanics items can run in parallel with Phase 8, because they don't touch the frontend. Analytics
+items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
+Angular.
 
-Phase 7 (Deployment) can be done in parallel with any feature phase — re-deploy as features land.
+- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, CAL-01, then MECH-07
+  last (its design is still open).
+- **Phase 4 — Analytics:** RV-04, RES-05, RV-05, HX-02, HX-03, IMPORT-01.
+- **Other:** SIM-12, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
+
+**Parked, below everything:** GEN-02 (compute tiers) and LG-02x-2 (Duos / Trios). See also
+**Deferred Items** below.
 
 ---
 
