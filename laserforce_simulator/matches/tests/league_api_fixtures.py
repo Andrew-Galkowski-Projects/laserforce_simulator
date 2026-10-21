@@ -455,15 +455,23 @@ def make_open_season(
 
 
 def ranked_career_league(
-    prefix: str, n: int = 8, *, manager=None, mode: str = "league"
+    prefix: str,
+    n: int = 8,
+    *,
+    manager=None,
+    mode: str = "league",
+    fired: bool = False,
 ) -> tuple[League, Season, list[Team]]:
     """A League with one completed ranked Season; ``current_team`` is the
-    STRONGEST team (``teams[0]``), so the worst-5 never contains it."""
+    STRONGEST team (``teams[0]``), so the worst-5 never contains it.
+    ``fired`` (UXP-03) adds the ``fired`` evaluation new-team / reassign need."""
     teams = make_teams(prefix, n)
     league = make_league(
         f"{prefix} League", mode=mode, manager=manager, current_team=teams[0]
     )
     season = make_completed_season(league, teams)
+    if fired:
+        fired_evaluation(league, season, teams[0])
     return league, season, teams
 
 

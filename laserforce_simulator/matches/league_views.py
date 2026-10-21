@@ -147,6 +147,7 @@ from .league_services import (  # noqa: F401 - re-exports
     is_career_league,
     latest_completed_season,
     pick_displayed_season,
+    manager_awaiting_reassignment,
     reassign_and_roll,
     replace_conferences,
     run_season_rollover,
@@ -1961,6 +1962,9 @@ def new_team_picker(request: HttpRequest, league_id: int) -> HttpResponse:
     latest_completed = latest_completed_season(league)
     if latest_completed is None:
         return HttpResponseBadRequest("No completed Season in this League.")
+    # UXP-03 — only a fired, not-yet-reassigned Manager picks a new team.
+    if not manager_awaiting_reassignment(league, latest_completed):
+        return redirect("owner_evaluation", season_id=latest_completed.id)
 
     eligible_teams = _eligible_new_teams(league, latest_completed)
 
@@ -2012,6 +2016,8 @@ def reassign_team(request: HttpRequest, league_id: int) -> HttpResponse:
     latest_completed = latest_completed_season(league)
     if latest_completed is None:
         return HttpResponseBadRequest("No completed Season in this League.")
+    if not manager_awaiting_reassignment(league, latest_completed):
+        return HttpResponseBadRequest("Only a fired Manager can choose a new team.")
 
     raw_team_id = request.POST.get("team_id")
     try:

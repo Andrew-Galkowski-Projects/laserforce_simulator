@@ -138,7 +138,9 @@ class TestNewTeamCandidates(LeagueApiTestCase):
         return self.api.get(url(league.id, "new-team-candidates"))
 
     def test_worst_five_excluding_current_team(self) -> None:
-        league, season, teams = ranked_career_league("NtcOk", 8, manager=self.user_a)
+        league, season, teams = ranked_career_league(
+            "NtcOk", 8, fired=True, manager=self.user_a
+        )
         data = self.ok(self.get(league))
         self.assertEqual(set(data), {"latest_completed", "candidates"})
         self.assertEqual(
@@ -159,9 +161,13 @@ class TestNewTeamCandidates(LeagueApiTestCase):
         self.assert_session_untouched()
 
     def test_excludes_current_team_even_when_weakest(self) -> None:
-        league, _season, teams = ranked_career_league("NtcWeak", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "NtcWeak", 8, fired=True, manager=self.user_a
+        )
         league.current_team = teams[-1]
         league.save(update_fields=["current_team"])
+        # The fired evaluation names the team actually managed.
+        OwnerEvaluation.objects.filter(league=league).update(team_managed=teams[-1])
         data = self.ok(self.get(league))
         ids = [row["team"]["id"] for row in data["candidates"]]
         self.assertNotIn(teams[-1].id, ids)
@@ -169,14 +175,14 @@ class TestNewTeamCandidates(LeagueApiTestCase):
 
     def test_small_league_returns_fewer(self) -> None:
         league, _season, teams = ranked_career_league(
-            "NtcSmall", 4, manager=self.user_a
+            "NtcSmall", 4, fired=True, manager=self.user_a
         )
         data = self.ok(self.get(league))
         self.assertEqual(len(data["candidates"]), 3)
 
     def test_non_career_409(self) -> None:
         league, _season, _teams = ranked_career_league(
-            "NtcMp", 8, manager=self.user_a, mode="multiplayer"
+            "NtcMp", 8, fired=True, manager=self.user_a, mode="multiplayer"
         )
         entry = self.error(self.get(league), 409, "not_career_league")
         self.assertEqual(entry["message"], FIRING_NOT_CAREER_MSG)
@@ -187,13 +193,13 @@ class TestNewTeamCandidates(LeagueApiTestCase):
 
     def test_foreign_is_404(self) -> None:
         league, _season, _teams = ranked_career_league(
-            "NtcForeign", 8, manager=self.user_b
+            "NtcForeign", 8, fired=True, manager=self.user_b
         )
         self.error(self.get(league), 404, "not_found")
 
     def test_post_is_405(self) -> None:
         league, _season, _teams = ranked_career_league(
-            "NtcPost", 8, manager=self.user_a
+            "NtcPost", 8, fired=True, manager=self.user_a
         )
         self.error(
             self.api.post(url(league.id, "new-team-candidates"), {}, format="json"),
@@ -217,7 +223,9 @@ class TestReassignTeam(LeagueApiTestCase):
         self.assertEqual(league.seasons.count(), season_count)
 
     def test_success_201(self) -> None:
-        league, _season, teams = ranked_career_league("RtOk", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "RtOk", 8, fired=True, manager=self.user_a
+        )
         data = self.ok(self.post(league, {"team_id": teams[-1].id}), 201)
         self.assertEqual(set(data), SEASON_DETAIL_KEYS)
         self.assertEqual(data["state"], "draft")
@@ -227,19 +235,25 @@ class TestReassignTeam(LeagueApiTestCase):
         self.assert_session_untouched()
 
     def test_missing_team_id_is_required(self) -> None:
-        league, _season, teams = ranked_career_league("RtMiss", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "RtMiss", 8, fired=True, manager=self.user_a
+        )
         self.error(self.post(league, {}), 400, "required", "team_id")
         self.assert_unchanged(league, teams[0].id, 1)
 
     def test_non_int_team_id_is_invalid_choice(self) -> None:
-        league, _season, teams = ranked_career_league("RtStr", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "RtStr", 8, fired=True, manager=self.user_a
+        )
         self.error(
             self.post(league, {"team_id": "abc"}), 400, "invalid_choice", "team_id"
         )
         self.assert_unchanged(league, teams[0].id, 1)
 
     def test_ineligible_team_id_is_invalid_choice(self) -> None:
-        league, _season, teams = ranked_career_league("RtInel", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "RtInel", 8, fired=True, manager=self.user_a
+        )
         # teams[0] is the just-left (current) team; teams[1] is not worst-5.
         for team in (teams[0], teams[1]):
             with self.subTest(team=team.name):
@@ -256,7 +270,7 @@ class TestReassignTeam(LeagueApiTestCase):
 
     def test_foreign_eligible_team_is_404(self) -> None:
         league, _season, teams = ranked_career_league(
-            "RtForeign", 8, manager=self.user_a
+            "RtForeign", 8, fired=True, manager=self.user_a
         )
         teams[-1].manager = self.user_b
         teams[-1].save(update_fields=["manager"])
@@ -264,7 +278,9 @@ class TestReassignTeam(LeagueApiTestCase):
         self.assert_unchanged(league, teams[0].id, 1)
 
     def test_season_in_progress_409(self) -> None:
-        league, _season, teams = ranked_career_league("RtProg", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "RtProg", 8, fired=True, manager=self.user_a
+        )
         draft = make_open_season(league, teams)
         entry = self.error(
             self.post(league, {"team_id": teams[-1].id}),
@@ -277,7 +293,7 @@ class TestReassignTeam(LeagueApiTestCase):
 
     def test_in_progress_checked_before_body(self) -> None:
         league, _season, teams = ranked_career_league(
-            "RtProgBody", 8, manager=self.user_a
+            "RtProgBody", 8, fired=True, manager=self.user_a
         )
         make_open_season(league, teams)
         self.error(
@@ -289,7 +305,7 @@ class TestReassignTeam(LeagueApiTestCase):
 
     def test_non_career_409(self) -> None:
         league, _season, teams = ranked_career_league(
-            "RtMp", 8, manager=self.user_a, mode="multiplayer"
+            "RtMp", 8, fired=True, manager=self.user_a, mode="multiplayer"
         )
         entry = self.error(
             self.post(league, {"team_id": teams[-1].id}), 409, "not_career_league"
@@ -299,7 +315,7 @@ class TestReassignTeam(LeagueApiTestCase):
 
     def test_non_career_checked_before_in_progress(self) -> None:
         league, _season, teams = ranked_career_league(
-            "RtMpProg", 8, manager=self.user_a, mode="multiplayer"
+            "RtMpProg", 8, fired=True, manager=self.user_a, mode="multiplayer"
         )
         make_open_season(league, teams)
         self.error(
@@ -312,16 +328,54 @@ class TestReassignTeam(LeagueApiTestCase):
         self.error(self.post(league, {"team_id": team.id}), 409, "no_completed_season")
 
     def test_non_object_body_is_parse_error(self) -> None:
-        league, _season, teams = ranked_career_league("RtArr", 8, manager=self.user_a)
+        league, _season, teams = ranked_career_league(
+            "RtArr", 8, fired=True, manager=self.user_a
+        )
         self.error(self.post(league, [teams[-1].id]), 400, "parse_error")
         self.assert_unchanged(league, teams[0].id, 1)
 
     def test_foreign_league_is_404(self) -> None:
-        league, _season, teams = ranked_career_league("RtFl", 8, manager=self.user_b)
+        league, _season, teams = ranked_career_league(
+            "RtFl", 8, fired=True, manager=self.user_b
+        )
         self.error(self.post(league, {"team_id": teams[-1].id}), 404, "not_found")
 
     def test_get_is_405(self) -> None:
-        league, _season, _teams = ranked_career_league("RtGet", 8, manager=self.user_a)
+        league, _season, _teams = ranked_career_league(
+            "RtGet", 8, fired=True, manager=self.user_a
+        )
         self.error(
             self.api.get(url(league.id, "reassign-team")), 405, "method_not_allowed"
         )
+
+
+# ---------------------------------------------------------------------------
+# UXP-03 — a Manager who was not fired cannot pick a new team
+# ---------------------------------------------------------------------------
+
+
+class TestUxp03NotFired(LeagueApiTestCase):
+    def test_candidates_409_when_retained(self) -> None:
+        league, _season, _teams = ranked_career_league(
+            "Uxp03Ntc", 8, manager=self.user_a
+        )
+        self.error(
+            self.api.get(url(league.id, "new-team-candidates")),
+            409,
+            "manager_not_fired",
+        )
+
+    def test_reassign_409_when_retained_and_changes_nothing(self) -> None:
+        league, _season, teams = ranked_career_league("Uxp03Rt", 8, manager=self.user_a)
+        self.error(
+            self.api.post(
+                url(league.id, "reassign-team"),
+                {"team_id": teams[-1].id},
+                format="json",
+            ),
+            409,
+            "manager_not_fired",
+        )
+        league.refresh_from_db()
+        self.assertEqual(league.current_team_id, teams[0].id)
+        self.assertEqual(Season.objects.filter(league=league).count(), 1)
