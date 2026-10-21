@@ -1,0 +1,32 @@
+name: PR evidence
+
+# A PR that changes UI files (templates, CSS, static assets, frontend/src) must
+# show it: a screenshot or video in the description, or a line
+# "No visual change: <reason>". Its own workflow so that editing the PR
+# description re-runs only this check, not the full test suite.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+
+jobs:
+  screenshots:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The pull_request checkout is the merge commit: HEAD^1 is the base.
+          fetch-depth: 2
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Require a screenshot or video for UI changes
+        # The body goes through the environment, never into the shell script.
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: git diff --name-only HEAD^1 HEAD | python scripts/check_pr_evidence.py -
