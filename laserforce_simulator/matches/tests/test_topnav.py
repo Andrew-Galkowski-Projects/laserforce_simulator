@@ -599,6 +599,21 @@ class TestUx01TopnavAuthControl(TestCase):
             with self.subTest(dom_id=dom_id):
                 self.assertNotContains(response, f'id="{dom_id}"')
 
+    def test_signed_out_pages_show_no_app_menu(self) -> None:
+        """UXP-20 — Sign in / Register showed Teams, Players, Matches, Batch
+        Sim, Maps, Tournaments, Tools and Help, every one bouncing to sign-in."""
+        self.client.logout()
+        for url in (reverse("login"), reverse("register")):
+            body = self.client.get(url).content.decode()
+            with self.subTest(url=url):
+                self.assertNotIn(f'href="{reverse("team_list")}"', body)
+                self.assertNotIn(f'href="{reverse("map_list")}"', body)
+                self.assertNotIn('id="tools-nav-link"', body)
+                self.assertNotIn('id="help-nav-link"', body)
+                self.assertNotIn('id="tournaments-nav-link"', body)
+                for dom_id in AUTH_CONTROL_ANONYMOUS_IDS:
+                    self.assertIn(f'id="{dom_id}"', body)
+
     def test_auth_control_does_not_disturb_the_tools_and_help_toggles(self) -> None:
         """Regression guard: the partial is appended, not substituted."""
         response = self.client.get("/")

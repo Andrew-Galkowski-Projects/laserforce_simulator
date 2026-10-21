@@ -17,7 +17,9 @@
             </button>
             <div class="collapse navbar-collapse" id="mainNav">
                 <div class="navbar-nav ms-auto">
-                    {% if app_mode == "league" %}
+                    {% if not user.is_authenticated %}
+                        {# UXP-20 — signed out: every app link would bounce to sign-in, so show only the auth links below. #}
+                    {% elif app_mode == "league" %}
                         {% regroup top_bar_links by section as sections %}
                         <a class="nav-link" id="dashboard-nav-link" href="{{ top_bar_dashboard_url }}" aria-label="League dashboard">⌂</a>
                         {# NAV-01 — the `Play ▾` advancement dropdown, positioned after ⌂ and before `League ▾`. #}
