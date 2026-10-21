@@ -78,6 +78,15 @@ describe('ApiClient', () => {
     expect(await result).toEqual({ id: 9 });
   });
 
+  it('PUTs the body and unwraps data', async () => {
+    const result = firstValueFrom(api.put<{ id: number }>('teams/9/slots/', { slot_ammo: 4 }));
+    const req = http.expectOne(`${BASE}/teams/9/slots/`);
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual({ slot_ammo: 4 });
+    req.flush({ data: { id: 9 }, meta: {} });
+    expect(await result).toEqual({ id: 9 });
+  });
+
   it('DELETEs and completes with no value on a 204', async () => {
     const result = firstValueFrom(api.delete('players/4/'));
     const req = http.expectOne(`${BASE}/players/4/`);

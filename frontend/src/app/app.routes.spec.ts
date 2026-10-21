@@ -1,12 +1,17 @@
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { Title } from '@angular/platform-browser';
+import { By, Title } from '@angular/platform-browser';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
-import { signIn } from './api/testing/auth-fixtures';
+import { releaseTeamsLoads, signIn } from './api/testing/auth-fixtures';
 import { routes } from './app.routes';
 import { authInterceptor } from './auth/auth.interceptor';
+import { TeamCreate } from './teams/team-create/team-create';
+import { TeamDetail } from './teams/team-detail/team-detail';
+import { TeamEdit } from './teams/team-edit/team-edit';
+import { TeamList } from './teams/team-list/team-list';
+import { TeamSlots } from './teams/team-slots/team-slots';
 
 describe('app routes', () => {
   let http: HttpTestingController;
@@ -22,7 +27,10 @@ describe('app routes', () => {
     http = TestBed.inject(HttpTestingController);
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releaseTeamsLoads();
+    http.verify();
+  });
 
   const routerUrl = (): string => TestBed.inject(Router).url;
 
@@ -71,16 +79,16 @@ describe('app routes', () => {
     });
 
     it.each([
-      ['/teams', 'Teams', 'Teams - Laserforce Simulator'],
-      ['/teams/new', 'Create Team', 'Create Team - Laserforce Simulator'],
-      ['/teams/3', 'Team Detail', 'Team - Laserforce Simulator'],
-      ['/teams/3/edit', 'Edit Team', 'Edit Team - Laserforce Simulator'],
-      ['/teams/3/slots', 'Assign Slots', 'Assign Slots - Laserforce Simulator'],
-    ])('resolves %s to its Teams screen and page title', async (url, heading, title) => {
+      ['/teams', TeamList, 'Teams - Laserforce Simulator'],
+      ['/teams/new', TeamCreate, 'Create Team - Laserforce Simulator'],
+      ['/teams/3', TeamDetail, 'Team - Laserforce Simulator'],
+      ['/teams/3/edit', TeamEdit, 'Edit Team - Laserforce Simulator'],
+      ['/teams/3/slots', TeamSlots, 'Assign Slots - Laserforce Simulator'],
+    ])('resolves %s to its Teams screen and page title', async (url, screen, title) => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl(url);
       expect(routerUrl()).toBe(url);
-      expect(harness.routeNativeElement?.querySelector('h1')?.textContent).toBe(heading);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
       expect(TestBed.inject(Title).getTitle()).toBe(title);
     });
   });

@@ -4,7 +4,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
-import { USER } from '../api/testing/auth-fixtures';
+import { USER, releaseTeamsLoads } from '../api/testing/auth-fixtures';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
 
@@ -36,7 +36,10 @@ describe('Login page', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releaseTeamsLoads();
+    http.verify();
+  });
 
   const routerUrl = (): string => TestBed.inject(Router).url;
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;

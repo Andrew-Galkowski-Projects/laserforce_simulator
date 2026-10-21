@@ -132,6 +132,12 @@ export class ApiClient {
       .pipe(unwrap((res) => res.data));
   }
 
+  put<T>(path: string, body: unknown, options: RequestOptions = {}): Observable<T> {
+    return this.http
+      .put<Envelope<T>>(this.url(path), body, { context: options.context })
+      .pipe(unwrap((res) => res.data));
+  }
+
   delete(path: string, options: RequestOptions = {}): Observable<void> {
     return this.http
       .delete<null>(this.url(path), { context: options.context })
