@@ -1,0 +1,91 @@
+# Self-hosted stack: Django + Celery + Postgres + Redis, published to the
+# internet by Tailscale Funnel at https://<TS_HOSTNAME>.<tailnet>.ts.net.
+# Setup and day-two commands: docs/self-hosting.md.
+#
+#   docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml up -d --build
+#
+# --env-file feeds the ${...} interpolation below. Each container gets only the
+# variables listed for it, so the Tailscale auth key never reaches Django.
+
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: laserforce
+      POSTGRES_USER: laserforce
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.selfhost}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U laserforce"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment: &app-env
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env.selfhost}
+      DEBUG: ${DEBUG:-False}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:?set ALLOWED_HOSTS in .env.selfhost}
+      R2_BUCKET_NAME: ${R2_BUCKET_NAME:-}
+      R2_ACCESS_KEY: ${R2_ACCESS_KEY:-}
+      R2_SECRET_KEY: ${R2_SECRET_KEY:-}
+      R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:-}
+      R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      DATABASE_URL: postgres://laserforce:${POSTGRES_PASSWORD}@db:5432/laserforce
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/1
+    # Loopback only, for checking the app from this PC; the public route is Funnel.
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  worker:
+    build: .
+    restart: unless-stopped
+    environment: *app-env
+    # Replaces entrypoint.sh so only the app container runs migrations.
+    entrypoint:
+      - celery
+      - --workdir
+      - laserforce_simulator
+      - -A
+      - laserforce_simulator
+      - worker
+      - --loglevel
+      - info
+      - --concurrency
+      - "2"
+    depends_on:
+      - app
+
+  tailscale:
+    image: tailscale/tailscale:stable
+    restart: unless-stopped
+    hostname: ${TS_HOSTNAME:-laserforce}
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_HOSTNAME: ${TS_HOSTNAME:-laserforce}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_SERVE_CONFIG: /config/serve.json
+      TS_USERSPACE: "true"
+    volumes:
+      - tsstate:/var/lib/tailscale
+      - ./deploy/tailscale:/config:ro
+    depends_on:
+      - app
+
+volumes:
+  pgdata:
+  tsstate:

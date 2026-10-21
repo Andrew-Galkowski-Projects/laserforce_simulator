@@ -30,6 +30,11 @@ DEBUG = config("DEBUG", default=False, cast=bool)
 
 ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
+# Fly and Tailscale Funnel terminate TLS and forward plain HTTP to gunicorn,
+# marking the hop with X-Forwarded-Proto. Without this, request.is_secure() is
+# False and the CSRF origin check rejects every https:// form POST.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+
 
 # Application definition
 
