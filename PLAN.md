@@ -2262,9 +2262,26 @@ ng add @angular/material
     (ANG-06), Docker / nginx / Fly serving (ANG-07), template removal (ANG-08), E2E tests, i18n,
     PWA. **One ticket.** No Django code, migration, ownership or simulation change.
 
-### ANG-04b · [IN PROGRESS] Visual style samples (pick a look before migrating)
+### ANG-04b · [DONE] Visual style samples (pick a look before migrating)
 
 Spec: #246
+
+**[DONE] Shipped (2026-10-21).** The four layouts and four palettes were compared live on the
+never-merged branch `prototype/ang-04b-samples`. The owner picked **layout B (LFstats-like)**, with
+**palette B for dark mode and palette A's colours for light mode**, JetBrains Mono in both modes,
+Material kept and themed, and the score shown as base + elimination bonus. All of this is recorded
+in [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md). What merged: the
+`--lf-*` token theme (`frontend/src/styles/`), `LF_TOKENS`, `theme.spec.ts` and ADR-0043.
+
+What the work found:
+- The fixture's 40-event window had no nuke, so the capture script appends the round's first nuke.
+- Palette A's elimination colour was too close to red. Fixed: it is now fuchsia.
+- Red and blue had almost the same lightness, which is hard under deuteranopia. Fixed: red is now
+  the lighter Side in both modes, and the R/B badges stay.
+- Material's generated secondary and tertiary roles stayed indigo / fuchsia in light mode, so
+  every Material colour role except `error` now points at `--lf-*` tokens.
+- The samples disagreed on the score: layout C included the elimination bonus in the headline
+  total, while the others showed it separately. Settled as base score + a separate muted bonus.
 
 The Angular migration is the chance to clean up the UI, not copy the Django templates one-for-one.
 Before ANG-06 builds its first real component, produce **several (3–4) clearly different visual
@@ -2508,12 +2525,11 @@ re-simulate, show diff vs original. Forked scenario is temporary, not a permanen
 Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found Issues at the
 top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
 
-**Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done.
-Remaining, in order:
+**Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
+so is the look (ANG-04b, ADR-0043). Remaining, in order:
 
 ```
-ANG-04b  Visual style samples -> ADR picks the look   <- NEXT; blocks ANG-06
-  -> ANG-05  Angular API services + JWT interceptor
+ANG-05  Angular API services + JWT interceptor   <- NEXT
     -> ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)
                + still to scope: League / Season, League screens,
                  Tournaments, Accounts
