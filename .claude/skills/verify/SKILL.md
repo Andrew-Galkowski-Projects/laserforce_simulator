@@ -24,7 +24,9 @@ The script:
 
 1. Computes changed files via the shared
    [`scripts/changed_files.py`](scripts/changed_files.py) helper (mode
-   `working`: vs `HEAD` plus unstaged; deleted files are skipped).
+   `working`: vs `HEAD` plus unstaged; on a clean tree it falls back to mode
+   `branch`, vs `main`, and the summary's second line names which ran;
+   deleted files are skipped).
 2. Runs `black --check`, `ruff check` (the narrow F401/F811 set from
    `pyproject.toml`) and `mypy --follow-imports=silent` on the changed `.py`
    files, and `scripts/check_encoding.py` on the changed text files. A step

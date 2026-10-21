@@ -94,15 +94,19 @@ def _django_dir_rel(repo_root: str) -> str:
 
 def collect_changed(repo_root: str, base: str, mode: str) -> list[str]:
     """Union of changed file paths (repo-root-relative, posix), deduplicated."""
+    # `git diff` never lists untracked files, so a brand-new file needs its
+    # own lookup in both modes.
+    untracked = ["ls-files", "--others", "--exclude-standard"]
     if mode == "working":
         # Changes since the last commit, including unstaged. Used by `verify`.
-        specs = [["diff", "--name-only", "HEAD"], ["diff", "--name-only"]]
+        specs = [["diff", "--name-only", "HEAD"], ["diff", "--name-only"], untracked]
     else:
         # Everything on this branch vs. base, plus staged + unstaged.
         specs = [
             ["diff", "--name-only", f"{base}...HEAD"],
             ["diff", "--name-only", "--cached"],
             ["diff", "--name-only"],
+            untracked,
         ]
     seen: dict[str, None] = {}
     for spec in specs:
