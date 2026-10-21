@@ -129,6 +129,12 @@ docker compose up
 
 Then open http://localhost:8000/ in your browser.
 
+### Option C — self-host on a home PC (public HTTPS URL)
+
+`docker-compose.selfhost.yml` runs the app, a Celery worker, Postgres and Redis, and publishes them
+at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
+[docs/self-hosting.md](docs/self-hosting.md).
+
 ### Frontend (Angular, in progress)
 
 Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](frontend/) (see

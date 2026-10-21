@@ -39,3 +39,4 @@ staticfiles/
 
 # Per-user PyCharm LSP settings
 .idea/pyLspTools.xml
+.env.selfhost
