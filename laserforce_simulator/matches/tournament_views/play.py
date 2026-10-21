@@ -18,7 +18,7 @@ from django.shortcuts import redirect
 
 from accounts.permissions import get_owned_or_404
 
-from matches.models import Tournament
+from matches.models import Tournament, count_series_wins
 from matches.tournament_services.errors import (
     BrokerUnavailableError,
     NoPlayableNodeError,
@@ -27,10 +27,15 @@ from matches.tournament_services.errors import (
     TournamentNotActiveError,
 )
 from matches.tournament_services.play import (
+    PlayedNode,
     build_play_status,
     enqueue_play_all,
     play_next,
 )
+
+# UXP-13 -- the bracket section a played node is named after; the winners
+# bracket, a round-robin and a Swiss round are just "Round N".
+_SECTION_PREFIX = {"losers": "Losers "}
 
 _PLAY_GUARD_ERRORS = (
     TournamentEmbeddedError,
@@ -47,10 +52,32 @@ def tournament_play_next(request: HttpRequest, tournament_id: int) -> HttpRespon
 
     tournament: Tournament = get_owned_or_404(Tournament, request, pk=tournament_id)
     try:
-        play_next(tournament)
+        played = play_next(tournament)
     except (*_PLAY_GUARD_ERRORS, NoPlayableNodeError) as exc:
         messages.error(request, str(exc))
+    else:
+        messages.success(request, _played_message(played))
     return redirect("tournament_detail", tournament_id=tournament.id)
+
+
+def _played_message(played: PlayedNode) -> str:
+    """UXP-13 -- "Played Round 1, Match 2: A 2–0 B." plus the champion when
+    this node ended the Tournament."""
+    node = played.node
+    if node.bracket_type == "grand_final":
+        label = "Grand Final"
+    else:
+        prefix = _SECTION_PREFIX.get(node.bracket_type, "")
+        label = f"{prefix}Round {node.bracket_round}, Match {node.position + 1}"
+    wins_a, wins_b = count_series_wins(
+        node.series_matches.all(), node.team_a_id, node.team_b_id
+    )
+    name_a = node.team_a.name if node.team_a else "—"
+    name_b = node.team_b.name if node.team_b else "—"
+    text = f"Played {label}: {name_a} {wins_a}–{wins_b} {name_b}."
+    if played.champion is not None:
+        text += f" {played.champion.name} win the Tournament!"
+    return text
 
 
 def tournament_play_all(request: HttpRequest, tournament_id: int) -> JsonResponse:

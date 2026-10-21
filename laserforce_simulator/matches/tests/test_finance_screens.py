@@ -619,3 +619,36 @@ class TestTeamFinancesPostFormErrors(TestCase):
         self.assertIn("<li>Injury policy: ", errors_html)
         for name in ("budget_scouting", "ticket_price", "injury_policy"):
             self.assertNotIn(name, errors_html)
+
+
+class TestTeamFinancesSaveConfirmation(TestCase):
+    """UXP-13 -- a successful Save Expense Settings flashes a confirmation;
+    a rejected one does not."""
+
+    def test_valid_post_flashes_saved(self) -> None:
+        league = _make_league("TfOkL")
+        _make_active_season(league)
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        response = self.client.post(url, data=_full_post(), follow=True)
+        self.assertContains(response, "Expense settings saved.")
+
+    def test_invalid_post_does_not_flash_saved(self) -> None:
+        league = _make_league("TfBadL")
+        _make_active_season(league)
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        response = self.client.post(url, data=_full_post(budget_scouting="0"))
+        self.assertNotContains(response, "Expense settings saved.")
+
+
+class TestTeamFinancesMetricsBasisNote(TestCase):
+    """UXP-13 -- the Revenue / Expenses tiles are the last settled Season's
+    immutable ``TeamSeasonFinance`` row, so a ticket-price edit cannot move
+    them; a note under the tiles says so."""
+
+    def test_note_explains_figures_are_settled_at_season_end(self) -> None:
+        league = _make_league("TfNoteL")
+        _make_active_season(league)
+        url = reverse("team_finances", kwargs={"league_id": league.id})
+        response = self.client.get(url)
+        self.assertContains(response, 'id="team-finances-metrics-note"')
+        self.assertContains(response, "settled at the end of each Season")
