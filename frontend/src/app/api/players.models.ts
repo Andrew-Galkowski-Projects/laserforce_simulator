@@ -1,5 +1,6 @@
 // Player shapes, snake_case exactly as teams/serializers.py and teams/forms.py
 // send / bind them (no mapping layer).
+import { ListParams } from './api-client';
 
 /** `teams.models.ROLE_CHOICES` keys. */
 export type Role = 'commander' | 'heavy' | 'scout' | 'medic' | 'ammo';
@@ -55,4 +56,15 @@ export interface PlayerInput extends Partial<PlayerStats> {
   total_games?: number;
   home_site?: string;
   height?: string;
+}
+
+/**
+ * `PlayerFilterSet` plus `ordering`. `ordering` takes the LG-00c sort keys
+ * (`name`, `team`, `overall_rating`, `potential`, each stat in lower case, so
+ * `offensive_synergy`); a `-` prefix descends.
+ */
+export interface PlayerListParams extends ListParams {
+  team?: number;
+  name?: string;
+  ordering?: string;
 }
