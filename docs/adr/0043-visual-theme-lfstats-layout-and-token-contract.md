@@ -14,7 +14,12 @@ effects) as independent axes in a throwaway route, fed by a fixture captured fro
 simulated round: the Teams list, the Round detail stat table with MVP, and a ~40-event timeline.
 The prototype lives on the pushed, never-merged branch
 [`prototype/ang-04b-samples`](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/tree/prototype/ang-04b-samples)
-(@7e0efb8). Screenshots of every layout and palette at 1440px and 390px are linked from the PR.
+(@7e0efb8). Screenshots of every layout and palette at 1440px and 390px live in
+[`pr-assets/ang-04b-visual-style-samples/`](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/tree/pr-assets/ang-04b-visual-style-samples).
+They are named `L<layout>-P<palette>-<screen>-<width>.png`, for example the chosen
+[layout B + palette B round](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/blob/pr-assets/ang-04b-visual-style-samples/Lb-Pb-round-1440.png?raw=true)
+and
+[layout B + palette A round](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/blob/pr-assets/ang-04b-visual-style-samples/Lb-Pa-round-1440.png?raw=true).
 
 ## Decision
 
