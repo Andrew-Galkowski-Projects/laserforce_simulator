@@ -269,6 +269,28 @@ class TestHtmlSaveZoneConfig(_HtmlMapTestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestHtmlEditorMissingBaseWarning(_HtmlMapTestCase):
+    """UXP-10 -- the save endpoint keeps its pinned ``{"status": "ok"}`` body for
+    a base-less config; the editor JS warns from its own ``bases`` state."""
+
+    def test_editor_save_handler_warns_when_a_team_base_is_missing(self) -> None:
+        response = self.client.get(reverse("map_editor", args=[self.map.pk]))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(
+            response, 'const missingTeamBases = ["red", "blue"].filter('
+        )
+        self.assertContains(response, "before using this map in a match.")
+        self.assertContains(response, "It won't be offered in match, round or League")
+        self.assertContains(response, '"alert alert-warning"')
+
+    def test_base_less_save_still_returns_exact_ok(self) -> None:
+        response = self.post_json(
+            "save_zone_config", {"zone_size": 50, "zones": GRID, "bases": []}
+        )
+        self.assertEqual(response.content, OK_BODY)
+        self.assertIsNotNone(self.map.latest_confirmed_config())
+
+
 class TestHtmlComputeSightLines(_HtmlMapTestCase):
     URL = "compute_sight_lines"
 

@@ -21,7 +21,7 @@ from django.test import TestCase
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
-from core.models import ArenaMap, MapZoneConfig
+from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
 from matches.models import (
     Conference,
     GameRound,
@@ -578,6 +578,11 @@ def confirmed_map(name: str) -> ArenaMap:
         zone_data={"zones": [[1, 1], [1, 1]]},
         confirmed=True,
     )
+    # UXP-10 - a simulation-ready map also needs a red and a blue base.
+    for base_type in ("red", "blue"):
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type=base_type, x_px=5, y_px=5
+        )
     return arena_map
 
 

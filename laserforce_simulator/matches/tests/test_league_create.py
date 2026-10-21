@@ -434,6 +434,7 @@ from django.core.files.uploadedfile import (
 
 from core.models import (
     ArenaMap as _Lg01jArenaMap,
+    MapBaseConfig as _Lg01jMapBaseConfig,
     MapZoneConfig as _Lg01jMapZoneConfig,
 )
 from matches.forms import CreateLeagueForm as _Lg01jCreateLeagueForm
@@ -464,6 +465,11 @@ def _lg01j_make_map_with_config(name: str = "Map") -> _Lg01jArenaMap:
         zone_data={"zones": [[1, 1], [1, 1]]},
         confirmed=True,
     )
+    # UXP-10 - a simulation-ready map also needs a red and a blue base.
+    for base_type in ("red", "blue"):
+        _Lg01jMapBaseConfig.objects.create(
+            arena_map=arena_map, base_type=base_type, x_px=5, y_px=5
+        )
     return arena_map
 
 
