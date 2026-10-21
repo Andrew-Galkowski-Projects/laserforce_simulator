@@ -1,0 +1,185 @@
+:host {
+  display: block;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1,
+h2 {
+  font-family: var(--lf-font-heading);
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.5rem;
+}
+
+h2 {
+  margin: 1.5rem 0 0.75rem;
+  font-size: 1rem;
+  font-weight: 500;
+  color: var(--lf-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.muted {
+  color: var(--lf-text-muted);
+}
+
+.detail__head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.detail__meta {
+  margin: 0.25rem 0 0;
+  color: var(--lf-text-muted);
+}
+
+.detail__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.detail__issues,
+.detail__error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--lf-ev-special);
+  border-radius: var(--lf-radius);
+  background: color-mix(in srgb, var(--lf-ev-special) 10%, transparent);
+
+  ul {
+    margin: 0.25rem 0 0;
+    padding-left: 1.25rem;
+  }
+}
+
+.detail__error {
+  border-color: var(--mat-sys-error);
+  background: none;
+  color: var(--mat-sys-error);
+}
+
+/* Roster tables beside the status card; stacked below 768px (layout B). */
+.detail__body {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: 1.5rem;
+
+  @media (max-width: 767.98px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.detail__roster section {
+  overflow-x: auto;
+}
+
+.roster {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--lf-font-numeric);
+
+  th,
+  td {
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th {
+    background: var(--lf-surface-alt);
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  tbody tr:nth-child(even) {
+    background: var(--lf-surface);
+  }
+}
+
+.badge,
+.tag {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--lf-radius);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.tag {
+  margin: 0 0.25rem 0 0;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface-alt);
+  color: var(--lf-text);
+}
+
+.tag--slot {
+  min-width: 3.5rem;
+  text-align: center;
+  font-weight: 700;
+}
+
+.tag--accent {
+  border-color: var(--lf-accent);
+  background: color-mix(in srgb, var(--lf-accent) 15%, transparent);
+}
+
+.badge--ok {
+  border: 1px solid var(--lf-ev-resupply);
+  color: var(--lf-ev-resupply);
+}
+
+.badge--warn {
+  border: 1px solid var(--lf-ev-special);
+  color: var(--lf-ev-special);
+}
+
+.badge--you {
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+  font-weight: 700;
+}
+
+.detail__side h2 {
+  margin-top: 1.5rem;
+}
+
+.status {
+  padding: 1rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.status__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.status__row--total {
+  margin: 0.75rem 0 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--lf-border);
+}
+
+.detail__rules {
+  margin: 1rem 0 0;
+  font-size: 0.85rem;
+  color: var(--lf-text-muted);
+}
+
+.detail__back {
+  margin-top: 2rem;
+}

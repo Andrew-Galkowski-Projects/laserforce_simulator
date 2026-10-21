@@ -1,0 +1,151 @@
+@if (notFound()) {
+  <app-team-not-found />
+} @else if (loadError(); as message) {
+  <p class="detail__error" role="alert">{{ message }}</p>
+} @else if (team(); as t) {
+  <header class="detail__head">
+    <div>
+      <h1>{{ t.name }}</h1>
+      <p class="detail__meta">
+        {{ t.players.length }} player{{ t.players.length === 1 ? '' : 's' }}
+        @if (t.is_valid_roster) {
+          <span class="badge badge--ok">Valid Roster &#10003;</span>
+        } @else {
+          <span class="badge badge--warn">Incomplete Roster</span>
+        }
+      </p>
+    </div>
+    <div class="detail__actions">
+      <a mat-flat-button [routerLink]="['/teams', t.id, 'slots']">Assign Slots</a>
+      <a mat-stroked-button [routerLink]="['/teams', t.id, 'edit']">Edit Team</a>
+    </div>
+  </header>
+
+  @if (t.roster_errors.length > 0) {
+    <div class="detail__issues" role="alert">
+      <strong>Roster issues:</strong>
+      <ul>
+        @for (err of t.roster_errors; track $index) {
+          <li>{{ err }}</li>
+        }
+      </ul>
+    </div>
+  }
+
+  <div class="detail__body">
+    <div class="detail__roster">
+      <section>
+        <h2>Active Slots</h2>
+        @if (active().length === 0) {
+          <p class="muted">
+            No slots assigned yet. Use <strong>Assign Slots</strong> to set up the active roster.
+          </p>
+        } @else {
+          <table class="roster">
+            <thead>
+              <tr>
+                <th>Slot</th>
+                <th>Player</th>
+                <th>Preferred Roles</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of active(); track row.label) {
+                <tr>
+                  <td>
+                    <span class="tag tag--slot">{{ row.label }}</span>
+                  </td>
+                  <td>
+                    {{ row.player.name }}
+                    @if (row.player.id === selfId()) {
+                      <span class="badge badge--you">You</span>
+                    }
+                  </td>
+                  <td>
+                    @for (r of row.player.preferred_roles; track r) {
+                      <span class="tag">{{ roleLabels[r] }}</span>
+                    } @empty {
+                      <span class="muted">&mdash;</span>
+                    }
+                  </td>
+                  <td>
+                    <button mat-stroked-button type="button" (click)="remove(row.player)">
+                      Remove
+                    </button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        }
+      </section>
+
+      @if (bench().length > 0) {
+        <section>
+          <h2>Bench</h2>
+          <table class="roster">
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Preferred Roles</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of bench(); track p.id) {
+                <tr>
+                  <td>
+                    {{ p.name }}
+                    @if (p.id === selfId()) {
+                      <span class="badge badge--you">You</span>
+                    }
+                  </td>
+                  <td>
+                    @for (r of p.preferred_roles; track r) {
+                      <span class="tag">{{ roleLabels[r] }}</span>
+                    } @empty {
+                      <span class="muted">&mdash;</span>
+                    }
+                  </td>
+                  <td>
+                    <button mat-stroked-button type="button" (click)="remove(p)">Remove</button>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </section>
+      }
+
+      @if (t.players.length === 0) {
+        <p class="muted">No players added yet.</p>
+      }
+    </div>
+
+    <aside class="detail__side">
+      <h2>Roster Status</h2>
+      <div class="status">
+        @for (role of roles; track role.label) {
+          <div class="status__row">
+            <span>{{ role.label }}</span>
+            <span class="tag">{{ role.slots }}</span>
+          </div>
+        }
+        <div class="status__row status__row--total">
+          <strong>Active / Bench</strong>
+          <span class="tag tag--accent">{{ active().length }} / {{ bench().length }}</span>
+        </div>
+      </div>
+      <p class="detail__rules">
+        <strong>SM5 Rules:</strong><br />
+        6 active slots: Commander, Heavy, Scout &times;2, Medic, Ammo. Remaining players are bench
+        (not simulated).
+      </p>
+    </aside>
+  </div>
+
+  <p class="detail__back">
+    <a mat-stroked-button routerLink="/teams">&larr; Back to Teams</a>
+  </p>
+}
