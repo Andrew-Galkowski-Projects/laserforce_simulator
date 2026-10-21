@@ -6,6 +6,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from teams.models import Player, Team
+from teams.player_generator import _STAT_FIELDS
 
 
 class TeamDetailRosterStatusTest(TestCase):
@@ -160,6 +161,71 @@ class PlayerEditA11yLabelTest(TestCase):
         self.assertIn("<legend", html)
         # The exact orphan label markup must be gone.
         self.assertNotIn('<label class="form-label">Preferred Roles</label>', html)
+
+
+class PlayerDetailHeadingTest(TestCase):
+    """Regression: UXP-19 -- the sandbox player page had no <h1>."""
+
+    def test_player_name_is_the_single_h1(self) -> None:
+        team = Team.objects.create(name="H1 Team")
+        p = Player.objects.create(team=team, name="Heading Player")
+        url = reverse("player_detail", kwargs={"team_id": team.id, "player_id": p.id})
+        html = self.client.get(url).content.decode()
+        self.assertEqual(html.count("<h1"), 1)
+        self.assertRegex(html, r"<h1[^>]*>Heading Player<")
+
+
+class PlayerAddFillsPreferredSlotTest(TestCase):
+    """Regression: UXP-19 -- adding a player with a preferred role left the
+    matching empty slot unfilled ("missing Commander") until Assign Slots."""
+
+    def _add(self, team: Team, name: str, roles: list[str]) -> Player:
+        data = {
+            "name": name,
+            "preferred_roles": roles,
+            "age": 25,
+            "started_playing_age": 16,
+            "total_games": 10,
+            "home_site": "",
+            "height": "",
+            **{f: 50 for f in _STAT_FIELDS},
+        }
+        url = reverse("player_add", kwargs={"team_id": team.id})
+        response = self.client.post(url, data)
+        self.assertEqual(response.status_code, 302, response.content)
+        return Player.objects.get(team=team, name=name)
+
+    def test_fills_empty_matching_slot(self) -> None:
+        team = Team.objects.create(name="Fill Team")
+        player = self._add(team, "Cdr", ["commander"])
+        team.refresh_from_db()
+        self.assertEqual(team.slot_commander_id, player.id)
+        self.assertNotIn("missing Commander", team.roster_errors)
+
+    def test_occupied_slot_is_not_displaced(self) -> None:
+        team = Team.objects.create(name="Occupied Team")
+        incumbent = Player.objects.create(team=team, name="Incumbent")
+        team.slot_commander = incumbent
+        team.save()
+        self._add(team, "Challenger", ["commander"])
+        team.refresh_from_db()
+        self.assertEqual(team.slot_commander_id, incumbent.id)
+
+    def test_scouts_fill_scout_1_then_scout_2(self) -> None:
+        team = Team.objects.create(name="Scout Team")
+        first = self._add(team, "ScoutA", ["scout"])
+        second = self._add(team, "ScoutB", ["scout"])
+        third = self._add(team, "ScoutC", ["scout"])
+        team.refresh_from_db()
+        self.assertEqual(team.slot_scout_1_id, first.id)
+        self.assertEqual(team.slot_scout_2_id, second.id)
+        self.assertNotIn(third.id, (team.slot_scout_1_id, team.slot_scout_2_id))
+
+    def test_no_preferred_role_fills_nothing(self) -> None:
+        team = Team.objects.create(name="Bare Team")
+        self._add(team, "Nobody", [])
+        team.refresh_from_db()
+        self.assertEqual(team.active_players, [])
 
 
 class FaviconLinkTest(TestCase):

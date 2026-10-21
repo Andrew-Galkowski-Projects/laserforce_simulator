@@ -39,6 +39,7 @@ from teams.services import (
     build_career_stats,
     build_role_benchmarks,
     build_roster_template_csv,
+    fill_preferred_slot,
     player_form_initial,
     run_player_generation,
     run_roster_import,
@@ -149,6 +150,7 @@ class TeamViewSet(
         player.team = team
         _full_clean_or_raise(player)
         player.save()
+        fill_preferred_slot(team, player)
         return Response(
             PlayerSerializer(player, context=self.get_serializer_context()).data,
             status=status.HTTP_201_CREATED,

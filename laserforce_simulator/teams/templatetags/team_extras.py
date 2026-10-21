@@ -1,3 +1,6 @@
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
+from typing import Any
+
 from django import template
 
 register = template.Library()
@@ -87,3 +90,21 @@ def count_attr_false(iterable, attr_name):
         return count
     except Exception:
         return 0
+
+
+@register.filter
+def money_k(value: Any) -> str:
+    """Render an amount held in thousands of dollars as ``$7.2k`` / ``-$7.2k``.
+
+    The sign goes before the currency symbol (UXP-19: never ``$-7.2k``). One
+    decimal, rounded half-up like ``floatformat:1``; a value that rounds to zero
+    carries no sign. Non-numeric input renders as an empty string.
+    """
+    try:
+        amount = Decimal(str(float(value))).quantize(
+            Decimal("0.1"), rounding=ROUND_HALF_UP
+        )
+    except (TypeError, ValueError, InvalidOperation):
+        return ""
+    sign = "-" if amount < 0 else ""
+    return f"{sign}${abs(amount)}k"

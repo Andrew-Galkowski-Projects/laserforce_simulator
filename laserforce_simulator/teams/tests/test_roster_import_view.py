@@ -281,6 +281,23 @@ class TestImportRosterPostDbSlotCollision(TestCase):
         # Atomic rolled back — no extra Players created.
         self.assertEqual(Player.objects.count(), players_before)
 
+    def test_reimporting_template_shows_collision_once_with_human_slot(
+        self,
+    ) -> None:
+        """UXP-19: re-importing the template printed the collision twice
+        (summary + row list) and used the internal ``slot_commander`` name."""
+        template = self.client.get(reverse("import_roster_template")).content
+        first = _post(self.client, template)
+        self.assertTemplateUsed(first, "teams/roster_import_done.html")
+
+        body = _post(self.client, template).content.decode()
+        message = (
+            "Team &#x27;Red Phoenix&#x27; Commander slot already filled by "
+            "player &#x27;Alice&#x27;"
+        )
+        self.assertEqual(body.count(message), 1)
+        self.assertNotIn("slot_commander", body)
+
 
 # ---------------------------------------------------------------------------
 # §10.2 — TestImportRosterPostFormErrors

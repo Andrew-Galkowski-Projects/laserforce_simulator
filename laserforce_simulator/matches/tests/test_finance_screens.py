@@ -110,6 +110,25 @@ class TestTeamFinancesRouting(TestCase):
 # ===========================================================================
 
 
+# ===========================================================================
+# UXP-19 -- negative money renders "-$7.2k", never "$-7.2k"
+# ===========================================================================
+
+
+class TestTeamFinancesNegativeMoney(TestCase):
+    def test_negative_cash_puts_sign_before_currency(self) -> None:
+        league = _make_league("TfNegL")
+        _, teams = _make_active_season(league)
+        teams[0].cash = -7.2
+        teams[0].save(update_fields=["cash"])
+        response = self.client.get(
+            reverse("team_finances", kwargs={"league_id": league.id})
+        )
+        body = response.content.decode()
+        self.assertIn("-$7.2k", body)
+        self.assertNotIn("$-", body)
+
+
 class TestTeamFinancesDomIds(TestCase):
     def test_history_and_budget_form_dom_ids_present(self) -> None:
         league = _make_league()

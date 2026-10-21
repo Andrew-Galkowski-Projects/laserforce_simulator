@@ -365,6 +365,19 @@ class TestTeamAddPlayer(_ApiTestCase):
         self.assertEqual(player.accuracy, 91)
         self.assertEqual(player.preferred_roles, ["scout", "medic"])
 
+    def test_preferred_role_fills_empty_slot_like_html(self) -> None:
+        """UXP-19: the API add-player shares the HTML slot fill."""
+        incumbent = Player.objects.create(team=self.team, name="Incumbent")
+        self.team.slot_commander = incumbent
+        self.team.save()
+        response = self._post(
+            self.team, {"name": "Flex", "preferred_roles": ["commander", "medic"]}
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        self.team.refresh_from_db()
+        self.assertEqual(self.team.slot_commander_id, incumbent.id)
+        self.assertEqual(self.team.slot_medic_id, response.json()["data"]["id"])
+
     def test_stat_above_100_is_400_max_value(self) -> None:
         response = self._post(self.team, {"name": "Over", "accuracy": 101})
         self.assert_error_envelope(response, 400)
@@ -601,7 +614,7 @@ class TestTeamImport(_ApiTestCase):
                 {
                     "code": "roster_invalid",
                     "message": (
-                        f"Team '{mine.name}' slot 'slot_commander' already filled "
+                        f"Team '{mine.name}' Commander slot already filled "
                         "by player 'Full commander'"
                     ),
                     "field": "row:1:role",
