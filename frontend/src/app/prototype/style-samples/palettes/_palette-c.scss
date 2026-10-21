@@ -1,0 +1,58 @@
+// Palette C -- Clean Material: light, Roboto, generous radius. Mono numerics.
+@use '@angular/material' as mat;
+
+.lf-palette-c {
+  color-scheme: light;
+
+  --lf-bg: #f6f8fc;
+  --lf-surface: #ffffff;
+  --lf-surface-alt: #eef2f8;
+  --lf-text: #1b1c1f;
+  --lf-text-muted: #45474e;
+  --lf-border: #c5c7cf;
+  --lf-accent: #0b57d0;
+
+  --lf-side-red: #c62828;
+  --lf-side-red-text: #a51c1c;
+  --lf-side-red-bg: #fdecea;
+  --lf-side-red-dim: #f2b8b5;
+  --lf-side-blue: #1565c0;
+  --lf-side-blue-text: #0d4f9c;
+  --lf-side-blue-bg: #e8f0fe;
+  --lf-side-blue-dim: #a8c7fa;
+
+  --lf-ev-elimination: #ad1457;
+  --lf-ev-missile: #c43e00;
+  --lf-ev-special: #6a1b9a;
+  --lf-ev-nuke: #7a5d00;
+  --lf-ev-miss: #6f7178;
+  --lf-ev-resupply: #2e7d32;
+  --lf-ev-tag: #00737d;
+
+  --lf-font-body: Roboto, system-ui, sans-serif;
+  --lf-font-heading: Roboto, system-ui, sans-serif;
+  --lf-font-numeric: 'Roboto Mono', ui-monospace, monospace;
+  --lf-radius: 12px;
+  --lf-glow: 0 0 0;
+
+  @include mat.theme(
+    (
+      color: (
+        theme-type: light,
+        primary: mat.$azure-palette,
+        tertiary: mat.$blue-palette,
+      ),
+      typography: Roboto,
+      density: 0,
+    )
+  );
+  @include mat.theme-overrides(
+    (
+      primary: var(--lf-accent),
+      surface: var(--lf-surface),
+      on-surface: var(--lf-text),
+      surface-container: var(--lf-surface-alt),
+      outline-variant: var(--lf-border),
+    )
+  );
+}

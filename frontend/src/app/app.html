@@ -1,6 +1,8 @@
-<mat-toolbar>
-  <span>{{ title }}</span>
-</mat-toolbar>
+@if (!onPrototype()) {
+  <mat-toolbar>
+    <span>{{ title }}</span>
+  </mat-toolbar>
+}
 <main>
   <router-outlet />
 </main>

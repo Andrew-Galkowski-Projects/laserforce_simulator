@@ -1,0 +1,58 @@
+// Palette D -- Arena neon: dark, saturated, glow. Proportional body, mono numerics.
+@use '@angular/material' as mat;
+
+.lf-palette-d {
+  color-scheme: dark;
+
+  --lf-bg: #07070f;
+  --lf-surface: #11111f;
+  --lf-surface-alt: #191930;
+  --lf-text: #f1f4ff;
+  --lf-text-muted: #a9aecb;
+  --lf-border: #2d3058;
+  --lf-accent: #00e5ff;
+
+  --lf-side-red: #ff2e63;
+  --lf-side-red-text: #ff7d9c;
+  --lf-side-red-bg: #2a0a16;
+  --lf-side-red-dim: #7a1533;
+  --lf-side-blue: #2ea8ff;
+  --lf-side-blue-text: #7cc8ff;
+  --lf-side-blue-bg: #071a33;
+  --lf-side-blue-dim: #134a85;
+
+  --lf-ev-elimination: #ff4dff;
+  --lf-ev-missile: #ff9f1c;
+  --lf-ev-special: #b98cff;
+  --lf-ev-nuke: #fff01f;
+  --lf-ev-miss: #8a8fb3;
+  --lf-ev-resupply: #39ff88;
+  --lf-ev-tag: #5ce1ff;
+
+  --lf-font-body: 'Exo 2', system-ui, sans-serif;
+  --lf-font-heading: Orbitron, 'Exo 2', system-ui, sans-serif;
+  --lf-font-numeric: 'Share Tech Mono', ui-monospace, monospace;
+  --lf-radius: 6px;
+  --lf-glow: 0 0 12px;
+
+  @include mat.theme(
+    (
+      color: (
+        theme-type: dark,
+        primary: mat.$cyan-palette,
+        tertiary: mat.$magenta-palette,
+      ),
+      typography: 'Exo 2',
+      density: 0,
+    )
+  );
+  @include mat.theme-overrides(
+    (
+      primary: var(--lf-accent),
+      surface: var(--lf-surface),
+      on-surface: var(--lf-text),
+      surface-container: var(--lf-surface-alt),
+      outline-variant: var(--lf-border),
+    )
+  );
+}

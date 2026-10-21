@@ -1,0 +1,57 @@
+// Palette A -- Dense dashboard: neutral greys, light. Proportional body, mono numerics.
+@use '@angular/material' as mat;
+
+.lf-palette-a {
+  color-scheme: light;
+
+  --lf-bg: #eceef1;
+  --lf-surface: #ffffff;
+  --lf-surface-alt: #f5f6f8;
+  --lf-text: #16181d;
+  --lf-text-muted: #4a505c;
+  --lf-border: #c9ced6;
+  --lf-accent: #2f4a6d;
+
+  --lf-side-red: #c0262d;
+  --lf-side-red-text: #a3161d;
+  --lf-side-red-bg: #fbeceb;
+  --lf-side-red-dim: #e8a3a6;
+  --lf-side-blue: #1f5fbf;
+  --lf-side-blue-text: #164c9e;
+  --lf-side-blue-bg: #e9f0fb;
+  --lf-side-blue-dim: #9dbbe6;
+
+  --lf-ev-elimination: #9f1239;
+  --lf-ev-missile: #b45309;
+  --lf-ev-special: #6d28d9;
+  --lf-ev-nuke: #854d0e;
+  --lf-ev-miss: #6b7280;
+  --lf-ev-resupply: #15803d;
+  --lf-ev-tag: #0e7490;
+
+  --lf-font-body: 'IBM Plex Sans', system-ui, sans-serif;
+  --lf-font-heading: 'IBM Plex Sans Condensed', 'IBM Plex Sans', system-ui, sans-serif;
+  --lf-font-numeric: 'IBM Plex Mono', ui-monospace, monospace;
+  --lf-radius: 2px;
+  --lf-glow: 0 0 0;
+
+  @include mat.theme(
+    (
+      color: (
+        theme-type: light,
+        primary: mat.$blue-palette,
+      ),
+      typography: 'IBM Plex Sans',
+      density: -2,
+    )
+  );
+  @include mat.theme-overrides(
+    (
+      primary: var(--lf-accent),
+      surface: var(--lf-surface),
+      on-surface: var(--lf-text),
+      surface-container: var(--lf-surface-alt),
+      outline-variant: var(--lf-border),
+    )
+  );
+}

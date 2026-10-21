@@ -1,0 +1,72 @@
+// ANG-04b prototype: palettes, the --side convention and the floating switcher.
+// Encapsulation is off on this component, so these rules reach every layout underneath.
+
+@use './palettes/palette-a';
+@use './palettes/palette-b';
+@use './palettes/palette-c';
+@use './palettes/palette-d';
+@use './palettes/sides';
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans+Condensed:wght@500;700&family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Roboto+Mono:wght@400;500&family=Roboto:wght@400;500;700&family=Exo+2:wght@400;500;700&family=Orbitron:wght@500;700;900&family=Share+Tech+Mono&display=swap');
+
+.lf-sample-root {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding-bottom: 4rem; // room for the floating switcher
+  background: var(--lf-bg);
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+.lf-switcher {
+  position: fixed;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  max-width: calc(100vw - 2rem);
+  box-sizing: border-box;
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: 999px;
+  background: var(--lf-surface);
+  color: var(--lf-text);
+  box-shadow:
+    0 2px 10px color-mix(in srgb, var(--lf-text) 25%, transparent),
+    var(--lf-glow) var(--lf-accent);
+  font: 600 0.8rem/1 var(--lf-font-body);
+
+  &__group {
+    display: inline-flex;
+    gap: 0.25rem;
+    align-items: center;
+  }
+
+  &__label {
+    color: var(--lf-text-muted);
+    margin-right: 0.15rem;
+  }
+
+  &__screen {
+    font-family: var(--lf-font-numeric);
+  }
+
+  a {
+    display: inline-block;
+    min-width: 1.6rem;
+    padding: 0.3rem 0.4rem;
+    border-radius: 999px;
+    color: var(--lf-text);
+    text-align: center;
+    text-decoration: none;
+
+    &.is-current {
+      background: var(--lf-accent);
+      color: var(--lf-surface);
+    }
+  }
+}

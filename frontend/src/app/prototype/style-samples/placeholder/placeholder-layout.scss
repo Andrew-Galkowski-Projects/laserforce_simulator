@@ -1,0 +1,112 @@
+// Tokens only: no colour literals (enforced by style-samples.contract.spec.ts).
+:host {
+  display: block;
+}
+
+.ph-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  background: var(--lf-surface);
+  border-bottom: 1px solid var(--lf-border);
+
+  h1 {
+    margin: 0;
+    font: 700 1.25rem var(--lf-font-heading);
+  }
+
+  small {
+    color: var(--lf-text-muted);
+    font-weight: 400;
+  }
+
+  nav {
+    display: flex;
+    gap: 0.75rem;
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+
+  a.is-current {
+    color: var(--lf-text);
+    font-weight: 700;
+    text-decoration: none;
+  }
+}
+
+.ph-main {
+  padding: 1rem;
+
+  h2 {
+    font-family: var(--lf-font-heading);
+  }
+}
+
+.ph-card {
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-left: 4px solid var(--side, var(--lf-border));
+  border-radius: var(--lf-radius);
+  box-shadow: var(--lf-glow) var(--side, var(--lf-accent));
+
+  h3 {
+    margin: 0 0 0.5rem;
+    color: var(--side-text, var(--lf-text));
+    font-family: var(--lf-font-heading);
+  }
+}
+
+.ph-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+th,
+td {
+  padding: 0.25rem 0.5rem;
+  border-bottom: 1px solid var(--lf-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--lf-text-muted);
+  background: var(--lf-surface-alt);
+}
+
+.num {
+  font-family: var(--lf-font-numeric);
+  text-align: right;
+}
+
+.is-top-mvp td {
+  background: var(--side-bg, var(--lf-surface-alt));
+  font-weight: 700;
+}
+
+td a {
+  color: var(--lf-accent);
+}
+
+.ph-side-text {
+  color: var(--side-text, var(--lf-text));
+}
+
+.ph-ev {
+  display: inline-block;
+  padding: 0 0.4rem;
+  border-left: 4px solid var(--ev);
+  color: var(--lf-text);
+}

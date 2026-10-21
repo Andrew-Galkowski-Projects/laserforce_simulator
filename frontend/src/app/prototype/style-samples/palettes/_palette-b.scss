@@ -1,0 +1,57 @@
+// Palette B -- LFstats-like: indigo/slate OKLCH, dark, all-monospace (the only all-mono palette).
+@use '@angular/material' as mat;
+
+.lf-palette-b {
+  color-scheme: dark;
+
+  --lf-bg: oklch(0.208 0.042 265.755);
+  --lf-surface: oklch(0.279 0.041 260.031);
+  --lf-surface-alt: oklch(0.246 0.04 262);
+  --lf-text: oklch(0.984 0.003 247.858);
+  --lf-text-muted: oklch(0.762 0.035 256.8);
+  --lf-border: oklch(0.372 0.044 257.287);
+  --lf-accent: oklch(0.673 0.182 276.935);
+
+  --lf-side-red: oklch(0.637 0.237 25.331);
+  --lf-side-red-text: oklch(0.808 0.114 19.571);
+  --lf-side-red-bg: oklch(0.258 0.092 26.042);
+  --lf-side-red-dim: oklch(0.444 0.177 26.899);
+  --lf-side-blue: oklch(0.623 0.214 259.815);
+  --lf-side-blue-text: oklch(0.809 0.105 251.813);
+  --lf-side-blue-bg: oklch(0.282 0.091 267.935);
+  --lf-side-blue-dim: oklch(0.424 0.199 265.638);
+
+  --lf-ev-elimination: oklch(0.74 0.238 322.16);
+  --lf-ev-missile: oklch(0.75 0.183 55.934);
+  --lf-ev-special: oklch(0.702 0.183 293.541);
+  --lf-ev-nuke: oklch(0.852 0.199 91.936);
+  --lf-ev-miss: oklch(0.704 0.04 256.788);
+  --lf-ev-resupply: oklch(0.765 0.177 163.223);
+  --lf-ev-tag: oklch(0.746 0.16 232.661);
+
+  --lf-font-body: 'JetBrains Mono', ui-monospace, monospace;
+  --lf-font-heading: 'JetBrains Mono', ui-monospace, monospace;
+  --lf-font-numeric: 'JetBrains Mono', ui-monospace, monospace;
+  --lf-radius: 0.375rem;
+  --lf-glow: 0 0 0;
+
+  @include mat.theme(
+    (
+      color: (
+        theme-type: dark,
+        primary: mat.$violet-palette,
+      ),
+      typography: 'JetBrains Mono',
+      density: -1,
+    )
+  );
+  @include mat.theme-overrides(
+    (
+      primary: var(--lf-accent),
+      surface: var(--lf-surface),
+      on-surface: var(--lf-text),
+      surface-container: var(--lf-surface-alt),
+      outline-variant: var(--lf-border),
+    )
+  );
+}

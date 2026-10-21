@@ -1,0 +1,38 @@
+<div class="lf-sample-root lf-palette-{{ paletteKey() }}">
+  <ng-container *ngComponentOutlet="layout(); inputs: layoutInputs()" />
+
+  <nav class="lf-switcher" aria-label="Style sample switcher">
+    <span class="lf-switcher__group">
+      <span class="lf-switcher__label">Layout</span>
+      @for (key of layoutKeys; track key) {
+        <a
+          [routerLink]="[]"
+          [queryParams]="{ layout: key }"
+          queryParamsHandling="merge"
+          [class.is-current]="key === layoutKey()"
+          [attr.aria-current]="key === layoutKey() ? 'true' : null"
+          [title]="layoutLabels[key]"
+          >{{ key.toUpperCase() }}</a
+        >
+      }
+    </span>
+    <span class="lf-switcher__group">
+      <span class="lf-switcher__label">Palette</span>
+      @for (key of paletteKeys; track key) {
+        <a
+          [routerLink]="[]"
+          [queryParams]="{ palette: key }"
+          queryParamsHandling="merge"
+          [class.is-current]="key === paletteKey()"
+          [attr.aria-current]="key === paletteKey() ? 'true' : null"
+          [title]="paletteLabels[key]"
+          >{{ key.toUpperCase() }}</a
+        >
+      }
+    </span>
+    <span class="lf-switcher__group">
+      <span class="lf-switcher__label">Screen</span>
+      <span class="lf-switcher__screen">{{ screen() }}</span>
+    </span>
+  </nav>
+</div>
