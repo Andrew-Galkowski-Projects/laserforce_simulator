@@ -130,6 +130,13 @@ Create each ticket as a sub-issue of the spec with native blocked-by edges,
 using the `gh api` fallbacks in `docs/agents/issue-tracker.md` (installed `gh`
 predates `--parent`).
 
+A **prototype** task (throwaway samples the owner picks from) adds two kinds of
+ticket. Prototype tickets target a `prototype/<task>` branch cut from the
+integration branch. It is pushed but never merged, and the PR still says
+`Closes #<ticket>` for it. A **pick** ticket, labelled `ready-for-human`,
+holds the screenshots and records the owner's choice on the issue. The tickets
+that build on that choice are blocked by the pick.
+
 **The owner's approval of the breakdown authorises local commits** on this
 task's integration and ticket branches (the `CLAUDE.md` exception). Say so
 when asking. Once approved, commit the grill's docs (PLAN.md, GLOSSARY.md,
@@ -145,7 +152,15 @@ each one's base before starting the next. Before starting tickets that run in
 parallel, grep the integration tip for every helper two of them will need,
 and move each into a neutral service module yourself; every new action goes
 in its own ticket's file. Point each one at the spec issue and its ticket issue rather
-than pasting them. Add these constraints to every implementer prompt:
+than pasting them.
+
+Merge each finished ticket branch yourself. Into the branch checked out in your
+worktree, use `git merge`. Into a branch checked out nowhere (a
+`prototype/<task>` branch), use `python scripts/merge_into_branch.py <target>
+<ticket branch>`. It fast-forwards when it can, otherwise writes the merge
+commit, and leaves the target alone on a conflict.
+
+Add these constraints to every implementer prompt:
 
 - **First step:** confirm your worktree is based on the integration branch,
   else `git reset --hard <integration branch>` in your own worktree. Agent
@@ -172,7 +187,14 @@ than pasting them. Add these constraints to every implementer prompt:
 - Run `python -m black` on the files you touched. Run `makemigrations` for
   model changes and commit the migration with the model.
 - Ownership is filtered on the server through the `manager` seam.
-- If you need a server, it goes on a free port, never 8000.
+- If you need a server, it goes on a free port, never 8000. Before reporting,
+  stop it with `powershell -NoProfile -File scripts/stop_worktree_servers.ps1
+  -Worktree <your worktree>`: stopping the npm wrapper alone leaves node,
+  esbuild and dart running, and they block `git worktree remove`.
+- When tickets run in parallel, they share one MCP Chrome. Open your own page
+  with `new_page`, close only that page, and leave `close_mcp_browser.ps1` to
+  the orchestrator, who runs it once after the last agent reports. This
+  overrides the reuse-the-tab rule in `CLAUDE.md`.
 - Commit only on your ticket branch. Merge the integration tip into it before
   reporting done. Comment the commit hash on your ticket issue.
 
@@ -246,18 +268,23 @@ A migration that drops or rewrites data is a one-way door. Say so plainly.
 
 **Stop and show the owner the commit summary and PR body.** Commit, push and
 `gh pr create --body-file` only on their "go" (`CLAUDE.md`, *Git Workflow*).
-Then wait for the PR's CI run (`gh run watch <run-id> --exit-status`, in the
-background) and read `gh pr checks <n>`. Every job must have **started**: a
+Then wait for the PR's CI run in the background:
+`gh run list --branch <branch> --json databaseId -q '.[0].databaseId'` gives
+the run id, and `gh run watch <run-id> --exit-status` waits on it.
+(`gh pr checks --watch` exits early while checks are still pending.) Then
+read `gh pr checks <n>`. Every job must have **started**: a
 run with no jobs, or one GitHub reports as "a workflow file issue", is a
 broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
 red job as in Step 7 and report it to the owner with the PR link.
 Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge confirm `git diff <integration tip>
-origin/main` is empty: the work is in `main` under a new hash. Then remove the
-implementer worktrees and `git branch -D` their branches, leave the
+origin/main` is empty: the work is in `main` under a new hash. Then, for every
+implementer worktree, run `scripts/stop_worktree_servers.ps1 -Worktree <path>`,
+`git worktree remove --force <path>`, and `git branch -D` its branch. Leave the
 integration worktree with `ExitWorktree` (`action: "remove"`,
-`discard_changes: true`), delete the remote branch, and `git pull --ff-only`
-in the main checkout.
+`discard_changes: true`, after stopping its servers too) and delete the remote
+branch. If the main checkout is on `main`, `git pull --ff-only` there.
+Otherwise leave it and tell the owner which branch it is on.
 
 ## Step 10: Retro
 
