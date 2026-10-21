@@ -172,3 +172,28 @@ class FaviconLinkTest(TestCase):
         m = re.search(r'<link[^>]+rel="(?:shortcut )?icon"[^>]*>', html)
         self.assertIsNotNone(m, "base.html declares no <link rel=icon>")
         self.assertRegex(m.group(0), r'href="[^"]+"')
+
+
+class PlayerDeleteConfirmPageTest(TestCase):
+    """Regression: UXP-01 — the confirm page rendered a template that does not
+    exist (``player_confirm_delete.html``), so every Remove/Delete was a 500."""
+
+    def setUp(self):
+        self.team = Team.objects.create(name="Delete Team")
+        self.player = Player.objects.create(team=self.team, name="Doomed")
+        self.url = reverse(
+            "player_delete",
+            kwargs={"team_id": self.team.id, "player_id": self.player.id},
+        )
+
+    def test_get_renders_confirm_page(self):
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Are you sure you want to remove Doomed")
+
+    def test_post_deletes_and_redirects_to_team(self):
+        response = self.client.post(self.url)
+        self.assertRedirects(
+            response, reverse("team_detail", kwargs={"team_id": self.team.id})
+        )
+        self.assertFalse(Player.objects.filter(id=self.player.id).exists())
