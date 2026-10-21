@@ -2983,3 +2983,21 @@ class TestRandomDrawDetailContextAndDom(TestCase):
             reverse("tournament_detail", args=[t.id])
         ).content.decode()
         self.assertNotIn('id="tournament-pool-section"', body)
+
+
+class TestUxp17BracketStageNames(TestCase):
+    """UXP-17 — single-elim columns said "Bracket Round 1/2/3" while the create
+    form sets "Quarterfinal / Semifinal / Final series length"."""
+
+    def test_columns_use_stage_names(self) -> None:
+        t = _active_tournament(8, name="U17Stages")
+        body = self.client.get(
+            reverse("tournament_detail", args=[t.id])
+        ).content.decode()
+        self.assertNotIn("Bracket Round", body)
+        for label in (
+            "<h5>Quarterfinals</h5>",
+            "<h5>Semifinals</h5>",
+            "<h5>Final</h5>",
+        ):
+            self.assertIn(label, body)

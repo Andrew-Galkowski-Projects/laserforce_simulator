@@ -321,7 +321,7 @@ def create_match(request):
                 return render(
                     request,
                     "matches/enhanced_match_setup.html",
-                    {"form": form, "title": "Create Tournament Match"},
+                    {"form": form, "title": "Create Match"},
                 )
 
             messages.success(
@@ -335,7 +335,7 @@ def create_match(request):
     return render(
         request,
         "matches/enhanced_match_setup.html",
-        {"form": form, "title": "Create Tournament Match"},
+        {"form": form, "title": "Create Match"},
     )
 
 

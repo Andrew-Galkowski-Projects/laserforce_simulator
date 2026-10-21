@@ -4308,3 +4308,14 @@ class TestGen01ViewUpgrades:
             "game_round_detail must NOT upgrade — scoreboard/MVP live from "
             "PlayerRoundState"
         )
+
+
+@pytest.mark.django_db
+def test_uxp17_create_match_page_is_not_called_tournament_match():
+    """UXP-17 — /matches/create/ was titled "Create Tournament Match" but makes
+    a (default Friendly) Match and is not the Tournaments feature."""
+    client = Client()
+    client.force_login(get_shared_manager())
+    html = client.get(reverse("create_match")).content.decode()
+    assert "Create Tournament Match" not in html
+    assert "Create Match" in html
