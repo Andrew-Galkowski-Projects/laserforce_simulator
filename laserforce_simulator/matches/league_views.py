@@ -873,6 +873,12 @@ def _resolve_current_team_for_sidebar(
     return displayed_season.teams.order_by("name").first()
 
 
+# UXP-12 — sidebar keys whose route is a ``coming_soon_*`` placeholder.
+_PLACEHOLDER_SIDEBAR_KEYS = frozenset(
+    {"trade", "trading_block", "prospects", "hall_of_fame"}
+)
+
+
 def _build_league_sidebar_links(
     league: League,
     displayed_season: Season | None,
@@ -998,6 +1004,9 @@ def _build_league_sidebar_links(
                 "url": url,
                 "disabled": url is None,
                 "active": key == sidebar_active,
+                # UXP-12 — routed to the shared coming-soon placeholder; the
+                # menus grey these out with a "Soon" badge.
+                "placeholder": key in _PLACEHOLDER_SIDEBAR_KEYS,
             }
         )
     return out
