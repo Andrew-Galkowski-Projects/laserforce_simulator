@@ -450,9 +450,9 @@ def landing(request) -> HttpResponse:
 
 
 def serve_media(request, path: str) -> HttpResponse:
-    """UXP-02 — serve an uploaded file from ``MEDIA_ROOT`` when ``SERVE_MEDIA``
-    is on (self-hosting without R2); 404 otherwise. ``serve`` rejects paths
-    that escape the document root."""
-    if not settings.SERVE_MEDIA:
+    """UXP-02 — serve an uploaded file from ``MEDIA_ROOT`` under ``DEBUG`` (dev,
+    as ``static()`` did) or when ``SERVE_MEDIA`` is on (self-hosting without
+    R2); 404 otherwise. ``serve`` rejects paths that escape the document root."""
+    if not (settings.DEBUG or settings.SERVE_MEDIA):
         raise Http404()
     return serve(request, path, document_root=settings.MEDIA_ROOT)

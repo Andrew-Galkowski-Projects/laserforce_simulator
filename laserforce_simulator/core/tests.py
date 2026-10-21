@@ -485,15 +485,28 @@ class ServeMediaTests(TestCase):
     def test_serves_media_file_when_enabled(self) -> None:
         from django.test import override_settings
 
-        with override_settings(SERVE_MEDIA=True, MEDIA_ROOT=self.media_root):
+        with override_settings(
+            DEBUG=False, SERVE_MEDIA=True, MEDIA_ROOT=self.media_root
+        ):
             response = self.client.get("/media/maps/arena.png")
         self.assertEqual(response.status_code, 200)
         self.assertEqual(b"".join(response.streaming_content), b"\x89PNG fake")
 
+    def test_debug_serves_media_without_serve_media(self) -> None:
+        from django.test import override_settings
+
+        with override_settings(
+            DEBUG=True, SERVE_MEDIA=False, MEDIA_ROOT=self.media_root
+        ):
+            response = self.client.get("/media/maps/arena.png")
+        self.assertEqual(response.status_code, 200)
+
     def test_404_when_disabled(self) -> None:
         from django.test import override_settings
 
-        with override_settings(SERVE_MEDIA=False, MEDIA_ROOT=self.media_root):
+        with override_settings(
+            DEBUG=False, SERVE_MEDIA=False, MEDIA_ROOT=self.media_root
+        ):
             response = self.client.get("/media/maps/arena.png")
         self.assertEqual(response.status_code, 404)
 
@@ -501,7 +514,9 @@ class ServeMediaTests(TestCase):
         from django.test import override_settings
 
         (self.media_root / "secret.txt").write_text("nope")
-        with override_settings(SERVE_MEDIA=True, MEDIA_ROOT=self.media_root / "maps"):
+        with override_settings(
+            DEBUG=False, SERVE_MEDIA=True, MEDIA_ROOT=self.media_root / "maps"
+        ):
             response = self.client.get("/media/%2E%2E/secret.txt")
         self.assertIn(response.status_code, (400, 404))
 
