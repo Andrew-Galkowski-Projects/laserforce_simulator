@@ -2481,12 +2481,15 @@ the `manager` seam; cross-Account rows are 404). Token storage is already ADR-00
 ### ANG-06 · Migrate views by feature area
 
 Migrate one area at a time in order of complexity. Each item: build the Angular route/component,
-verify feature parity with the existing Django template, then remove the Django template + view.
-"Parity" means the same features, not the same look. Every component uses the theme chosen in
-ANG-04b.
+verify feature parity with the existing Django template. The Django template + view stays: removal
+is ANG-08 (owner, 2026-10-21 — until ANG-07 serves Angular, production is Django-only, and removing
+a URL name raises NoReverseMatch site-wide). "Parity" means the same features, not the same look.
+Every component uses the theme chosen in ANG-04b.
 
 1. **Teams list & detail** — simple CRUD table + form; good first Angular component to build
+   (ANG-06a below)
 2. **Player add/edit** — stat form with live `overall_rating` preview
+2b. **Generate Players + Import Roster** — the two Teams-list header actions, split out of ANG-06a
 3. **Match list & create** — team picker, match creation, results list
 4. **Round detail** — per-player stat table, MVP scores
 5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
@@ -2504,6 +2507,50 @@ and log search, and position icons (roles stay CMD / HVY / SCT / AMO / MED until
 will have full API coverage from ANG-01d-1 / ANG-01d-2 / ANG-01e / ANG-01f, but they are **not yet planned** as
 ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six
 items above are scoped.
+
+#### ANG-06a · Teams list & detail
+
+Spec: #263
+
+Grill settled (owner, 2026-10-21):
+
+- **No Django removal** (see ANG-06 intro). Angular is built alongside.
+- **Scope in:** Teams list (cards: name, "N/6 active (+M bench)", Valid / Incomplete badge, created
+  date, View / Edit, empty state); Team detail (Active Slots + Bench tables, roster-issues alert,
+  Roster Status card + SM5 blurb, Remove player with confirm, "You" badge from
+  `currentUser().player`); Create Team, Edit Team (name), Assign Slots. **Scope out:** Add / Edit
+  player (item 2), Generate / Import (item 2b), Match History link (item 3), player detail page.
+  Links to not-yet-migrated pages are omitted, never pointed at Django (session vs JWT auth).
+- **Prerequisite in this task:** a real login form (`AuthService.login`, back to `returnUrl`), an
+  `authGuard` on app routes, and the ADR-0043 layout-B shell (header with user + Sign out, sidebar
+  with Teams, drawer below 768px). Register / password change / self-insert wait for the Accounts
+  screens.
+- **Roster validity is server-side:** read-only `is_valid_roster` + `roster_errors` on both Team
+  serializers, from the model methods. Active / bench is derived client-side from the six `slot_*`
+  ids. No migration.
+- **Paging:** request `page_size=100`; `mat-paginator` only when there is more than one page;
+  default order by name.
+- **Errors:** a 404 (cross-Account or missing) shows a "Team not found" state with a link back;
+  envelope field errors show inline; success shows a Material snackbar with the Django flash text.
+- **Ownership:** unchanged — the API already filters through the `manager` seam. No simulation
+  change.
+- **Tests:** Vitest with `HttpTestingController`; Django API tests for the new serializer fields;
+  browser check with `start:worktree` (4201) against Django on 8001, incl. a cross-Account 404.
+- **Routes:** `/teams`, `/teams/new`, `/teams/:id`, `/teams/:id/edit`, `/teams/:id/slots`, all
+  behind `authGuard` (only `/login` is open); `''` redirects to `/teams`; the Home placeholder goes.
+- **Login:** Email + Password + Sign in; one "Invalid email or password." message on failure;
+  success goes to `returnUrl` or `/teams`; a signed-in visit to `/login` goes to `/teams`; Sign out
+  is `AuthService.logout()` then `/login`.
+- **Assign Slots:** six `mat-select`s (CMD, HVY, SCT 1, SCT 2, MED, AMO), each this Team's players
+  plus "— empty —"; Save is `PUT /api/teams/<id>/slots/` via a new
+  `TeamsService.setSlots(id, TeamSlotsInput): Observable<Team>`; server errors inline per select;
+  success snackbar "Roster slots updated." and back to detail.
+- **Remove player** is a hard delete (as Django): `MatDialog` confirm, `PlayersService.delete`,
+  reload, snackbar.
+- **Tickets:** T1 foundation (login, guard, shell, serializer fields, `teams/teams.routes.ts` with
+  lazy stubs for all five paths); then T2 list, T3 detail + remove, T4 create / edit / slots +
+  `setSlots`, in parallel, each in its own `teams/<screen>/` folder.
+- No GLOSSARY or ADR changes.
 
 ### ANG-07 · Serve Angular from Docker (nginx sidecar)
 
@@ -2542,6 +2589,90 @@ Questions to answer:
   pools), the bundled map / media files, and where logs go.
 - **Distribution:** Windows first. Cover code signing / SmartScreen, auto-update vs. manual download,
   and macOS / Linux feasibility.
+
+## Phase 3.5 — LFstats realism (added 2026-10-21)
+
+Follow-ups to the LFstats player import (#256). The import turns real players' LFstats numbers
+into the 19 Player stats. The formulas, the meaning of each stat and the sim oddities found
+along the way are in [`docs/lfstats-import.md`](docs/lfstats-import.md). The rebuild tools are
+`scripts/lfstats_import/` and the data is `data/lfstats_snapshot_2026-10-21.json`. Scheduled
+directly after the Phase 8 Angular work (owner, 2026-10-21); LFS-01 must still be sequenced with
+CAL-01. **Open question for both:** run LFS-02 first? Mechanics changes from LFS-02 would
+invalidate any LFS-01 tuning done before them.
+
+### LFS-01 · Tune the numbers so imported players reproduce their LFstats results
+
+**Goal:** a simulated imported player's per-position outputs land close to their real LFstats
+numbers: accuracy, hit diff, times hit, MVP, uptime, elimination rate, resupplies, nukes,
+missiles and rapid fire. Today the formulas are fixed guesses that were never checked against
+sim output.
+
+**Known gaps:**
+- **Hit chance saturates.** The sim's hit chance is `70 + accuracy - defender.survival`
+  (`sim_helpers/shot.py`, clamped 10-95). Imported accuracy is raw LFstats accuracy (median
+  77), so a median-vs-median shot hits about 94%, against about 75% in real games.
+- **Accuracy varies by position** (scout 66%, medic 90%), but `Player` holds one value.
+  Per-role stats need a model change.
+- **Placeholder stats:** resource_awareness, stamina, speed and flexibility are written as
+  50 for everyone.
+
+**Approach:**
+- Build a calibration harness, in the style of `score_averages`: run N seeded rounds with the
+  imported teams and print sim vs LFstats per position and metric.
+- Decide in the grill which side moves: the import formulas (`compute.py` and the doc,
+  together), the sim mechanics, or both.
+- Decide the target metrics and tolerances.
+
+**Depends on / interacts with:**
+- CAL-01 (Score Calibration re-baseline). Changing mechanics shifts the scores.
+- IMPORT-01 (`.tdf` parser). TDF event logs are the planned source for the deferred stats:
+  resource_awareness from elimination order and shot outages, stamina from late- vs
+  early-game tag rate.
+
+**Acceptance:**
+- The harness exists and its results are recorded.
+- Tolerances are documented.
+- `compute.py`, `docs/lfstats-import.md` and the CSV are updated together.
+
+### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
+
+**Goal:** use the talk ([video](https://www.youtube.com/watch?v=SngT6ipJsYU); summary in
+`docs/lfstats-import.md`) as a domain reference for where the sim and the Player model differ
+from how SM5 is really played. **Output:** a written, prioritised proposal (doc or ADR draft),
+not code. Each accepted suggestion becomes its own PLAN entry.
+
+**Starting points found during the import:**
+- **Unused stats get real effects.** Six stats are never read by the sim: positioning,
+  flexibility, adaptability and the offensive/defensive/midfield synergies. Possible effects:
+  - positioning: choosing control zones over neutral ones ("why am I here?");
+  - flexibility: body angles and missile dodging (today the dodge comes from survival);
+  - adaptability: performance when losing or with unfamiliar teammates.
+- **resource_awareness has no effect** (`_observe_lives` is a dead end). The talk's "look at
+  your gun" suggests an aggression range set by your own shots and lives, plus retreat
+  timing: about 9-13 lives is safe, 6-7 means head home, adjusted for the nukes the enemy
+  commander is likely holding.
+- **decision_making** means decisiveness in the talk (act within about a second). In the
+  sim, `_stress_fail` looks inverted: a higher value raises the support fail chance.
+- **Sprinting vs jogging.** Speed trades against awareness, because sprinting misses
+  information. Stamina's second-half fade already matches the talk.
+- **Communication:**
+  - nuke call-outs remove teammates' 1-3 s reaction delay;
+  - sharing shots and lives changes how teammates play;
+  - calling downs with a location ("commander down at big box").
+- **Mechanics:** laying trails while down, stubborn zone control (about 3 resets before
+  leaving) and missile-dodging technique.
+- **overall_rating weighting.** It is a plain mean of 19 stats; the talk's pie chart puts
+  game sense largest and mechanical skill around 5%.
+
+**Overlap to reconcile:** MECH-08 (reset timing), MECH-10 (follow rule), MECH-13 (per-player
+information table) and MECH-14 (memory/comms-driven behaviour).
+
+**Acceptance:**
+- The proposal is reviewed.
+- Each suggestion is mapped to an existing MECH item or a new PLAN entry, or rejected with a
+  reason.
+
+---
 
 ## Parked — deferred Tournament work
 
@@ -2604,6 +2735,7 @@ ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)   <- NEXT
     -> ANG-07  Serve Angular from an nginx sidecar
       -> ANG-08  Remove Django template views (Admin stays)
         -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
+          -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
@@ -2613,8 +2745,6 @@ Angular.
 
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, CAL-01, then MECH-07
   last (its design is still open).
-- **Phase 3.5 — LFstats realism:** LFS-01 (tune to LFstats results) and LFS-02 (Kodama-talk
-  change proposal). LFS-01 must be sequenced with CAL-01.
 - **Phase 4 — Analytics:** RV-04, RES-05, RV-05, HX-02, HX-03, IMPORT-01.
 - **Other:** SIM-12, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -2771,89 +2901,6 @@ filter toggles.
 (chart + overlay-plugin infrastructure). **Acceptance:** toggling "Medic hits" marks each qualifying
 event on the charts at the correct tick and toggling it off restores the prior appearance; the
 definition chosen in the grill is documented in GLOSSARY.md if it introduces new domain language.
-
----
-
-## Phase 3.5 — LFstats realism (added 2026-10-21)
-
-Follow-ups to the LFstats player import (#256). The import turns real players' LFstats numbers
-into the 19 Player stats. The formulas, the meaning of each stat and the sim oddities found
-along the way are in [`docs/lfstats-import.md`](docs/lfstats-import.md). The rebuild tools are
-`scripts/lfstats_import/` and the data is `data/lfstats_snapshot_2026-10-21.json`. Neither item
-is scheduled. **Open question for both:** run LFS-02 first? Mechanics changes from LFS-02 would
-invalidate any LFS-01 tuning done before them.
-
-### LFS-01 · Tune the numbers so imported players reproduce their LFstats results
-
-**Goal:** a simulated imported player's per-position outputs land close to their real LFstats
-numbers: accuracy, hit diff, times hit, MVP, uptime, elimination rate, resupplies, nukes,
-missiles and rapid fire. Today the formulas are fixed guesses that were never checked against
-sim output.
-
-**Known gaps:**
-- **Hit chance saturates.** The sim's hit chance is `70 + accuracy - defender.survival`
-  (`sim_helpers/shot.py`, clamped 10-95). Imported accuracy is raw LFstats accuracy (median
-  77), so a median-vs-median shot hits about 94%, against about 75% in real games.
-- **Accuracy varies by position** (scout 66%, medic 90%), but `Player` holds one value.
-  Per-role stats need a model change.
-- **Placeholder stats:** resource_awareness, stamina, speed and flexibility are written as
-  50 for everyone.
-
-**Approach:**
-- Build a calibration harness, in the style of `score_averages`: run N seeded rounds with the
-  imported teams and print sim vs LFstats per position and metric.
-- Decide in the grill which side moves: the import formulas (`compute.py` and the doc,
-  together), the sim mechanics, or both.
-- Decide the target metrics and tolerances.
-
-**Depends on / interacts with:**
-- CAL-01 (Score Calibration re-baseline). Changing mechanics shifts the scores.
-- IMPORT-01 (`.tdf` parser). TDF event logs are the planned source for the deferred stats:
-  resource_awareness from elimination order and shot outages, stamina from late- vs
-  early-game tag rate.
-
-**Acceptance:**
-- The harness exists and its results are recorded.
-- Tolerances are documented.
-- `compute.py`, `docs/lfstats-import.md` and the CSV are updated together.
-
-### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
-
-**Goal:** use the talk ([video](https://www.youtube.com/watch?v=SngT6ipJsYU); summary in
-`docs/lfstats-import.md`) as a domain reference for where the sim and the Player model differ
-from how SM5 is really played. **Output:** a written, prioritised proposal (doc or ADR draft),
-not code. Each accepted suggestion becomes its own PLAN entry.
-
-**Starting points found during the import:**
-- **Unused stats get real effects.** Six stats are never read by the sim: positioning,
-  flexibility, adaptability and the offensive/defensive/midfield synergies. Possible effects:
-  - positioning: choosing control zones over neutral ones ("why am I here?");
-  - flexibility: body angles and missile dodging (today the dodge comes from survival);
-  - adaptability: performance when losing or with unfamiliar teammates.
-- **resource_awareness has no effect** (`_observe_lives` is a dead end). The talk's "look at
-  your gun" suggests an aggression range set by your own shots and lives, plus retreat
-  timing: about 9-13 lives is safe, 6-7 means head home, adjusted for the nukes the enemy
-  commander is likely holding.
-- **decision_making** means decisiveness in the talk (act within about a second). In the
-  sim, `_stress_fail` looks inverted: a higher value raises the support fail chance.
-- **Sprinting vs jogging.** Speed trades against awareness, because sprinting misses
-  information. Stamina's second-half fade already matches the talk.
-- **Communication:**
-  - nuke call-outs remove teammates' 1-3 s reaction delay;
-  - sharing shots and lives changes how teammates play;
-  - calling downs with a location ("commander down at big box").
-- **Mechanics:** laying trails while down, stubborn zone control (about 3 resets before
-  leaving) and missile-dodging technique.
-- **overall_rating weighting.** It is a plain mean of 19 stats; the talk's pie chart puts
-  game sense largest and mechanical skill around 5%.
-
-**Overlap to reconcile:** MECH-08 (reset timing), MECH-10 (follow rule), MECH-13 (per-player
-information table) and MECH-14 (memory/comms-driven behaviour).
-
-**Acceptance:**
-- The proposal is reviewed.
-- Each suggestion is mapped to an existing MECH item or a new PLAN entry, or rejected with a
-  reason.
 
 ---
 
