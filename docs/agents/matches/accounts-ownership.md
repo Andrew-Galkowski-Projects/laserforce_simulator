@@ -107,9 +107,9 @@ every `Season`, `SeasonPhase`, `Conference` and `SeriesMatch` (all derived rows)
 choices=VISIBILITY_CHOICES, default="closed")` where `VISIBILITY_CHOICES = (("closed", "Closed"),
 ("open", "Open"))` is a class-level constant on `League` alongside the existing `MODE_CHOICES` /
 `STATE_CHOICES`; a `required=False` `CreateLeagueForm.visibility` `ChoiceField` (widget id
-`league-create-visibility`, declared last in the class body) rendered on
-`templates/leagues/create_advanced.html` **only** (not `create.html`), between the
-`league-create-number-of-conferences` and `league-create-schedule-format` blocks; and
+`league-create-visibility`, declared last in the class body), which UX-01 rendered on
+`templates/leagues/create_advanced.html` and **UXP-21 removed from the page** (it did nothing, so
+offering it confused users; the field still binds, so the API keeps accepting it); and
 `_create_league_and_season` passing `visibility=cleaned.get("visibility") or "closed"` (with
 `_template_to_form_data` supplying `"visibility": "closed"`). **Nothing reads it this slice** — no
 branch, no filter, no context key, no sidebar entry, no admin column; outside the model, the
