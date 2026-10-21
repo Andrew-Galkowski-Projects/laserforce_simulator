@@ -444,7 +444,8 @@ yields the locked tournament-node-swiss-{bracket_round}-{position} ids).
     <div class="d-flex" id="tournament-bracket">
         {% for round in rounds.winners %}
         <div class="me-4" id="tournament-bracket-round-{{ round.bracket_round }}">
-            <h5>Bracket Round {{ round.bracket_round }}</h5>
+            {# UXP-17 — stage names match the create form's series-length fields. #}
+            <h5>{% if forloop.revcounter == 1 %}Final{% elif forloop.revcounter == 2 %}Semifinals{% elif forloop.revcounter == 3 %}Quarterfinals{% else %}Round {{ round.bracket_round }}{% endif %}</h5>
             {% for node in round.nodes %}
             <div class="card mb-2 {% if node.is_bye %}bye-node{% endif %}" id="tournament-node-{{ node.bracket_round }}-{{ node.position }}">
                 <div class="card-body p-2">
