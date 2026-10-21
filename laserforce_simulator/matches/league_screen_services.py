@@ -48,6 +48,11 @@ from matches.power_rankings_logic import (
     sort_power_rankings,
 )
 from matches.season_dashboard import LeaderRow
+from matches.season_snapshot import (
+    completed_season_cached,
+    leader_boards_from_json,
+    leader_boards_to_json,
+)
 from matches.season_player_stats import (
     PlayerStatRow,
     aggregate_player_stats,
@@ -599,9 +604,22 @@ def build_leaderboards(scope: SeasonScope) -> dict[str, list[LeaderRow]]:
     if scope.round_filter is None:
         return {board: [] for board in LEADER_BOARDS}
     prs_filter = {f"game_round__{k}": v for k, v in scope.round_filter.items()}
-    # build_round_dicts orders by id, which makes the "last row wins"
-    # defensive fallback in the pure module deterministic.
-    return compute_leaderboards(build_round_dicts(prs_filter), limit=10)
+
+    def compute() -> dict[str, list[LeaderRow]]:
+        # build_round_dicts orders by id, which makes the "last row wins"
+        # defensive fallback in the pure module deterministic.
+        return compute_leaderboards(build_round_dicts(prs_filter), limit=10)
+
+    if not isinstance(scope.selected, Season):
+        return compute()
+    # UXP-09: a completed Season's boards come from its summary snapshot.
+    return completed_season_cached(
+        scope.selected,
+        "leaderboards",
+        compute,
+        dump=leader_boards_to_json,
+        load=leader_boards_from_json,
+    )
 
 
 # ---------------------------------------------------------------------------
