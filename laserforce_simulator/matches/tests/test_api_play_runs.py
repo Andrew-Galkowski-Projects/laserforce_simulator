@@ -128,6 +128,34 @@ class TestPlayUntilEnd(LeagueApiTestCase):
         self.assertFalse(status["cancelled"])
         self.assertIsNone(status["error"])
 
+    def test_career_template_stops_before_the_playoffs(self) -> None:
+        """UXP-05 -- "Play Until Playoffs" on an 8-Team Career League plays the
+        regular season out and stops: the playoff bracket is built but unplayed
+        and the Season stays active (the playoffs are their own step)."""
+        created = self.ok(
+            self.api.post(
+                "/api/leagues/",
+                {"template": "8_team_career", "league_name": "Career"},
+                format="json",
+            ),
+            201,
+        )
+        season = Season.objects.get(pk=created["draft_season"]["id"])
+        self.ok(self.api.post(action(season.id, "start")))
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-until-end")))
+
+        season.refresh_from_db()
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)
+        rr, playoff = season.ordered_phases()
+        self.assertTrue(season._phase_complete(rr))
+        playoff.refresh_from_db()
+        self.assertIsNotNone(playoff.tournament_id)
+        self.assertEqual(playoff.tournament.state, "active")
+        self.assertFalse(playoff.tournament.nodes.filter(winner__isnull=False).exists())
+        self.assertEqual(season.current_phase().pk, playoff.pk)
+
 
 def play_round_robin(season: Season) -> None:
     """Play every RR fixture so the tournament phase auto-builds."""

@@ -1063,7 +1063,10 @@ tournament phase, **drain bracket STAGES on the SHARED budget** —
 `rr_weeks_played = len({fixture.matchday for the fixtures simulated this run})`
 (matchday is global-continuous post-Part2c-2, so a bare count is the distinct-week
 count); `max_matchdays is None` ⇒ unbounded drain via `play_next_bracket_round`
-until it returns `0` (champion crowned), else
+until it returns `0` (champion crowned) — **but only when the run started ON the
+tournament phase**: UXP-05 makes a `None` run that simulated any RR fixtures return
+right after the RR loop, so "Play Until Playoffs / Tournament" leaves the freshly
+built bracket unplayed as its own step — else
 `bracket_budget = max(0, max_matchdays − rr_weeks_played)` calls (stop early on a
 `0` return). Then `season.complete_if_finished()`. **PROGRESS `update_state`
 `{completed, total}` switches meaning at the boundary (LOCKED):** Round-counts
