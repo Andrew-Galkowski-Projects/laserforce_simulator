@@ -701,3 +701,35 @@ class TestLg01hDisabledFlipsLive(TestCase):
             reverse("coming_soon_trading_block", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
+
+
+# ---------------------------------------------------------------------------
+# UXP-07 — phone width: the sidebar collapses and main can shrink
+# ---------------------------------------------------------------------------
+
+
+class TestUxp07SidebarMobile(TestCase):
+    def setUp(self) -> None:
+        league = _make_league("Uxp07")
+        _make_active_season(league)
+        self.html = self.client.get(
+            reverse("league_dashboard", args=[league.id])
+        ).content.decode()
+
+    def test_sidebar_is_collapsed_below_md(self) -> None:
+        self.assertRegex(
+            self.html, r'<nav id="league-sidebar" class="[^"]*\bcollapse d-md-block\b'
+        )
+
+    def test_toggle_button_shown_only_below_md(self) -> None:
+        self.assertRegex(
+            self.html,
+            r'<button[^>]*class="[^"]*\bd-md-none\b[^"]*"[^>]*'
+            r'data-bs-target="#league-sidebar"',
+        )
+
+    def test_main_flex_item_can_shrink(self) -> None:
+        # Without min-width: 0 the flex item never shrinks below its widest
+        # table, so .table-responsive never engages and the page scrolls.
+        self.assertIn("min-width: 0", self.html)
+        self.assertIn(".d-flex:has(> #league-sidebar) > main", self.html)
