@@ -1,0 +1,231 @@
+team,name,role,age,started_playing_age,total_games,home_site,height,preferred_roles,player_awareness,game_awareness,resource_awareness,decision_making,positioning,stamina,speed,flexibility,adaptability,communication,teamwork,Offensive_synergy,defensive_synergy,midfield_synergy,resupply_synergy,resupply_efficiency,accuracy,survival,special_usage
+Auckland Wairau 1,Morange!!!,commander,25,18,673,Auckland Wairau,,commander,61,61,50,55,59,50,50,50,59,62,54,67,61,67,50,57,83,54,59
+Auckland Wairau 1,Leech,heavy,25,18,246,Auckland Wairau,,heavy,52,55,50,50,50,50,50,50,53,53,52,54,54,56,50,48,83,53,58
+Auckland Wairau 1,Esnc,scout,25,18,346,Auckland Wairau,,scout,63,62,50,56,55,50,50,50,62,62,57,74,60,63,51,50,82,52,62
+Auckland Wairau 1,Knowitall,scout,25,18,632,Auckland Wairau,,scout,53,56,50,49,51,50,50,50,56,56,53,65,54,56,50,51,87,51,55
+Auckland Wairau 1,GuyNextDoor,medic,25,18,660,Auckland Wairau,,"medic,scout",57,57,50,54,57,50,50,50,56,57,53,69,54,60,51,57,85,53,57
+Auckland Wairau 1,Lyte,ammo,25,18,556,Auckland Wairau,,"scout,ammo",70,62,50,57,64,50,50,50,61,59,54,71,60,66,50,62,77,59,61
+Auckland Wairau 2,DeathMark,commander,25,18,199,Auckland Wairau,,"commander,scout",47,46,50,47,50,50,50,50,45,51,50,54,45,45,49,54,77,47,48
+Auckland Wairau 2,Scorpion,heavy,25,18,42,Auckland Wairau,,"heavy,scout",38,44,50,39,41,50,50,50,46,48,47,54,44,45,48,45,73,48,46
+Auckland Wairau 2,Artemis,scout,25,18,243,Auckland Wairau,,"scout,commander",41,43,50,47,51,50,50,50,45,48,48,54,42,41,50,61,76,54,34
+Auckland Wairau 2,Rodac,scout,25,18,215,Auckland Wairau,,"scout,medic",54,53,50,51,58,50,50,50,53,53,51,62,51,55,50,64,77,53,55
+Auckland Wairau 2,Captain JLT,medic,25,18,189,Auckland Wairau,,"scout,medic",40,44,50,42,46,50,50,50,43,49,49,56,44,44,49,52,75,48,44
+Auckland Wairau 2,Dyno,ammo,25,18,103,Auckland Wairau,,"scout,ammo",42,42,50,49,52,50,50,50,40,43,48,52,40,41,51,65,77,56,32
+Auckland Wairau 3,Chackushi,commander,25,18,36,Auckland Wairau,,scout,43,40,50,43,51,50,50,50,37,44,48,46,37,38,51,61,70,54,43
+Auckland Wairau 3,Jim,heavy,25,18,136,Auckland Wairau,,"scout,heavy",36,40,50,48,51,50,50,50,40,43,47,50,39,40,50,65,79,54,36
+Auckland Wairau 3,Force,scout,25,18,213,Auckland Wairau,,"scout,commander",50,50,50,50,54,50,50,50,49,51,52,57,50,52,50,60,75,53,54
+Auckland Wairau 3,Sneak,scout,25,18,424,Auckland Wairau,,scout,54,54,50,52,51,50,50,50,53,55,54,65,51,54,51,52,79,52,55
+Auckland Wairau 3,Hell Brute,medic,25,18,94,Auckland Wairau,,"scout,medic",32,39,50,44,40,50,50,50,38,39,47,56,38,37,49,51,70,49,38
+Auckland Wairau 3,Mookie,ammo,25,18,73,Auckland Wairau,,scout,61,57,50,55,59,50,50,50,55,54,54,65,55,58,50,59,85,53,57
+Brisbane 1,Twin,commander,25,18,1262,Brisbane,,"scout,commander",57,57,50,56,47,50,50,50,58,65,64,63,58,60,53,40,80,56,54
+Brisbane 1,~Troyoda~,heavy,25,18,1075,Brisbane,,"scout,heavy",50,47,50,51,47,50,50,50,49,53,58,54,48,47,54,45,71,59,49
+Brisbane 1,Prawn Boy,scout,25,18,1110,Brisbane,,scout,63,55,50,57,59,50,50,50,56,62,62,61,55,57,53,57,73,59,61
+Brisbane 1,Rook,scout,25,18,1294,Brisbane,,scout,56,56,50,54,50,50,50,50,56,65,65,56,57,57,52,44,77,51,65
+Brisbane 1,Danta,medic,25,18,1249,Brisbane,,"scout,medic",53,52,50,56,51,50,50,50,51,57,62,56,51,53,53,50,81,57,56
+Brisbane 1,Archdruid,ammo,25,18,1466,Brisbane,,"scout,ammo",57,51,50,55,57,50,50,50,51,57,59,51,50,52,53,58,78,57,52
+Brisbane 2,Taipan,commander,25,18,527,Brisbane,,"scout,commander",76,67,50,64,65,50,50,50,67,67,62,67,67,68,52,59,83,69,66
+Brisbane 2,Screaver,heavy,25,18,565,Brisbane,,"scout,heavy",62,60,50,60,51,50,50,50,60,66,64,65,61,63,53,42,74,58,69
+Brisbane 2,Basil,scout,25,18,1524,Brisbane,,scout,62,60,50,62,52,50,50,50,61,63,62,72,60,62,53,44,75,60,59
+Brisbane 2,Rr Uu Ss Tt Yy,scout,25,18,1746,Brisbane,,scout,76,70,50,61,62,50,50,50,72,71,63,75,72,71,52,51,76,64,70
+Brisbane 2,Lucidun,medic,25,18,829,Brisbane,,"scout,medic",47,43,50,49,52,50,50,50,45,46,56,44,44,43,53,59,75,59,53
+Brisbane 2,Glaedr,ammo,25,18,1735,Brisbane,,"scout,ammo",69,60,50,58,64,50,50,50,61,63,63,59,59,62,52,61,83,64,62
+Brisbane 3,Sexy mEoW!,commander,25,18,187,Brisbane,,"scout,commander",48,45,50,44,46,50,50,50,45,53,58,47,44,47,52,45,71,52,58
+Brisbane 3,Thomiiik,heavy,25,18,96,Brisbane,,"heavy,scout",62,51,50,48,61,50,50,50,47,51,47,55,52,51,49,62,81,54,49
+Brisbane 3,J.F.K,scout,25,18,1230,Brisbane,,scout,59,59,50,57,52,50,50,50,59,60,58,67,58,61,52,46,76,57,61
+Brisbane 3,Scrapz,scout,25,18,502,Brisbane,,scout,58,52,50,53,53,50,50,50,53,59,61,52,52,54,53,50,77,54,60
+Brisbane 3,Black Ace,medic,25,18,39,Brisbane,,"scout,medic",19,28,50,43,36,50,50,50,27,25,43,39,31,25,53,55,69,51,21
+Brisbane 3,ataPATasaurus,ammo,25,18,536,Brisbane,,"scout,ammo",42,43,50,46,45,50,50,50,45,49,58,43,43,45,53,48,72,55,54
+Brisbane 4,Dart,commander,25,18,36,Brisbane,,commander,32,22,50,17,36,50,50,50,29,38,38,18,15,20,50,38,66,35,24
+Brisbane 4,RedNecTec,heavy,25,18,133,Brisbane,,"scout,heavy",43,33,50,31,48,50,50,50,32,46,47,35,25,33,50,53,64,48,41
+Brisbane 4,Jeff Pecks,scout,25,18,1232,Brisbane,,scout,49,44,50,48,47,50,50,50,46,57,60,55,42,45,53,46,67,56,26
+Brisbane 4,Sharp Shooter,scout,25,18,1080,Brisbane,,scout,67,60,50,59,51,50,50,50,59,66,64,70,60,61,51,40,74,56,61
+Brisbane 4,Phynn,medic,25,18,34,Brisbane,,medic,9,28,50,19,22,50,50,50,34,23,38,74,29,20,42,39,85,25,37
+Brisbane 4,Squiza,ammo,25,18,880,Brisbane,,"scout,ammo",43,44,50,54,37,50,50,50,45,57,60,49,44,45,53,32,66,54,56
+Brisbane 5,TheBlackWhisper,commander,25,18,455,Brisbane,,scout,37,44,50,42,46,50,50,50,48,39,55,46,43,46,54,59,75,55,55
+Brisbane 5,Gaza,heavy,25,18,46,Brisbane,,heavy,46,42,50,30,40,50,50,50,44,53,47,40,41,44,48,33,87,34,38
+Brisbane 5,Scorpion,scout,25,18,1159,Brisbane,,scout,49,50,50,53,43,50,50,50,51,60,62,54,49,51,53,37,70,58,64
+Brisbane 5,The Scary One,scout,25,18,1060,Brisbane,,scout,42,46,50,48,43,50,50,50,48,47,57,48,45,49,53,45,82,52,52
+Brisbane 5,Valareos,medic,25,18,161,Brisbane,,scout,21,26,50,45,32,50,50,50,28,21,40,37,32,21,53,43,60,49,51
+Brisbane 5,LoneSoul,ammo,25,18,107,Brisbane,,ammo,62,53,50,47,60,50,50,50,54,52,51,58,52,57,50,61,78,55,53
+Brisbane 6,Lilbo,commander,25,18,33,Brisbane,,scout,38,27,50,16,45,50,50,50,32,26,26,49,25,28,45,58,59,37,5
+Brisbane 6,NoName,heavy,25,18,55,Brisbane,,"scout,heavy",27,32,50,49,39,50,50,50,35,41,55,36,29,31,53,54,72,57,30
+Brisbane 6,SmileySniper :),scout,25,18,891,Brisbane,,scout,26,32,50,44,36,50,50,50,34,27,45,33,34,31,52,47,73,47,33
+Brisbane 6,[HyHo]El Diablo,scout,25,18,571,Brisbane,,scout,57,54,50,54,53,50,50,50,51,55,53,57,53,56,50,54,80,57,56
+Brisbane 6,Prd > Oldskool,medic,25,18,133,Brisbane,,scout,54,48,50,51,50,50,50,50,49,59,61,51,48,47,53,48,74,53,59
+Brisbane 6,A.n.g.e.l,ammo,25,18,192,Brisbane,,"ammo,scout",51,38,50,41,58,50,50,50,41,40,52,38,40,38,52,66,74,60,50
+Brisbane 7,Valareos,commander,25,18,29,Brisbane,,scout,21,25,50,47,38,50,50,50,24,25,39,42,29,24,51,57,55,51,50
+Brisbane 7,Wildcard,heavy,25,18,36,Brisbane,,scout,45,38,50,22,47,50,50,50,42,41,42,45,40,38,50,51,63,40,4
+Brisbane 7,Lone Wolf,scout,25,18,202,Brisbane,,scout,37,42,50,50,42,50,50,50,42,50,59,48,41,44,53,48,75,54,39
+Brisbane 7,boomTRAIN,scout,25,18,324,Brisbane,,scout,50,52,50,53,47,50,50,50,54,58,60,54,51,55,53,44,76,57,63
+Brisbane 7,PetRoo,medic,25,18,80,Brisbane,,scout,24,33,50,42,40,50,50,50,34,30,49,41,35,33,52,59,67,54,29
+Brisbane 7,CoolBeans,ammo,25,18,35,Brisbane,,ammo,31,27,50,18,30,50,50,50,32,37,39,44,31,2,42,31,67,35,34
+Invasion 1,EboMike,commander,25,18,880,Invasion,,"scout,commander",47,52,50,50,42,50,50,50,49,46,47,58,50,54,49,39,75,53,54
+Invasion 1,Spooky,heavy,25,18,662,Invasion,,"heavy,scout",59,54,50,51,54,50,50,50,52,52,53,57,52,54,51,51,82,53,54
+Invasion 1,High Tower,scout,25,18,697,Invasion,,"ammo,scout",53,45,50,52,47,50,50,50,42,48,51,58,44,46,52,43,55,54,55
+Invasion 1,anchovy!,scout,25,18,783,Invasion,,scout,46,48,50,50,41,50,50,50,44,47,49,53,50,49,49,36,76,50,50
+Invasion 1,Super Dave,medic,25,18,719,Invasion,,medic,50,49,50,51,50,50,50,50,46,42,53,65,49,46,53,52,83,50,45
+Invasion 1,Luffy,ammo,25,18,666,Invasion,,"heavy,ammo",49,44,50,51,42,50,50,50,40,48,52,51,43,44,51,38,74,52,44
+Invasion 2,Commander,commander,25,18,727,Invasion,,commander,71,67,50,61,53,50,50,50,63,58,54,72,66,70,51,40,80,60,63
+Invasion 2,Halange,heavy,25,18,464,Invasion,,"scout,heavy",53,54,50,50,50,50,50,50,52,50,52,57,51,55,50,48,85,52,53
+Invasion 2,Shadow Dagger,scout,25,18,692,Invasion,,scout,52,45,50,48,46,50,50,50,44,54,54,44,41,46,50,42,69,48,56
+Invasion 2,XCountry,scout,25,18,467,Invasion,,"scout,medic",52,54,50,55,38,50,50,50,51,49,53,71,52,56,51,27,73,52,55
+Invasion 2,Paulie,medic,25,18,556,Invasion,,"scout,medic",50,47,50,51,45,50,50,50,43,47,53,55,46,46,51,44,69,50,54
+Invasion 2,Ender,ammo,25,18,519,Invasion,,"ammo,heavy",54,54,50,52,49,50,50,50,51,53,51,61,52,56,50,45,78,54,56
+Invasion 3,Sweets,commander,25,18,659,Invasion,,commander,56,56,50,51,45,50,50,50,54,51,52,64,50,58,51,38,84,51,55
+Invasion 3,Loading...,heavy,25,18,192,Invasion,,heavy,56,50,50,52,52,50,50,50,47,48,51,56,50,51,50,50,77,53,52
+Invasion 3,Insulified,scout,25,18,269,Invasion,,scout,53,52,50,52,46,50,50,50,48,49,50,56,45,54,50,40,77,55,57
+Invasion 3,John Warhammer,scout,25,18,368,Invasion,,scout,51,48,50,49,33,50,50,50,41,47,48,55,47,50,50,20,69,48,43
+Invasion 3,Stealth,medic,25,18,126,Invasion,,"scout,medic",37,40,50,43,46,50,50,50,39,35,46,43,41,42,51,59,75,48,52
+Invasion 3,Just Jay ☺,ammo,25,18,494,Invasion,,"ammo,heavy",55,49,50,49,57,50,50,50,46,47,53,50,48,51,52,60,87,54,44
+Invasion 4,Bagel,commander,25,18,76,Invasion,,"commander,scout",47,48,50,45,49,50,50,50,45,39,45,39,47,50,50,51,82,57,44
+Invasion 4,Wowza,heavy,25,18,159,Invasion,,"ammo,heavy",54,57,50,53,50,50,50,50,54,52,53,69,55,62,51,46,79,57,59
+Invasion 4,Junkrat ♥,scout,25,18,155,Invasion,,"scout,ammo",43,46,50,50,45,50,50,50,45,36,53,50,46,46,54,49,81,51,53
+Invasion 4,Twix ☺,scout,25,18,169,Invasion,,"medic,scout",14,38,50,40,23,50,50,50,34,20,42,56,42,30,51,34,79,40,34
+Invasion 4,☺,medic,25,18,93,Invasion,,medic,31,42,50,40,36,50,50,50,41,30,47,58,44,38,50,44,86,41,42
+Invasion 4,Shadow ☺,ammo,25,18,516,Invasion,,"ammo,heavy",57,53,50,52,51,50,50,50,51,49,53,60,50,55,52,46,78,51,57
+Lasergame Říčany 1,Daddy Pig,commander,25,18,58,Lasergame Říčany,,commander,56,51,50,39,53,50,50,50,48,38,38,57,30,40,49,51,83,51,40
+Lasergame Říčany 1,Smally McSmall,heavy,25,18,121,Lasergame Říčany,,heavy,41,40,50,28,47,50,50,50,42,28,33,37,39,40,48,51,86,44,29
+Lasergame Říčany 1,Void,scout,25,18,45,Lasergame Říčany,,"scout,medic",44,40,50,32,45,50,50,50,39,23,36,60,42,39,45,52,76,42,42
+Lasergame Říčany 1,Wezza,scout,25,18,72,Lasergame Říčany,,scout,50,52,50,47,52,50,50,50,47,42,45,56,43,53,48,59,83,51,17
+Lasergame Říčany 1,Agent Jaikei,medic,25,18,44,Lasergame Říčany,,"medic,ammo",27,30,50,25,28,50,50,50,31,36,37,63,30,24,39,30,62,35,36
+Lasergame Říčany 1,Shigiros^. .^₎⟆,ammo,25,18,37,Lasergame Říčany,,"ammo,scout",54,43,50,49,53,50,50,50,36,54,45,57,42,46,46,52,60,52,48
+Lasergame Říčany 2,Fujka293^. .^₎⟆,commander,25,18,37,Lasergame Říčany,,commander,66,52,50,51,65,50,50,50,43,39,39,58,75,61,50,69,81,58,50
+Lasergame Říčany 2,VoKu,heavy,25,18,28,Lasergame Říčany,,scout,54,38,50,25,55,50,50,50,39,29,32,51,31,42,48,64,68,42,33
+Lasergame Říčany 2,Poison Ivy,scout,25,18,104,Lasergame Říčany,,"scout,ammo",33,38,50,28,35,50,50,50,38,35,39,47,33,39,44,38,77,38,39
+Lasergame Říčany 2,Terano,scout,25,18,41,Lasergame Říčany,,scout,56,40,50,31,54,50,50,50,38,35,38,39,46,39,47,57,71,47,48
+Lasergame Říčany 2,FLY Lord_Logan,medic,25,18,40,Lasergame Říčany,,medic,48,43,50,46,47,50,50,50,33,55,45,69,42,42,45,49,82,44,41
+Lasergame Říčany 2,FLY Dominanz,ammo,25,18,39,Lasergame Říčany,,scout,54,50,50,49,52,50,50,50,42,46,48,54,44,51,49,54,69,52,52
+Loveland 1,♥Sabo♥,commander,25,18,879,Loveland,,"scout,commander",62,57,50,51,54,50,50,50,56,54,49,61,58,59,48,50,88,58,55
+Loveland 1,TheBabe,heavy,25,18,773,Loveland,,"scout,heavy",54,52,50,47,48,50,50,50,50,50,48,57,52,53,48,44,80,54,53
+Loveland 1,RaidenGL,scout,25,18,1118,Loveland,,scout,48,41,50,43,50,50,50,50,41,35,39,48,43,40,47,54,72,60,42
+Loveland 1,Rooks2NR,scout,25,18,1052,Loveland,,scout,61,60,50,51,46,50,50,50,58,54,50,74,59,60,49,35,83,56,58
+Loveland 1,Mr Jo Gangles,medic,25,18,1569,Loveland,,"medic,scout",66,62,50,53,56,50,50,50,62,55,49,76,63,63,49,48,92,56,57
+Loveland 1,Asra,ammo,25,18,1320,Loveland,,"ammo,scout",56,52,50,48,52,50,50,50,51,52,47,62,52,52,48,50,85,56,45
+Loveland 2,ˢᵖᵃᵃʳʳᵏᶻ,commander,25,18,1036,Loveland,,"scout,commander",70,61,50,56,56,50,50,50,60,58,51,72,61,62,48,47,85,61,46
+Loveland 2,฿ Ⱡ ₳ ₵ ₭ Ø Ʉ ₮,heavy,25,18,697,Loveland,,"scout,heavy",56,53,50,48,53,50,50,50,53,52,50,56,52,55,50,52,81,57,50
+Loveland 2,C.Arsyn,scout,25,18,442,Loveland,,scout,38,43,50,42,40,50,50,50,41,35,41,46,43,44,48,43,83,55,45
+Loveland 2,Celly Bee,scout,25,18,426,Loveland,,scout,44,46,50,46,47,50,50,50,44,43,48,46,45,47,49,52,83,58,33
+Loveland 2,B I G   Lizard,medic,25,18,788,Loveland,,"medic,scout",55,52,50,49,53,50,50,50,52,51,49,62,52,55,49,51,87,54,50
+Loveland 2,Mr.mischief,ammo,25,18,1117,Loveland,,"ammo,scout",64,59,50,53,53,50,50,50,57,56,49,76,60,60,48,44,78,56,54
+Loveland 3,AshVD,commander,25,18,976,Loveland,,"scout,commander",56,54,50,47,52,50,50,50,54,52,50,57,54,54,49,47,85,54,55
+Loveland 3,Odin's Fist,heavy,25,18,713,Loveland,,"scout,heavy",54,58,50,54,50,50,50,50,57,58,52,67,58,60,49,47,83,53,56
+Loveland 3,Bromatized,scout,25,18,1234,Loveland,,scout,62,56,50,51,52,50,50,50,55,51,47,69,58,57,49,44,77,58,47
+Loveland 3,Judoku,scout,25,18,989,Loveland,,scout,50,49,50,49,44,50,50,50,46,51,50,57,47,51,49,40,85,54,50
+Loveland 3,SgtTucker,medic,25,18,1145,Loveland,,"scout,medic",62,53,50,55,56,50,50,50,52,55,50,57,53,52,48,53,86,59,48
+Loveland 3,Oddum,ammo,25,18,674,Loveland,,"scout,ammo",49,48,50,45,51,50,50,50,47,50,50,51,48,48,49,53,81,47,50
+Loveland 4,Nami Swan,commander,25,18,334,Loveland,,"scout,commander",44,46,50,46,47,50,50,50,46,40,44,51,48,46,48,50,82,59,29
+Loveland 4,10yrStrawberry,heavy,25,18,249,Loveland,,"scout,heavy",44,41,50,42,51,50,50,50,41,34,36,41,43,43,47,60,79,63,28
+Loveland 4,Burnt_lettuce,scout,25,18,196,Loveland,,scout,44,41,50,42,43,50,50,50,41,41,45,47,40,40,47,42,76,58,33
+Loveland 4,DyscoMonkee,scout,25,18,673,Loveland,,scout,52,54,50,51,51,50,50,50,53,53,51,65,51,55,49,52,77,53,56
+Loveland 4,G H O 5 T,medic,25,18,850,Loveland,,"scout,medic",60,56,50,51,56,50,50,50,53,48,47,70,55,57,49,52,79,61,57
+Loveland 4,Loki,ammo,25,18,1110,Loveland,,"scout,ammo",60,51,50,48,57,50,50,50,50,45,45,56,50,51,47,56,77,62,54
+Loveland 5,@s1mply0k,commander,25,18,1093,Loveland,,"commander,medic",65,57,50,54,53,50,50,50,56,53,51,71,57,59,49,45,87,57,55
+Loveland 5,MDLuffy,heavy,25,18,108,Loveland,,"scout,heavy",44,46,50,45,39,50,50,50,45,42,42,53,48,47,49,34,75,57,45
+Loveland 5,Artemis02,scout,25,18,175,Loveland,,scout,31,33,50,34,40,50,50,50,34,31,35,30,38,31,48,51,61,60,31
+Loveland 5,YoYoSwampert Sr,scout,25,18,181,Loveland,,scout,44,41,50,40,53,50,50,50,42,34,38,44,42,41,48,62,75,65,38
+Loveland 5,OldManThanatos,medic,25,18,245,Loveland,,medic,57,53,50,59,54,50,50,50,45,50,51,73,53,56,52,55,90,52,54
+Loveland 5,Death Knight,ammo,25,18,655,Loveland,,"ammo,scout",63,60,50,56,57,50,50,50,60,57,53,65,59,64,51,55,86,54,58
+Loveland 6,Agent X,commander,25,18,190,Loveland,,"scout,commander",42,45,50,43,46,50,50,50,46,34,41,43,44,46,48,51,87,62,44
+Loveland 6,Nyx05,heavy,25,18,99,Loveland,,"scout,heavy",27,25,50,33,36,50,50,50,27,27,34,35,27,25,48,46,53,60,33
+Loveland 6,ElderBerry,scout,25,18,131,Loveland,,scout,33,29,50,35,40,50,50,50,27,30,36,38,31,26,49,47,60,53,17
+Loveland 6,Night Storm 5,scout,25,18,162,Loveland,,scout,34,36,50,43,38,50,50,50,34,32,37,40,39,35,49,43,68,58,38
+Loveland 6,The Rat,medic,25,18,296,Loveland,,"scout,medic",43,44,50,43,45,50,50,50,44,36,41,52,43,46,47,49,78,58,45
+Loveland 6,123git,ammo,25,18,108,Loveland,,"scout,ammo",52,49,50,45,48,50,50,50,48,45,42,54,49,52,46,43,80,61,49
+Loveland 7,Kodama,commander,25,18,666,Loveland,,"commander,scout",66,62,50,59,62,50,50,50,61,57,51,67,60,65,49,62,87,59,57
+Loveland 7,Mama mia,heavy,25,18,43,Loveland,,"scout,heavy",31,37,50,39,37,50,50,50,34,36,39,36,36,36,48,43,72,62,22
+Loveland 7,Beng,scout,25,18,51,Loveland,,scout,19,30,50,30,30,50,50,50,30,9,21,31,29,28,47,42,69,61,15
+Loveland 7,Blackmoon,scout,25,18,115,Loveland,,scout,40,44,50,42,41,50,50,50,43,29,39,54,43,44,47,43,75,59,18
+Loveland 7,LucidOrb,medic,25,18,52,Loveland,,"scout,medic",20,32,50,39,44,50,50,50,29,14,29,45,35,29,48,70,72,56,21
+Loveland 7,Poopies,ammo,25,18,369,Loveland,,"ammo,commander",34,44,50,28,36,50,50,50,46,38,43,52,42,35,48,40,87,35,47
+PowerLaser Stuttgart 1,[HyHo] Veltiar,commander,25,18,163,PowerLaser Stuttgart,,"commander,heavy",72,66,50,59,59,50,50,50,63,55,50,78,65,67,50,51,84,61,59
+PowerLaser Stuttgart 1,[HyHo] Kamish,heavy,25,18,156,PowerLaser Stuttgart,,heavy,50,50,50,48,45,50,50,50,48,56,53,57,49,50,50,41,85,48,39
+PowerLaser Stuttgart 1,[HyHo] M!ka,scout,25,18,130,PowerLaser Stuttgart,,"scout,medic",51,55,50,49,46,50,50,50,51,49,49,67,48,58,49,43,83,49,47
+PowerLaser Stuttgart 1,[HyHo]Sir Robbe,scout,25,18,150,PowerLaser Stuttgart,,"scout,heavy",52,53,50,51,45,50,50,50,49,53,51,62,50,54,51,40,75,51,49
+PowerLaser Stuttgart 1,[HyHo] Ainsel,medic,25,18,164,PowerLaser Stuttgart,,"medic,scout",42,49,50,48,45,50,50,50,43,49,46,66,50,47,50,49,78,49,49
+PowerLaser Stuttgart 1,[HyHo] ReFolix,ammo,25,18,145,PowerLaser Stuttgart,,"ammo,scout",69,61,50,63,59,50,50,50,56,64,55,66,60,63,50,51,77,58,53
+PowerLaser Stuttgart 2,[HyHo] Zwähn,commander,25,18,117,PowerLaser Stuttgart,,"commander,scout",60,62,50,60,50,50,50,50,58,55,50,74,57,64,50,42,82,56,53
+PowerLaser Stuttgart 2,[HyHo] Sariel,heavy,25,18,122,PowerLaser Stuttgart,,"heavy,scout",58,62,50,60,55,50,50,50,56,61,56,72,61,62,50,52,84,61,57
+PowerLaser Stuttgart 2,[HyHo] Colt 45,scout,25,18,114,PowerLaser Stuttgart,,scout,47,44,50,45,47,50,50,50,39,44,47,46,40,47,49,51,69,50,24
+PowerLaser Stuttgart 2,[HyHo]IronGuard,scout,25,18,68,PowerLaser Stuttgart,,scout,39,44,50,43,38,50,50,50,40,48,47,54,39,45,49,38,68,42,44
+PowerLaser Stuttgart 2,[HyHo]XenOn,medic,25,18,195,PowerLaser Stuttgart,,medic,58,55,50,56,50,50,50,50,52,58,51,70,55,51,50,43,81,49,45
+PowerLaser Stuttgart 2,[HyHo] Kayce,ammo,25,18,142,PowerLaser Stuttgart,,ammo,47,51,50,48,41,50,50,50,48,51,48,53,50,48,49,38,84,45,44
+St George 1,Sslaughtermelon,commander,25,18,1176,St George,,"scout,commander",70,66,50,58,53,50,50,50,64,63,53,80,66,67,50,42,82,54,55
+St George 1,Metalface,heavy,25,18,980,St George,,"scout,heavy",51,54,50,51,46,50,50,50,52,53,50,59,53,56,49,42,78,48,57
+St George 1,CopeWithIt,scout,25,18,347,St George,,scout,50,52,50,51,44,50,50,50,48,56,52,63,49,54,49,41,74,50,51
+St George 1,Rockwood,scout,25,18,826,St George,,scout,59,57,50,53,53,50,50,50,53,58,54,64,56,59,49,49,85,51,57
+St George 1,Chaser,medic,25,18,798,St George,,"medic,scout",58,59,50,56,53,50,50,50,57,59,53,70,57,62,50,49,86,54,56
+St George 1,Snufflez,ammo,25,18,1147,St George,,"scout,ammo",67,66,50,57,52,50,50,50,63,63,53,80,66,68,50,41,82,51,62
+St George 2,Zeatta,commander,25,18,287,St George,,"scout,commander",48,51,50,50,47,50,50,50,47,50,49,59,49,52,49,48,83,48,47
+St George 2,Volterizer,heavy,25,18,123,St George,,"scout,heavy",55,49,50,51,58,50,50,50,46,53,53,53,46,51,50,61,81,50,44
+St George 2,Falconblade,scout,25,18,96,St George,,scout,33,40,50,43,40,50,50,50,38,40,45,52,39,40,48,48,72,44,38
+St George 2,Vulcan,scout,25,18,369,St George,,scout,53,52,50,51,48,50,50,50,46,51,49,60,52,54,49,46,78,50,56
+St George 2,Fire-sword,medic,25,18,458,St George,,"scout,medic",50,53,50,48,45,50,50,50,50,52,49,58,51,56,49,43,78,49,57
+St George 2,Medz,ammo,25,18,455,St George,,"medic,ammo",63,60,50,55,54,50,50,50,57,60,50,65,59,63,50,49,88,48,55
+St George 3,Imathis,commander,25,18,99,St George,,"commander,scout",52,51,50,47,43,50,50,50,47,56,54,50,49,54,49,39,80,43,42
+St George 3,Vipermetcalf,heavy,25,18,234,St George,,"scout,heavy",26,35,50,43,35,50,50,50,28,31,35,38,37,36,49,44,68,54,16
+St George 3,Brigbooty,scout,25,18,68,St George,,"scout,medic",23,35,50,41,22,50,50,50,31,38,44,50,36,33,48,25,64,39,37
+St George 3,Sadders,scout,25,18,581,St George,,"scout,medic",42,47,50,48,40,50,50,50,44,53,51,56,43,46,50,41,80,49,48
+St George 3,EZ Bake,medic,25,18,225,St George,,medic,38,43,50,44,39,50,50,50,37,43,45,58,42,41,48,42,79,41,40
+St George 3,Gunshy,ammo,25,18,105,St George,,"scout,ammo",40,39,50,40,44,50,50,50,37,50,48,47,37,39,48,49,72,44,37
+Syracuse 1,Beanz,commander,25,18,552,Syracuse,,"scout,commander",63,62,50,58,57,50,50,50,61,60,56,69,63,64,50,53,84,57,63
+Syracuse 1,Brew,heavy,25,18,385,Syracuse,,"heavy,scout",70,63,50,60,63,50,50,50,62,60,53,72,63,63,50,59,80,58,61
+Syracuse 1,Dogebuster,scout,25,18,131,Syracuse,,scout,47,45,50,38,52,50,50,50,46,41,45,45,43,45,50,59,82,47,27
+Syracuse 1,Evol hate on me,scout,25,18,382,Syracuse,,scout,63,59,50,57,56,50,50,50,57,54,52,71,56,60,50,54,79,57,56
+Syracuse 1,AlexBoxes!,medic,25,18,386,Syracuse,,"scout,medic",57,54,50,52,55,50,50,50,52,54,51,62,51,56,49,56,80,51,33
+Syracuse 1,DiscoStu,ammo,25,18,543,Syracuse,,"ammo,scout",49,48,50,47,50,50,50,50,46,51,49,59,48,49,48,52,76,49,48
+Syracuse 2,Oguri Cap,commander,25,18,609,Syracuse,,"scout,commander",60,61,50,55,55,50,50,50,59,53,50,70,60,63,49,51,86,56,54
+Syracuse 2,Axman,heavy,25,18,281,Syracuse,,"heavy,commander",47,49,50,37,52,50,50,50,51,49,48,48,47,49,50,57,86,46,43
+Syracuse 2,Golden Pony Boy,scout,25,18,163,Syracuse,,scout,57,55,50,52,59,50,50,50,56,52,53,55,53,58,51,64,86,53,57
+Syracuse 2,Woz,scout,25,18,131,Syracuse,,scout,34,34,50,34,43,50,50,50,32,32,38,36,32,32,49,54,66,46,38
+Syracuse 2,Fenrir,medic,25,18,201,Syracuse,,"scout,medic",51,53,50,49,54,50,50,50,50,45,49,56,52,55,50,59,85,55,52
+Syracuse 2,Skillz,ammo,25,18,174,Syracuse,,"ammo,scout",43,45,50,45,50,50,50,50,44,47,46,48,45,44,46,57,80,49,36
+Syracuse 3,Jackal,commander,25,18,421,Syracuse,,"commander,scout",58,58,50,52,60,50,50,50,56,54,50,63,54,62,50,62,86,55,54
+Syracuse 3,Black Hammer,heavy,25,18,224,Syracuse,,"heavy,scout",66,61,50,61,62,50,50,50,59,60,56,66,60,62,51,62,84,64,61
+Syracuse 3,Havoc,scout,25,18,74,Syracuse,,"scout,commander",41,35,50,42,46,50,50,50,35,36,43,45,37,35,49,55,64,48,45
+Syracuse 3,XxDrakEx,scout,25,18,64,Syracuse,,scout,38,47,50,45,42,50,50,50,47,47,48,54,47,48,50,47,84,40,48
+Syracuse 3,RazorWires,medic,25,18,113,Syracuse,,"medic,scout",25,33,50,34,32,50,50,50,35,31,40,59,32,36,42,41,72,44,28
+Syracuse 3,DoNotPassGo,ammo,25,18,307,Syracuse,,"ammo,medic",62,56,50,59,60,50,50,50,55,57,53,65,56,57,50,59,83,59,51
+Syracuse 4,Stealth Elf,commander,25,18,150,Syracuse,,"commander,scout",53,48,50,46,56,50,50,50,48,46,48,46,49,52,50,62,86,51,39
+Syracuse 4,Zerg,heavy,25,18,276,Syracuse,,"heavy,scout",60,55,50,46,58,50,50,50,55,51,52,61,53,55,51,58,81,50,54
+Syracuse 4,Grumpy,scout,25,18,47,Syracuse,,scout,31,19,50,12,53,50,50,50,21,10,11,26,18,19,50,80,61,40,1
+Syracuse 4,Papa Smurf,scout,25,18,45,Syracuse,,scout,41,27,50,19,44,50,50,50,31,35,34,32,11,28,49,51,61,33,18
+Syracuse 4,PlayBudderCraft,medic,25,18,85,Syracuse,,"medic,scout",29,40,50,33,32,50,50,50,42,37,33,65,40,42,39,37,79,36,38
+Syracuse 4,Cody'sTinyShirt,ammo,25,18,295,Syracuse,,"scout,ammo",57,59,50,58,54,50,50,50,56,53,50,73,57,62,50,53,80,56,55
+Syracuse 5,Nobody,commander,25,18,87,Syracuse,,"commander,ammo",38,36,50,24,47,50,50,50,39,27,36,28,36,45,48,54,80,46,33
+Syracuse 5,Foxroundfindout,heavy,25,18,213,Syracuse,,"scout,heavy",52,50,50,48,49,50,50,50,45,50,49,57,51,50,49,47,72,51,38
+Syracuse 5,Cornwall,scout,25,18,39,Syracuse,,"scout,medic",9,25,50,29,33,50,50,50,24,21,32,38,26,20,47,55,65,35,19
+Syracuse 5,Yung Buck,scout,25,18,40,Syracuse,,scout,27,27,50,45,42,50,50,50,18,34,39,40,30,26,49,59,59,41,34
+Syracuse 5,xoxLiLBiTxox,medic,25,18,206,Syracuse,,"medic,ammo",40,37,50,44,49,50,50,50,34,33,44,54,38,36,47,60,73,50,45
+Syracuse 5,Mama Bear,ammo,25,18,178,Syracuse,,"ammo,heavy",43,43,50,37,46,50,50,50,44,46,42,43,42,45,45,49,86,42,29
+Syracuse 6,Jerome,commander,25,18,83,Syracuse,,"scout,commander",49,52,50,47,51,50,50,50,52,53,54,57,49,54,49,55,80,50,58
+Syracuse 6,The Gracken,heavy,25,18,201,Syracuse,,"heavy,scout",38,34,50,33,45,50,50,50,36,48,44,39,31,33,48,51,76,39,37
+Syracuse 6,Acer,scout,25,18,38,Syracuse,,scout,43,44,50,44,46,50,50,50,44,45,49,55,39,46,50,52,77,39,50
+Syracuse 6,Cookie,scout,25,18,59,Syracuse,,scout,55,48,50,46,54,50,50,50,50,48,49,53,43,48,49,59,74,48,49
+Syracuse 6,Princess,medic,25,18,95,Syracuse,,medic,62,57,50,64,59,50,50,50,51,58,52,73,56,61,51,58,85,57,54
+Syracuse 6,Razz,ammo,25,18,47,Syracuse,,"scout,ammo",55,48,50,48,57,50,50,50,49,53,54,54,50,47,50,61,80,51,40
+Free Agents,Minette,commander,25,18,225,Loveland,,"commander,scout",36,40,50,44,44,50,50,50,40,42,46,47,37,38,51,51,84,49,44
+Free Agents,S C Y T H E,commander,25,18,212,Detroit,,"commander,scout",56,49,50,52,47,50,50,50,42,60,58,44,54,50,50,42,75,54,55
+Free Agents,[HyHo]Fives,commander,25,18,111,PowerLaser Stuttgart,,"commander,scout",58,59,50,57,53,50,50,50,53,48,45,73,57,58,50,49,85,56,51
+Free Agents,Anubis ☥,heavy,25,18,232,Invasion,,"heavy,scout",53,44,50,44,49,50,50,50,46,35,45,53,44,44,49,46,71,56,53
+Free Agents,Assassin,scout,25,18,83,Syracuse,,scout,62,57,50,62,59,50,50,50,56,60,57,59,57,58,50,59,73,63,59
+Free Agents,DK,scout,25,18,502,Auckland Wairau,,"scout,heavy",53,51,50,49,51,50,50,50,49,50,53,64,48,52,53,50,75,48,56
+Free Agents,Das,scout,25,18,49,Invasion,,"scout,medic",28,33,50,36,33,50,50,50,29,27,40,50,34,33,50,42,70,39,44
+Free Agents,Deadinside,scout,25,18,42,Auckland Wairau,,"scout,commander",44,45,50,51,45,50,50,50,41,55,53,62,40,46,49,47,69,51,46
+Free Agents,Deadshot X,scout,25,18,31,Brisbane,,"scout,ammo",0,19,50,33,33,50,50,50,22,2,19,33,23,17,49,67,59,59,15
+Free Agents,Dill,scout,25,18,301,St George,,"scout,commander",63,54,50,57,61,50,50,50,51,56,57,42,45,55,49,64,75,58,55
+Free Agents,I am retired,scout,25,18,44,Syracuse,,"scout,medic",55,55,50,63,54,50,50,50,54,55,51,67,53,54,51,55,88,52,46
+Free Agents,Jacrovio,scout,25,18,241,St George,,"scout,medic",57,50,50,48,51,50,50,50,46,62,53,59,48,50,48,47,75,49,48
+Free Agents,N00b,scout,25,18,199,Detroit,,"scout,ammo",52,47,50,44,49,50,50,50,49,50,47,60,48,48,49,49,77,43,51
+Free Agents,Neo,scout,25,18,88,Brisbane,,"scout,ammo",0,11,50,32,34,50,50,50,12,0,23,33,19,3,52,69,54,59,19
+Free Agents,Obyron,scout,25,18,29,Loveland,,scout,42,34,50,44,48,50,50,50,32,31,40,38,35,30,50,54,65,59,43
+Free Agents,Oggi,scout,25,18,27,Auckland Wairau,,scout,42,33,50,45,47,50,50,50,32,47,49,45,31,34,50,60,54,51,35
+Free Agents,Psycho Cyborg,scout,25,18,36,Loveland,,scout,27,34,50,33,45,50,50,50,37,24,29,31,32,35,48,65,75,75,21
+Free Agents,Shadow,scout,25,18,79,Auckland Wairau,,"scout,medic",34,33,50,42,47,50,50,50,31,41,41,48,35,30,48,61,65,51,22
+Free Agents,SheeplessKnight,scout,25,18,27,Loveland,,scout,24,29,50,28,36,50,50,50,29,24,31,36,34,27,49,50,62,60,31
+Free Agents,SupremeKev,scout,25,18,93,Invasion,,scout,57,45,50,46,52,50,50,50,42,36,40,54,43,46,50,56,62,57,50
+Free Agents,Thee Merlin,scout,25,18,59,Syracuse,,scout,55,60,50,66,54,50,50,50,55,53,53,51,56,61,50,56,86,70,59
+Free Agents,Try HARDER,scout,25,18,227,Detroit,,"scout,commander",50,46,50,52,54,50,50,50,45,57,54,51,46,43,49,58,75,57,52
+Free Agents,Unluckyonion13,scout,25,18,27,St George,,scout,30,34,50,41,40,50,50,50,30,38,40,34,38,31,49,51,67,45,35
+Free Agents,[HyHo]Misu,scout,25,18,60,PowerLaser Stuttgart,,"scout,medic",40,44,50,46,40,50,50,50,41,48,50,58,39,43,51,42,72,45,28
+Free Agents,Applesauce,medic,25,18,333,St George,,medic,56,54,50,61,54,50,50,50,46,40,50,83,54,50,50,54,88,54,50
+Free Agents,Bum,medic,25,18,27,Lasergame Říčany,,medic,32,41,50,26,28,50,50,50,43,43,32,76,41,45,34,27,84,27,25

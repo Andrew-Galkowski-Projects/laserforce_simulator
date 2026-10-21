@@ -44,6 +44,13 @@ SLOT_LIMITS: dict[str, int] = {
 }
 
 
+# Must equal ``teams.models.FREE_AGENTS_TEAM_NAME`` (re-declared to keep this
+# module Django-free; ``test_services.py`` pins the equality). Rows for this
+# team go to the shared free-agent pool, which is not a roster, so
+# :data:`SLOT_LIMITS` does not apply to it.
+FREE_AGENTS_TEAM_NAME: str = "Free Agents"
+
+
 PROFILE_BOUNDS: dict[str, tuple[int, int]] = {
     "age": (5, 100),
     "started_playing_age": (3, 100),
@@ -437,7 +444,7 @@ def _check_in_file_collisions(
     Two passes:
       1. Same ``(team, name)`` twice → flag the second occurrence.
       2. Same ``(team, role)`` overflows :data:`SLOT_LIMITS` → flag the
-         offending row.
+         offending row. Skipped for :data:`FREE_AGENTS_TEAM_NAME`.
     """
 
     seen_pairs: dict[tuple[str, str], int] = {}
@@ -459,6 +466,8 @@ def _check_in_file_collisions(
         else:
             seen_pairs[pair] = row.row_num
 
+        if row.team == FREE_AGENTS_TEAM_NAME:
+            continue
         role_key = (row.team, row.role)
         role_counts[role_key] = role_counts.get(role_key, 0) + 1
         limit = SLOT_LIMITS.get(row.role)

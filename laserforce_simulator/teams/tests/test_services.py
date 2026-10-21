@@ -22,7 +22,8 @@ from django.test import TestCase
 from django.urls import reverse
 
 from conftest import get_shared_manager
-from teams.models import Player, Team, get_free_agents_team
+from teams import roster_importer
+from teams.models import FREE_AGENTS_TEAM_NAME, Player, Team, get_free_agents_team
 from teams.roster_importer import ALL_COLUMNS, REQUIRED_COLUMNS, RosterImportError
 from teams.serializers import _PLAYER_STAT_FIELDS
 from teams.services import (
@@ -275,6 +276,68 @@ class TestRunRosterImport(_ServicesTestCase):
         self.assertFalse(Team.objects.filter(name="SvcFirst").exists())
         self.assertEqual(Team.objects.count(), teams_before)
         self.assertEqual(Player.objects.count(), players_before)
+
+
+class TestRunRosterImportFreeAgents(_ServicesTestCase):
+    """Rows naming the Free Agents Team go to the shared pool, not a roster."""
+
+    def _pool_rows(self) -> str:
+        return _csv_text(
+            _row(FREE_AGENTS_TEAM_NAME, "FA-Sc1", "scout"),
+            _row(FREE_AGENTS_TEAM_NAME, "FA-Sc2", "scout"),
+            _row(FREE_AGENTS_TEAM_NAME, "FA-Sc3", "scout"),
+            _row(FREE_AGENTS_TEAM_NAME, "FA-Cdr1", "commander"),
+            _row(FREE_AGENTS_TEAM_NAME, "FA-Cdr2", "commander"),
+        )
+
+    def test_parser_constant_matches_model_constant(self) -> None:
+        self.assertEqual(roster_importer.FREE_AGENTS_TEAM_NAME, FREE_AGENTS_TEAM_NAME)
+
+    def test_rows_land_on_the_free_agents_team_without_slots(self) -> None:
+        result = run_roster_import(self._pool_rows(), manager=self.user_a)
+        pool = get_free_agents_team()
+        self.assertEqual(result.player_count, 5)
+        self.assertEqual(
+            sorted(pool.players.values_list("name", flat=True)),
+            ["FA-Cdr1", "FA-Cdr2", "FA-Sc1", "FA-Sc2", "FA-Sc3"],
+        )
+        pool.refresh_from_db()
+        for slot in (
+            "slot_commander",
+            "slot_heavy",
+            "slot_scout_1",
+            "slot_scout_2",
+            "slot_medic",
+            "slot_ammo",
+        ):
+            self.assertIsNone(getattr(pool, slot), slot)
+
+    def test_free_agents_team_is_never_stamped(self) -> None:
+        run_roster_import(self._pool_rows(), manager=self.user_a)
+        self.assertEqual(Team.objects.filter(name=FREE_AGENTS_TEAM_NAME).count(), 1)
+        self.assertIsNone(get_free_agents_team().manager_id)
+
+    def test_existing_pool_is_appended_to(self) -> None:
+        pool = get_free_agents_team()
+        Player.objects.create(team=pool, name="Already-Here")
+        result = run_roster_import(self._pool_rows(), manager=self.user_a)
+        self.assertEqual(result.created_teams, [])
+        self.assertEqual([t.pk for t in result.appended_teams], [pool.pk])
+        self.assertEqual(pool.players.count(), 6)
+
+    def test_pool_rows_import_alongside_regular_teams(self) -> None:
+        text = _csv_text(
+            *_six_rows("SvcWithPool", "W"),
+            _row(FREE_AGENTS_TEAM_NAME, "FA-Extra", "scout"),
+        )
+        result = run_roster_import(text, manager=self.user_a)
+        # The pool did not exist yet, so it is reported as created (unstamped).
+        self.assertEqual(
+            [t.name for t in result.created_teams],
+            ["SvcWithPool", FREE_AGENTS_TEAM_NAME],
+        )
+        self.assertEqual(result.player_count, 7)
+        self.assertTrue(get_free_agents_team().players.filter(name="FA-Extra").exists())
 
 
 # ---------------------------------------------------------------------------

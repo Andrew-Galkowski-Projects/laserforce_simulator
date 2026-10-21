@@ -18,6 +18,33 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
   players still have data.
 - **Small samples:** no adjustment. Raw averages are used whatever the game count.
 
+## Generated roster (2026-10-21)
+
+- **Players:** every SM5 player with 26+ games from 2024-10-21 to 2026-10-21: 230 players.
+- **Files:** `data/lfstats_snapshot_2026-10-21.json` holds the raw LFstats data, and
+  `data/lfstats_players.csv` is the importable roster built from it.
+- **Rebuild:** `python scripts/lfstats_import/compute.py data/lfstats_snapshot_2026-10-21.json data/lfstats_players.csv`.
+  `extract.py` builds a snapshot from the Claude Code session transcripts that fetched the
+  data through the LFstats connector. Tests: `laserforce_simulator/test_lfstats_import.py`.
+- **Teams:** grouped by home center (the center where the player plays most, from LFstats).
+  Each center fields as many full 6-player rosters as it can (`<Center> 1`, `<Center> 2`, ...):
+  1. main role first;
+  2. then the second preferred role;
+  3. then single-role scouts in any slot. They keep `preferred_roles = scout`, so they get
+     no x1.2 boost in the other role.
+- **Free Agents:** everyone left over goes to the Free Agents pool. The importer skips slot
+  limits and slot assignment for `team = Free Agents`. Result: 34 full teams and 26 free
+  agents.
+- **Profile:**
+  - `age` 25 and `started_playing_age` 18 are placeholders, since LFstats has no ages;
+  - `total_games` is the all-time SM5 count;
+  - `home_site` is the home center;
+  - `height` is blank.
+- **preferred_roles:** the most-played position, plus the second if it has at least 20% of
+  the player's games.
+- **Duplicate callsigns:** different players can share one. When two land on the same team,
+  the later one gets its IPL id appended.
+
 ## Source for what each stat means
 
 The stats come from Kodama's talk "How to Improve in SM5"
