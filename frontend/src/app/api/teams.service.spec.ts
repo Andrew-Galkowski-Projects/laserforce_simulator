@@ -133,6 +133,23 @@ describe('TeamsService', () => {
     expect((await result).name).toBe('Blue Barons');
   });
 
+  it('replaces all six role slots with PUT teams/{id}/slots/', async () => {
+    const body = {
+      slot_commander: 11,
+      slot_heavy: null,
+      slot_scout_1: null,
+      slot_scout_2: null,
+      slot_medic: null,
+      slot_ammo: null,
+    };
+    const result = firstValueFrom(teams.setSlots(3, body));
+    const req = http.expectOne(`${BASE}/teams/3/slots/`);
+    expect(req.request.method).toBe('PUT');
+    expect(req.request.body).toEqual(body);
+    req.flush({ data: TEAM, meta: {} });
+    expect(await result).toEqual(TEAM);
+  });
+
   it('adds a Player to a Team', async () => {
     const body = { name: 'Ace', preferred_roles: ['commander' as const], accuracy: 70 };
     const result = firstValueFrom(teams.addPlayer(3, body));

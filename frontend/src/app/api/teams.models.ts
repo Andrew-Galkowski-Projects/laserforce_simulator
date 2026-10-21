@@ -38,6 +38,19 @@ export interface TeamInput {
   name: string;
 }
 
+/**
+ * `TeamSlotForm` fields for `PUT teams/{id}/slots/`: Player ids (`null` clears a slot).
+ * The endpoint is a full replace, so all six are always sent.
+ */
+export interface TeamSlotsInput {
+  slot_commander: number | null;
+  slot_heavy: number | null;
+  slot_scout_1: number | null;
+  slot_scout_2: number | null;
+  slot_medic: number | null;
+  slot_ammo: number | null;
+}
+
 /** `TeamFilterSet` plus `ordering` (name, created_date, wins, losses, id; `-` descends). */
 export interface TeamListParams extends ListParams {
   name?: string;
