@@ -7,7 +7,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../environments/environment';
 import { Player, Role } from '../../api/players.models';
 import { STATS } from '../../api/testing/player-fixtures';
-import { USER, signIn } from '../../api/testing/auth-fixtures';
+import { USER, releaseTeamsLoads, signIn } from '../../api/testing/auth-fixtures';
 import { Team } from '../../api/teams.models';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
@@ -263,6 +263,7 @@ describe('Team detail page', () => {
     );
     link?.click();
     await harness.fixture.whenStable();
+    releaseTeamsLoads();
     expect(routerUrl()).toBe('/teams/7/slots');
   });
 
