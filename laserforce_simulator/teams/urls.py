@@ -5,6 +5,7 @@ urlpatterns = [
     path("", views.team_list, name="team_list"),
     path("create/", views.team_create, name="team_create"),
     path("generate/", views.generate_players, name="generate_players"),
+    path("generate/done/", views.generate_players_done, name="generate_players_done"),
     path("import/", views.import_roster, name="import_roster"),
     path(
         "import/template.csv",

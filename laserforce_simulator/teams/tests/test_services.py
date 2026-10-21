@@ -381,6 +381,7 @@ class TestHtmlDelegatesUnchanged(_ServicesTestCase):
         response = self.client.post(
             reverse("generate_players"),
             {"num_teams": "2", "players_per_team": "6", "mean": "50", "std_dev": "15"},
+            follow=True,  # UXP-16: the result renders on the redirected GET
         )
         self.assertEqual(response.status_code, 200)
         created = response.context["created_teams"]
@@ -394,6 +395,7 @@ class TestHtmlDelegatesUnchanged(_ServicesTestCase):
         response = self.client.post(
             reverse("generate_players"),
             {"num_teams": "0", "players_per_team": "12", "mean": "50", "std_dev": "15"},
+            follow=True,  # UXP-16: the result renders on the redirected GET
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(list(response.context["created_teams"]), [])

@@ -22,17 +22,21 @@
             {% endif %}
         </div>
 
-        <div class="mb-3">
+        {% with pool_mode=form.is_pool_mode %}
+        <div class="mb-3" id="generate-players-per-team-group"{% if pool_mode %} hidden{% endif %}>
             <label for="generate-players-per-team" class="form-label">Players per team</label>
-            {{ form.players_per_team }}
-            <div class="form-text">
-                For teams: 6–9 (or "Random 6–8"). For the free-agent pool
-                (0 teams): 12–100 (or "Random 12–100").
-            </div>
-            {% if form.players_per_team.errors %}
-                <div class="text-danger">{{ form.players_per_team.errors }}</div>
-            {% endif %}
+            {{ form.team_players_select }}
+            <div class="form-text">6–9 players per team (players 7+ go to the bench).</div>
         </div>
+        <div class="mb-3" id="generate-players-per-pool-group"{% if not pool_mode %} hidden{% endif %}>
+            <label for="generate-players-per-pool" class="form-label">Free-agent players</label>
+            {{ form.pool_players_select }}
+            <div class="form-text">12–100 players for the free-agent pool.</div>
+        </div>
+        {% endwith %}
+        {% if form.players_per_team.errors %}
+            <div class="text-danger mb-3">{{ form.players_per_team.errors }}</div>
+        {% endif %}
 
         <div class="row g-2 mb-3">
             <div class="col-sm-3">
@@ -59,4 +63,25 @@
         <a href="{% url 'team_list' %}" class="btn btn-secondary">Cancel</a>
     </form>
 </div>
+<script>
+    // UXP-16: show only the players control for the chosen mode. The hidden
+    // one is disabled so it is not submitted; the server re-checks the range.
+    (function () {
+        var numTeams = document.getElementById("generate-players-num-teams");
+        var modes = [
+            ["generate-players-per-team-group", "generate-players-per-team", false],
+            ["generate-players-per-pool-group", "generate-players-per-pool", true],
+        ];
+        function sync() {
+            var pool = numTeams.value === "0";
+            modes.forEach(function (m) {
+                var active = m[2] === pool;
+                document.getElementById(m[0]).hidden = !active;
+                document.getElementById(m[1]).disabled = !active;
+            });
+        }
+        numTeams.addEventListener("change", sync);
+        sync();
+    })();
+</script>
 {% endblock %}

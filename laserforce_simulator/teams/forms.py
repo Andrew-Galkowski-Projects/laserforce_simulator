@@ -1,5 +1,6 @@
 from django import forms
 from django.core.validators import MinValueValidator, MaxValueValidator
+from django.utils.safestring import SafeString
 
 from .models import Team, Player, ROLE_CHOICES
 
@@ -156,8 +157,10 @@ class GenerateLeagueForm(forms.Form):
     """LG-00 bulk player/team generation form.
 
     Two dropdowns + two integer fields. The cross-field rule between
-    ``num_teams`` and ``players_per_team`` is enforced in `clean()` (no
-    JS-driven dependent toggle for v1).
+    ``num_teams`` and ``players_per_team`` is enforced in `clean()`. The HTML
+    page renders ``players_per_team`` as two per-mode selects
+    (``team_players_select`` / ``pool_players_select``, UXP-16) that a small
+    inline script swaps when ``num_teams`` changes.
     """
 
     # 22 entries: "0", "2"..."20", "random_2_10". "1" is intentionally omitted.
@@ -185,17 +188,23 @@ class GenerateLeagueForm(forms.Form):
         ("random_2_10", "Random (2–10)"),
     )
 
-    # 98 entries: team-mode 6..9 + "random_team", pool-mode 12..100 +
-    # "random_pool". The wide superset renders always; `clean()` enforces
-    # which subset is legal for the chosen `num_teams`.
-    _TEAM_MODE_PPT = (("6", "6"), ("7", "7"), ("8", "8"), ("9", "9"))
-    _POOL_MODE_PPT = tuple((str(n), str(n)) for n in range(12, 101))
-    PLAYERS_PER_TEAM_CHOICES = (
-        *_TEAM_MODE_PPT,
+    # UXP-16: the two modes' ranges are offered by two separate <select>s
+    # (team mode 6..9 + "random_team", pool mode 12..100 + "random_pool"),
+    # both submitting as `players_per_team`; the one for the inactive mode is
+    # disabled so the browser never submits it. `clean()` still enforces the
+    # per-mode range server-side (the API binds this form too).
+    TEAM_MODE_PPT_CHOICES = (
+        ("6", "6"),
+        ("7", "7"),
+        ("8", "8"),
+        ("9", "9"),
         ("random_team", "Random (6–8)"),
-        *_POOL_MODE_PPT,
+    )
+    POOL_MODE_PPT_CHOICES = (
+        *tuple((str(n), str(n)) for n in range(12, 101)),
         ("random_pool", "Random (12–100)"),
     )
+    PLAYERS_PER_TEAM_CHOICES = (*TEAM_MODE_PPT_CHOICES, *POOL_MODE_PPT_CHOICES)
 
     num_teams = forms.CharField(
         widget=forms.Select(
@@ -243,6 +252,46 @@ class GenerateLeagueForm(forms.Form):
         ),
         label="Stat standard deviation",
     )
+
+    def is_pool_mode(self) -> bool:
+        """True when the (bound or initial) ``num_teams`` is ``"0"``."""
+        return str(self["num_teams"].value()) == "0"
+
+    def _ppt_select(
+        self,
+        choices: tuple[tuple[str, str], ...],
+        default: str,
+        select_id: str,
+        active: bool,
+    ) -> SafeString:
+        value = str(self["players_per_team"].value())
+        if value not in {key for key, _ in choices}:
+            value = default
+        attrs = {"id": select_id, "class": "form-select"}
+        if not active:
+            attrs["disabled"] = "disabled"
+        widget = forms.Select(choices=choices, attrs=attrs)
+        return widget.render("players_per_team", value)
+
+    @property
+    def team_players_select(self) -> SafeString:
+        """The team-mode ``players_per_team`` <select> (6–9)."""
+        return self._ppt_select(
+            self.TEAM_MODE_PPT_CHOICES,
+            "random_team",
+            "generate-players-per-team",
+            active=not self.is_pool_mode(),
+        )
+
+    @property
+    def pool_players_select(self) -> SafeString:
+        """The free-agent-mode ``players_per_team`` <select> (12–100)."""
+        return self._ppt_select(
+            self.POOL_MODE_PPT_CHOICES,
+            "random_pool",
+            "generate-players-per-pool",
+            active=self.is_pool_mode(),
+        )
 
     def clean(self):
         cleaned = super().clean()
