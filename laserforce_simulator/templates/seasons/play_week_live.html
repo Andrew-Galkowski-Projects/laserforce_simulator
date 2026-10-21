@@ -82,6 +82,11 @@ preview_round_2 (round 2 or None), sidebar_links, sidebar_active.
                     <div class="row g-3">
                         <div class="col-lg-7">
                             <div id="pb-scoreboard"></div>
+                            {# UXP-15 — legend for the abbreviated columns + playback speed. #}
+                            <p id="pb-scoreboard-legend" class="small text-muted mt-1 mb-0">
+                                Sc = Score · L = Lives · Sh = Shots · Mi = Missiles · SP = Special Points.
+                                Playback starts paused; 1&times; is real time (a Round lasts 15 minutes).
+                            </p>
                         </div>
                         <div class="col-lg-5">
                             <div class="border rounded h-100 d-flex flex-column">
@@ -359,8 +364,8 @@ preview_round_2 (round 2 or None), sidebar_links, sidebar_active.
                 '<th colspan="6" class="table-primary">' + esc(PB_BLUE) + ' &mdash; ' + bTot.toLocaleString() + '</th></tr>' +
                 '<tr class="small text-muted">' +
                 '<th>Role</th>' +
-                '<th class="text-start">Player</th><th>Sc</th><th>L</th><th>Sh</th><th>Mi</th><th>SP</th>' +
-                '<th class="text-start">Player</th><th>Sc</th><th>L</th><th>Sh</th><th>Mi</th><th>SP</th>' +
+                '<th class="text-start">Player</th><th title="Score">Sc</th><th title="Lives">L</th><th title="Shots">Sh</th><th title="Missiles">Mi</th><th title="Special Points">SP</th>' +
+                '<th class="text-start">Player</th><th title="Score">Sc</th><th title="Lives">L</th><th title="Shots">Sh</th><th title="Missiles">Mi</th><th title="Special Points">SP</th>' +
                 '</tr></thead><tbody>' + rows + '</tbody></table>';
         }
 

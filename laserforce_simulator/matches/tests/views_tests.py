@@ -4308,3 +4308,98 @@ class TestGen01ViewUpgrades:
             "game_round_detail must NOT upgrade — scoreboard/MVP live from "
             "PlayerRoundState"
         )
+
+
+# ---------------------------------------------------------------------------
+# UXP-15 — label the unlabelled numbers
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestUxp15RoundCardEliminationLabel:
+    """The team summary card's 4th column was a bare grey "-" badge."""
+
+    def test_fourth_column_is_labelled(self):
+        red, red_players = make_team_with_slots("U15Red")
+        blue, blue_players = make_team_with_slots("U15Blue")
+        game_round = _make_round(red, blue)
+        # One surviving player per side, so neither team is eliminated.
+        _make_state(
+            game_round,
+            red_players["commander"],
+            team_color="red",
+            role="commander",
+            final_lives=5,
+        )
+        _make_state(
+            game_round,
+            blue_players["commander"],
+            team_color="blue",
+            role="commander",
+            final_lives=5,
+        )
+        client = Client()
+        client.force_login(get_shared_manager())
+        html = client.get(
+            reverse("game_round_detail", kwargs={"round_id": game_round.id})
+        ).content.decode()
+        assert '<span class="badge bg-secondary">-</span>' not in html
+        assert "Not eliminated" in html
+        assert html.count("<small>Team status</small>") == 2
+
+
+@pytest.mark.django_db
+class TestUxp15MatchSidesAndTiebreak:
+    """Teams swap colours for Round 2, so "(Red)" headers mislead; a 1-1 split
+    decided on total points was not explained."""
+
+    def _match(self, r1, b1, r2, b2):
+        red, _ = make_team_with_slots("U15MRed")
+        blue, _ = make_team_with_slots("U15MBlue")
+        return Match.objects.create(
+            team_red=red,
+            team_blue=blue,
+            red_round1_points=r1,
+            blue_round1_points=b1,
+            red_round2_points=r2,
+            blue_round2_points=b2,
+            is_completed=True,
+        )
+
+    def _html(self, match):
+        client = Client()
+        client.force_login(get_shared_manager())
+        return client.get(
+            reverse("match_detail", kwargs={"match_id": match.id})
+        ).content.decode()
+
+    def test_headers_say_colour_is_round_one_only(self):
+        html = self._html(self._match(100, 50, 100, 50))
+        assert "(Red)</th>" not in html
+        assert "(Red in Round 1)" in html
+        assert "Teams swap colours for Round 2." in html
+
+    def test_split_decided_on_points_is_explained(self):
+        html = self._html(self._match(100, 50, 10, 30))
+        assert "Rounds split 1–1, so total points decided the Match." in html
+
+    def test_sweep_has_no_tiebreak_note(self):
+        html = self._html(self._match(100, 50, 100, 50))
+        assert "Rounds split" not in html
+
+
+def test_uxp15_live_viewer_explains_column_abbreviations():
+    """The One Week (Live) scoreboard headers "Sc L Sh Mi SP" had no legend.
+    The scoreboard is built client-side from a long simulation, so assert on
+    the template source (no meaningful server-side render to hit)."""
+    from pathlib import Path
+
+    from django.conf import settings
+
+    src = (Path(settings.BASE_DIR) / "templates/seasons/play_week_live.html").read_text(
+        encoding="utf-8"
+    )
+    assert 'id="pb-scoreboard-legend"' in src
+    assert "Sc = Score" in src and "SP = Special Points" in src
+    assert '<th title="Score">Sc</th>' in src
+    assert "1&times; is real time" in src
