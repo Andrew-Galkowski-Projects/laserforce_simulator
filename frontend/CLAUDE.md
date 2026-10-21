@@ -1,9 +1,10 @@
 # frontend/ -- the Angular SPA (ANG-04)
 
 The Phase 8 replacement for the Django templates. The stack is fixed by
-[ADR-0042](../docs/adr/0042-angular-frontend-stack.md). Right now it is only an app shell: a
-Material toolbar titled "Laserforce Simulator", a placeholder home page, and a wildcard route that
-redirects to it. It has no API calls yet (those start in ANG-05).
+[ADR-0042](../docs/adr/0042-angular-frontend-stack.md). Right now it is an app shell (a Material
+toolbar titled "Laserforce Simulator", a placeholder home page, a placeholder `/login`, and a
+wildcard route that redirects home) plus the client layer from ANG-05: typed API services and the
+JWT sign-in / silent-refresh flow. See **API and auth** below. No feature screens yet (ANG-06).
 
 ## Stack
 
@@ -66,9 +67,15 @@ src/
     app.ts / app.html     the shell: <mat-toolbar> + <router-outlet>
     app.scss              toolbar primary colour via mat.toolbar-overrides (M3 ignores color="primary")
     app-title.ts          APP_TITLE, shared by the toolbar and the route titles
-    app.config.ts         providers (router, global error listeners)
-    app.routes.ts         '' -> Home, '**' -> redirect to ''
+    app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
+    app.routes.ts         '' -> Home, 'login' -> Login placeholder, '**' -> redirect to ''
     home/                 placeholder Home page
+    login/                placeholder Login page ("Sign in (coming in ANG-06)")
+    api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
+                          <resource>.service.ts + <resource>.models.ts per resource
+                          (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures
+    auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
+                          auth.tokens.ts (TOKEN_PATH, SKIP_AUTH_REFRESH), user.ts
     theme/                theme-tokens.ts (LF_TOKENS) + theme.spec.ts
 ```
 
@@ -102,6 +109,47 @@ colours in light mode, all-mono JetBrains Mono.
   dark (it emulates `prefers-color-scheme` by rewriting the media condition, since jsdom matches no
   media feature). It also checks the dark block declares every colour token itself and scans
   every `.scss` under `src/` for colour literals.
+
+## API and auth
+
+Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-0041 (JWT).
+
+- **`ApiClient` is the only `HttpClient` user.** Components inject a resource service, never
+  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `delete`, `upload` (multipart). Each takes a
+  path relative to `apiBaseUrl` (`'teams/'`, `'rounds/7/events/'`, trailing slash as the API routes
+  it) and an optional `{ context }`.
+- **Envelope unwrapped once:** objects come back as `T`, lists as `Page<T>` (`items` plus `meta`:
+  `page`, `page_size`, `count`, `total_pages`), and a 204 as `undefined`. Undefined params are
+  dropped from the query.
+- **Every failure is an `ApiError`** (`status`, `errors: {code, message, field}[]`, never empty).
+  Status 0 gives `network_error`; a non-envelope 5xx gives `server_error`. Cross-Account rows come
+  back as 404, because ownership is filtered on the server.
+- **Models are hand-written and snake_case**, exactly as the DRF serializers send them (there is no
+  OpenAPI schema and no mapping layer). Where the list and detail serializers differ, they are
+  separate types (`GameRoundListItem` vs `GameRound`). Add a field when the serializer gains one.
+- **Services cover only what ANG-06's first screens need.** A League, Tournament or analytics
+  service is added by the ANG-06 item that first uses it, as its own `<resource>.service.ts`.
+- **Auth:**
+  - `AuthService` keeps the access token **in memory only**. It provides `login`, `logout`,
+    `register` (which does not sign in), the `currentUser` / `isSignedIn` signals, a single-flight
+    `refresh()`, and `restoreSession()`.
+  - `authInterceptor` adds `Bearer` to `apiBaseUrl` calls except `token/*`, and sets
+    `withCredentials` only on `token/*`, where the refresh cookie's `Path=/api/token/` applies.
+  - On a 401 it does one shared refresh and replays the request once. A failed refresh, or a second
+    401, clears the session and navigates to `/login?returnUrl=<url>`; if the person is already on
+    `/login`, it keeps that URL.
+  - A request whose context sets `SKIP_AUTH_REFRESH` gets its 401 back as-is. The `accounts/me/`
+    call made by login and restore uses this, so a failed restore never redirects.
+  - The initializer runs `restoreSession()` once at bootstrap.
+- **Tests:** use `provideHttpClient(withInterceptors([authInterceptor]))` plus
+  `provideHttpClientTesting()` / `HttpTestingController`. Assert the request (URL, method, body,
+  headers) and what the caller receives. `teams.service.spec.ts` is the template for a service
+  spec, and `auth.interceptor.spec.ts` for the flow.
+- **Live check without the owner's ports:**
+  - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 manage.py runserver 8001`.
+  - Run `ng serve --port 4201`, with `environment.ts` temporarily pointed at `:8001`.
+  - Revert `environment.ts` before committing.
+  - In dev mode, reach a service from DevTools through `ng.ɵgetInjectorProviders`.
 
 ## The `apiBaseUrl` rule
 

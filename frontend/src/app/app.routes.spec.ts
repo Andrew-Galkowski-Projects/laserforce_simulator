@@ -17,6 +17,13 @@ describe('app routes', () => {
     expect(page).toBeInstanceOf(Home);
   });
 
+  it('shows the sign-in placeholder at /login, keeping a returnUrl', async () => {
+    const harness = await RouterTestingHarness.create();
+    await harness.navigateByUrl('/login?returnUrl=%2Fteams');
+    expect(TestBed.inject(Router).url).toBe('/login?returnUrl=%2Fteams');
+    expect(harness.routeNativeElement?.textContent).toContain('Sign in (coming in ANG-06)');
+  });
+
   it('redirects an unknown path to / and shows the home page', async () => {
     const harness = await RouterTestingHarness.create();
     await harness.navigateByUrl('/no-such-page');

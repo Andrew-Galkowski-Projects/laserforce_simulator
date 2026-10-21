@@ -2391,7 +2391,29 @@ Depends on ANG-04. Blocks ANG-06.
   inert), the player side sheet, per-player expandable timelines, momentum and score charts,
   replay controls and log search.
 
-### ANG-05 · Angular API services
+### ANG-05 · [DONE] Angular API services
+
+Spec: #257 (tickets #258, #259)
+
+**[DONE] Shipped (2026-10-21).** As specified: `ApiClient` (the only `HttpClient` user), an
+`AuthService` + functional `authInterceptor` + bootstrap initializer, a `/login` placeholder, and the
+Teams / Players / Matches / Rounds / Maps services. Detail in `frontend/CLAUDE.md` (**API and
+auth**). What the work found:
+
+- **Restore could redirect.** Review caught that a 401 from `accounts/me/` during the startup
+  restore went through the interceptor's refresh-and-redirect path. Fixed with a
+  `SKIP_AUTH_REFRESH` `HttpContextToken` on the `me/` call (login and restore share it).
+- **The table below was wrong** against the real API (players have no create; maps are a
+  multipart upload + delete). Grill item 7 is the shipped surface.
+- **Smaller departures:** `ListParams` is an `interface` (ESLint `consistent-type-definitions`);
+  the interceptor, not `AuthService`, sets `withCredentials` on `token/*`; `AuthService` exposes
+  `clearSession()`; a 401 with no token held still tries one refresh, so a signed-out visitor hitting
+  a protected endpoint lands on `/login`; `login` clears a half-made session if `me/` fails.
+- **Real serializer quirks** the models mirror: `Offensive_synergy` (capital O); `MatchSerializer`
+  is `__all__` (adds `manager`, `season_phase`, `conference`, `leg`); `PlayerSerializer` has no
+  `overall_rating`; `DELETE /api/maps/{id}/` can be 409 `map_in_use`.
+- **Live check off the owner's ports works** (grill item 18): sign-in, Bearer on `teams/`, three
+  concurrent 401s -> one refresh, reload restores, logout -> `/login`.
 
 One Angular service per Django API resource. Components never call `HttpClient` directly.
 
@@ -2401,13 +2423,60 @@ localStorage) and attaches `Authorization: Bearer <token>` to every `/api/` requ
 retries; a second 401 goes to login. On app start it tries one refresh to restore the session.
 
 ```
-TeamsService     → GET/POST/PATCH /api/teams/
-PlayersService   → GET/POST/PATCH /api/players/
-MatchesService   → GET/POST       /api/matches/
-RoundsService    → GET            /api/rounds/<id>/
-EventsService    → GET            /api/rounds/<id>/events/
-MapsService      → GET/POST       /api/maps/
+TeamsService     → list / get / create / PATCH / addPlayer (POST teams/{id}/players/)
+PlayersService   → list / get / PATCH / DELETE           (no create)
+MatchesService   → list / get / create
+RoundsService    → list / get / create / events(roundId) (rounds/{id}/events/)
+MapsService      → list / get / upload (multipart) / DELETE
 ```
+
+**Grill (2026-10-21).** Settled answers. The original table predated ANG-01 (corrected above at
+ship); the real surface is item 7.
+
+1. **Scope:** the five resource services below plus an `AuthService`. League / Season, Tournament,
+   batch and analytics services are added by the ANG-06 item that first uses them.
+2. **No UI** beyond a placeholder `/login` route ("Sign in (coming in ANG-06)"). Services and the
+   interceptor are proven by unit tests.
+3. **Hand-written TS interfaces**, one models file per resource, only the fields the API returns
+   today. There is no OpenAPI schema (no drf-spectacular); no codegen.
+4. **Services return `Observable<T>` with the `{data, meta}` envelope unwrapped** by one shared
+   helper. Components choose `toSignal` / `rxResource` themselves.
+5. **Errors:** one shared helper maps the `{errors, meta}` envelope to a typed `ApiError` (status +
+   `{code, message, field}` list) that services rethrow. No global toast / snackbar.
+6. **Tests:** `provideHttpClientTesting` / `HttpTestingController` under Vitest, asserting the real
+   URL, method, body and unwrapped result. Step 7 adds a live browser pass (log in, list teams).
+7. **Service surface = what the API really supports:** Teams list / get / create / patch /
+   `addPlayer` (`POST /teams/{id}/players/`); Players list / get / patch / delete (no create);
+   Matches list / get / create; Rounds list / get / create / `events(id, filters)`; Maps list / get /
+   upload (multipart) / delete. Analytics and map-editor actions wait for ANG-06.
+8. **snake_case fields** in the interfaces, exactly as the API sends them. No camelCase mapping.
+9. **Bearer only on URLs under `environment.apiBaseUrl`, never on `/token/*`.** `withCredentials:
+   true` only on the three `/token/*` calls.
+10. **Single-flight refresh:** concurrent 401s share one in-flight `POST /token/refresh/`, then each
+    retries once. A failed refresh clears the token and navigates to `/login?returnUrl=<current>`;
+    a 401 on the retry also goes to login (never a second refresh).
+11. **Session restore:** `provideAppInitializer` runs one silent refresh at bootstrap; failure means
+    signed out, no redirect. Refresh is reactive on 401 only (no expiry timer).
+12. **`AuthService`:** `login(email, password)`, `logout()`, `register(form)` (does not log in, as
+    the API), and a `currentUser` signal loaded from `GET /api/accounts/me/` after login / restore.
+    Password change and self-insert go to ANG-06.
+13. **Pagination:** list methods take `{ page?, page_size?, ...filters }` and return
+    `Page<T> = { items: T[], meta: { page, page_size, count, total_pages } }`. One page per call.
+14. **Docs:** fix `CLAUDE.md`'s "read-only `/api/maps/`" and this section's table in Step 9.
+15. **Layout:** `src/app/api/` (`api-client.ts` for envelope unwrap / `ApiError` / `Page<T>` /
+    query params, then one `<resource>.service.ts` + `<resource>.models.ts` per resource);
+    `src/app/auth/` (`auth.service.ts`, functional `auth.interceptor.ts`, `auth.initializer.ts`);
+    `src/app/login/` stub. `app.config.ts` adds `provideHttpClient(withInterceptors([...]))` and the
+    initializer.
+16. **Network errors** (status 0, no envelope) become an `ApiError` with status 0 and one
+    `{code: 'network_error', message, field: null}` error.
+17. **Replay any method** after a successful refresh: a 401 means the view never ran.
+18. **Live check off the owner's ports:** Django on 8001 with `CORS_ALLOWED_ORIGINS=http://localhost:4201`
+    in that process only, `ng serve --port 4201` with `environment.ts` temporarily pointed at 8001,
+    reverted (and `git diff`-checked) before any commit.
+
+No Django change, migration, ownership or simulation change (ownership stays server-side through
+the `manager` seam; cross-Account rows are 404). Token storage is already ADR-0041; no new ADR.
 
 ### ANG-06 · Migrate views by feature area
 
@@ -2526,16 +2595,15 @@ Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found
 top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
 
 **Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
-so is the look (ANG-04b, ADR-0043). Remaining, in order:
+so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
 
 ```
-ANG-05  Angular API services + JWT interceptor   <- NEXT
-    -> ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)
-               + still to scope: League / Season, League screens,
-                 Tournaments, Accounts
-      -> ANG-07  Serve Angular from an nginx sidecar
-        -> ANG-08  Remove Django template views (Admin stays)
-          -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
+ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)   <- NEXT
+        + still to scope: League / Season, League screens,
+          Tournaments, Accounts
+    -> ANG-07  Serve Angular from an nginx sidecar
+      -> ANG-08  Remove Django template views (Admin stays)
+        -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
