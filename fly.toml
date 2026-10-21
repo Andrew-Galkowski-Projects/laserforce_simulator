@@ -5,8 +5,21 @@ primary_region = "ord"
 
 [env]
   PORT = "8000"
-  # Set secrets via: flyctl secrets set SECRET_KEY=... ALLOWED_HOSTS=laserforce-simulator.fly.dev DATABASE_URL=...
+  # Secrets (fly secrets list): DATABASE_URL (fly postgres attach), SECRET_KEY,
+  # ALLOWED_HOSTS, CORS_ALLOWED_ORIGINS (also the CSRF trusted origin), and
+  # CELERY_BROKER_URL / CELERY_RESULT_BACKEND (the Upstash Redis URL).
   # R2 storage: flyctl secrets set R2_BUCKET_NAME=... R2_ACCESS_KEY=... R2_SECRET_KEY=... R2_ENDPOINT_URL=...
+
+[deploy]
+  # Migrate once per deploy, before any Machine starts the new release.
+  release_command = "python laserforce_simulator/manage.py migrate --noinput"
+
+# ADR-0013: the web app plus a Celery worker for batch sims and the play loops.
+[processes]
+  app = "gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000 --chdir laserforce_simulator --workers 3 --timeout 30 --access-logfile - --error-logfile -"
+  # gossip / mingle / heartbeat off: one worker needs none of them, and each
+  # adds Redis commands (Upstash bills per command).
+  worker = "celery --workdir laserforce_simulator -A laserforce_simulator worker --loglevel info --concurrency 2 --without-gossip --without-mingle --without-heartbeat"
 
 [http_service]
   internal_port = 8000
@@ -17,6 +30,13 @@ primary_region = "ord"
   processes = ["app"]
 
 [[vm]]
+  processes = ["app"]
   memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1
+
+[[vm]]
+  processes = ["worker"]
+  memory = "512mb"
   cpu_kind = "shared"
   cpus = 1
