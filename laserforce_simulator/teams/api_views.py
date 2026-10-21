@@ -339,6 +339,7 @@ class PlayerViewSet(
             player,
             min_rounds=form.cleaned_data["threshold"],
             display=form.cleaned_data["display"],
+            user=request.user,
         )
         return Response(
             {
@@ -357,7 +358,8 @@ class PlayerViewSet(
 
     @action(detail=False, methods=["get"], url_path="benchmarks", url_name="benchmarks")
     def benchmarks(self, request: Request) -> Response:
-        """HX-02 global role benchmarks (``benchmarks_by_role`` is HTML-only)."""
+        """HX-02 role benchmarks, UXP-14 scoped to the caller's own + Unmanaged
+        Rounds (``benchmarks_by_role`` is HTML-only)."""
         form = BenchmarkParamsForm(
             data=plain_form_data(BenchmarkParamsForm, request.query_params)
         )
@@ -365,6 +367,7 @@ class PlayerViewSet(
         payload = build_role_benchmarks(
             min_rounds=form.cleaned_data["threshold"],
             display=form.cleaned_data["display"],
+            user=request.user,
         )
         return Response(
             {

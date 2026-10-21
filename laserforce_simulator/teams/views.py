@@ -417,13 +417,16 @@ def player_career_stats(request, player_id: int):
 
     context = {
         "player": player,
-        **build_career_stats(player, min_rounds=min_rounds, display=display),
+        **build_career_stats(
+            player, min_rounds=min_rounds, display=display, user=request.user
+        ),
     }
     return render(request, "teams/player_career_stats.html", context)
 
 
 def role_benchmarks(request):
-    """HX-02 — global role benchmarks page (one table per role).
+    """HX-02 — role benchmarks page (one table per role), UXP-14 scoped to
+    the requesting Account's own + Unmanaged Rounds.
 
     Reads `?threshold=` and `?display=mean|median` (both with safe
     fallbacks) and renders ``teams.services.build_role_benchmarks``.
@@ -431,7 +434,9 @@ def role_benchmarks(request):
     min_rounds = _coerce_threshold(request.GET.get("threshold"))
     display = _coerce_display(request.GET.get("display"))
 
-    context = build_role_benchmarks(min_rounds=min_rounds, display=display)
+    context = build_role_benchmarks(
+        min_rounds=min_rounds, display=display, user=request.user
+    )
     return render(request, "teams/role_benchmarks.html", context)
 
 

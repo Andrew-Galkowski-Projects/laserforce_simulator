@@ -2489,8 +2489,8 @@ The following were explicitly scoped out and should not be implemented until re-
   `self_insert_player_id` key) into that `render_to_string` call, checking the poll endpoint's query
   budget
 - **Ownership-filtered head-to-head / career / benchmark corpora** (ANG-01b follow-up) — the HX-03 /
-  HX-04 round sets (`_h2h_matches_qs`, `_h2h_rounds_qs`, `_player_h2h_rounds_qs`), the HX-01 career
-  round set and the HX-02 benchmark population are **not ownership-filtered**, in HTML or the API: a
+  HX-04 round sets (`_h2h_matches_qs`, `_h2h_rounds_qs`, `_player_h2h_rounds_qs`) and the HX-01 career
+  round set are **not ownership-filtered** (the HX-02 benchmark population was scoped by UXP-14), in HTML or the API: a
   foreign Account's Match between two Unmanaged Teams can appear in `detail_list` (scores plus round
   ids, which then 404). Fixing it means passing `user` into the `matches.services` /
   `teams.services` builders and filtering by `owned_match_q` / `owned_game_round_q`; it changes HTML
