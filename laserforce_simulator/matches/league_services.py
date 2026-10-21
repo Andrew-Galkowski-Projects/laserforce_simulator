@@ -2501,6 +2501,25 @@ def start_next_season(league: League) -> Season:
     return run_season_rollover(league, latest)
 
 
+def manager_awaiting_reassignment(league: League, latest_completed: Season) -> bool:
+    """UXP-03 — True iff ``latest_completed``'s owner evaluation fired the
+    Manager and they have not yet moved off the fired team. Only then may the
+    New-Team picker / reassign run (the same condition ``ManagerFiredError``
+    blocks a plain rollover on). Runs the lazy finance + evaluation ensures
+    first (FIN-01 order).
+    """
+    _ensure_team_finances(league, latest_completed)
+    _ensure_owner_evaluations(league, latest_completed)
+    evaluation = OwnerEvaluation.objects.filter(
+        league=league, season=latest_completed
+    ).first()
+    return (
+        evaluation is not None
+        and evaluation.verdict == "fired"
+        and league.current_team_id == evaluation.team_managed_id
+    )
+
+
 def reassign_and_roll(league: League, team: Team, latest_completed: Season) -> Season:
     """Point the Manager at ``team`` (a new tenure), then roll the Season.
 

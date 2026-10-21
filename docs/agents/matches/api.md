@@ -40,7 +40,7 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
   `WWW-Authenticate: Bearer` since ANG-03 / ADR-0041; it was 403 before) / `token_not_valid` (bad,
   expired or blacklisted JWT); 403 `permission_denied` (CSRF on a session write); 405 `method_not_allowed` (keeps the
   `Allow` header); 409 — a raised `APIException` subclass for a state conflict (ANG-01b
-  `job_not_complete`, ANG-01c `map_in_use`, ANG-01d-1 `season_in_progress` / `manager_fired` /
+  `job_not_complete`, ANG-01c `map_in_use`, ANG-01d-1 `season_in_progress` / `manager_fired` / `manager_not_fired` (UXP-03) /
   `season_not_draft` / `no_completed_season` / `not_career_league`, ANG-01f `tournament_embedded` /
   `tournament_not_setup` / `tournament_not_active` / `no_playable_node` / `play_in_progress`); 415
   `unsupported_media_type`; 503 `broker_unavailable` (ANG-01f play-all).
@@ -345,7 +345,9 @@ team_ids}`); `active_play_job_id` / `play_cancel_requested` excluded (ANG-01d-2 
 
 **409 conflict codes** (`APIException`s in `league_api_views.py`): `SeasonInProgress` ⇒
 `season_in_progress`, `field = "season:<id>"` (dict `detail`, the `roster_invalid` `row:<n>`
-precedent; next-season / reassign); `ManagerFired` ⇒ `manager_fired` (next-season); `NoCompletedSeason`
+precedent; next-season / reassign); `ManagerFired` ⇒ `manager_fired` (next-season); `ManagerNotFired` ⇒ `manager_not_fired`
+(UXP-03: candidates / reassign unless the latest evaluation fired the Manager and they have not
+reassigned yet; the HTML picker redirects to the owner evaluation, HTML reassign is 400); `NoCompletedSeason`
 ⇒ `no_completed_season` (next-season / candidates / reassign); `NotCareerLeague` ⇒
 `not_career_league` (delete / candidates / reassign; message = the HTML string per site);
 `SeasonNotDraft` ⇒ `season_not_draft` (conferences PUT; text == the HTML 400). PUT / PATCH on a

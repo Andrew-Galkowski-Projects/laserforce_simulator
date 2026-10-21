@@ -89,14 +89,32 @@ def _add_match(season, winner, loser, *, win_pts=100, lose_pts=1):
     return match
 
 
-def _make_ranked_league(n_teams: int = 8, *, league_name: str = "RankL"):
+def _evaluation(league, season, team, *, verdict: str):
+    from matches.models import OwnerEvaluation
+
+    return OwnerEvaluation.objects.create(
+        league=league,
+        season=season,
+        team_managed=team,
+        wins_delta=0.0,
+        playoffs_delta=0.0,
+        wins_total=0.0,
+        playoffs_total=0.0,
+        verdict=verdict,
+    )
+
+
+def _make_ranked_league(
+    n_teams: int = 8, *, league_name: str = "RankL", fired: bool = True
+):
     """Build a completed Season with ``n_teams`` teams given a strict win
     ordering: team 0 beats all, team 1 beats all but team 0, … so the final
     standings rank is deterministic (team 0 best → team n-1 worst).
 
     Returns ``(league, season, teams)`` where ``teams[0]`` is the strongest and
     ``teams[-1]`` the weakest. ``league.current_team`` is set to ``teams[0]``
-    (the "just-left" team that fired the manager).
+    (the "just-left" team that fired the manager). ``fired`` (UXP-03) adds the
+    ``fired`` owner evaluation the picker / reassign require.
     """
     teams = [_make_team(f"{league_name}{i}") for i in range(n_teams)]
     league = _make_league(league_name, current_team=teams[0])
@@ -108,6 +126,8 @@ def _make_ranked_league(n_teams: int = 8, *, league_name: str = "RankL"):
     for i in range(n_teams):
         for j in range(i + 1, n_teams):
             _add_match(season, teams[i], teams[j])
+    if fired:
+        _evaluation(league, season, teams[0], verdict="fired")
     return league, season, teams
 
 
@@ -198,6 +218,7 @@ class TestNewTeamPickerEligibleList(TestCase):
         for i in range(8):
             for j in range(i + 1, 8):
                 _add_match(season, teams[i], teams[j])
+        _evaluation(league, season, teams[-1], verdict="fired")
         response = self.client.get(
             reverse("new_team_picker", kwargs={"league_id": league.id})
         )
@@ -459,3 +480,53 @@ class TestReassignTeamActiveSeasonGuard(TestCase):
             data={"team_id": teams[-1].id},
         )
         self.assertEqual(response.status_code, 400)
+
+
+# ---------------------------------------------------------------------------
+# UXP-03 — only a fired (and not yet reassigned) Manager may pick a new team
+# ---------------------------------------------------------------------------
+
+
+class TestUxp03RetainedManagerCannotReassign(TestCase):
+    """A retained Manager reached "You've been fired — choose a new team" by
+    URL and could switch teams, bypassing the owner evaluation."""
+
+    def setUp(self) -> None:
+        self.league, self.season, self.teams = _make_ranked_league(
+            league_name="Uxp03", fired=False
+        )
+        _evaluation(self.league, self.season, self.teams[0], verdict="retained")
+
+    def test_picker_redirects_to_owner_evaluation(self) -> None:
+        response = self.client.get(reverse("new_team_picker", args=[self.league.id]))
+        self.assertRedirects(
+            response,
+            reverse("owner_evaluation", args=[self.season.id]),
+            fetch_redirect_response=False,
+        )
+
+    def test_reassign_is_400_and_changes_nothing(self) -> None:
+        response = self.client.post(
+            reverse("reassign_team", args=[self.league.id]),
+            {"team_id": self.teams[-1].id},
+        )
+        self.assertEqual(response.status_code, 400)
+        self.league.refresh_from_db()
+        self.assertEqual(self.league.current_team_id, self.teams[0].id)
+        self.assertEqual(self.league.seasons.count(), 1)
+
+    def test_hot_seat_manager_is_also_refused(self) -> None:
+        from matches.models import OwnerEvaluation
+
+        OwnerEvaluation.objects.filter(league=self.league).update(verdict="hot_seat")
+        response = self.client.get(reverse("new_team_picker", args=[self.league.id]))
+        self.assertEqual(response.status_code, 302)
+
+    def test_already_reassigned_manager_is_refused(self) -> None:
+        from matches.models import OwnerEvaluation
+
+        OwnerEvaluation.objects.filter(league=self.league).update(verdict="fired")
+        self.league.current_team = self.teams[-1]
+        self.league.save(update_fields=["current_team"])
+        response = self.client.get(reverse("new_team_picker", args=[self.league.id]))
+        self.assertEqual(response.status_code, 302)

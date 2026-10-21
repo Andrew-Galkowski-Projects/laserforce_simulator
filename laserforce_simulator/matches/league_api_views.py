@@ -68,6 +68,7 @@ from matches.league_services import (
     is_career_league,
     latest_completed_season,
     pick_displayed_season,
+    manager_awaiting_reassignment,
     reassign_and_roll,
     replace_conferences,
     season_mode_for,
@@ -137,6 +138,14 @@ class SeasonNotDraft(APIException):
     status_code = 409
     default_code = "season_not_draft"
     default_detail = "Conferences can only be edited while the Season is in draft."
+
+
+class ManagerNotFired(APIException):
+    """409 (UXP-03) — only a fired, not-yet-reassigned Manager picks a new team."""
+
+    status_code = 409
+    default_code = "manager_not_fired"
+    default_detail = "Only a fired Manager can choose a new team."
 
 
 class NoCompletedSeason(APIException):
@@ -534,6 +543,8 @@ class LeagueViewSet(
         latest = latest_completed_season(league)
         if latest is None:
             raise NoCompletedSeason()
+        if not manager_awaiting_reassignment(league, latest):
+            raise ManagerNotFired()
         return Response(
             {
                 "latest_completed": season_ref(latest),
@@ -562,6 +573,8 @@ class LeagueViewSet(
         latest = latest_completed_season(league)
         if latest is None:
             raise NoCompletedSeason()
+        if not manager_awaiting_reassignment(league, latest):
+            raise ManagerNotFired()
         eligible = eligible_new_teams(league, latest)
         form = ReassignTeamForm(
             data=plain_form_data(ReassignTeamForm, request.data),
