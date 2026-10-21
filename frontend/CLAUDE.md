@@ -1,10 +1,11 @@
 # frontend/ -- the Angular SPA (ANG-04)
 
 The Phase 8 replacement for the Django templates. The stack is fixed by
-[ADR-0042](../docs/adr/0042-angular-frontend-stack.md). Right now it is an app shell (a Material
-toolbar titled "Laserforce Simulator", a placeholder home page, a placeholder `/login`, and a
-wildcard route that redirects home) plus the client layer from ANG-05: typed API services and the
-JWT sign-in / silent-refresh flow. See **API and auth** below. No feature screens yet (ANG-06).
+[ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
+layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
+below 768px) behind `authGuard`, and the Teams feature routes (ANG-06a), on top of the client
+layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
+auth** below.
 
 ## Stack
 
@@ -67,17 +68,22 @@ src/
     environment.prod.ts   prod: { production: true,  apiBaseUrl: '/api' }
     environment.worktree.ts  agent worktrees: { apiBaseUrl: 'http://localhost:8001/api' } (start:worktree)
   app/
-    app.ts / app.html     the shell: <mat-toolbar> + <router-outlet>
-    app.scss              toolbar primary colour via mat.toolbar-overrides (M3 ignores color="primary")
-    app-title.ts          APP_TITLE, shared by the toolbar and the route titles
+    app.ts                the root: a bare <router-outlet> (/login renders without the shell)
+    app-title.ts          APP_TITLE, shared by the header and the route titles
     app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
-    app.routes.ts         '' -> Home, 'login' -> Login placeholder, '**' -> redirect to ''
-    home/                 placeholder Home page
-    login/                placeholder Login page ("Sign in (coming in ANG-06)")
+    app.routes.ts         'login' (signedOutGuard, lazy) | '' -> Shell behind authGuard:
+                          '' -> /teams, 'teams' -> lazy teams/teams.routes.ts | '**' -> ''
+    shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
+                          over drawer below); toolbar colours via mat.toolbar-overrides
+    login/                sign-in form; returnUrl honoured only when it is an in-app path
+    teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
+                          team-create, team-detail, team-edit, team-slots
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures
+                          (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
+                          auth.guard.ts (authGuard, signedOutGuard),
                           auth.tokens.ts (TOKEN_PATH, SKIP_AUTH_REFRESH), user.ts
     theme/                theme-tokens.ts (LF_TOKENS) + theme.spec.ts
 ```

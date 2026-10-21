@@ -303,7 +303,7 @@ Tournament participant import (`matches.tournament_services.setup.import_partici
 called by both `matches/tournament_views/setup.py` and `POST /api/tournaments/<id>/import-participants/`)
 all pass `manager_or_none(request)`.
 
-**Serializer split:** `TeamListSerializer` (list) nests `PlayerInlineSerializer` (id, name, preferred_roles) to keep list payloads small. `TeamSerializer` (detail) nests the full `PlayerSerializer` with explicit stat fields. Both share `_TEAM_BASE_FIELDS` and `_PLAYER_STAT_FIELDS` constants so the field lists are defined once.
+**Serializer split:** `TeamListSerializer` (list) nests `PlayerInlineSerializer` (id, name, preferred_roles) to keep list payloads small. `TeamSerializer` (detail) nests the full `PlayerSerializer` with explicit stat fields. Both share `_TEAM_BASE_FIELDS` and `_PLAYER_STAT_FIELDS` constants so the field lists are defined once. Both also carry read-only `is_valid_roster` (bool) and `roster_errors` (string list) straight from the model properties (ANG-06a, so the Angular app never re-implements the roster rules); `TeamViewSet.get_queryset` `select_related`s the six slot FKs so the list adds no per-Team queries (`test_api_roster_validity.py`).
 
 **`PlayerInlineSerializer`** — minimal player representation (id, name, preferred_roles) for use anywhere a full player is not needed.
 

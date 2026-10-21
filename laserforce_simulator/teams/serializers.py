@@ -36,6 +36,8 @@ _TEAM_BASE_FIELDS = [
     "slot_scout_2",
     "slot_medic",
     "slot_ammo",
+    "is_valid_roster",
+    "roster_errors",
 ]
 
 
@@ -57,6 +59,8 @@ class TeamListSerializer(serializers.ModelSerializer):
     """Slim team serializer for list responses — players include id/name only."""
 
     players = PlayerInlineSerializer(many=True, read_only=True)
+    is_valid_roster = serializers.BooleanField(read_only=True)
+    roster_errors = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = Team
@@ -67,6 +71,8 @@ class TeamSerializer(serializers.ModelSerializer):
     """Full team detail including all player stats."""
 
     players = PlayerSerializer(many=True, read_only=True)
+    is_valid_roster = serializers.BooleanField(read_only=True)
+    roster_errors = serializers.ListField(child=serializers.CharField(), read_only=True)
 
     class Meta:
         model = Team

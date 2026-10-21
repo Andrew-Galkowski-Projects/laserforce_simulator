@@ -17,6 +17,10 @@ export interface TeamBase {
   slot_scout_2: number | null;
   slot_medic: number | null;
   slot_ammo: number | null;
+  /** `Team.is_valid_roster`: the server's SM5 roster verdict. */
+  is_valid_roster: boolean;
+  /** `Team.roster_errors`: human-readable problems, `[]` when valid. */
+  roster_errors: string[];
 }
 
 /** `TeamListSerializer`: a row of `GET teams/`. */

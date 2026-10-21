@@ -35,6 +35,8 @@ const TEAM: Team = {
   wins: 2,
   losses: 1,
   ...SLOTS,
+  is_valid_roster: false,
+  roster_errors: ['missing Heavy'],
   players: [PLAYER],
 };
 
