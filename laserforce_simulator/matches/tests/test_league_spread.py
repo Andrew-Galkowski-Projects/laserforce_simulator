@@ -239,11 +239,11 @@ class TestCre02AdvancedCreateWithSpread(TestCase):
         self.assertEqual(response.status_code, 302)
         self._assert_created("Eight Steep", expected_teams=8)
 
-    def test_redirect_target_is_season_standings(self) -> None:
+    def test_redirect_target_is_league_dashboard(self) -> None:
         response = self._post("Redirect League", league_spread="tiered")
         season = League.objects.get(name="Redirect League").seasons.get()
         self.assertEqual(
-            response["Location"], reverse("season_standings", args=[season.id])
+            response["Location"], reverse("league_dashboard", args=[season.league_id])
         )
 
     def test_spread_creates_no_extra_leagues_or_seasons(self) -> None:

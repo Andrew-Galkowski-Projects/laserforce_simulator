@@ -728,3 +728,37 @@ class TestConf01SeasonStandingsConferences(TestCase):
 
                 team = Team.objects.get(pk=team_id)
                 self.assertContains(r, team.name)
+
+
+# ---------------------------------------------------------------------------
+# UXP-08 — the Manager's team row is highlighted on the standings page.
+# ---------------------------------------------------------------------------
+
+
+class TestUxp08StandingsManagedTeamHighlight(TestCase):
+    def _draft_season(self, prefix: str, *, mode: str = "league"):
+        league = League.objects.create(name=f"{prefix} League", mode=mode)
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 6, 1)
+        )
+        teams = [make_team_with_slots(f"{prefix}{i}")[0] for i in range(3)]
+        season.teams.add(*teams)
+        return league, season, teams
+
+    def test_managed_team_row_is_highlighted(self) -> None:
+        league, season, teams = self._draft_season("UxpStd")
+        league.current_team = teams[2]
+        league.save()
+        response = self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertContains(
+            response,
+            f'<tr id="season-standings-row-{teams[2].id}" class="table-primary">',
+        )
+        self.assertContains(response, 'class="table-primary"', count=1)
+        self.assertContains(response, 'id="season-standings-managed-badge"', count=1)
+
+    def test_no_managed_team_no_highlight(self) -> None:
+        _league, season, _teams = self._draft_season("UxpStdNone")
+        response = self.client.get(reverse("season_standings", args=[season.id]))
+        self.assertNotContains(response, 'class="table-primary"')
+        self.assertNotContains(response, 'id="season-standings-managed-badge"')

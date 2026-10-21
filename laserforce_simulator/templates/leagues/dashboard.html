@@ -15,7 +15,9 @@
                 <span id="league-dashboard-state-badge" class="badge bg-primary text-uppercase">{{ season_mode }}</span>
             {% endif %}
             {# NAV-01 — the advancement Play controls moved to the topnav `Play ▾` dropdown. #}
+            {% if has_owner_evaluations %}
             <a id="league-dashboard-past-evaluations-link" class="btn btn-link btn-sm" href="{% url 'league_history' league.id %}">View past evaluations</a>
+            {% endif %}
             {% if league.mode == "league" %}
             <a id="league-dashboard-delete-link" class="btn btn-outline-danger btn-sm" href="{% url 'league_delete' league.id %}">Delete League</a>
             {% endif %}
@@ -35,6 +37,22 @@
 
     {% if displayed_season %}
         <p class="text-muted">{{ displayed_season.name }}</p>
+    {% endif %}
+
+    {# UXP-08 — tell a career Manager which Team is theirs. #}
+    {% if managed_team %}
+        <p id="league-dashboard-managed-team">You manage <strong>{{ managed_team.name }}</strong>.</p>
+    {% endif %}
+
+    {# UXP-08 — the draft-Season onboarding call-to-action (same endpoint as the Play menu). #}
+    {% if season_mode == "draft" and displayed_season %}
+        <div id="league-dashboard-start-season-cta" class="alert alert-primary d-flex justify-content-between align-items-center">
+            <span>This Season hasn't started yet. Start it to lock in the teams and schedule, then play games from the Play menu.</span>
+            <form id="league-dashboard-start-season-form" method="post" action="{% url 'start_season' displayed_season.id %}">
+                {% csrf_token %}
+                <button type="submit" class="btn btn-primary">Start Season</button>
+            </form>
+        </div>
     {% endif %}
 
     {% if season_mode == "none" %}

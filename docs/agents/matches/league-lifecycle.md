@@ -239,7 +239,9 @@ booleans pass python `True`/`False`) so it reuses the Advanced validation +
 **Views.** `league_create(request) -> HttpResponse` is now the **chooser** (GET renders
 the template `<select>`; POST resolves the chosen `LeagueTemplate`, builds
 `CreateLeagueForm(data=_template_to_form_data(...))`, validates, and on valid calls
-`_create_league_and_season(form)` → `redirect("season_standings", season_id=season.id)`;
+`_create_league_and_season(form)` → `redirect("season_standings", season_id=season.id)`
+(UXP-08: now `redirect("league_dashboard", ...)`, whose draft branch shows a Start Season
+call-to-action; the CONF-05 Manage Conferences redirect is unchanged);
 invalid / bad template key ⇒ re-render the chooser). `league_create_advanced(request)
 -> HttpResponse` is today's full-form `league_create` **verbatim** (form + template +
 flow, only action/back-link/heading + the difficulty row adjusted); GET renders the

@@ -8,7 +8,7 @@ in ``@transaction.atomic``, and on success creates one League (mode="league",
 state="active") + one Season (state="draft", schedule_format=
 "single_round_robin") + ``num_teams`` Teams (each with 6 Players via
 ``teams.views._generate_teams``), enrols them on the Season, and redirects
-to ``reverse("season_standings", season_id=season.id)``.
+to ``reverse("league_dashboard", league_id=league.id)`` (UXP-08; was standings).
 """
 
 from __future__ import annotations
@@ -158,11 +158,11 @@ class TestLeagueCreatePost(TestCase):
                 f"Team {team.name!r} has {team.players.count()} players, expected 6",
             )
 
-    def test_post_redirects_to_season_standings(self) -> None:
+    def test_post_redirects_to_league_dashboard(self) -> None:
         response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
         self.assertEqual(
-            response["Location"], reverse("season_standings", args=[season.id])
+            response["Location"], reverse("league_dashboard", args=[season.league_id])
         )
 
     def test_redirect_target_renders_200(self) -> None:
@@ -2152,11 +2152,13 @@ class TestConf05CreateLeagueConferences(TestCase):
         )
         self.assertEqual(assigned, set(season.teams.values_list("id", flat=True)))
 
-    def test_create_without_conferences_redirects_to_standings(self):
+    def test_create_without_conferences_redirects_to_league_dashboard(self):
         payload = _valid_payload(league_name="FlatCreate")  # no conferences field
         response = self.client.post(reverse("league_create_advanced"), payload)
         season = Season.objects.get(league__name="FlatCreate")
-        self.assertRedirects(response, reverse("season_standings", args=[season.id]))
+        self.assertRedirects(
+            response, reverse("league_dashboard", args=[season.league_id])
+        )
         self.assertEqual(season.conferences.count(), 0)
 
 
