@@ -15,11 +15,12 @@ from django.contrib.auth.forms import (
     UserCreationForm,
 )
 from django.db import transaction
-from django.utils import timezone
+from django.db.models import F
 
-from .models import Invite, User
+from .models import Invite, InviteRedemption, User
 
 INVALID_INVITE_MESSAGE = "This invite code is invalid or has already been used."
+EXPIRED_INVITE_MESSAGE = "This invite has expired."
 WRONG_EMAIL_INVITE_MESSAGE = "This invite is for a different email address."
 
 
@@ -56,7 +57,10 @@ class EmailAuthenticationForm(AuthenticationForm):
 
 
 class RegisterForm(UserCreationForm):
-    """UX-01 — open self-registration: email + password + confirm."""
+    """UX-01 — invite-only self-registration: email + password + confirm, plus
+    a redeemable ``Invite`` code. ``save`` spends one of the invite's uses and
+    records the redemption.
+    """
 
     class Meta:
         model = User
@@ -109,8 +113,10 @@ class RegisterForm(UserCreationForm):
     def clean_invite(self) -> Invite:
         code = self.cleaned_data["invite"].strip()
         invite = Invite.objects.filter(code=code).first()
-        if invite is None or invite.is_used:
+        if invite is None or not invite.uses_left:
             raise forms.ValidationError(INVALID_INVITE_MESSAGE, code="invalid")
+        if invite.is_expired:
+            raise forms.ValidationError(EXPIRED_INVITE_MESSAGE, code="expired")
         return invite
 
     def clean(self) -> dict[str, Any]:
@@ -128,15 +134,15 @@ class RegisterForm(UserCreationForm):
     def save(self, commit: bool = True) -> User:
         user = super().save(commit=commit)
         if commit:
-            # Conditional update: of two racing redemptions, only one claims
-            # the invite; the loser's Account is rolled back with this atomic.
+            invite = self.cleaned_data["invite"]
+            # Conditional increment: racing redemptions of the last use cannot
+            # both win; the loser's Account is rolled back with this atomic.
             claimed = Invite.objects.filter(
-                pk=self.cleaned_data["invite"].pk,
-                used_at__isnull=True,
-                used_by__isnull=True,
-            ).update(used_by=user, used_at=timezone.now())
+                pk=invite.pk, use_count__lt=F("max_uses")
+            ).update(use_count=F("use_count") + 1)
             if not claimed:
                 raise forms.ValidationError(INVALID_INVITE_MESSAGE, code="invalid")
+            InviteRedemption.objects.create(invite=invite, user=user)
         return user
 
 

@@ -116,7 +116,10 @@ class TestAuthUrlWiring(TestCase):
 
 
 class TestRegisterView(TestCase):
-    """§9.3 — open self-registration: happy path plus three invalid inputs."""
+    """§9.3 — self-registration (invite-only): happy path plus invalid inputs.
+
+    Invite enforcement itself is covered in `test_invites.py`.
+    """
 
     def setUp(self) -> None:
         super().setUp()

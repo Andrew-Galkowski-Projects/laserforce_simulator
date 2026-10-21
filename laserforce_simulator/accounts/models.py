@@ -5,7 +5,10 @@ from typing import Any
 
 from django.contrib.auth.base_user import BaseUserManager
 from django.contrib.auth.models import AbstractUser
+from django.core.exceptions import ValidationError
+from django.core.validators import MinValueValidator
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -82,11 +85,13 @@ def _new_invite_code() -> str:
 
 
 class Invite(models.Model):
-    """A single-use code that lets one person register an Account.
+    """A code that lets up to ``max_uses`` people register an Account, until
+    ``expires_at`` (never, when blank).
 
-    Registration is invite-only: ``RegisterForm`` refuses a missing, unknown or
-    used code, and an ``email``-locked invite only for that address. Staff
-    create invites in Django admin, which shows the sign-up link to send.
+    Registration is invite-only: ``RegisterForm`` refuses a missing, unknown,
+    used-up or expired code, and an ``email``-locked invite for any other
+    address. Staff create invites in Django admin, which shows the sign-up link.
+    ``use_count`` only ever grows, so deleting an Account never gives a use back.
     """
 
     code = models.CharField(
@@ -96,15 +101,16 @@ class Invite(models.Model):
         blank=True, help_text="Optional: only this address may use the invite."
     )
     note = models.CharField(max_length=200, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    used_by = models.OneToOneField(
-        User,
-        null=True,
-        blank=True,
-        on_delete=models.SET_NULL,
-        related_name="invite_used",
+    max_uses = models.PositiveIntegerField(
+        default=1,
+        validators=[MinValueValidator(1)],
+        help_text="How many Accounts this invite can create.",
     )
-    used_at = models.DateTimeField(null=True, blank=True)
+    use_count = models.PositiveIntegerField(default=0, editable=False)
+    expires_at = models.DateTimeField(
+        null=True, blank=True, help_text="Optional: the link stops working after this."
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -112,6 +118,45 @@ class Invite(models.Model):
     def __str__(self) -> str:
         return self.email or self.note or self.code
 
+    def clean(self) -> None:
+        if self.email and self.max_uses > 1:
+            raise ValidationError(
+                {
+                    "max_uses": "An email-locked invite can only be used once: "
+                    "that address can register only one Account."
+                }
+            )
+
     @property
-    def is_used(self) -> bool:
-        return self.used_at is not None or self.used_by_id is not None
+    def uses_left(self) -> int:
+        return max(self.max_uses - self.use_count, 0)
+
+    @property
+    def is_expired(self) -> bool:
+        return self.expires_at is not None and self.expires_at <= timezone.now()
+
+    @property
+    def is_redeemable(self) -> bool:
+        return self.uses_left > 0 and not self.is_expired
+
+
+class InviteRedemption(models.Model):
+    """One Account created through an ``Invite``. ``user`` goes NULL when that
+    Account is deleted; the row stays, as the record of a use spent."""
+
+    invite = models.ForeignKey(
+        Invite, on_delete=models.CASCADE, related_name="redemptions"
+    )
+    user = models.OneToOneField(
+        User,
+        null=True,
+        on_delete=models.SET_NULL,
+        related_name="invite_redemption",
+    )
+    redeemed_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ["redeemed_at"]
+
+    def __str__(self) -> str:
+        return f"{self.user or 'deleted Account'} via {self.invite}"

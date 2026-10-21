@@ -9,7 +9,7 @@ from django.http import HttpRequest, HttpResponse
 from django.urls import reverse
 from django.utils.html import format_html
 
-from .models import Invite, User
+from .models import Invite, InviteRedemption, User
 
 
 @admin.register(User)
@@ -48,15 +48,42 @@ class UserAdmin(BaseUserAdmin):
     )
 
 
+class InviteRedemptionInline(admin.TabularInline):
+    """Who signed up through this invite, and when."""
+
+    model = InviteRedemption
+    extra = 0
+    can_delete = False
+    fields = ("user", "redeemed_at")
+    readonly_fields = ("user", "redeemed_at")
+
+    def has_add_permission(
+        self, request: HttpRequest, obj: Invite | None = None
+    ) -> bool:
+        return False
+
+
 @admin.register(Invite)
 class InviteAdmin(admin.ModelAdmin):
     """Create an Invite, then send its sign-up link: shown in a message right
-    after it is added, and in the changelist until it is used."""
+    after it is added, and in the changelist while it is still redeemable."""
 
-    list_display = ("__str__", "email", "created_at", "used_by", "used_at")
-    list_filter = (("used_at", admin.EmptyFieldListFilter),)
+    list_display = ("__str__", "email", "uses", "status", "expires_at", "created_at")
     search_fields = ("email", "note", "code")
-    readonly_fields = ("code", "used_by", "used_at")
+    readonly_fields = ("code", "use_count")
+    inlines = [InviteRedemptionInline]
+
+    @admin.display(description="Uses")
+    def uses(self, invite: Invite) -> str:
+        return f"{invite.use_count} / {invite.max_uses}"
+
+    @admin.display(description="Status")
+    def status(self, invite: Invite) -> str:
+        if invite.is_expired:
+            return "Expired"
+        if not invite.uses_left:
+            return "Used up"
+        return "Active"
 
     @staticmethod
     def signup_url(request: HttpRequest, invite: Invite) -> str:
@@ -64,7 +91,7 @@ class InviteAdmin(admin.ModelAdmin):
 
     def get_list_display(self, request: HttpRequest) -> Sequence[Any]:
         def signup_link(invite: Invite) -> str:
-            if invite.is_used:
+            if not invite.is_redeemable:
                 return "-"
             return format_html(
                 '<a href="{0}">{0}</a>', self.signup_url(request, invite)
@@ -76,9 +103,15 @@ class InviteAdmin(admin.ModelAdmin):
     def get_fields(
         self, request: HttpRequest, obj: Invite | None = None
     ) -> Sequence[Any]:
+        editable = ("email", "note", "max_uses", "expires_at")
         if obj is None:
-            return ("email", "note")
-        return ("email", "note", "code", "used_by", "used_at")
+            return editable
+        return (*editable, "code", "use_count")
+
+    def get_inlines(
+        self, request: HttpRequest, obj: Invite | None
+    ) -> list[type[admin.options.InlineModelAdmin]]:
+        return list(self.inlines) if obj is not None else []
 
     def response_add(
         self, request: HttpRequest, obj: Invite, post_url_continue: str | None = None
