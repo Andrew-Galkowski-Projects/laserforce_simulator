@@ -1,3 +1,201 @@
+# Website walkthrough — live self-hosted site (UX + performance)
+
+Date: 2026-10-20
+Target: `https://laserforce-sim.tail7d590.ts.net` (self-hosted, `main` @ `f8b8bf3`, Postgres, Celery
+worker, no R2), test Account `uxtest@example.com` registered through an Invite.
+Scope: every HTML route group — sign-up, Sandbox (teams, players, rounds, matches, batch sim,
+compare, head-to-head), Tournaments, an 8-Team Career League through two Seasons, an 8-Team Member
+Nights League, an Advanced-form League (created and deleted), Maps (upload, editor, sight lines),
+Account (Self-insert, password change), and a 390 px phone viewport. Timings are server responses
+measured from the browser over Funnel; "fast" below means < 100 ms.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary — website walkthrough
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| UXP-01 | 🔴 | Sandbox teams | Every "Remove" / "Delete" player button is a 500 (template name mismatch) |
+| UXP-02 | 🔴 | Self-hosting / Maps | Map images 404 on the self-hosted deploy: nothing serves `/media/` without R2 |
+| UXP-03 | 🟠 | Career | A retained Manager can open the "You've been fired" page and switch teams |
+| UXP-04 | 🟠 | Maps | A failed map upload reloads the list with no error message |
+| UXP-05 | 🟠 | Career play | "Play Until Playoffs" also plays the playoffs in the 8-Team Career template |
+| UXP-06 | 🟠 | Round pages | The Event Log takes ~1 s and ships ~600 KB of HTML per Round |
+| UXP-07 | 🟠 | Mobile | League pages scroll sideways on a phone; the sidebar never collapses |
+| UXP-08 | 🟠 | League onboarding | A new League lands on preview Standings with no "Start Season" and no "your team" |
+| UXP-09 | 🟡 | League screens | Season-summary pages cost 150–200 ms after one Season and recompute every request |
+| UXP-10 | 🟡 | Maps | The editor saves a map with 0 bases, matches offer it, and it only fails at simulate |
+| UXP-11 | 🟡 | Member nights | Results are hidden at the bottom of Schedule; no feedback after playing a game |
+| UXP-12 | 🟡 | Navigation | 14 menu items lead to "Coming soon" pages; Trade shows internal dev notes |
+| UXP-13 | 🟡 | Feedback | Several writes give no confirmation (finances save, play next match, season start) |
+| UXP-14 | 🟡 | Benchmarks | Empty-state says "play some rounds" when the real gate is 5 Rounds per Player; data is cross-Account |
+| UXP-15 | 🟡 | Labels | Unlabelled numbers: round summary "–" badge, bracket "Game 1 6–0", live viewer "Sc L Sh Mi SP" |
+| UXP-16 | 🟡 | Forms | Generate Players mixes two ranges in one 95-option dropdown; its result page re-POSTs on refresh |
+| UXP-17 | 🟡 | Naming | "Create Tournament Match" vs Tournaments; bracket "Round 1/2/3" vs form "Quarter/Semi/Final" |
+| UXP-18 | 🟡 | Leagues | Season rollover takes three clicks; second League reuses team names with "#2" |
+| UXP-19 | 🟡 | Small UI | "$-7.2k"; invisible "Floor" paint button; CSV import error printed twice with `slot_commander` |
+| UXP-20 | ℹ️ | Anonymous nav | Signed-out pages show the full app menu, every link bouncing to sign-in |
+| UXP-21 | ℹ️ | Advanced create | Shows the dormant `visibility` setting |
+| UXP-22 | ℹ️ | Performance baseline | What is fast, for comparison |
+
+### 🔴 UXP-01 — Removing a player is a 500 on every team
+`teams/views.py::player_delete` renders `teams/player_confirm_delete.html`, but the template on disk
+is `templates/teams/player_delete.html`, so `GET /teams/<id>/player/<id>/delete/` raises
+`TemplateDoesNotExist` (500). Both entry points are broken: "Remove" on every row of the team page
+(`team_detail.html:60`, `:90`) and "Delete" on the player page (`player_detail.html:68`). The POST
+branch is fine, but nothing reaches it. Fix: render `teams/player_delete.html` (or rename the file),
+plus a view test that GETs the confirm page.
+
+### 🔴 UXP-02 — Map images 404 on the self-hosted deploy
+`GET /media/maps/Syracuse_Laser_Tag_Map_cropped.png` → 404. Without the `R2_*` variables, media goes
+to the local filesystem, and with `DEBUG=False` nothing serves `/media/` (`static()` in `urls.py` is
+DEBUG-only). Visible damage: both seeded default maps and every uploaded map show a broken image in
+`/maps/`, and the editor's "Original" panel is broken (the "Zone Map" panel works because
+`processed-image/` is a view). Fix options: set the R2 variables in `.env.selfhost`; or serve
+`MEDIA_ROOT` in production (a WhiteNoise-style media route, or a `media` volume behind a static file
+server in the compose stack). `docs/self-hosting.md` lists this as a caveat; maps make it a defect.
+
+### 🟠 UXP-03 — A retained Manager can take the "fired" path and switch teams
+`/leagues/<id>/new-team/` renders "You've been fired — The Owner has let you go… Take Over This Team"
+for any career League with a completed Season, even when the owner verdict was **RETAINED**
+(observed on `/seasons/1/owner-evaluation/`). `new_team_picker` and `reassign_team`
+(`matches/league_views.py:1945`, `:1986`) check career mode, the active-Season guard and the worst-N
+eligibility, but never that the latest evaluation fired the Manager. A retained Manager can therefore
+jump to any of the five worst teams, bypassing the owner evaluation. Found by reading the code after
+seeing the page; the POST was not exercised. Fix: 404 / redirect both views unless the latest
+`OwnerEvaluation` verdict is fired, plus tests.
+
+### 🟠 UXP-04 — Failed map uploads fail silently
+`core/views.py::upload_map` redirects to `map_list` on an invalid form and on `InvalidMapImage`,
+with no message. Uploading a text file named `.png` returned to `/maps/` with nothing shown and no map
+created. Fix: re-render the list with the form errors, or `messages.error(...)` before the redirect.
+
+### 🟠 UXP-05 — "Play Until Playoffs" plays the playoffs too (8-Team Career)
+In the 8-Team Career League, Season 1 at 8/56 Rounds → "Play Until Playoffs" → 22 s later the Season
+was COMPLETED with a champion (Tempest Titans); the playoffs were never offered as a separate step.
+The API docstring for the same action says "rest of the regular season". In the 8-Team Member Nights
+template the same button correctly stopped at "Confirm — Set Up Member Night", so this looks specific
+to the template whose next phase is the playoff tournament. Needs a decision: stop before the playoffs
+(matching the label), or relabel the button "Play Until End of Season".
+
+### 🟠 UXP-06 — The Event Log is the slowest page in the app
+`/matches/game-round/<id>/events/`: 921 ms / 582 KB (Round 1) and 1,045 ms / 626 KB (Round 3), about
+6,700 DOM nodes, for one 15-minute Round with 1,324 events. Every other Round page is 20–30 ms.
+In-browser rendering was fine once measured in a fresh browser (161 fps); the cost is server render +
+HTML size. Fix ideas: serve the full timeline through the existing windowed JSON instead of inlining
+it, or paginate server-side.
+
+### 🟠 UXP-07 — League pages overflow on a phone
+At 390 px, `/seasons/1/standings/` is 967 px wide (`scrollWidth` 967 vs `clientWidth` 485): the
+`<main class="flex-grow-1">` flex item cannot shrink below its content, so the table's
+`.table-responsive` wrapper never engages and the whole page scrolls sideways. Separately, the League
+sidebar stays visible at phone width and takes about a quarter of the screen. Fix: `min-width: 0` on
+the `main` flex item, and collapse the sidebar under `md`. Sandbox Round pages fit (485 = 485).
+
+### 🟠 UXP-08 — New-League onboarding has no next step
+After "Create League" (3.3 s) the user lands on `/seasons/1/standings/` in Preview. Nothing on that
+page or on the League dashboard says how to begin: "Start Season" exists only in the Play menu, the
+dashboard shows "DRAFT" with no button, and no page marks which team is yours (the Team menu reveals
+it was Ember Enforcers). Also on the new dashboard: "Top standings" is alphabetical (Aurora, Blackout,
+Ember) while Preview Standings ranks by rating (Blackout first), and "View past evaluations" is offered
+before any evaluation exists. Fix ideas: redirect to the dashboard with a "Start Season" call to
+action; highlight the Manager's team in standings and say "You manage X".
+
+### 🟡 UXP-09 — Season-summary pages recompute on every request
+With one completed 56-Round Season: Season dashboard 167–171 ms, Awards 152–182 ms, League Leaders
+for that Season 195 ms, League player page 180–218 ms, versus 50–110 ms for the other League screens.
+(The first reads, while the worker was still busy, were 360–430 ms.) These builders aggregate the
+whole Season's `PlayerRoundState` on each request, so the cost grows with Seasons played; same root as
+ANG01e-D1. Fix idea: persist award sets and leader tables when a Season completes.
+
+### 🟡 UXP-10 — Maps can be saved with no bases, then fail only at simulate time
+The editor's "Save Configuration" accepted 0 bases ("Configuration saved! (50px zones, 0 base(s))");
+the map then appeared in the Create Single Round "Arena Map" list, and only "Simulate Round" said
+"Map 'UX Test Arena' has no red base placed." Fix: warn on save, and list only maps with both bases.
+
+### 🟡 UXP-11 — Member-night flow is hard to follow
+- The Site picker is nine checkboxes inside the Play dropdown, none pre-selected; "Confirm — Set Up
+  Member Night" with nothing ticked returns "Pick at least one Site".
+- After set-up, the menu still shows "Confirm — Set Up Member Night" beside the play actions.
+- "Play Single Members Game" plays one of 62 queued games and returns to a dashboard that still says
+  "All fixtures played · 56 / 56"; the results live only in a "Member nights" section at the bottom
+  of Season Schedule. Fix ideas: a member-night card on the dashboard (progress plus a link), and
+  pre-select "All Sites".
+
+### 🟡 UXP-12 — Fourteen menu items are placeholders
+Tools (Achievements, Screenshot, Enable Debug Mode, Reset DB), Help (all six links) and Players
+(Trade, Trading Block, Prospects, Hall of Fame) all open "Coming soon" pages, from both the top menu
+and the League sidebar. The Trade page also prints internal notes to users: "Blocked: Needs cap-space
+validation from the salary / contract model — not yet built. players_trade". Fix ideas: hide or grey
+out unbuilt items; never render the blocked-by notes.
+
+### 🟡 UXP-13 — Writes with no confirmation
+No message after: Start Season (1.9 s), Play Next Match in a Tournament (1.3 s), Save Expense Settings
+on Team Finances (the projection also stays unchanged after a ticket-price change), member-night
+set-up, and Play Single Members Game. Compare Delete League, Self-insert and Create Team, which all
+flash a message.
+
+### 🟡 UXP-14 — Role Benchmarks empty-state is misleading
+After three saved Rounds `/players/benchmarks/` still says "There is no benchmark data yet. Play and
+save some rounds first." The real gate is the default `threshold=5` Rounds per Player in a role.
+Also, `teams.services.build_role_benchmarks` takes no user, so benchmarks pool every Account's
+Rounds (aggregates only, but the only cross-Account read in the Sandbox). Fix: name the threshold in
+the message; decide whether benchmarks should be per-Account.
+
+### 🟡 UXP-15 — Unlabelled numbers
+- Round detail: each team summary card has a grey "–" badge in its fourth column with no label.
+- Tournament bracket: "Game 1 6–0" next to Round scores in the tens of thousands (probably survivors).
+- One Week (Live): columns "Sc L Sh Mi SP" with no legend; playback starts paused at 00:00, and 1×
+  is real time (15 minutes per game).
+- Match page: the column headers fix colours ("Frostbite Brigade (Red)") although teams switch sides
+  in Round 2, and a 1–1 split decided on points is not explained.
+
+### 🟡 UXP-16 — Generate Players form
+"Players per team" holds the team range (6–9) and the free-agent range (12–100) in one 95-option
+list, whichever team count is chosen. The result page is rendered from the POST without a redirect,
+so a browser refresh generates another batch of Teams.
+
+### 🟡 UXP-17 — Naming collisions
+`/matches/create/` is titled "Create Tournament Match" but defaults to "Friendly Match" and is not
+the Tournaments feature. Brackets label columns "Bracket Round 1/2/3" while the create form sets
+"Quarterfinal / Semifinal / Final series length".
+
+### 🟡 UXP-18 — League lifecycle friction
+Season to Season takes three clicks: "Start Next Season" (shows the owner evaluation), "Start Next
+Season" again (creates a DRAFT Season), then "Start Season". A second League gets the same generated
+team names with a "#2" suffix ("Aurora Aces #2").
+
+### 🟡 UXP-19 — Small UI defects
+- Team Finances prints negative cash as "$-7.2k".
+- Map editor: the "Floor" paint button label is invisible (light text on a white button).
+- Roster CSV import: re-importing the template prints the error twice, using the internal field name:
+  "Team 'Red Phoenix' slot 'slot_commander' already filled by player 'Alice'".
+- No `<h1>` on the sandbox player page or on `/maps/` (headings start at h2 / h5).
+- Adding a player with a preferred role does not fill the empty matching slot; the team still says
+  "missing Commander" until Assign Slots.
+
+### ℹ️ UXP-20 — Signed-out pages show the full app menu
+Sign-in and Register show Teams, Players, Matches, Batch Sim, Maps, Tournaments, Tools and Help;
+every app link redirects back to sign-in.
+
+### ℹ️ UXP-21 — Advanced League create exposes `visibility`
+The form shows a `visibility` select (default "closed") for the dormant `League.visibility` column
+(see `docs/agents/matches/accounts-ownership.md`); changing it does nothing yet.
+
+### ℹ️ UXP-22 — Performance baseline (for comparison)
+Fast (< 100 ms): every Sandbox list, detail and form page; Compare / Head-to-Head (20–44 ms); maps
+editor (77 ms); most League screens (50–110 ms); sight-line compute on a 12×8 grid (29 ms).
+Actions: generate 6 Teams 84 ms; simulate one Round 1.4 s end to end; a 2-Round Match 0.8 s; Batch
+Sim 100 Rounds 18.9 s with live progress; League play about 1 Round/s with a live counter and the
+Play buttons disabled; Tournament "Play All" (5 Matches) a few seconds; create League 3.3 s
+(template) / 1.2 s (advanced); delete League 1.2 s.
+
+Not findings (checked and ruled out during the pass): a render stall on the Event Log and League
+dashboard, which was the test browser degrading over the session (231 → 71 fps on the same light
+page; both pages measured fine after a browser restart); a "missing" progress indicator on Play Two
+Months (the spinner and counter are there); the Site-picker error, which came from submitting the
+dropdown form without opening it.
+
 # Out-of-scope findings — ANG-01f-5 (Player pool and Draw)
 
 Date: 2026-10-19
