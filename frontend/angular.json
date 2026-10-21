@@ -30,7 +30,12 @@
                 "input": "public"
               }
             ],
-            "styles": ["src/styles.scss"]
+            "styles": [
+              "@fontsource/jetbrains-mono/400.css",
+              "@fontsource/jetbrains-mono/500.css",
+              "@fontsource/jetbrains-mono/700.css",
+              "src/styles.scss"
+            ]
           },
           "configurations": {
             "production": {

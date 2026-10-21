@@ -1,0 +1,15 @@
+// The `--side` convention (ADR-0043): every team container carries `data-lf-side="red|blue"`,
+// which points `--side*` at that Side's tokens. Nothing inside picks red or blue itself.
+[data-lf-side='red'] {
+  --side: var(--lf-side-red);
+  --side-text: var(--lf-side-red-text);
+  --side-bg: var(--lf-side-red-bg);
+  --side-dim: var(--lf-side-red-dim);
+}
+
+[data-lf-side='blue'] {
+  --side: var(--lf-side-blue);
+  --side-text: var(--lf-side-blue-text);
+  --side-bg: var(--lf-side-blue-bg);
+  --side-dim: var(--lf-side-blue-dim);
+}

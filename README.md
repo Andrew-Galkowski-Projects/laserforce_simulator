@@ -139,7 +139,9 @@ at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
 
 Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](frontend/) (see
 [ADR-0042](docs/adr/0042-angular-frontend-stack.md)). For now it is only an app shell: a toolbar
-and a placeholder home page. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is
+and a placeholder home page, styled by the app theme in
+[ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md). The theme follows the
+OS light / dark setting and uses JetBrains Mono, self-hosted. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is
 a project dependency, so no global install is needed.
 
 ```bash

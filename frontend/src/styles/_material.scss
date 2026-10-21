@@ -1,0 +1,79 @@
+// Angular Material, themed from the `--lf-*` contract (ADR-0043).
+//
+// `mat.theme` generates the FULL `--mat-sys-*` role set from tonal palettes seeded with indigo
+// and slate (`_theme-colors.scss`). `theme-type: color-scheme` emits every colour role as
+// `light-dark(<light>, <dark>)`, so the roles follow the same OS setting as the `--lf-*` tokens.
+// `mat.theme-overrides` then points every colour role except error, shadow and scrim at the
+// contract (a token, or a `color-mix` of tokens). The tokens switch with the mode, so light
+// Material follows palette A and dark follows palette B, and a Material component and a
+// hand-rolled one look the same. The error roles stay generated (Material's red).
+@use '@angular/material' as mat;
+@use 'theme-colors';
+
+@mixin theme {
+  @include mat.theme(
+    (
+      color: (
+        theme-type: color-scheme,
+        primary: theme-colors.$primary-palette,
+        tertiary: theme-colors.$tertiary-palette,
+      ),
+      typography: (
+        plain-family: var(--lf-font-body),
+        brand-family: var(--lf-font-heading),
+      ),
+    )
+  );
+  @include mat.theme-overrides(
+    (
+      // Primary: the accent.
+      primary: var(--lf-accent),
+      on-primary: var(--lf-bg),
+      primary-container: color-mix(in srgb, var(--lf-accent) 22%, var(--lf-surface)),
+      on-primary-container: var(--lf-text),
+      primary-fixed: color-mix(in srgb, var(--lf-accent) 22%, var(--lf-surface)),
+      primary-fixed-dim: color-mix(in srgb, var(--lf-accent) 40%, var(--lf-surface)),
+      on-primary-fixed: var(--lf-text),
+      on-primary-fixed-variant: var(--lf-text),
+      surface-tint: var(--lf-accent),
+      // Secondary: the accent toned down towards the muted text.
+      secondary: color-mix(in srgb, var(--lf-accent) 65%, var(--lf-text-muted)),
+      on-secondary: var(--lf-bg),
+      secondary-container: color-mix(in srgb, var(--lf-accent) 12%, var(--lf-surface-alt)),
+      on-secondary-container: var(--lf-text),
+      secondary-fixed: color-mix(in srgb, var(--lf-accent) 12%, var(--lf-surface-alt)),
+      secondary-fixed-dim: color-mix(in srgb, var(--lf-accent) 28%, var(--lf-surface-alt)),
+      on-secondary-fixed: var(--lf-text),
+      on-secondary-fixed-variant: var(--lf-text),
+      // Tertiary: the tag event colour (teal in light, sky in dark).
+      tertiary: var(--lf-ev-tag),
+      on-tertiary: var(--lf-bg),
+      tertiary-container: color-mix(in srgb, var(--lf-ev-tag) 18%, var(--lf-surface)),
+      on-tertiary-container: var(--lf-text),
+      tertiary-fixed: color-mix(in srgb, var(--lf-ev-tag) 18%, var(--lf-surface)),
+      tertiary-fixed-dim: color-mix(in srgb, var(--lf-ev-tag) 36%, var(--lf-surface)),
+      on-tertiary-fixed: var(--lf-text),
+      on-tertiary-fixed-variant: var(--lf-text),
+      // Surfaces, text and outlines.
+      background: var(--lf-bg),
+      on-background: var(--lf-text),
+      surface: var(--lf-bg),
+      surface-dim: var(--lf-bg),
+      surface-bright: var(--lf-surface),
+      surface-variant: var(--lf-surface-alt),
+      on-surface: var(--lf-text),
+      on-surface-variant: var(--lf-text-muted),
+      surface-container-lowest: var(--lf-surface),
+      surface-container-low: var(--lf-surface),
+      surface-container: var(--lf-surface),
+      surface-container-high: var(--lf-surface),
+      surface-container-highest: var(--lf-surface-alt),
+      outline: var(--lf-text-muted),
+      outline-variant: var(--lf-border),
+      // Inverse (snackbars, tooltips): the text and background swapped.
+      inverse-surface: var(--lf-text),
+      inverse-on-surface: var(--lf-bg),
+      inverse-primary: color-mix(in srgb, var(--lf-accent) 50%, var(--lf-bg))
+    )
+  );
+}
