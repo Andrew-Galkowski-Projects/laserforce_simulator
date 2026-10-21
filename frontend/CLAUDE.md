@@ -39,6 +39,12 @@ npm --prefix frontend exec -- ng generate component foo   # any other ng command
 `ng add` / `ng generate` resolve paths against the project in `frontend/`, so
 `npm --prefix frontend exec -- ng ...` works from the root.
 
+**A background dev server:** to know when it's up, poll the port with
+`until curl -s localhost:<port> >/dev/null; do sleep 1; done`. Grepping its log for `Local:`
+doesn't work, because the line carries ANSI colour codes. To stop it, run
+`powershell -NoProfile -File scripts/stop_worktree_servers.ps1 -Worktree <worktree>`. Stopping
+the npm wrapper alone leaves node, esbuild and dart running.
+
 CI's `frontend` job (`.github/workflows/ci.yml`) runs `npm ci`, `lint`, `format:check`,
 `test:ci` and `build`, in parallel with the Python `test` job. The `docker` deploy job needs both.
 
