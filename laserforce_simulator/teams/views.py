@@ -45,6 +45,7 @@ from .services import (  # noqa: F401 - re-exports
     build_career_stats,
     build_role_benchmarks,
     build_roster_template_csv,
+    fill_preferred_slot,
     player_form_initial,
     run_player_generation,
     run_roster_import,
@@ -217,6 +218,7 @@ def player_add(request, team_id):
             try:
                 player.full_clean()
                 player.save()
+                fill_preferred_slot(team, player)
                 messages.success(
                     request, f'Player "{player.name}" added to {team.name}!'
                 )
@@ -473,6 +475,12 @@ def generate_players(request):
 # LG-00b roster import ----------------------------------------------------
 
 
+def _roster_error_summary(error_count: int) -> str:
+    """One-line summary above the per-row error list (never the messages)."""
+    noun = "problem" if error_count == 1 else "problems"
+    return f"Nothing was imported: {error_count} {noun} found. Fix them and retry."
+
+
 @transaction.atomic
 def import_roster(request):
     """LG-00b roster-import surface.
@@ -499,7 +507,9 @@ def import_roster(request):
                     "teams/roster_import.html",
                     {
                         "form": form,
-                        "errors": [str(exc)],
+                        # The row list below carries each message; the summary
+                        # only counts them, so nothing is printed twice (UXP-19).
+                        "errors": [_roster_error_summary(len(exc.errors))],
                         "row_errors": exc.errors,
                     },
                 )

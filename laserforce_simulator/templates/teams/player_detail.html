@@ -14,7 +14,7 @@
     <div class="col-md-3">
         <div class="card h-100">
             <div class="card-body">
-                <h3 class="card-title mb-1">{{ player.name }}<span class="fs-6 align-middle">{% you_badge player.id %}</span></h3>
+                <h1 class="h3 card-title mb-1">{{ player.name }}<span class="fs-6 align-middle">{% you_badge player.id %}</span></h1>
                 <p class="text-muted mb-3">{{ team.name }}</p>
                 {# UX-02 - Self-insert link / unlink #}
                 {% if self_insert_player_id == player.id %}

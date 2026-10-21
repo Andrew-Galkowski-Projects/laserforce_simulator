@@ -11,6 +11,7 @@ to the requesting Account.
 from __future__ import annotations
 
 import json
+import re
 
 from django.contrib.auth import get_user_model
 from django.contrib.messages import get_messages
@@ -520,3 +521,27 @@ class TestHtmlHeatmapScoping(_HtmlMapTestCase):
         bad = self.client.get(self.url, {"zone_size": 50, "team_color": "green"})
         self.assertEqual(bad.status_code, 400)
         self.assertEqual(bad.content, b"invalid team_color")
+
+
+# ---------------------------------------------------------------------------
+# UXP-19 -- readable Floor brush, one <h1> on the map list
+# ---------------------------------------------------------------------------
+
+
+class TestHtmlMapPagesUxp19(_HtmlMapTestCase):
+    def test_floor_brush_button_uses_readable_outline_style(self) -> None:
+        body = self.client.get(reverse("map_editor", args=[self.map.pk])).content
+        match = re.search(
+            r'<button class="([^"]*)" data-wall="1"[^>]*>Floor</button>',
+            body.decode(),
+        )
+        assert match is not None, "Floor wall-brush button not found"
+        classes = match.group(1).split()
+        self.assertIn("wall-brush-btn", classes)
+        self.assertIn("btn-outline-secondary", classes)
+        self.assertNotIn("btn-outline-light", classes)
+
+    def test_map_list_has_exactly_one_h1(self) -> None:
+        body = self.client.get(reverse("map_list")).content.decode()
+        self.assertEqual(body.count("<h1"), 1)
+        self.assertRegex(body, r"<h1[^>]*>Arena Maps</h1>")

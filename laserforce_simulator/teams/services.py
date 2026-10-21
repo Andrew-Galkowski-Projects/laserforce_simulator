@@ -272,6 +272,26 @@ def _assign_team_slots(team: Team, created_players: list[Player]) -> None:
         setattr(team, f"slot_{slot_key}", created_players[player_idx])
 
 
+def fill_preferred_slot(team: Team, player: Player) -> str | None:
+    """Put a newly added ``player`` into the first empty slot of a preferred role.
+
+    Walks ``player.preferred_roles`` in order; a Scout takes the first empty of
+    ``slot_scout_1`` / ``slot_scout_2``. An occupied slot is never displaced.
+    Saves ``team`` and returns the slot field name filled, or ``None`` when no
+    preferred role has an empty slot (the player stays on the bench).
+    """
+    for role in player.preferred_roles or []:
+        slot_fields = (
+            ("slot_scout_1", "slot_scout_2") if role == "scout" else (f"slot_{role}",)
+        )
+        for field in slot_fields:
+            if hasattr(team, f"{field}_id") and getattr(team, f"{field}_id") is None:
+                setattr(team, field, player)
+                team.save(update_fields=[field])
+                return field
+    return None
+
+
 def _generate_teams(
     num_teams: int,
     players_per_team: int,
@@ -523,7 +543,7 @@ def _check_db_slot_collisions(
                             row_num=row.row_num,
                             field="role",
                             message=(
-                                f"Team '{team_name}' slot '{slot_key}' "
+                                f"Team '{team_name}' {row.role.title()} slot "
                                 f"already filled by player '{current.name}'"
                             ),
                         )

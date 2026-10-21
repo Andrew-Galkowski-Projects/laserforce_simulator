@@ -262,6 +262,7 @@ code path (HTML output byte-identical):
 | `run_player_generation(cleaned_data, *, manager) -> GenerationResult` | `@transaction.atomic`; the post-validation half of `generate_players`, same RNG order; `GenerationResult(created_teams, free_agent_count)` (frozen dataclass) |
 | `run_roster_import(csv_text, *, manager) -> RosterImportResult` | parse → `_check_db_slot_collisions` → `_apply_roster` inside one `transaction.atomic()`; `RosterImportResult(created_teams, appended_teams, player_count, row_count)`; `RosterImportError` propagates after rollback |
 | `resolve_import_teams(names, *, manager) -> dict[str, Team]` | name → Team over `owned_queryset(...)` (own + Unmanaged), highest id wins on a duplicated name |
+| `fill_preferred_slot(team, player) -> str \| None` | UXP-19: after HTML `player_add` / API `add_player` saves a Player, put it in the first **empty** slot of its `preferred_roles` (in list order; Scout = first empty of `slot_scout_1` / `slot_scout_2`); never displaces; returns the slot field or `None` (bench) |
 | `player_form_initial() -> dict` | the 19 stat defaults (50) + one `_random_player_profile()` draw — the HTML `player_add` GET initial **and** the API add-player defaults |
 | `annotate_overall_rating(qs)` | `overall_rating_db = (sum of 19 stats) / 19.0`, lifted from `player_list` |
 | `build_roster_template_csv() -> str` | the LG-00b template body (`ALL_COLUMNS` + `_ROSTER_TEMPLATE_ROWS`) |

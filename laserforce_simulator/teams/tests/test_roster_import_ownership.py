@@ -269,7 +269,7 @@ class TestCollisionsStillFire(TestCase):
 
     def _expected_message(self, team_name: str) -> str:
         return (
-            f"Team '{team_name}' slot 'slot_commander' already filled by "
+            f"Team '{team_name}' Commander slot already filled by "
             f"player '{team_name}Cdr'"
         )
 
