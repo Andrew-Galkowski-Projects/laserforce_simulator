@@ -39,18 +39,9 @@ the PR is not ready until the suite is green.
 ## Step 2b - Run the full suite on PostgreSQL (when Docker is available)
 
 CI runs the suite on `postgres:16`, the canonical database. If `docker info`
-succeeds, reuse the throwaway container (`docker start lf-test-pg`) or, when
-it does not exist yet, create it:
-
-```powershell
-docker run -d --name lf-test-pg -e POSTGRES_USER=laserforce -e POSTGRES_PASSWORD=laserforce -e POSTGRES_DB=laserforce_test -p 5433:5432 postgres:16
-```
-
-Then run the suite against it through the **Bash tool**:
-
-```bash
-DATABASE_URL=postgres://laserforce:laserforce@localhost:5433/laserforce_test python -m pytest laserforce_simulator
-```
+succeeds, start the throwaway container and run the suite exactly as the
+repo-root `CLAUDE.md` *Database* bullet "Test suite on Postgres (what CI
+runs)" says. That bullet is the only copy of the commands.
 
 Report the exact counts, as in Step 2. A failure stops the PR. If Docker is
 not available, say so plainly: `Postgres run skipped: Docker unavailable`.

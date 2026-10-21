@@ -13,7 +13,7 @@ from django.contrib.auth import get_user_model
 from django.db import connection, connections
 from django.test import TestCase, TransactionTestCase
 
-from conftest import install_close_in_transaction_guard
+from laserforce_simulator.testing import install_close_in_transaction_guard
 
 
 class TestCloseInsideTransaction(TestCase):
