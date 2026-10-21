@@ -2406,6 +2406,14 @@ ANG-04b.
 5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
 
+**Note (ANG-04b, 2026-10-21):** ANG-06 builds to
+[ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md): layout B (lfstats-like)
+structure, the `--lf-*` tokens and `data-lf-side` only (no hex in components), Material kept and
+themed, round score = base + a separate muted `(+N elim bonus)`. Candidates left out of ANG-04b
+(spec #246) for ANG-06 to scope: the MVP breakdown dialog, the player side sheet, per-player
+expandable timelines, momentum and score charts (and choosing a charting library), replay controls
+and log search, and position icons (roles stay CMD / HVY / SCT / AMO / MED until then).
+
 **Note (ANG-01 re-slice, 2026-10-14):** the League / Season, League-screens and Tournament surfaces
 will have full API coverage from ANG-01d-1 / ANG-01d-2 / ANG-01e / ANG-01f, but they are **not yet planned** as
 ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six

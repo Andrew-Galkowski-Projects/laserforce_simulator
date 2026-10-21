@@ -1,34 +1,26 @@
-// Include theming for Angular Material with `mat.theme()`.
-// This Sass mixin will define CSS variables that are used for styling Angular Material
-// components according to the Material 3 design spec.
-// Learn more about theming and how to use it for your application's
-// custom components at https://material.angular.dev/guide/theming
-@use '@angular/material' as mat;
+// Global styles: the app theme (ADR-0043).
+// - `styles/_tokens.scss`   the `--lf-*` token contract, light and dark (the only colour literals)
+// - `styles/_sides.scss`    `[data-lf-side]` -> `--side*`
+// - `styles/_material.scss` Material 3 theme, every `--mat-sys-*` role following the tokens
+// JetBrains Mono is self-hosted through `@fontsource/jetbrains-mono` (the `styles` list in
+// `angular.json`); no font CDN.
+@use 'styles/tokens';
+@use 'styles/sides';
+@use 'styles/material';
 
 html {
   height: 100%;
-  @include mat.theme(
-    (
-      color: (
-        primary: mat.$azure-palette,
-        tertiary: mat.$blue-palette,
-      ),
-      typography: Roboto,
-      density: 0,
-    )
-  );
+  // Follow the operating system's light/dark setting (ANG-04, ADR-0042). `_tokens.scss` sets it on
+  // `:root` too; Material's `light-dark()` roles resolve against it.
+  color-scheme: light dark;
+  @include material.theme;
 }
 
 body {
-  // Follow the operating system's light/dark setting (ANG-04, ADR-0042).
-  color-scheme: light dark;
-
-  // Set a default background, font and text colors for the application using
-  // Angular Material's system-level CSS variables. Learn more about these
-  // variables at https://material.angular.dev/guide/system-variables
-  background-color: var(--mat-sys-surface);
-  color: var(--mat-sys-on-surface);
+  background-color: var(--lf-bg);
+  color: var(--lf-text);
   font: var(--mat-sys-body-medium);
+  font-family: var(--lf-font-body);
 
   // Reset the user agent margin.
   margin: 0;

@@ -1,3 +1,12 @@
 .home {
   padding: 24px;
+
+  h1 {
+    font-family: var(--lf-font-heading);
+    margin-top: 0;
+  }
+
+  p {
+    color: var(--lf-text-muted);
+  }
 }

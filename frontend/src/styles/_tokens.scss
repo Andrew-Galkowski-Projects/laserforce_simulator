@@ -1,0 +1,86 @@
+// The `--lf-*` token contract (ADR-0043). THE token block: the only global stylesheet that may hold
+// a colour literal. Components read colour, fonts, radius and glow from these tokens (and the
+// `--side*` aliases in `_sides.scss`), never from a hex value. The list of names is
+// `LF_TOKENS` in `src/app/theme/theme-tokens.ts`; `theme.spec.ts` fails if one goes missing.
+//
+// Light (default) takes palette A's colours, dark takes palette B's (ANG-04b, #252). Both modes
+// share palette B's all-mono typography and shape. The mode follows the OS setting.
+//
+// Changes from the ANG-04b samples (contrast measured as WCAG 2 ratios, see ADR-0043):
+// - light `--lf-ev-elimination` moved from rose to fuchsia, away from `--lf-side-red`;
+// - the Sides now differ in lightness as well as hue (red is the lighter Side in both modes), so
+//   they stay apart under red-green colour blindness; the R / B badges stay too;
+// - light `--lf-ev-missile`, `--lf-ev-miss`, `--lf-ev-resupply` and `--lf-ev-tag` were darkened to
+//   reach 4.5:1 on `--lf-bg`.
+
+:root {
+  color-scheme: light dark;
+
+  // Surfaces and text.
+  --lf-bg: #eceef1;
+  --lf-surface: #ffffff;
+  --lf-surface-alt: #f5f6f8;
+  --lf-text: #16181d;
+  --lf-text-muted: #4a505c;
+  --lf-border: #c9ced6;
+  --lf-accent: #2f4a6d;
+
+  // Sides.
+  --lf-side-red: #d33a40;
+  --lf-side-red-text: #bf2a30;
+  --lf-side-red-bg: #fcefee;
+  --lf-side-red-dim: #f0b3b5;
+  --lf-side-blue: #1a4a94;
+  --lf-side-blue-text: #123c7e;
+  --lf-side-blue-bg: #e7eefa;
+  --lf-side-blue-dim: #87a6d6;
+
+  // Event types.
+  --lf-ev-elimination: #a21caf;
+  --lf-ev-missile: #a8480a;
+  --lf-ev-special: #6d28d9;
+  --lf-ev-nuke: #854d0e;
+  --lf-ev-miss: #5f6673;
+  --lf-ev-resupply: #12733a;
+  --lf-ev-tag: #0b6a84;
+
+  // Fonts and shape (shared by both modes). JetBrains Mono is self-hosted (`@fontsource`).
+  --lf-font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
+  --lf-font-heading: var(--lf-font-body);
+  --lf-font-numeric: var(--lf-font-body);
+  --lf-radius: 0.375rem;
+  // A shadow geometry, used with a colour token: `box-shadow: var(--lf-glow) var(--side);`.
+  --lf-glow: 0 0 0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    // Surfaces and text.
+    --lf-bg: oklch(0.208 0.042 265.755);
+    --lf-surface: oklch(0.279 0.041 260.031);
+    --lf-surface-alt: oklch(0.246 0.04 262);
+    --lf-text: oklch(0.984 0.003 247.858);
+    --lf-text-muted: oklch(0.762 0.035 256.8);
+    --lf-border: oklch(0.372 0.044 257.287);
+    --lf-accent: oklch(0.673 0.182 276.935);
+
+    // Sides.
+    --lf-side-red: oklch(0.68 0.22 25);
+    --lf-side-red-text: oklch(0.87 0.08 18);
+    --lf-side-red-bg: oklch(0.258 0.092 26.042);
+    --lf-side-red-dim: oklch(0.48 0.17 26);
+    --lf-side-blue: oklch(0.56 0.2 262);
+    --lf-side-blue-text: oklch(0.74 0.12 252);
+    --lf-side-blue-bg: oklch(0.282 0.091 267.935);
+    --lf-side-blue-dim: oklch(0.38 0.17 265);
+
+    // Event types.
+    --lf-ev-elimination: oklch(0.74 0.238 322.16);
+    --lf-ev-missile: oklch(0.75 0.183 55.934);
+    --lf-ev-special: oklch(0.702 0.183 293.541);
+    --lf-ev-nuke: oklch(0.852 0.199 91.936);
+    --lf-ev-miss: oklch(0.704 0.04 256.788);
+    --lf-ev-resupply: oklch(0.765 0.177 163.223);
+    --lf-ev-tag: oklch(0.746 0.16 232.661);
+  }
+}

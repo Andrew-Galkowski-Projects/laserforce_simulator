@@ -12,8 +12,9 @@ redirects to it. It has no API calls yet (those start in ANG-05).
 - **Standalone components, zoneless change detection, signals.** No NgModules, no `zone.js`.
 - **No SSR.** `ng build` writes plain static files to `dist/frontend/browser/` (served by nginx in
   ANG-07).
-- **Angular Material**, Material 3 theme (azure / blue palette) in `src/styles.scss`, with
-  `color-scheme: light dark` so it follows the OS setting.
+- **Angular Material** (and the CDK), Material 3, themed from the app's `--lf-*` tokens and
+  following the OS light/dark setting. See **Theme** below and
+  [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md).
 - **Vitest** through the `@angular/build:unit-test` builder (`ng test`), on jsdom.
 - **ESLint** (`angular-eslint`, `eslint.config.js`) and **Prettier** (`.prettierrc`, print width
   100, single quotes, `endOfLine: auto`). Both are enforced in CI.
@@ -46,7 +47,12 @@ CI's `frontend` job (`.github/workflows/ci.yml`) runs `npm ci`, `lint`, `format:
 ```
 src/
   main.ts                 bootstrapApplication(App, appConfig)
-  styles.scss             Material 3 theme + global styles
+  styles.scss             global styles: uses the theme partials below
+  styles/
+    _tokens.scss          the --lf-* token contract, light + dark (the only colour literals)
+    _sides.scss           [data-lf-side='red'|'blue'] -> --side, --side-text, --side-bg, --side-dim
+    _material.scss        mat.theme + mat.theme-overrides from the tokens
+    _theme-colors.scss    generated M3 tonal palettes (ng generate @angular/material:theme-color)
   environments/
     environment.ts        dev:  { production: false, apiBaseUrl: 'http://localhost:8000/api' }
     environment.prod.ts   prod: { production: true,  apiBaseUrl: '/api' }
@@ -57,11 +63,39 @@ src/
     app.config.ts         providers (router, global error listeners)
     app.routes.ts         '' -> Home, '**' -> redirect to ''
     home/                 placeholder Home page
+    theme/                theme-tokens.ts (LF_TOKENS) + theme.spec.ts
 ```
 
 Specs sit next to the file they cover (`*.spec.ts`). Test what you can see from outside -- the
 rendered text, where the router lands -- not component internals. `app.routes.spec.ts` uses
 `RouterTestingHarness` with the real `routes`.
+
+## Theme
+
+The look is fixed by [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md):
+the lfstats-like layout B as the structure for screens, palette B colours in dark mode, palette A
+colours in light mode, all-mono JetBrains Mono.
+
+- **Tokens live in `src/styles/_tokens.scss`** on `:root`: light by default, dark under
+  `@media (prefers-color-scheme: dark)`. `LF_TOKENS` in `src/app/theme/theme-tokens.ts` is the
+  contract: surfaces and text (`--lf-bg`, `--lf-surface`, `--lf-surface-alt`, `--lf-text`,
+  `--lf-text-muted`, `--lf-border`, `--lf-accent`), Sides (`--lf-side-{red,blue}` plus `-text`,
+  `-bg`, `-dim`), event types (`--lf-ev-{elimination,missile,special,nuke,miss,resupply,tag}`),
+  fonts and shape (`--lf-font-{body,heading,numeric}`, `--lf-radius`, `--lf-glow`).
+- **No colour literal in a component stylesheet.** Use a token, or derive a tint with
+  `color-mix(in srgb, var(--side) 20%, transparent)`. A new token goes in `_tokens.scss` (light and
+  dark) and in `LF_TOKENS`.
+- **Sides:** put `data-lf-side="red"` / `"blue"` on a team container and read `--side`,
+  `--side-text`, `--side-bg`, `--side-dim` inside it. Nothing inside picks red or blue itself.
+  Keep the R / B badge next to Side colour for colour-blind users.
+- **Material** follows the tokens: `_material.scss` generates every `--mat-sys-*` role and points
+  the surface / text / primary / outline roles at `--lf-*`, so no component needs local
+  `--mat-sys-*` patches. Data screens (team strips, stat tables, the log) are hand-rolled.
+- **Font:** JetBrains Mono is self-hosted by `@fontsource/jetbrains-mono` (400 / 500 / 700, in the
+  `angular.json` `styles` list). Never add a Google Fonts link or other font CDN.
+- `theme.spec.ts` compiles the real `styles.scss` and checks every token in light and dark
+  (it emulates `prefers-color-scheme` by rewriting the media condition, since jsdom matches no media
+  feature), plus no Side colour outside the token block.
 
 ## The `apiBaseUrl` rule
 

@@ -1,0 +1,47 @@
+// Angular Material, themed from the `--lf-*` contract (ADR-0043).
+//
+// `mat.theme` generates the FULL `--mat-sys-*` role set from tonal palettes seeded with the
+// theme's indigo accent and slate neutrals (`_theme-colors.scss`). `theme-type: color-scheme`
+// emits every colour role as `light-dark(<light>, <dark>)`, so the roles follow the same OS
+// setting as the `--lf-*` tokens. `mat.theme-overrides` then points the roles the app's own
+// screens also use at the contract, so a Material component and a hand-rolled one look the same.
+@use '@angular/material' as mat;
+@use 'theme-colors';
+
+@mixin theme {
+  @include mat.theme(
+    (
+      color: (
+        theme-type: color-scheme,
+        primary: theme-colors.$primary-palette,
+        tertiary: theme-colors.$tertiary-palette,
+      ),
+      typography: (
+        plain-family: var(--lf-font-body),
+        brand-family: var(--lf-font-heading),
+      ),
+      density: -1,
+    )
+  );
+  @include mat.theme-overrides(
+    (
+      primary: var(--lf-accent),
+      on-primary: var(--lf-bg),
+      surface-tint: var(--lf-accent),
+      background: var(--lf-bg),
+      on-background: var(--lf-text),
+      surface: var(--lf-bg),
+      surface-dim: var(--lf-bg),
+      surface-bright: var(--lf-surface),
+      on-surface: var(--lf-text),
+      on-surface-variant: var(--lf-text-muted),
+      surface-container-lowest: var(--lf-surface),
+      surface-container-low: var(--lf-surface),
+      surface-container: var(--lf-surface),
+      surface-container-high: var(--lf-surface),
+      surface-container-highest: var(--lf-surface-alt),
+      outline: var(--lf-text-muted),
+      outline-variant: var(--lf-border),
+    )
+  );
+}
