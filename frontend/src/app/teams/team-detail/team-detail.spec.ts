@@ -277,6 +277,10 @@ describe('Team detail page', () => {
     back?.click();
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/teams');
+    // The Teams list loads itself; answer it so no request is left open.
+    for (const req of http.match((r) => r.url === `${BASE}/teams/`)) {
+      req.flush({ data: [], meta: { page: 1, page_size: 100, count: 0, total_pages: 1 } });
+    }
   });
 
   describe('Remove', () => {
