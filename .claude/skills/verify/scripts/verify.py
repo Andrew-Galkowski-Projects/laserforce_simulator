@@ -19,9 +19,13 @@ python and every tool comes from that same environment.
 mypy runs with ``--follow-imports=silent`` (plus the pyproject.toml config,
 ``ignore_missing_imports = true``), so it reports only errors that are in the
 changed files themselves, not in every module they import. Its errors are then
-filtered to the lines changed vs HEAD: CI does not run mypy, so an error the
-change did not write is not this change's FAIL. A file with no diff hunks (new
-and untracked) keeps every error.
+filtered to the changed lines: CI does not run mypy, so an error the change did
+not write is not this change's FAIL. A file with no diff hunks (new and
+untracked) keeps every error.
+
+The change set is the uncommitted work vs HEAD. On a clean tree (everything
+committed, the usual state at PR time) it falls back to the branch vs main, so
+the checks never skip a committed branch; the summary names which one ran.
 
 Run from anywhere in the repo:
 
@@ -41,6 +45,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Any, Callable
 
 import changed_files as cf  # same directory
 
@@ -94,8 +99,21 @@ def _tool(name: str, *args: str) -> list[str]:
     return [sys.executable, "-m", name, *args]
 
 
+def select_changes(compute: Callable[..., Any]) -> tuple[str, Any]:
+    """The change set to check: uncommitted work, else the branch vs main.
+
+    A clean tree (everything committed, the usual state at PR time) falls back
+    to ``mode="branch"`` so the checks still see the branch's files instead of
+    skipping every step.
+    """
+    data = compute(base="main", mode="working")
+    if not data["nothing_changed"]:
+        return "working", data
+    return "branch", compute(base="main", mode="branch")
+
+
 def main() -> int:
-    data = cf.compute(base="main", mode="working")
+    mode, data = select_changes(cf.compute)
     repo_root = str(data["repo_root"])
     django_dir = (
         os.path.join(repo_root, str(data["django_dir"]))
@@ -148,7 +166,8 @@ def main() -> int:
         if code == 0:
             results["mypy"] = ("PASS", "")
         else:
-            _, diff = _run(["git", "diff", "-U0", "HEAD", "--", *py_files], repo_root)
+            ref = "HEAD" if mode == "working" else "main...HEAD"
+            _, diff = _run(["git", "diff", "-U0", ref, "--", *py_files], repo_root)
             errors = _errors_on_changed_lines(out, _changed_lines(diff), repo_root)
             results["mypy"] = (
                 ("FAIL", " | ".join(errors[-15:]))
@@ -187,6 +206,7 @@ def main() -> int:
     overall = "FAIL" if any(v[0] == "FAIL" for v in results.values()) else "PASS"
 
     print("VERIFY SUMMARY")
+    print("uncommitted changes vs HEAD" if mode == "working" else "branch vs main")
     print("-" * 30)
     for step in STEPS:
         status, note = results[step]

@@ -76,6 +76,8 @@ every frontier question at once, numbered, each with a recommended answer
 worded so "yes" accepts it. `AskUserQuestion` takes at most four questions, so
 a bigger round goes as numbered text in chat and the owner answers there.
 Facts come from subagents reading the code; decisions come from the owner.
+When the task is a bug or a red check, reproduce it before round 1: the
+probe's result is a settled fact in that round, not a question.
 Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
 become ADRs in `docs/adr/` (next free number).
 
@@ -147,7 +149,9 @@ than pasting them. Add these constraints to every implementer prompt:
 
 - **First step:** confirm your worktree is based on the integration branch,
   else `git reset --hard <integration branch>` in your own worktree. Agent
-  worktrees branch from `origin/main` by default.
+  worktrees branch from `origin/main` by default. Then copy
+  `laserforce_simulator/.env` from the main checkout into your worktree (Django
+  needs its `SECRET_KEY`); it stays uncommitted.
 - Follow `mattpocock-skills:tdd` at the spec's agreed seams: one failing
   test, then just enough code, one slice at a time. Tests and code for a
   ticket come from the **same** agent. Test placement is in `CLAUDE.md`.
@@ -179,7 +183,9 @@ Confirm every ticket landed on the integration branch
 hand (`CLAUDE.md`, *Sub-Agent Delegation*): off-by-one in tick math, constant
 mismatches, field-name drift between spec and code, missing seam methods.
 
-1. **Full suite**, once: `python -m pytest laserforce_simulator`, plus
+1. **Full suite** on SQLite (`python -m pytest laserforce_simulator`) and, when
+   `docker info` succeeds, on Postgres as the `CLAUDE.md` *Database* bullet
+   "Test suite on Postgres" says, plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
    Triage every failure:
    - a **regression** from this task: fix the code;

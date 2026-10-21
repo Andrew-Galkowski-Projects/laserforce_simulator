@@ -7,14 +7,14 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 - **Type hints on every public function signature.** Flag a public function that has none.
 - **One job per function.** Flag a function over ~25 lines that does two things and splits cleanly.
 - **Django idioms.** Prefer `get_object_or_404`, model methods over logic in views, and a `services.py` builder shared by the HTML view and the API (see `teams/services.py`, `matches/services.py`, `matches/league_services.py`, `core/services.py`). Flag raw SQL unless a comment justifies it.
-- **Querysets.** Flag a queryset evaluated inside a loop (N+1). Suggest `select_related` / `prefetch_related`. Flag a large list built where a slice or generator would do.
+- **Querysets.** Flag a queryset evaluated inside a loop (N+1). Suggest `select_related` / `prefetch_related`. Flag a large list built where a slice or generator would do. Flag a queryset whose iteration order decides RNG draws, saved order or output order but has no explicit `order_by`: PostgreSQL row order moves after an UPDATE, while SQLite's id order hides it (CI-01's rollover develop bug).
 - **Dead code.** Unused imports, unreachable branches, commented-out blocks.
 - **Pythonic idioms.** Comprehensions for simple transforms, `any()` / `all()`, `zip()`, `enumerate()`. A `dataclass` or `NamedTuple` instead of a dict with fixed keys.
 
 ## Simulation engine
 
 - **The tick loop is hot.** Flag O(n^2) work, repeated dict lookups that could be hoisted, and values computed more than once per tick.
-- **Determinism.** Randomness goes through the seeded RNG the simulator is given. Flag any bare `random.*` call, set iteration that decides an outcome, or ordering that depends on dict or DB order. A change to RNG, parallelism or ordering needs a serial-vs-parallel determinism test.
+- **Determinism.** Randomness goes through the seeded RNG the simulator is given. Flag any bare `random.*` call, set iteration that decides an outcome, or ordering that depends on dict or DB order (DB order: see **Querysets**). A change to RNG, parallelism or ordering needs a serial-vs-parallel determinism test.
 - **Tick math.** Check off-by-one errors at tick boundaries and conversions between seconds and ticks (`sim_helpers/time_constants.py`).
 - **Formula constants.** A constant in a formula (MVP weights, score values) must match its documented value in the app's `CLAUDE.md`.
 
