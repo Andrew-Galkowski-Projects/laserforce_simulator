@@ -114,21 +114,25 @@
            302 redirect), NOT intercepted; the Play form's 202 {job_id, season_id} is
            polled by the same JS against play_status (the async Play rail).{% endcomment %}
         {% if member_night_phase_active %}
+            {% comment %}UXP-11 — set-up renders only while it is the next step
+               (no unplayed game yet). Once games are drawn the play controls
+               replace it; once they are all played the phase completes.{% endcomment %}
+            {% if not member_night_has_unplayed %}
             <li>
                 {% comment %}Setup: per-Site toggle boxes + an "All Sites" master
                    toggle (JS checks/unchecks every per-Site box) + a Confirm button.
                    The form POSTs the checked Site names as the multi-valued ``sites``
-                   field. Submits SYNCHRONOUSLY (302 → dashboard); re-running appends
-                   more games.{% endcomment %}
+                   field. Every box starts checked (UXP-11), so Confirm works in one
+                   click. Submits SYNCHRONOUSLY (302 → dashboard).{% endcomment %}
                 <form id="topbar-play-member-night-setup" method="post" action="{% url 'member_night_setup' season_id=play_displayed_season_id %}" class="px-2">
                     {% csrf_token %}
                     <div class="px-1 mb-1">
                         <label class="d-block small fw-bold">
-                            <input type="checkbox" id="topbar-play-member-night-all"> All Sites
+                            <input type="checkbox" id="topbar-play-member-night-all" checked> All Sites
                         </label>
                         {% for entry in member_night_sites %}
                         <label class="d-block small">
-                            <input type="checkbox" class="topbar-play-member-night-site-cb" name="sites" value="{{ entry.site }}">
+                            <input type="checkbox" class="topbar-play-member-night-site-cb" name="sites" value="{{ entry.site }}" checked>
                             {% if entry.site %}{{ entry.site }}{% else %}(no site){% endif %} ({{ entry.count }})
                         </label>
                         {% empty %}
@@ -138,6 +142,7 @@
                     <button type="submit" class="dropdown-item" data-action-state="{{ action_button_state }}">Confirm — Set Up Member Night</button>
                 </form>
             </li>
+            {% endif %}{# /member-night set-up is the next step #}
             {% if member_night_has_unplayed %}
             <li>
                 <form id="topbar-play-member-night-single" method="post" action="{% url 'play_member_night_single' season_id=play_displayed_season_id %}" class="px-2">

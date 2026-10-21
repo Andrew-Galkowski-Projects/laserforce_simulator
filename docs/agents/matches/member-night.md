@@ -184,6 +184,20 @@ existing `topnav_play_script.html` IIFE against `play_status` — same progress 
 Play Playoffs). The IIFE also intercepts the async playoff `topbar-play-play-two-months` and
 wires the `topbar-play-member-night-all` master toggle to check/uncheck every per-Site box.
 
+**UXP-11 set-up / progress UX.** Every per-Site box and the "All Sites" master start
+`checked`, so Confirm works in one click. The set-up `<li>` renders only while set-up is
+the next step (`member_night_phase_active and not member_night_has_unplayed`); once games
+are drawn only the three play controls show. `member_night_setup` flashes
+`"Member night set up: N games drawn across K Site(s)."`; `play_member_night_single`
+(whose service now returns the played game's `SeasonPhase`) flashes
+`"Member-night game played: P / T games done."`, or `"Member night complete: all T games
+played."` on the last one. `build_dashboard_context` gains `member_night_progress`
+(`{"played", "total"}` from `league_services.member_night_game_counts(phase)`, or `None`
+off an active member-night cursor / before set-up), rendered by
+`_partials/dashboard_member_night.html` as `season-dashboard-member-night` /
+`league-dashboard-member-night` with a "View results" link to
+`season_schedule#season-schedule-member-nights`. The API dashboard payload is unchanged.
+
 **Schedule surfaces (read-only / derived).** Member-night games (Standings-excluded but
 real `season`-attached drawn-team Matches) are surfaced on two schedule pages via shared
 helpers in `matches/league_views.py`: `_member_night_game_dict(match)` (one display row —

@@ -41,6 +41,10 @@
     <div>
         <div id="season-dashboard-standings-snippet" class="card mb-3">{% include "_partials/dashboard_standings_snippet.html" %}</div>
 
+            {% if member_night_progress %}
+                <div id="season-dashboard-member-night" class="card mb-3">{% include "_partials/dashboard_member_night.html" with member_night_season_id=season.id %}</div>
+            {% endif %}
+
             {% if season_mode == "active" or season_mode == "completed" %}
                 <div id="season-dashboard-next-round" class="card mb-3">{% include "_partials/dashboard_next_round.html" %}</div>
 

@@ -1013,10 +1013,15 @@ def _play_member_night_shell(
     return round_ids
 
 
-def play_member_night_single(season: Season) -> None:
-    """Play ONE unplayed member-night game (both Rounds, default fidelity)."""
+def play_member_night_single(season: Season) -> SeasonPhase:
+    """Play ONE unplayed member-night game (both Rounds, default fidelity).
+
+    Returns the member-night phase the game belonged to (the cursor may have
+    moved past it if this was the last game).
+    """
     phase, shell = _next_member_night_shell(season)
     _play_member_night_shell(season, phase, shell)
+    return phase
 
 
 def play_member_night_live(season: Season) -> LivePlayResult:

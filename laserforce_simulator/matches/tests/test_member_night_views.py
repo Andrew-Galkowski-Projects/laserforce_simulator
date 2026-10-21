@@ -22,6 +22,7 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import patch
 
+from django.contrib.messages import get_messages
 from django.test import TestCase
 from django.urls import reverse
 
@@ -143,6 +144,22 @@ class TestMemberNightSetup(TestCase):
         ):
             self.assertTrue(m.team_red.is_draw_team)
             self.assertTrue(m.team_blue.is_draw_team)
+
+    def test_setup_flashes_success_message(self) -> None:
+        # UXP-11 — set-up confirms what it did (games drawn, Sites).
+        _league, season, _teams, mn = _member_night_active_season("MnSetFlash")
+        r = _post_setup(self.client, season)
+        total = Match.objects.filter(season_phase=mn).count()
+        msgs = [str(m) for m in get_messages(r.wsgi_request)]
+        self.assertEqual(
+            msgs, [f"Member night set up: {total} games drawn across 1 Site."]
+        )
+
+    def test_invalid_setup_flashes_nothing(self) -> None:
+        _league, season, _teams, _mn = _member_night_active_season("MnSetNoFlash")
+        r = _post_setup(self.client, season, sites=())
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(list(get_messages(r.wsgi_request)), [])
 
 
 # ===========================================================================
@@ -420,6 +437,83 @@ class TestPlayMemberNightSingle(TestCase):
             Match.objects.filter(season_phase=mn, is_completed=False).count(),
             total - 1,
         )
+
+    def test_flashes_progress_then_completion(self) -> None:
+        # UXP-11 — each single play confirms progress; the last one says the
+        # member night is complete. Trim the drawn shells to 2 to keep it fast.
+        _league, season, _teams, mn = _member_night_active_season("MnSingleFlash")
+        # Following the redirect renders (and so consumes) the set-up flash.
+        self.client.get(_post_setup(self.client, season).url)
+        keep = list(
+            Match.objects.filter(season_phase=mn)
+            .order_by("id")
+            .values_list("id", flat=True)[:2]
+        )
+        Match.objects.filter(season_phase=mn).exclude(id__in=keep).delete()
+        url = reverse("play_member_night_single", args=[season.id])
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            r1 = self.client.post(url)
+            msgs1 = [str(m) for m in get_messages(r1.wsgi_request)]
+            self.client.get(r1.url)  # render (and so consume) the first flash
+            r2 = self.client.post(url)
+            msgs2 = [str(m) for m in get_messages(r2.wsgi_request)]
+        self.assertEqual(msgs1, ["Member-night game played: 1 / 2 games done."])
+        self.assertEqual(msgs2, ["Member night complete: all 2 games played."])
+
+    def test_no_flash_when_nothing_to_play(self) -> None:
+        _league, season, _teams, _mn = _member_night_active_season("MnSingleNoFl")
+        r = self.client.post(reverse("play_member_night_single", args=[season.id]))
+        self.assertEqual(r.status_code, 400)
+        self.assertEqual(list(get_messages(r.wsgi_request)), [])
+
+
+# ===========================================================================
+# UXP-11 — the dashboard member-night card
+# ===========================================================================
+
+
+class TestMemberNightDashboardCard(TestCase):
+    """Once a member night is set up, both dashboards show its progress and
+    link to the results section of the Season Schedule."""
+
+    def _season_body(self, season) -> str:
+        return self.client.get(
+            reverse("season_dashboard", args=[season.id])
+        ).content.decode()
+
+    def test_card_absent_before_set_up(self) -> None:
+        _league, season, _teams, _mn = _member_night_active_season("MnCardNone")
+        self.assertNotIn(
+            'id="season-dashboard-member-night"', self._season_body(season)
+        )
+
+    def test_card_absent_off_member_night(self) -> None:
+        _league, season = _plain_rr_active_season("MnCardRR")
+        self.assertNotIn(
+            'id="season-dashboard-member-night"', self._season_body(season)
+        )
+
+    def test_season_card_shows_progress_and_results_link(self) -> None:
+        _league, season, _teams, mn = _member_night_active_season("MnCardSeason")
+        _post_setup(self.client, season)
+        shells = Match.objects.filter(season_phase=mn).order_by("id")
+        total = shells.count()
+        Match.objects.filter(id=shells[0].id).update(is_completed=True)
+        body = self._season_body(season)
+        self.assertIn('id="season-dashboard-member-night"', body)
+        self.assertIn(f"1 / {total} games played", body)
+        results = reverse("season_schedule", args=[season.id])
+        self.assertIn(f'href="{results}#season-schedule-member-nights"', body)
+
+    def test_league_card_shows_progress(self) -> None:
+        league, season, _teams, mn = _member_night_active_season("MnCardLeague")
+        _post_setup(self.client, season)
+        total = Match.objects.filter(season_phase=mn).count()
+        body = self.client.get(
+            reverse("league_dashboard", args=[league.id])
+        ).content.decode()
+        self.assertIn('id="league-dashboard-member-night"', body)
+        self.assertIn(f"0 / {total} games played", body)
 
 
 # ===========================================================================

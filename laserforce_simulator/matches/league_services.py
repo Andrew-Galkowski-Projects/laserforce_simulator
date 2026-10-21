@@ -294,6 +294,29 @@ def _member_night_games_for_season(season: Season) -> list[dict]:
     return [by_ordinal[o] for o in sorted(by_ordinal)]
 
 
+def member_night_game_counts(phase: SeasonPhase) -> tuple[int, int]:
+    """UXP-11 — ``(games played, games total)`` for one member-night phase."""
+    shells = Match.objects.filter(season_phase=phase)
+    return shells.filter(is_completed=True).count(), shells.count()
+
+
+def _member_night_progress(season: Optional[Season]) -> Optional[dict]:
+    """UXP-11 — ``{"played", "total"}`` for the member night at the cursor.
+
+    ``None`` when there is no Season, the cursor is not on a member-night
+    phase, or that member night has not been set up (no games drawn yet).
+    """
+    if season is None or season.state != "active":
+        return None
+    phase = season.current_phase()
+    if phase is None or phase.phase_type != "member_night":
+        return None
+    played, total = member_night_game_counts(phase)
+    if total == 0:
+        return None
+    return {"played": played, "total": total}
+
+
 def _member_night_appearances_for_team(season: Season, team: Team) -> list[dict]:
     """LG-07 — member-night games of ``season`` in which a Player of ``team``
     appeared (borrowed onto a drawn Team). Found via ``PlayerRoundState`` →
@@ -1122,6 +1145,8 @@ def build_dashboard_context(
         # NAV-01 — KEPT for the read-only dashboard "View bracket" link (§4);
         # the playoff *play* forms moved to the topnav ``Play ▾`` dropdown.
         "playoff_tournament_id": playoff_tournament_id,
+        # UXP-11 — the dashboard member-night card (None unless one is set up).
+        "member_night_progress": _member_night_progress(displayed_season),
     }
 
 
