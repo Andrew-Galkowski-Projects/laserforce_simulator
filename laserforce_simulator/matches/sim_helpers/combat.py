@@ -317,6 +317,15 @@ def plan_action(
         weights, getattr(player, "decision_making", 50)
     )
 
+    # UXP-23: the role weight functions can leave a total <= 0 (e.g. a
+    # low-lives Medic with resupply_synergy 0, or a negative use_special
+    # bucket on the 3-zone fallback), which random.choices rejects. Fall back
+    # to hiding, as the cooldown guard above does. A positive total is left
+    # untouched, so non-crashing rounds replay byte-identically.
+    if sum(weights) <= 0:
+        weights = [0] * len(weights)
+        weights[_ACTION_IDX["hide"]] = 1
+
     choice = random.choices(_CHOICES, weights)[0]
     player.last_chosen_action = choice
 

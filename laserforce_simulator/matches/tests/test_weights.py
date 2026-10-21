@@ -32,6 +32,7 @@ the per-role ``_state`` helper takes explicit full-resource defaults.
 """
 
 import random
+from typing import Any
 
 import pytest
 
@@ -813,6 +814,8 @@ def _plan_action_internal_weights(player, all_alive, second):
     check_stamina_penalty → role weight fn → stamina-penalty only_move scaling →
     shot-cooldown tag zeroing (with the all-zero hide=1 guard) →
     apply_decision_making_spread. Lets us inspect the vector random.choices sees.
+    It deliberately omits plan_action's final UXP-23 zero-total hide fallback, so
+    it returns the raw vector (identical to plan_action's whenever the total > 0).
 
     DRIFT GUARD: this duplicates combat.plan_action's pipeline. If plan_action
     changes, update here too — the sibling ``test_plan_action_never_raises_*``
@@ -860,3 +863,96 @@ def test_plan_action_total_weight_is_positive(role, state_name):
     assert (
         sum(weights) > 0
     ), f"{role}/{state_name} produced non-positive total: {weights}"
+
+
+# --------------------------------------------------------------------------- #
+# UXP-23 regression: a League Season on the 3-zone fallback 500'd with
+# ``ValueError: Total of weights must be greater than zero``. The role weight
+# functions can hand plan_action a vector whose TOTAL is <= 0, and the only
+# guard (the shot-cooldown ``sum == 0 -> hide = 1``) neither runs off cooldown
+# nor catches a negative total. Reproduced in the real BatchSimulator by a
+# no-map seed loop; the states below are pinned directly from it.
+# --------------------------------------------------------------------------- #
+
+
+def _blue_enemy(idx: int) -> PlayerState:
+    return PlayerState(
+        tag_id=f"blue_scout_{idx}",
+        name=f"Blue {idx}",
+        team_color="blue",
+        role="scout",
+        accuracy=50,
+        survival=50,
+        starting_lives=15,
+        starting_shots=30,
+        final_lives=15,
+        final_shots=30,
+    )
+
+
+def test_plan_action_low_lives_medic_with_zero_synergy_hides() -> None:
+    """Medic low-lives funnels every weight into resupply_ally; synergy 0 zeroes it.
+
+    The state from the failing no-map round: lives <= 3 (tag + hide are poured
+    into resupply_ally), ``resupply_synergy=0`` (resupply_ally scaled to 0),
+    ``resupply_efficiency`` <= 1 (request_resupply 0), no special. Every weight
+    is 0 and the player is off shot cooldown, so the old hide fallback never
+    ran. Injuries clamp stats to 0, so this is reachable in a League.
+    """
+    random.seed(42)
+    medic = _make_player_state(
+        "medic", final_lives=2, resupply_synergy=0, resupply_efficiency=0
+    )
+    actions = plan_action(medic, [medic], 1.0)
+    assert medic.last_chosen_action == "hide"
+    assert actions[0]["type"] == "hide"
+
+
+def test_plan_action_negative_total_on_cooldown_hides() -> None:
+    """A negative bucket can drive the total below 0, which ``sum == 0`` misses.
+
+    Commander with a charged nuke and 6 active enemies in its zone (only
+    possible on the 3-zone fallback): use_special = int((100 - 20*6) * 2) = -40,
+    only_move is -10 while missiles remain, and the shot cooldown zeroes
+    tag_player, so the total is -25.
+    """
+    random.seed(42)
+    commander = _make_player_state(
+        "commander",
+        final_special=99,
+        special_usage=100,
+        missiles_landed=0,
+        last_shot_time=0.8,
+    )
+    enemies = [_blue_enemy(i) for i in range(6)]
+    plan_action(commander, [commander, *enemies], 1.0)
+    assert commander.last_chosen_action == "hide"
+
+
+@pytest.mark.parametrize("role", ["medic", "ammo", "scout", "heavy", "commander"])
+@pytest.mark.parametrize("state_name", list(_EDGE_STATES))
+def test_plan_action_positive_total_choice_and_rng_unchanged(
+    role: str, state_name: str
+) -> None:
+    """Determinism: for a positive-total vector the zero-total fallback is a no-op.
+
+    plan_action must pick exactly what ``random.choices`` picks over the raw
+    pipeline vector and leave the RNG at the same point, so every round that
+    did not crash before replays byte-identically from the same seed.
+    """
+    from matches.sim_helpers.combat import _CHOICES
+
+    overrides: Any = _EDGE_STATES[state_name]
+
+    random.seed(42)
+    twin = _make_player_state(role, **overrides)
+    raw = _plan_action_internal_weights(twin, [twin], 1.0)
+    assert sum(raw) > 0
+    expected = random.choices(_CHOICES, raw)[0]
+    expected_next = random.random()
+
+    random.seed(42)
+    player = _make_player_state(role, **overrides)
+    plan_action(player, [player], 1.0)
+    assert player.last_chosen_action == expected
+    assert random.random() == expected_next
