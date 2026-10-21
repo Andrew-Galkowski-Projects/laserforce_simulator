@@ -28,6 +28,12 @@ before).
 
 ## Step 2 — Run the full pytest suite
 
+**Python-free diff first:** run
+`python .claude/skills/verify/scripts/changed_files.py --base origin/main --mode branch`.
+When its `python`, `templates` and `migrations` buckets are all empty, skip
+Steps 2, 2b and 3 (CI runs them) and write
+`pytest: CI only (no Python changes)` in the test plan. Otherwise:
+
 ```powershell
 python -m pytest laserforce_simulator
 ```
@@ -58,7 +64,7 @@ python laserforce_simulator/manage.py makemigrations --check --dry-run
 
 ## Step 3b — Frontend checks (when `frontend/` changed)
 
-If `git diff main...HEAD --stat` touches `frontend/`, run CI's `frontend`
+If `git diff origin/main...HEAD --stat` touches `frontend/`, run CI's `frontend`
 job locally (`npm --prefix frontend ci` first if `frontend/node_modules` is
 missing):
 
@@ -78,8 +84,8 @@ Gather the diff context:
 
 ```powershell
 git status
-git diff main...HEAD --stat
-git log main..HEAD --oneline
+git diff origin/main...HEAD --stat
+git log origin/main..HEAD --oneline
 ```
 
 Output the PR body in this format (do not write it to a file — just print it

@@ -6,11 +6,13 @@
 # process whose executable path or command line lies under the given worktree, except this
 # shell and its ancestors. Processes from other worktrees and the main checkout are untouched.
 #
-# Run: powershell -NoProfile -File scripts/stop_worktree_servers.ps1 -Worktree <path>
+# Run (through the PowerShell tool; the worktree guard refuses `powershell -File` in Bash):
+#   powershell -NoProfile -File scripts/stop_worktree_servers.ps1                    # this worktree
+#   powershell -NoProfile -File scripts/stop_worktree_servers.ps1 -Worktree <path>   # another one
+# -Worktree defaults to the current directory, so a call from inside a worktree needs no path.
 
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$Worktree
+    [string]$Worktree = (Get-Location).Path
 )
 
 $root = (Resolve-Path -LiteralPath $Worktree -ErrorAction Stop).Path.TrimEnd('\') + '\'

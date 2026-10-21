@@ -28,6 +28,7 @@ Run from the repo root with `--prefix` (no `cd` needed):
 ```bash
 npm --prefix frontend ci                  # install exactly what package-lock.json says
 npm --prefix frontend start               # ng serve on http://localhost:4200
+npm --prefix frontend run start:worktree  # agent worktrees: :4201, API on Django :8001
 npm --prefix frontend test                # Vitest; watches in a terminal, single run when CI is set
 npm --prefix frontend run test:ci         # Vitest, one headless run (what CI uses)
 npm --prefix frontend run lint            # ng lint
@@ -43,8 +44,9 @@ npm --prefix frontend exec -- ng generate component foo   # any other ng command
 **A background dev server:** to know when it's up, poll the port with
 `until curl -s localhost:<port> >/dev/null; do sleep 1; done`. Grepping its log for `Local:`
 doesn't work, because the line carries ANSI colour codes. To stop it, run
-`powershell -NoProfile -File scripts/stop_worktree_servers.ps1 -Worktree <worktree>`. Stopping
-the npm wrapper alone leaves node, esbuild and dart running.
+`powershell -NoProfile -File scripts/stop_worktree_servers.ps1` through the PowerShell tool (it
+defaults to the current worktree; pass `-Worktree <path>` for another). Stopping the npm wrapper
+alone leaves node, esbuild and dart running.
 
 CI's `frontend` job (`.github/workflows/ci.yml`) runs `npm ci`, `lint`, `format:check`,
 `test:ci` and `build`, in parallel with the Python `test` job. The `docker` deploy job needs both.
@@ -63,6 +65,7 @@ src/
   environments/
     environment.ts        dev:  { production: false, apiBaseUrl: 'http://localhost:8000/api' }
     environment.prod.ts   prod: { production: true,  apiBaseUrl: '/api' }
+    environment.worktree.ts  agent worktrees: { apiBaseUrl: 'http://localhost:8001/api' } (start:worktree)
   app/
     app.ts / app.html     the shell: <mat-toolbar> + <router-outlet>
     app.scss              toolbar primary colour via mat.toolbar-overrides (M3 ignores color="primary")
@@ -147,8 +150,8 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   spec, and `auth.interceptor.spec.ts` for the flow.
 - **Live check without the owner's ports:**
   - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 manage.py runserver 8001`.
-  - Run `ng serve --port 4201`, with `environment.ts` temporarily pointed at `:8001`.
-  - Revert `environment.ts` before committing.
+  - Run `npm --prefix frontend run start:worktree`. Its `worktree` configuration serves on 4201
+    and swaps in `environment.worktree.ts`, which points at `:8001`. No committed file is edited.
   - In dev mode, reach a service from DevTools through `ng.ɵgetInjectorProviders`.
 
 ## The `apiBaseUrl` rule
