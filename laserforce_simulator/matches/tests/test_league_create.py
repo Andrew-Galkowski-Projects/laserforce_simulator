@@ -76,11 +76,17 @@ class TestLeagueCreateGet(TestCase):
             "league-create-schedule-format",
             "league-create-mean",
             "league-create-std-dev",
-            # UX-01 -- the dormant League-visibility control (contract 13).
-            "league-create-visibility",
             "league-create-submit",
         ):
             self.assertIn(f'id="{dom_id}"', body, f"missing DOM id {dom_id!r}")
+
+    def test_dormant_visibility_control_not_rendered(self) -> None:
+        # UXP-21 — UX-01 rendered a `visibility` select for the dormant
+        # League.visibility column; changing it did nothing. Not offered any
+        # more (the column keeps its "closed" default).
+        body = self.client.get(reverse("league_create_advanced")).content.decode()
+        self.assertNotIn('id="league-create-visibility"', body)
+        self.assertNotIn("League visibility", body)
 
     def test_schedule_format_select_is_disabled(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))

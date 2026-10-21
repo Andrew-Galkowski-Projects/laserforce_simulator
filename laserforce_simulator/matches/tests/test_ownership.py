@@ -296,9 +296,11 @@ class TestLeagueVisibilityIsDormant(TestCase):
 class TestLeagueCreateStoresVisibility(TestCase):
     """§13 — the create form authors the marker; nothing else touches it."""
 
-    def test_create_advanced_renders_the_control(self) -> None:
+    def test_create_advanced_does_not_render_the_control(self) -> None:
+        # UXP-21 — the dormant control did nothing, so the page no longer
+        # offers it; the form field still binds (API / tests below).
         body = self.client.get(reverse("league_create_advanced")).content.decode()
-        self.assertIn('id="league-create-visibility"', body)
+        self.assertNotIn('id="league-create-visibility"', body)
 
     def test_form_field_is_optional_and_defaults_to_closed(self) -> None:
         form = CreateLeagueForm(VALID_LEAGUE_PAYLOAD)
