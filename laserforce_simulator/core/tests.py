@@ -471,3 +471,59 @@ class LandingInProgressLeagueScopingTests(TestCase):
         self.client.force_login(self.me)
         response = self.client.get(reverse("landing"))
         self.assertNotContains(response, "Their League")
+
+
+class UploadMapErrorMessageTests(TestCase):
+    """UXP-04 — a failed upload redirected to the list with no message."""
+
+    def test_non_image_upload_flashes_the_form_error(self) -> None:
+        response = self.client.post(
+            "/maps/upload/",
+            {
+                "name": "Bad Map",
+                "image": SimpleUploadedFile(
+                    "bad.png", b"not an image", content_type="image/png"
+                ),
+            },
+            follow=True,
+        )
+        self.assertRedirects(response, "/maps/")
+        self.assertContains(response, "Map upload failed:")
+        self.assertContains(response, "Upload a valid image.")
+
+    def test_missing_name_flashes_required(self) -> None:
+        png = io.BytesIO()
+        PILImage.new("RGB", (10, 10)).save(png, format="PNG")
+        response = self.client.post(
+            "/maps/upload/",
+            {
+                "name": "",
+                "image": SimpleUploadedFile(
+                    "ok.png", png.getvalue(), content_type="image/png"
+                ),
+            },
+            follow=True,
+        )
+        self.assertContains(
+            response, "Map upload failed: Map name: This field is required."
+        )
+
+    def test_unreadable_image_flashes_message(self) -> None:
+        from .services import InvalidMapImage
+
+        png = io.BytesIO()
+        PILImage.new("RGB", (10, 10)).save(png, format="PNG")
+        with patch("core.services.upload_map", side_effect=InvalidMapImage("x")):
+            response = self.client.post(
+                "/maps/upload/",
+                {
+                    "name": "Corrupt",
+                    "image": SimpleUploadedFile(
+                        "c.png", png.getvalue(), content_type="image/png"
+                    ),
+                },
+                follow=True,
+            )
+        self.assertContains(
+            response, "Map upload failed: the file could not be read as an image."
+        )

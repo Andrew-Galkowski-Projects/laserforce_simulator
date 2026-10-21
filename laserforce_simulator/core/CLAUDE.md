@@ -261,7 +261,9 @@ malformed sight-line keys, bool cell pairs, non-object JSON bodies — previousl
 500) are now 400 with each view's **existing** error body shape: `{"status": "error", "message":
 <first form error>}` (zone-config / sight-line / strong-spot saves; the sight-line save previously
 sent no `message`) or `{"error": <first form error>}` (compute). HTML upload with an invalid form
-(incl. a name > 100) or an unreadable image redirects to `/maps/` with no row created.
+(incl. a name > 100) or an unreadable image redirects to `/maps/` with no row created, and (UXP-04)
+flashes `Map upload failed: <field label>: <first form error>` (or `…: the file could not be read as
+an image.`).
 
 ## Storage Backend (`core/services.py`, re-exported from `core/views.py`)
 
@@ -269,7 +271,7 @@ sent no `message`) or `{"error": <first form error>}` (compute). HTML upload wit
 
 **`_seed_defaults()`** — skips seeding entirely when the active storage backend is not `FileSystemStorage` (i.e., R2 is configured). Default map images cannot be seeded from the local `Screenshots_and_video_examples/` directory in production.
 
-**`upload_map` view** — binds `MapUploadForm` and delegates to `services.upload_map`, which reads image dimensions via `image_field.open("rb")` (works for both local and remote storage) instead of `image_field.path`. Handles corrupt/non-image uploads gracefully: deletes the partial record and redirects back to the map list rather than returning a 500.
+**`upload_map` view** — binds `MapUploadForm` and delegates to `services.upload_map`, which reads image dimensions via `image_field.open("rb")` (works for both local and remote storage) instead of `image_field.path`. Handles corrupt/non-image uploads gracefully: deletes the partial record and redirects back to the map list with a `messages.error` (UXP-04) rather than returning a 500.
 
 **`save_zone_config` view** — binds `ZoneConfigForm` and delegates to `services.save_zone_config`. Accepts an optional `elevation` 2D float array from the client. Server-side validation rejects payloads where any elevation value is outside `[0.0, 10.0]` (returns HTTP 400). Elevation is carried forward from the existing confirmed config when not sent by the client, and persisted inline in `MapZoneConfig.zone_data` under the `"elevation"` key.
 
