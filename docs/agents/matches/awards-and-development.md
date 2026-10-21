@@ -145,6 +145,20 @@ NO awards caching, NO API/DRF endpoint.
   context); `templates/leagues/player_detail.html` — **CHANGED** (`league-player-awards-stub`
   → live `league-player-awards`).
 
+### UXP-09 completed-Season summary snapshot
+
+LG-03's "no awards caching" is superseded for **completed** Seasons. A completed Season's
+corpus never changes (ADR-0029), so `matches/season_snapshot.py::completed_season_cached`
+stores three whole-Season outputs in `Season.summary_snapshot_json` (migration 0065), written
+lazily on the first read (which also backfills older Seasons): `"awards"`
+(`compute_season_award_set` — Awards page, League History, League player page),
+`"leaderboards"` (`build_leaderboards` for a Season scope; Career is never cached) and
+`"dashboard_leaders"` (`build_dashboard_context`). An in-progress Season is never cached.
+Player / Team names are re-read live on load, so a rename shows up; a stored row naming a
+deleted Player / Team, or a snapshot whose `"v"` is not `SNAPSHOT_VERSION`, is recomputed.
+Bump `SNAPSHOT_VERSION` when a stored shape changes. Tests:
+`matches/tests/test_season_summary_snapshot.py`.
+
 ## LG-04 player development + ratings history
 
 The **first persisted mutation of `Player` stats in the league flow** — every prior LG slice

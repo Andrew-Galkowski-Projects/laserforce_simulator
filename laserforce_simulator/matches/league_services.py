@@ -61,6 +61,13 @@ from .season_dashboard import (
     find_next_fixture,
     round_progress,
 )
+from .season_snapshot import (
+    award_set_from_json,
+    award_set_to_json,
+    completed_season_cached,
+    leader_boards_from_json,
+    leader_boards_to_json,
+)
 from .standings import StandingsRow, compute_standings
 
 if TYPE_CHECKING:
@@ -1067,41 +1074,19 @@ def build_dashboard_context(
             }
 
         # --- Leaders snippets ----------------------------------------
-        prs_qs = (
-            PlayerRoundState.objects.filter(game_round__match__season=displayed_season)
-            .select_related(
-                "player",
-                "game_round__match",
-                "game_round__team_red",
-                "game_round__team_blue",
-            )
-            .order_by("id")
+        # UXP-09: a completed Season's snippets come from its summary snapshot.
+        leaders_season = displayed_season
+        assert leaders_season is not None  # active / completed modes have one
+        leaders = completed_season_cached(
+            leaders_season,
+            "dashboard_leaders",
+            lambda: _compute_dashboard_leaders(leaders_season),
+            dump=leader_boards_to_json,
+            load=leader_boards_from_json,
         )
-        player_rounds: list[dict] = []
-        for prs in prs_qs:
-            game_round = prs.game_round
-            if prs.team_color == "red":
-                team = game_round.team_red
-            elif prs.team_color == "blue":
-                team = game_round.team_blue
-            else:
-                team = None
-            player_rounds.append(
-                {
-                    "player_id": prs.player_id,
-                    "player_name": prs.player.name,
-                    "role": prs.role,
-                    "team_id": team.id if team is not None else 0,
-                    "team_name": team.name if team is not None else "",
-                    "tags_made": prs.tags_made,
-                    "times_tagged": prs.times_tagged,
-                    "points_scored": prs.points_scored,
-                }
-            )
-
-        leaders_points = compute_leaders(player_rounds, "points_per_game", limit=3)
-        leaders_tags = compute_leaders(player_rounds, "tags_per_game", limit=3)
-        leaders_ratio = compute_leaders(player_rounds, "tag_ratio", limit=3)
+        leaders_points = leaders["points"]
+        leaders_tags = leaders["tags"]
+        leaders_ratio = leaders["ratio"]
 
     # LG-01j — read-only map-config label for the dashboard "Map: ..."
     # line. 4 cases in pinned precedence order. Active / completed
@@ -1137,6 +1122,48 @@ def build_dashboard_context(
         # NAV-01 — KEPT for the read-only dashboard "View bracket" link (§4);
         # the playoff *play* forms moved to the topnav ``Play ▾`` dropdown.
         "playoff_tournament_id": playoff_tournament_id,
+    }
+
+
+def _compute_dashboard_leaders(displayed_season: Season) -> dict[str, list[LeaderRow]]:
+    """The dashboard's three top-3 leader snippets over the Season's corpus,
+    keyed ``points`` / ``tags`` / ``ratio``."""
+    prs_qs = (
+        PlayerRoundState.objects.filter(game_round__match__season=displayed_season)
+        .select_related(
+            "player",
+            "game_round__match",
+            "game_round__team_red",
+            "game_round__team_blue",
+        )
+        .order_by("id")
+    )
+    player_rounds: list[dict] = []
+    for prs in prs_qs:
+        game_round = prs.game_round
+        if prs.team_color == "red":
+            team = game_round.team_red
+        elif prs.team_color == "blue":
+            team = game_round.team_blue
+        else:
+            team = None
+        player_rounds.append(
+            {
+                "player_id": prs.player_id,
+                "player_name": prs.player.name,
+                "role": prs.role,
+                "team_id": team.id if team is not None else 0,
+                "team_name": team.name if team is not None else "",
+                "tags_made": prs.tags_made,
+                "times_tagged": prs.times_tagged,
+                "points_scored": prs.points_scored,
+            }
+        )
+
+    return {
+        "points": compute_leaders(player_rounds, "points_per_game", limit=3),
+        "tags": compute_leaders(player_rounds, "tags_per_game", limit=3),
+        "ratio": compute_leaders(player_rounds, "tag_ratio", limit=3),
     }
 
 
@@ -1513,6 +1540,21 @@ def compute_season_award_set(season: Season) -> AwardSet:
 
     The single shared path used by ``season_awards`` (the view),
     ``build_history_row`` (League History), and the player-page awards badge.
+    UXP-09: a completed Season's set is stored in its summary snapshot
+    (``matches.season_snapshot``) after the first computation.
+    """
+    return completed_season_cached(
+        season,
+        "awards",
+        lambda: _compute_season_award_set(season),
+        dump=award_set_to_json,
+        load=award_set_from_json,
+    )
+
+
+def _compute_season_award_set(season: Season) -> AwardSet:
+    """Compute the :class:`AwardSet` from the Season's corpus.
+
     Builds the regular-season seam dicts, derives ``min_games``, calls
     ``compute_season_awards``, then stamps the separately-computed Finals MVP.
     """

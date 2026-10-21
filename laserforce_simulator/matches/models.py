@@ -1088,6 +1088,10 @@ class Season(models.Model):
     # CLEAR it (= False) at enqueue; play_cancel SETS it (= True); the task
     # READS it (top + between fixtures), never writes it.
     play_cancel_requested = models.BooleanField(default=False)
+    # UXP-09 — whole-Season builder outputs (award set, League Leaders boards,
+    # dashboard leader snippets) for a COMPLETED Season, written lazily on
+    # first read by ``matches.season_snapshot``. Never set while in progress.
+    summary_snapshot_json = models.JSONField(null=True, blank=True, default=None)
 
     def __str__(self) -> str:
         return f"{self.league.name} — {self.name}"
