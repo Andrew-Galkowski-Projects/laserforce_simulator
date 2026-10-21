@@ -1,0 +1,265 @@
+<div class="la">
+  <header class="la-head">
+    <span class="la-brand">LF<span class="la-brand__slash">//</span>SIM</span>
+    <nav class="la-tabs" aria-label="Screens">
+      @for (s of screens; track s) {
+        <a
+          class="la-tab"
+          [routerLink]="[]"
+          [queryParams]="{ screen: s }"
+          queryParamsHandling="merge"
+          [class.is-current]="s === screen()"
+          [attr.aria-current]="s === screen() ? 'page' : null"
+          >{{ screenLabels[s] }}</a
+        >
+      }
+    </nav>
+    <span class="la-head__meta num">
+      R{{ fixture.round.roundNumber }} &middot; seed {{ fixture.capturedFrom.seed }}
+    </span>
+  </header>
+
+  <div class="la-body">
+    <aside class="la-side" aria-label="Round summary">
+      <div class="la-side__title">Round {{ fixture.round.roundNumber }}</div>
+      @for (s of sides(); track s.side) {
+        <section class="la-sidecard" [attr.data-lf-side]="s.side">
+          <div class="la-sidecard__row">
+            <span class="la-badge">{{ s.label }}</span>
+            @if (s.won) {
+              <span class="la-flag la-flag--win">WIN</span>
+            } @else {
+              <span class="la-flag">LOSS</span>
+            }
+            @if (s.eliminated) {
+              <span class="la-flag la-flag--elim">ELIM</span>
+            }
+          </div>
+          <div class="la-sidecard__name">{{ s.teamName }}</div>
+          <div class="la-sidecard__score num">{{ s.points | number }}</div>
+          <dl class="la-kv num">
+            <dt>MVP</dt>
+            <dd>{{ s.totals.mvp | number: '1.1-1' }}</dd>
+            <dt>Hit diff</dt>
+            <dd>{{ s.totals.hitDiff | number: '1.2-2' }}</dd>
+            <dt>Lives</dt>
+            <dd>{{ s.totals.lives }}/{{ s.totals.startingLives }}</dd>
+            <dt>Msls</dt>
+            <dd>{{ s.totals.missilesLanded }}</dd>
+          </dl>
+        </section>
+      }
+      <dl class="la-kv la-kv--meta num">
+        <dt>Elim bonus</dt>
+        <dd>+{{ fixture.round.eliminationBonus | number }}</dd>
+        <dt>Elim at</dt>
+        <dd>
+          {{
+            fixture.round.eliminatedAtTick === null ? '--' : clock(fixture.round.eliminatedAtTick)
+          }}
+        </dd>
+        <dt>Events</dt>
+        <dd>{{ fixture.capturedFrom.eventCountTotal | number }}</dd>
+      </dl>
+    </aside>
+
+    <main class="la-main">
+      @switch (screen()) {
+        @case ('teams') {
+          <h1 class="la-h1">
+            Teams <span class="la-count num">{{ fixture.teams.length }}</span>
+          </h1>
+          <div class="la-scroll">
+            <table class="la-table">
+              <thead>
+                <tr>
+                  <th class="num">#</th>
+                  <th>Team</th>
+                  <th>Side</th>
+                  <th class="num">W</th>
+                  <th class="num">L</th>
+                  <th class="num">Pl</th>
+                  <th>Roster (preferred roles)</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (t of fixture.teams; track t.id) {
+                  <tr [attr.data-lf-side]="sideOfTeam(t.name)" class="la-siderow">
+                    <td class="num muted">{{ t.id }}</td>
+                    <td class="la-strong">{{ t.name }}</td>
+                    <td>
+                      @if (sideOfTeam(t.name); as side) {
+                        <span class="la-badge">{{ sideLetter(side) }}</span>
+                      }
+                    </td>
+                    <td class="num">{{ t.wins }}</td>
+                    <td class="num">{{ t.losses }}</td>
+                    <td class="num">{{ t.players.length }}</td>
+                    <td class="la-roster">
+                      @for (p of t.players; track p.name) {
+                        <span class="la-chip"
+                          >{{ p.name }}
+                          <span class="la-chip__roles">{{ p.preferredRoles.join('/') }}</span></span
+                        >
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
+
+        @case ('round') {
+          <h1 class="la-h1">
+            Round {{ fixture.round.roundNumber }}
+            <span class="la-h1__vs num">
+              {{ fixture.round.redPoints | number }} : {{ fixture.round.bluePoints | number }}
+            </span>
+          </h1>
+          @for (s of sides(); track s.side) {
+            <section class="la-block" [attr.data-lf-side]="s.side">
+              <h2 class="la-h2">
+                <span class="la-badge">{{ s.label }}</span>
+                {{ s.teamName }}
+                <span class="la-h2__pts num">{{ s.points | number }} pts</span>
+                @if (s.eliminated) {
+                  <span class="la-flag la-flag--elim">ELIMINATED</span>
+                }
+              </h2>
+              <div class="la-scroll">
+                <table class="la-table la-table--stats">
+                  <thead>
+                    <tr>
+                      <th>Player</th>
+                      <th>Role</th>
+                      <th class="num">Score</th>
+                      <th class="num">MVP</th>
+                      <th class="num">Hit Diff</th>
+                      <th class="num">Acc</th>
+                      <th class="num">Medic Hits</th>
+                      <th class="num">Lives</th>
+                      <th class="num">Shots</th>
+                      <th class="num">Missiles</th>
+                      <th class="num">Missiled</th>
+                      <th>Survived</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (p of s.players; track p.playerName) {
+                      <tr [class.is-top]="p.mvp === topMvp()">
+                        <td class="la-strong la-player">
+                          {{ p.playerName }}
+                          @if (p.mvp === topMvp()) {
+                            <span class="la-star" title="Top MVP">MVP</span>
+                          }
+                        </td>
+                        <td class="la-role">{{ p.role }}</td>
+                        <td class="num">{{ p.points | number }}</td>
+                        <td class="num">
+                          <a class="la-mvp" href="#" (click)="$event.preventDefault()">{{
+                            p.mvp | number: '1.1-1'
+                          }}</a>
+                        </td>
+                        <td class="num" [class.pos]="p.hitDiff >= 1" [class.neg]="p.hitDiff < 1">
+                          {{ p.hitDiff | number: '1.2-2' }}
+                        </td>
+                        <td class="num">{{ p.accuracy }}%</td>
+                        <td class="num" [class.muted]="!p.medicHits">{{ p.medicHits }}</td>
+                        <td class="num" [class.muted]="!p.lives">
+                          {{ p.lives }}<span class="muted">/{{ p.startingLives }}</span>
+                        </td>
+                        <td class="num">{{ p.shotsFired }}</td>
+                        <td class="num" [class.muted]="!p.missilesLanded">
+                          {{ p.missilesLanded }}
+                        </td>
+                        <td class="num" [class.muted]="!p.timesMissiled">{{ p.timesMissiled }}</td>
+                        <td class="la-surv num">
+                          <span class="la-bar"
+                            ><span
+                              class="la-bar__fill"
+                              [style.width.%]="survivedPct(p.survivedSeconds)"
+                            ></span
+                          ></span>
+                          {{ secondsClock(p.survivedSeconds) }}
+                        </td>
+                      </tr>
+                    }
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td class="la-strong">Total</td>
+                      <td class="muted">{{ s.players.length }}p</td>
+                      <td class="num">{{ s.totals.points | number }}</td>
+                      <td class="num">{{ s.totals.mvp | number: '1.1-1' }}</td>
+                      <td class="num">{{ s.totals.hitDiff | number: '1.2-2' }}</td>
+                      <td class="num">{{ s.totals.accuracy | number: '1.0-0' }}%</td>
+                      <td class="num">{{ s.totals.medicHits }}</td>
+                      <td class="num">{{ s.totals.lives }}/{{ s.totals.startingLives }}</td>
+                      <td class="num">{{ s.totals.shotsFired }}</td>
+                      <td class="num">{{ s.totals.missilesLanded }}</td>
+                      <td class="num">{{ s.totals.timesMissiled }}</td>
+                      <td class="num muted">avg {{ secondsClock(s.totals.survivedSeconds) }}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </section>
+          }
+        }
+
+        @case ('timeline') {
+          <h1 class="la-h1">
+            Timeline
+            <span class="la-count num"
+              >{{ fixture.events.length }} / {{ fixture.capturedFrom.eventCountTotal }}</span
+            >
+          </h1>
+          <div class="la-scroll la-scroll--tall">
+            <table class="la-table la-table--events">
+              <thead>
+                <tr>
+                  <th class="num">Time</th>
+                  <th>Type</th>
+                  <th>Actor</th>
+                  <th></th>
+                  <th>Target</th>
+                  <th class="num">Pts</th>
+                  <th>Detail</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (e of fixture.events; track $index) {
+                  <tr [class]="'ev ev--' + e.type">
+                    <td class="num muted">{{ clock(e.tick) }}</td>
+                    <td class="la-evtype"><span class="la-evdot"></span>{{ e.rawType }}</td>
+                    <td class="la-actor" [attr.data-lf-side]="e.actorSide">
+                      <span class="la-mini">{{ sideLetter(e.actorSide) }}</span
+                      >{{ e.actorName }}
+                    </td>
+                    <td class="muted">{{ e.targetName ? '>' : '' }}</td>
+                    <td class="la-actor" [attr.data-lf-side]="e.targetSide">
+                      @if (e.targetName) {
+                        <span class="la-mini">{{ sideLetter(e.targetSide) }}</span
+                        >{{ e.targetName }}
+                      }
+                    </td>
+                    <td class="num" [class.muted]="!e.points">
+                      {{ e.points ? (e.points > 0 ? '+' : '') + e.points : '0' }}
+                    </td>
+                    <td class="muted la-desc">{{ e.description }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+          <div class="la-legend">
+            @for (t of eventTypes; track t) {
+              <span [class]="'ev ev--' + t"><span class="la-evdot"></span>{{ t }}</span>
+            }
+          </div>
+        }
+      }
+    </main>
+  </div>
+</div>
