@@ -40,3 +40,4 @@ staticfiles/
 # Per-user PyCharm LSP settings
 .idea/pyLspTools.xml
 .env.selfhost
+.idea/laserforce_simulator.iml
