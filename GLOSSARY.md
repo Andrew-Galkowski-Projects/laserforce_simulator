@@ -405,7 +405,7 @@ _Avoid_: the pre-LG-06e "category best" model (one row = the single best of each
 ### Accounts and ownership
 
 **Account**:
-A registered human identity that logs in — `accounts.User`, a custom `AbstractUser` with `username = None` and a unique `email` as `USERNAME_FIELD` (UX-01). Open self-registration; account removal is a Django Admin action.
+A registered human identity that logs in — `accounts.User`, a custom `AbstractUser` with `username = None` and a unique `email` as `USERNAME_FIELD` (UX-01). Self-registration is invite-only (an **Invite**: a single-use code, optionally locked to one email, created in Django Admin); account removal is a Django Admin action.
 _Avoid_: calling an Account an **Owner** (the **Owner** is the fictional boss who judges the **Manager**, never a login); using "user" as a domain noun where the **Manager** relationship is meant.
 
 **Ownership root**:

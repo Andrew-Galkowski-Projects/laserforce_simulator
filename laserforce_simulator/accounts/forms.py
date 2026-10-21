@@ -6,14 +6,21 @@ input carries ``class="form-control"`` (Bootstrap 5.3 from CDN, no project
 stylesheet).
 """
 
+from typing import Any
+
 from django import forms
 from django.contrib.auth.forms import (
     AuthenticationForm,
     PasswordChangeForm,
     UserCreationForm,
 )
+from django.db import transaction
+from django.utils import timezone
 
-from .models import User
+from .models import Invite, User
+
+INVALID_INVITE_MESSAGE = "This invite code is invalid or has already been used."
+WRONG_EMAIL_INVITE_MESSAGE = "This invite is for a different email address."
 
 
 class EmailAuthenticationForm(AuthenticationForm):
@@ -87,6 +94,50 @@ class RegisterForm(UserCreationForm):
             }
         ),
     )
+    invite = forms.CharField(
+        label="Invite code",
+        error_messages={"required": "An invite code is required to register."},
+        widget=forms.TextInput(
+            attrs={
+                "id": "register-invite",
+                "class": "form-control",
+                "autocomplete": "off",
+            }
+        ),
+    )
+
+    def clean_invite(self) -> Invite:
+        code = self.cleaned_data["invite"].strip()
+        invite = Invite.objects.filter(code=code).first()
+        if invite is None or invite.is_used:
+            raise forms.ValidationError(INVALID_INVITE_MESSAGE, code="invalid")
+        return invite
+
+    def clean(self) -> dict[str, Any]:
+        cleaned = super().clean()
+        invite = cleaned.get("invite")
+        email = cleaned.get("email")
+        if invite and email and invite.email and invite.email.lower() != email.lower():
+            self.add_error(
+                "invite",
+                forms.ValidationError(WRONG_EMAIL_INVITE_MESSAGE, code="wrong_email"),
+            )
+        return cleaned
+
+    @transaction.atomic
+    def save(self, commit: bool = True) -> User:
+        user = super().save(commit=commit)
+        if commit:
+            # Conditional update: of two racing redemptions, only one claims
+            # the invite; the loser's Account is rolled back with this atomic.
+            claimed = Invite.objects.filter(
+                pk=self.cleaned_data["invite"].pk,
+                used_at__isnull=True,
+                used_by__isnull=True,
+            ).update(used_by=user, used_at=timezone.now())
+            if not claimed:
+                raise forms.ValidationError(INVALID_INVITE_MESSAGE, code="invalid")
+        return user
 
 
 class StyledPasswordChangeForm(PasswordChangeForm):

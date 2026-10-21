@@ -17,6 +17,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from accounts.forms import RegisterForm
+from accounts.models import Invite
 from accounts.models import User as UserModel
 from conftest import get_shared_manager
 from teams.models import Player, Team
@@ -76,7 +77,12 @@ _GOOD_PASSWORD = "Sturdy-Passw0rd-42"
 
 
 def _register_body(email: str = "new@example.com", **overrides: str) -> dict[str, str]:
-    body = {"email": email, "password1": _GOOD_PASSWORD, "password2": _GOOD_PASSWORD}
+    body = {
+        "email": email,
+        "password1": _GOOD_PASSWORD,
+        "password2": _GOOD_PASSWORD,
+        "invite": Invite.objects.create().code,
+    }
     body.update(overrides)
     return body
 
