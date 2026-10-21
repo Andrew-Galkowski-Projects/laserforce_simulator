@@ -117,12 +117,21 @@ def map_list(request):
     return render(request, "maps/map_list.html", {"maps": maps})
 
 
+# UXP-04 — the map list's labels for the upload form's fields.
+_UPLOAD_FIELD_LABELS = {"name": "Map name", "image": "Image file"}
+
+
 def upload_map(request):
     if request.method != "POST":
         return redirect("map_list")
 
     form = MapUploadForm(request.POST, request.FILES)
     if not form.is_valid():
+        # UXP-04 — say why, instead of silently reloading the list.
+        field = next((f for f in form.fields if f in form.errors), None)
+        label = _UPLOAD_FIELD_LABELS.get(field, "")
+        prefix = f"{label}: " if label else ""
+        messages.error(request, f"Map upload failed: {prefix}{_first_form_error(form)}")
         return redirect("map_list")
 
     try:
@@ -130,6 +139,9 @@ def upload_map(request):
             form.cleaned_data["name"], form.cleaned_data["image"]
         )
     except services.InvalidMapImage:
+        messages.error(
+            request, "Map upload failed: the file could not be read as an image."
+        )
         return redirect("map_list")
 
     return redirect("map_editor", map_id=arena_map.pk)

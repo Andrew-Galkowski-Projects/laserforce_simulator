@@ -261,7 +261,9 @@ malformed sight-line keys, bool cell pairs, non-object JSON bodies — previousl
 500) are now 400 with each view's **existing** error body shape: `{"status": "error", "message":
 <first form error>}` (zone-config / sight-line / strong-spot saves; the sight-line save previously
 sent no `message`) or `{"error": <first form error>}` (compute). HTML upload with an invalid form
-(incl. a name > 100) or an unreadable image redirects to `/maps/` with no row created.
+(incl. a name > 100) or an unreadable image redirects to `/maps/` with no row created, and (UXP-04)
+flashes `Map upload failed: <field label>: <first form error>` (or `…: the file could not be read as
+an image.`).
 
 ## Storage Backend (`core/services.py`, re-exported from `core/views.py`)
 
