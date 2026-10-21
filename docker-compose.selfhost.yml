@@ -39,9 +39,13 @@ services:
       R2_SECRET_KEY: ${R2_SECRET_KEY:-}
       R2_ENDPOINT_URL: ${R2_ENDPOINT_URL:-}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL:-}
+      # Without R2, Django serves uploaded map images from the media volume.
+      SERVE_MEDIA: "True"
       DATABASE_URL: postgres://laserforce:${POSTGRES_PASSWORD}@db:5432/laserforce
       CELERY_BROKER_URL: redis://redis:6379/0
       CELERY_RESULT_BACKEND: redis://redis:6379/1
+    volumes: &media-volume
+      - media:/app/laserforce_simulator/media
     # Loopback only, for checking the app from this PC; the public route is Funnel.
     ports:
       - "127.0.0.1:8000:8000"
@@ -55,6 +59,7 @@ services:
     build: .
     restart: unless-stopped
     environment: *app-env
+    volumes: *media-volume
     # Replaces entrypoint.sh so only the app container runs migrations.
     entrypoint:
       - celery
@@ -88,4 +93,5 @@ services:
 
 volumes:
   pgdata:
+  media:
   tsstate:

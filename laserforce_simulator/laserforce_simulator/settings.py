@@ -189,6 +189,9 @@ STATICFILES_DIRS = [BASE_DIR / "assets"]
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
+# UXP-02: let Django itself serve MEDIA_ROOT when DEBUG is off and no R2 is
+# configured (the self-hosted stack). Fly uses R2; dev uses static() in urls.py.
+SERVE_MEDIA = config("SERVE_MEDIA", default=False, cast=bool)
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

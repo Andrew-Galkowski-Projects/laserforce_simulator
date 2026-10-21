@@ -15,10 +15,8 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 
-from django.conf import settings
-from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from core import views as core_views
 
 urlpatterns = [
@@ -37,4 +35,8 @@ urlpatterns = [
         "players/", include("teams.player_urls")
     ),  # HX-01: must be above the "" include
     path("", core_views.landing, name="landing"),
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    # UXP-02: uploaded media in dev (DEBUG) and on the self-hosted stack
+    # (SERVE_MEDIA); replaces the DEBUG-only static() helper. With R2,
+    # MEDIA_URL points at the bucket and this route is never linked.
+    re_path(r"^media/(?P<path>.*)$", core_views.serve_media, name="serve_media"),
+]
