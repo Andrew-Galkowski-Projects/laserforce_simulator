@@ -374,9 +374,19 @@ class TestM1EventLogWindowing:
         gr.refresh_from_db()
         return gr
 
+    def _events_payload(self, gr) -> dict:
+        """UXP-06: GET the round's events JSON endpoint and return the body."""
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(reverse("game_round_events_data", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        assert resp["Content-Type"].startswith("application/json")
+        return resp.json()
+
     def test_view_emits_json_not_per_event_rows(self):
-        """The response carries the JSON script blocks and does NOT
-        server-render a ``data-event-type`` div per event."""
+        """The page does NOT server-render a ``data-event-type`` div per
+        event, and (UXP-06) no longer inlines the events JSON either: it
+        points the client at the events data endpoint instead."""
         gr = self._round_with_events()
         assert gr.events.count() > 0, "fixture round produced no events"
 
@@ -386,7 +396,11 @@ class TestM1EventLogWindowing:
         assert resp.status_code == 200
 
         body = resp.content.decode()
-        assert 'id="events-data"' in body, "events JSON script block missing"
+        assert 'id="events-data"' not in body, "events are still inlined (UXP-06)"
+        assert "events_data" not in resp.context
+        assert (
+            reverse("game_round_events_data", kwargs={"round_id": gr.id}) in body
+        ), "page must point the client at the events data endpoint"
         assert 'id="players-data"' in body, "players JSON script block missing"
         # The old design emitted one `data-event-type="..."` attribute per
         # event into the server HTML. The windowed design renders rows in
@@ -398,10 +412,7 @@ class TestM1EventLogWindowing:
 
     def test_events_data_matches_db_and_has_full_shape(self):
         gr = self._round_with_events()
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
-        events_data = resp.context["events_data"]
+        events_data = self._events_payload(gr)["events"]
         assert len(events_data) == gr.events.count()
         # Events are emitted in chronological (timestamp) order.
         ts = [e["ts"] for e in events_data]
@@ -456,8 +467,63 @@ class TestM1EventLogWindowing:
         client.force_login(get_shared_manager())
         resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
         assert resp.status_code == 200
-        assert resp.context["events_data"] == []
         assert "data-event-type=" not in resp.content.decode()
+        payload = self._events_payload(gr)
+        assert payload["events"] == []
+        assert payload["playback_map"] is None
+
+    def test_long_round_page_stays_small(self):
+        """UXP-06: a ~1,300-event round used to inline ~580 KB of event
+        JSON into the page. The HTML must now stay well under 100 KB and
+        carry none of the event descriptions; the data endpoint still
+        returns every event."""
+        gr = self._round_with_events()
+        actor_id = gr.player_states.first().player_id
+        gr.events.all().delete()
+        GameEvent.objects.bulk_create(
+            GameEvent(
+                game_round=gr,
+                event_type="miss",
+                timestamp=i // 2,
+                actor_id=actor_id,
+                description=f"UXP06-marker-{i} missed a long shot",
+                metadata={"actor_shots": 10, "sp": 0},
+            )
+            for i in range(1300)
+        )
+        client = Client()
+        client.force_login(get_shared_manager())
+        resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
+        assert resp.status_code == 200
+        assert len(resp.content) < 100_000, f"page is {len(resp.content)} bytes"
+        assert "UXP06-marker-" not in resp.content.decode()
+
+        events = self._events_payload(gr)["events"]
+        assert len(events) == 1300
+        assert events[0]["desc"] == "UXP06-marker-0 missed a long shot"
+        assert events[-1]["desc"] == "UXP06-marker-1299 missed a long shot"
+
+    def test_events_data_is_get_only(self):
+        gr = self._round_with_events()
+        client = Client()
+        client.force_login(get_shared_manager())
+        url = reverse("game_round_events_data", kwargs={"round_id": gr.id})
+        assert client.post(url).status_code == 405
+
+    def test_events_data_hides_other_accounts_rounds(self):
+        """A round managed by another Account is a 404 on the data endpoint
+        (same isolation as the page itself)."""
+        from django.contrib.auth import get_user_model
+
+        gr = self._round_with_events()
+        GameRound.objects.filter(pk=gr.pk).update(manager=get_shared_manager())
+        other = get_user_model().objects.create(
+            email="uxp06-other@example.com", is_active=True
+        )
+        client = Client()
+        client.force_login(other)
+        url = reverse("game_round_events_data", kwargs={"round_id": gr.id})
+        assert client.get(url).status_code == 404
 
     # ------------------------------------------------------------------ #
     # RES-02b — universal per-player snapshot contract on events_data.   #
@@ -502,11 +568,7 @@ class TestM1EventLogWindowing:
         ``meta.special_points`` (RES-02 rename preserved).
         """
         gr = self._round_with_events()
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(reverse("game_round_events", kwargs={"round_id": gr.id}))
-        assert resp.status_code == 200
-        events_data = resp.context["events_data"]
+        events_data = self._events_payload(gr)["events"]
         assert events_data, "fixture round produced no events_data rows"
 
         sp_seen = {t: 0 for t in self._RES02_SP_TYPES}
