@@ -2,12 +2,13 @@
    dashboards inside their {season,league}-dashboard-standings-snippet panel
    and rendered by _build_play_status_response (render_to_string) as the live
    incremental fragment the poll JS patches into that panel's innerHTML.
-   Context: standings_snippet — list of (row, team) tuples.{% endcomment %}
+   Context: standings_snippet — list of (row, team) tuples; optional
+   managed_team_id (UXP-08) highlights the Manager's row.{% endcomment %}
 <div class="card-header"><strong>Top standings</strong></div>
 <ul class="list-group list-group-flush">
     {% for row, team in standings_snippet %}
-        <li class="list-group-item d-flex justify-content-between">
-            <span>{{ row.rank }}. {% if team %}{{ team.name }}{% else %}(unknown){% endif %}</span>
+        <li id="dashboard-standings-row-{{ row.team_id }}" class="list-group-item d-flex justify-content-between{% if managed_team_id and row.team_id == managed_team_id %} list-group-item-primary{% endif %}">
+            <span>{{ row.rank }}. {% if team %}{{ team.name }}{% else %}(unknown){% endif %}{% if managed_team_id and row.team_id == managed_team_id %} <span class="badge bg-primary">You</span>{% endif %}</span>
             <span>{{ row.league_points }} pts</span>
         </li>
     {% endfor %}

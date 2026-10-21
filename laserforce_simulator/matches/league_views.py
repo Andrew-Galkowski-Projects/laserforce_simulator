@@ -324,8 +324,20 @@ def season_standings(request, season_id: int) -> HttpResponse:
         "dir": direction,
         "sort_keys": _STANDINGS_SORT_KEYS_DISPLAY,
         "querystring_without_sort_dir": querystring_without_sort_dir,
+        # UXP-08 — highlight the Manager's row.
+        "managed_team_id": _managed_team_id(league),
     }
     return render(request, "seasons/standings.html", context)
+
+
+def _managed_team_id(league: League) -> int | None:
+    """UXP-08 — the Manager's Team id in a career (``mode="league"``) League.
+
+    ``None`` for sandbox / multiplayer Leagues or when no Team is managed.
+    """
+    if league.mode != "league":
+        return None
+    return league.current_team_id
 
 
 # ----------------------------------------------------------------------
@@ -585,12 +597,12 @@ def _redirect_after_create(form: CreateLeagueForm, season: Season) -> HttpRespon
 
     CONF-05: when the form requested Conferences, ``_create_league_and_season``
     has already pre-created them, so send the user to the Manage Conferences
-    composer to rename / reassign before Start Season. Otherwise fall through to
-    the CRE-01 default, the Season standings page.
+    composer to rename / reassign before Start Season. Otherwise (UXP-08) land
+    on the League dashboard, which carries the draft Start Season call-to-action.
     """
     if form.cleaned_data.get("number_of_conferences") or 0:
         return redirect("manage_conferences", season_id=season.id)
-    return redirect("season_standings", season_id=season.id)
+    return redirect("league_dashboard", league_id=season.league_id)
 
 
 def league_create(request) -> HttpResponse:
@@ -599,7 +611,7 @@ def league_create(request) -> HttpResponse:
     GET renders the template chooser. POST resolves the chosen
     ``LeagueTemplate``, builds ``CreateLeagueForm(data=_template_to_form_data(
     ...))``, validates, and on valid calls ``_create_league_and_season(form)``
-    → redirect ``season_standings``. An unknown template key or an invalid form
+    → redirect ``league_dashboard``. An unknown template key or an invalid form
     re-renders the chooser.
     """
     if request.method == "POST":
@@ -646,7 +658,7 @@ def league_create_advanced(request) -> HttpResponse:
 
     GET renders the full form; POST validates ``CreateLeagueForm(request.POST)``
     and on valid calls ``_create_league_and_season(form)`` → redirect
-    ``season_standings``; invalid re-renders the full form.
+    ``league_dashboard``; invalid re-renders the full form.
     """
     if request.method != "POST":
         return render(
@@ -1091,11 +1103,17 @@ def league_dashboard(request, league_id: int) -> HttpResponse:
 
     body = _build_dashboard_context(displayed_season, season_mode)
     sidebar_links = _build_league_sidebar_links(league, displayed_season, "dashboard")
+    managed_team_id = _managed_team_id(league)
     context = {
         "league": league,
         **body,
         "sidebar_active": "dashboard",
         "sidebar_links": sidebar_links,
+        # UXP-08 — onboarding: "You manage <Team>" + row highlight, and the
+        # past-evaluations link only once an owner evaluation exists.
+        "managed_team_id": managed_team_id,
+        "managed_team": league.current_team if managed_team_id else None,
+        "has_owner_evaluations": league.owner_evaluations.exists(),
         "play_error": None,
         "play_job_id": None,
     }

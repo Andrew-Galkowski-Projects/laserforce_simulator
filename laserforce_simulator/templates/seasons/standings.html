@@ -58,11 +58,11 @@
                     </thead>
                     <tbody>
                         {% for row, team in group.rows_with_teams %}
-                            <tr>
+                            <tr id="season-standings-row-{{ row.team_id }}"{% if managed_team_id and row.team_id == managed_team_id %} class="table-primary"{% endif %}>
                                 <td>{{ row.rank }}</td>
                                 <td>
                                     {% if team %}
-                                        <a href="{% url 'team_detail' team.id %}">{{ team.name }}</a>
+                                        <a href="{% url 'team_detail' team.id %}">{{ team.name }}</a>{% if managed_team_id and row.team_id == managed_team_id %} <span id="season-standings-managed-badge" class="badge bg-primary">You</span>{% endif %}
                                     {% else %}
                                         <span class="text-muted">(unknown)</span>
                                     {% endif %}

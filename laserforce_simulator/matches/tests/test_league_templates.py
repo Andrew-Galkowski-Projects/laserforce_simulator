@@ -179,7 +179,7 @@ class TestCre01ChooserPostCreatesEachTemplate(TestCase):
                 self.assertEqual(season.teams.count(), template.num_teams)
                 self.assertEqual(
                     response["Location"],
-                    reverse("season_standings", args=[season.id]),
+                    reverse("league_dashboard", args=[season.league_id]),
                 )
 
     def test_each_template_creates_the_expected_phase_shape(self) -> None:
@@ -468,12 +468,12 @@ class TestCre01ConferenceRedirectSurvives(TestCase):
         )
         self.assertEqual(season.conferences.count(), 2)
 
-    def test_no_conferences_redirects_to_standings(self) -> None:
+    def test_no_conferences_redirects_to_league_dashboard(self) -> None:
         response = self.client.post(
             reverse("league_create_advanced"), _advanced_payload(league_name="Flat")
         )
         season = League.objects.get(name="Flat").seasons.get()
         self.assertEqual(
             response["Location"],
-            reverse("season_standings", args=[season.id]),
+            reverse("league_dashboard", args=[season.league_id]),
         )

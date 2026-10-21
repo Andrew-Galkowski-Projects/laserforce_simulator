@@ -921,8 +921,13 @@ def build_dashboard_context(
         action_button_label = "Start Season"
         action_button_state = "start_season"
 
-        # Zero-filled top-3 standings preview: teams sorted by name asc.
-        teams = sorted(displayed_season.teams.all(), key=lambda t: t.name)
+        # Zero-filled top-3 standings preview. UXP-08 — ranked by team rating
+        # (name tiebreak), the same order as the Preview Standings page.
+        assert displayed_season is not None  # "draft" mode implies a Season
+        teams = sorted(
+            displayed_season.teams.all(),
+            key=lambda t: (-_compute_team_overall(t), t.name),
+        )
         top_teams = teams[:3]
         for index, team in enumerate(top_teams):
             row = {

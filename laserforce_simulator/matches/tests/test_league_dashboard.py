@@ -14,11 +14,19 @@ rows — LG-01c runs NO simulation, so the simulator is never entered.
 from __future__ import annotations
 
 from datetime import date
+from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
 
-from matches.models import GameRound, League, Match, PlayerRoundState, Season
+from matches.models import (
+    GameRound,
+    League,
+    Match,
+    OwnerEvaluation,
+    PlayerRoundState,
+    Season,
+)
 from matches.tests.conftest import make_team_with_slots
 
 # ---------------------------------------------------------------------------
@@ -458,12 +466,23 @@ class TestLg01eDashboardWiring(TestCase):
 
     def _make_completed_only_league(self) -> League:
         league = _make_league("LE1eCompleted")
-        Season.objects.create(
+        season = Season.objects.create(
             league=league,
             name="Done",
             start_date=date(2026, 1, 1),
             state="completed",
             starting_team_ids_json=[],
+        )
+        # UXP-08 — the past-evaluations link renders only once an owner
+        # evaluation exists.
+        OwnerEvaluation.objects.create(
+            league=league,
+            season=season,
+            wins_delta=0.0,
+            playoffs_delta=0.0,
+            wins_total=0.0,
+            playoffs_total=0.0,
+            verdict="retained",
         )
         return league
 
@@ -1021,3 +1040,118 @@ class TestLg07aMemberNightDashboardExclusion(TestCase):
         self.assertNotIn(da.id, snippet_team_ids)
         self.assertNotIn(db.id, snippet_team_ids)
         self.assertTrue(snippet_team_ids <= {team_a.id, team_b.id})
+
+
+# ---------------------------------------------------------------------------
+# UXP-08 — League onboarding: Start Season CTA, "You manage", draft ordering,
+# past-evaluations link gating.
+# ---------------------------------------------------------------------------
+
+
+class TestUxp08LeagueDashboardOnboarding(TestCase):
+    """UXP-08 — the new-League dashboard tells the Manager how to begin."""
+
+    def test_draft_renders_start_season_cta_posting_to_start_season(self) -> None:
+        league = _make_league("UxpCta")
+        season, _teams = _make_draft_season(league)
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertContains(response, 'id="league-dashboard-start-season-cta"')
+        body = response.content.decode()
+        form_open = (
+            '<form id="league-dashboard-start-season-form" method="post" '
+            f'action="{reverse("start_season", args=[season.id])}">'
+        )
+        self.assertIn(form_open, body)
+        form_body = body.split(form_open, 1)[1].split("</form>", 1)[0]
+        self.assertIn('name="csrfmiddlewaretoken"', form_body)
+        self.assertIn('type="submit"', form_body)
+
+    def test_active_does_not_render_start_season_cta(self) -> None:
+        league = _make_league("UxpCtaActive")
+        _make_active_season(league)
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertNotContains(response, 'id="league-dashboard-start-season-cta"')
+
+    def test_none_does_not_render_start_season_cta(self) -> None:
+        league = _make_league("UxpCtaNone")
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertNotContains(response, 'id="league-dashboard-start-season-cta"')
+
+    def test_career_league_says_you_manage_team(self) -> None:
+        league = _make_league("UxpManage")
+        _season, teams = _make_draft_season(league)
+        league.current_team = teams[1]
+        league.save()
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertContains(response, 'id="league-dashboard-managed-team"')
+        self.assertContains(response, f"You manage <strong>{teams[1].name}</strong>")
+
+    def test_no_managed_team_omits_you_manage(self) -> None:
+        league = _make_league("UxpNoManage")
+        _make_draft_season(league)
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertNotContains(response, 'id="league-dashboard-managed-team"')
+
+    def test_sandbox_league_omits_you_manage(self) -> None:
+        league = League.objects.create(name="UxpSandbox", mode="sandbox")
+        _season, teams = _make_draft_season(league)
+        league.current_team = teams[0]
+        league.save()
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertNotContains(response, 'id="league-dashboard-managed-team"')
+
+    def test_standings_snippet_highlights_managed_team_row(self) -> None:
+        league = _make_league("UxpHighlight")
+        _season, teams = _make_draft_season(league)
+        league.current_team = teams[0]
+        league.save()
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertContains(
+            response,
+            f'id="dashboard-standings-row-{teams[0].id}" class="list-group-item',
+        )
+        self.assertContains(response, "list-group-item-primary", count=1)
+
+    def test_draft_snippet_uses_preview_standings_rating_order(self) -> None:
+        league = _make_league("UxpOrder")
+        season = Season.objects.create(
+            league=league, name="S1", start_date=date(2026, 6, 1)
+        )
+        t_a, _ = make_team_with_slots("Aurora")
+        t_b, _ = make_team_with_slots("Blackout")
+        t_c, _ = make_team_with_slots("Ember")
+        t_d, _ = make_team_with_slots("Frost")
+        season.teams.add(t_a, t_b, t_c, t_d)
+        ratings = {t_a.id: 50.0, t_b.id: 90.0, t_c.id: 70.0, t_d.id: 80.0}
+        with patch(
+            "matches.league_services._compute_team_overall",
+            side_effect=lambda team: ratings[team.id],
+        ):
+            dash = self.client.get(reverse("league_dashboard", args=[league.id]))
+            standings = self.client.get(reverse("season_standings", args=[season.id]))
+        dash_ids = [team.id for _row, team in dash.context["standings_snippet"]]
+        preview_ids = [team.id for _row, team in standings.context["rows_with_teams"]]
+        self.assertEqual(dash_ids, [t_b.id, t_d.id, t_c.id])
+        self.assertEqual(dash_ids, preview_ids[:3])
+
+    def test_past_evaluations_link_hidden_without_evaluations(self) -> None:
+        league = _make_league("UxpNoEval")
+        _make_draft_season(league)
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertNotContains(response, 'id="league-dashboard-past-evaluations-link"')
+
+    def test_past_evaluations_link_shown_once_an_evaluation_exists(self) -> None:
+        league = _make_league("UxpEval")
+        season, teams = _make_draft_season(league)
+        OwnerEvaluation.objects.create(
+            league=league,
+            season=season,
+            team_managed=teams[0],
+            wins_delta=0.0,
+            playoffs_delta=0.0,
+            wins_total=0.0,
+            playoffs_total=0.0,
+            verdict="retained",
+        )
+        response = self.client.get(reverse("league_dashboard", args=[league.id]))
+        self.assertContains(response, 'id="league-dashboard-past-evaluations-link"')
