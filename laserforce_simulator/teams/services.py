@@ -26,7 +26,13 @@ from matches.sim_helpers.score_calculator import calculate_mvp
 from .career_stats import points_trend, summarize, summarize_by_role
 from .constants import PLAYER_NAMES, TEAM_NAMES
 from .forms import PlayerForm
-from .models import Player, Team, _random_player_profile, get_free_agents_team
+from .models import (
+    FREE_AGENTS_TEAM_NAME,
+    Player,
+    Team,
+    _random_player_profile,
+    get_free_agents_team,
+)
 from .player_generator import assign_slots, draw_preferred_roles, draw_stats
 from .roster_importer import (
     ALL_COLUMNS,
@@ -518,7 +524,8 @@ def _check_db_slot_collisions(
     errors: list[RowError] = []
     for team_name, rows in parsed.by_team.items():
         team = teams_by_name.get(team_name)
-        if team is None:
+        # The free-agent pool has no slots to collide with.
+        if team is None or team_name == FREE_AGENTS_TEAM_NAME:
             continue
 
         # Track in-call simulated assignments so multiple Scouts on the
@@ -590,8 +597,15 @@ def _apply_roster(
     player_count = 0
 
     for team_name, rows in parsed.by_team.items():
+        is_pool = team_name == FREE_AGENTS_TEAM_NAME
         team = teams_by_name.get(team_name)
-        if team is None:
+        if is_pool:
+            # The shared pool is never stamped with an Account (see
+            # get_free_agents_team), so it is fetched, not created here.
+            pool_existed = team is not None
+            team = get_free_agents_team()
+            (appended_teams if pool_existed else created_teams).append(team)
+        elif team is None:
             team = Team.objects.create(name=team_name, manager=manager)
             created_teams.append(team)
         else:
@@ -607,6 +621,8 @@ def _apply_roster(
             )
             player_count += 1
 
+            if is_pool:
+                continue
             if row.role == "scout":
                 if team.slot_scout_1 is None:
                     team.slot_scout_1 = player

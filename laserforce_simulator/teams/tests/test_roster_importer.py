@@ -19,6 +19,7 @@ import unittest
 
 from teams.roster_importer import (
     ALL_COLUMNS,
+    FREE_AGENTS_TEAM_NAME,
     MAX_DATA_ROWS,
     OPTIONAL_COLUMNS,
     PROFILE_BOUNDS,
@@ -322,6 +323,29 @@ class TestInFileCollisions(unittest.TestCase):
         ]
         self.assertEqual(len(offenders), 1, ctx.exception.errors)
 
+    def test_free_agents_team_has_no_role_limits(self) -> None:
+        """The Free Agents pool is not a roster, so slot limits do not apply."""
+        csv = _csv_required_only(
+            _valid_required_row(team="Free Agents", name="S1", role="scout"),
+            _valid_required_row(team="Free Agents", name="S2", role="scout"),
+            _valid_required_row(team="Free Agents", name="S3", role="scout"),
+            _valid_required_row(team="Free Agents", name="C1", role="commander"),
+            _valid_required_row(team="Free Agents", name="C2", role="commander"),
+        )
+        parsed = parse_roster_csv(csv)
+        self.assertEqual(len(parsed.by_team["Free Agents"]), 5)
+
+    def test_free_agents_team_still_rejects_duplicate_names(self) -> None:
+        csv = _csv_required_only(
+            _valid_required_row(team="Free Agents", name="Same", role="scout"),
+            _valid_required_row(team="Free Agents", name="Same", role="heavy"),
+        )
+        with self.assertRaises(RosterImportError) as ctx:
+            parse_roster_csv(csv)
+        self.assertEqual(
+            [(e.row_num, e.field) for e in ctx.exception.errors], [(2, "name")]
+        )
+
     def test_two_non_scout_rows_for_same_team_role_raises(self) -> None:
         csv = _csv_required_only(
             _valid_required_row(team="Red", name="Alice", role="commander"),
@@ -548,6 +572,11 @@ class TestModuleConstantsPinned(unittest.TestCase):
             SLOT_LIMITS,
             {"commander": 1, "heavy": 1, "scout": 2, "medic": 1, "ammo": 1},
         )
+
+    def test_free_agents_team_name_pinned(self) -> None:
+        # Must equal teams.models.FREE_AGENTS_TEAM_NAME; the Django-side
+        # equality pin lives in test_services.py (this file stays Django-free).
+        self.assertEqual(FREE_AGENTS_TEAM_NAME, "Free Agents")
 
     def test_profile_bounds_pinned(self) -> None:
         self.assertEqual(
