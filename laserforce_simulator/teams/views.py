@@ -272,9 +272,7 @@ def player_delete(request, team_id, player_id):
         messages.success(request, f'Player "{player_name}" removed from {team.name}')
         return redirect("team_detail", team_id=team.id)
 
-    return render(
-        request, "teams/player_confirm_delete.html", {"player": player, "team": team}
-    )
+    return render(request, "teams/player_delete.html", {"player": player, "team": team})
 
 
 def _coerce_threshold(raw: str | None, default: int = 5) -> int:
