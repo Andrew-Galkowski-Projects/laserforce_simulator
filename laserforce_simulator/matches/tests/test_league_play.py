@@ -1233,8 +1233,10 @@ class TestLg02Part2cPlaySeasonTaskMultiRr(TestCase):
 # §5 / §6.4: after the RR loop, ``play_season_task`` drains the trailing built
 # tournament phase via ``play_next_bracket_round`` on the SHARED
 # ``max_matchdays`` budget:
-#   - ``max_matchdays=None`` ⇒ unbounded RR drain THEN unbounded bracket drain
-#     to a champion (``season.champion_team`` set, ``state == "completed"``);
+#   - ``max_matchdays=None`` ⇒ unbounded RR drain, then STOP (UXP-05: "Play
+#     Until Playoffs" leaves the bracket as its own step); a second
+#     ``max_matchdays=None`` run starting ON the tournament phase drains the
+#     bracket to a champion (``season.champion_team`` set, ``completed``);
 #   - ``max_matchdays=8`` ⇒ ``rr_weeks_played`` (distinct RR matchdays simulated
 #     this run) is SUBTRACTED from the bracket budget, so a run can stop
 #     mid-bracket when the shared budget is exhausted, resuming on a second call;
@@ -1274,14 +1276,39 @@ def _lg3f_rr_tournament_season(prefix: str, n: int = 4):
 
 
 class TestPlaySeasonTaskPlayoffTail(TestCase):
-    """``play_season_task`` drains the RR phase THEN the bracket to a champion
-    when ``max_matchdays=None``."""
+    """``max_matchdays=None`` drains the RR phase and stops (UXP-05); a second
+    run from the tournament phase drains the bracket to a champion."""
+
+    def test_until_end_stops_after_rr_with_bracket_unplayed(self) -> None:
+        """UXP-05 regression -- the RR run builds the bracket but plays none of
+        it, so the Season is not crowned behind the "Until Playoffs" label."""
+        from matches.tasks import play_season_task
+
+        season, _teams, rr, tp = _lg3f_rr_tournament_season("TailStop", n=4)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            result = play_season_task.delay(season.id, max_matchdays=None)
+        self.assertEqual(result.state, "SUCCESS")
+
+        season.refresh_from_db()
+        tp.refresh_from_db()
+        self.assertTrue(season._phase_complete(rr))
+        self.assertIsNotNone(tp.tournament_id)
+        self.assertEqual(tp.tournament.state, "active")
+        self.assertEqual(
+            _Lg3fBracketNode.objects.filter(
+                tournament=tp.tournament, winner__isnull=False
+            ).count(),
+            0,
+        )
+        self.assertEqual(season.state, "active")
+        self.assertIsNone(season.champion_team_id)
 
     def test_until_end_drains_rr_then_bracket_to_champion(self) -> None:
         from matches.tasks import play_season_task
 
         season, _teams, _rr, tp = _lg3f_rr_tournament_season("TailEnd", n=4)
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            play_season_task.delay(season.id, max_matchdays=None)
             result = play_season_task.delay(season.id, max_matchdays=None)
         self.assertEqual(result.state, "SUCCESS")
 
@@ -1315,6 +1342,8 @@ class TestPlaySeasonTaskPlayoffTail(TestCase):
             return None
 
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            # UXP-05 -- the first run stops after the RR; the second drains.
+            play_season_task.delay(season.id, max_matchdays=None)
             with patch.object(actual_task, "update_state", _spy_update_state):
                 play_season_task.delay(season.id, max_matchdays=None)
 

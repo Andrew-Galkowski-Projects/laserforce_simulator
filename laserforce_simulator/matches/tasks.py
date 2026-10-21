@@ -383,6 +383,14 @@ def play_season_task(
                     meta={"completed": k + 1, "total": n},
                 )
 
+            # UXP-05 — "Play Until Playoffs / Tournament" (``max_matchdays is
+            # None``) stops once the regular-season fixtures are done: the
+            # bracket the RR completion just built is its own step, so skip the
+            # tournament tail. A run that starts ON the tournament phase
+            # (``n == 0``) still drains it below.
+            if max_matchdays is None:
+                return {"completed": n, "total": n}
+
         # LG-02-Part2c-3f — phase-aware tail. After the RR fixture loop, if
         # the cursor sits on a built+active tournament phase, drain bracket
         # STAGES with the SHARED budget. ``rr_weeks_played`` is the count of
