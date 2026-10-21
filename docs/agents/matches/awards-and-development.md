@@ -255,7 +255,9 @@ rolls back the whole rollover (new Season + carry-forward + development) atomica
 2. gathers the **developing set** via `_developing_players(league)` — the snapshot Teams'
    players (active slots **+ bench**, i.e. full `team.players.all()` — do NOT use
    `team.active_players`; bench players develop too) PLUS `league.free_agent_pool` players,
-   de-duplicated by pk. Snapshot Team ids come from `latest_completed.starting_team_ids_json`
+   de-duplicated by pk, **ordered by id** (Teams, then each Team's players, then free agents;
+   CI-01: the shared develop RNG is drawn in this order, and Postgres row order is not stable).
+   Snapshot Team ids come from `latest_completed.starting_team_ids_json`
    (the frozen snapshot `next_season` already uses for carry-forward). **League-isolated by
    construction; NO cross-League guard** — a Player in a different League is not developed and
    gets no new-Season row;

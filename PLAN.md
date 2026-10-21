@@ -524,7 +524,7 @@ the **CRE-02 tiered generation** subsection in
 
 Spec: #215 (ticket #216)
 
-[DONE] Shipped (2026-10-20). Full suite 7861 passed / 0 failed on both SQLite and Postgres. Found a **second** cause the PLAN entry did not know about (two map tests calling `response.close()` on an already-closed streamed response), and that each cause alone breaks the Postgres run. The guard lives in `laserforce_simulator/testing.py` (not the conftest, after review) so tests import it as a normal module. A pre-UX-01 Fly Postgres must be re-provisioned before the first green merge deploys.
+[DONE] Shipped (2026-10-20). Full suite 7862 passed / 0 failed on both SQLite and Postgres. Found a **second** cause the PLAN entry did not know about (two map tests calling `response.close()` on an already-closed streamed response), and that each cause alone breaks the Postgres run. The guard lives in `laserforce_simulator/testing.py` (not the conftest, after review) so tests import it as a normal module. Verify also found a **third**, intermittent Postgres-only bug: League rollover development drew its shared RNG in DB row order (`_developing_players()` had no `order_by`), now ordered by id (decision 8). A pre-UX-01 Fly Postgres must be re-provisioned before the first green merge deploys.
 
 Found by ANG-04 (PR #213). ANG-04 fixed `ci.yml`, which GitHub had rejected since at least 2026-06,
 so the `test` job ran on CI's `postgres:16` service for the first time in months. It failed with
