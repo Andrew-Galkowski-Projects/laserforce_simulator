@@ -176,6 +176,33 @@ class TestRunPlayerGeneration(_ServicesTestCase):
 # ---------------------------------------------------------------------------
 
 
+class TestFillPreferredSlot(TestCase):
+    """UXP-19: a newly added Player takes the first empty preferred slot."""
+
+    def test_falls_through_to_next_preferred_role_when_first_is_full(self) -> None:
+        team = Team.objects.create(name="Fallthrough")
+        team.slot_heavy = Player.objects.create(team=team, name="Tank")
+        team.save()
+        player = Player.objects.create(
+            team=team, name="Flex", preferred_roles=["heavy", "ammo"]
+        )
+        self.assertEqual(fill_preferred_slot(team, player), "slot_ammo")
+        team.refresh_from_db()
+        self.assertEqual(team.slot_ammo_id, player.id)
+
+    def test_returns_none_when_every_preferred_slot_is_full(self) -> None:
+        team = Team.objects.create(name="Full Medic")
+        medic = Player.objects.create(team=team, name="Doc")
+        team.slot_medic = medic
+        team.save()
+        player = Player.objects.create(
+            team=team, name="Doc2", preferred_roles=["medic"]
+        )
+        self.assertIsNone(fill_preferred_slot(team, player))
+        team.refresh_from_db()
+        self.assertEqual(team.slot_medic_id, medic.id)
+
+
 class TestRunRosterImport(_ServicesTestCase):
     def test_result_dataclass_fields(self) -> None:
         self.assertTrue(dataclasses.is_dataclass(RosterImportResult))
@@ -534,30 +561,3 @@ class TestBuildRoleBenchmarks(TestCase):
         result = build_role_benchmarks(min_rounds=5, display="mean")
         for key in _BENCHMARK_BUILDER_KEYS:
             self.assertEqual(response.context[key], result[key], key)
-
-
-class TestFillPreferredSlot(TestCase):
-    """UXP-19: a newly added Player takes the first empty preferred slot."""
-
-    def test_falls_through_to_next_preferred_role_when_first_is_full(self) -> None:
-        team = Team.objects.create(name="Fallthrough")
-        team.slot_heavy = Player.objects.create(team=team, name="Tank")
-        team.save()
-        player = Player.objects.create(
-            team=team, name="Flex", preferred_roles=["heavy", "ammo"]
-        )
-        self.assertEqual(fill_preferred_slot(team, player), "slot_ammo")
-        team.refresh_from_db()
-        self.assertEqual(team.slot_ammo_id, player.id)
-
-    def test_returns_none_when_every_preferred_slot_is_full(self) -> None:
-        team = Team.objects.create(name="Full Medic")
-        medic = Player.objects.create(team=team, name="Doc")
-        team.slot_medic = medic
-        team.save()
-        player = Player.objects.create(
-            team=team, name="Doc2", preferred_roles=["medic"]
-        )
-        self.assertIsNone(fill_preferred_slot(team, player))
-        team.refresh_from_db()
-        self.assertEqual(team.slot_medic_id, medic.id)
