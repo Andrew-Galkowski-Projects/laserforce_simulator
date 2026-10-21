@@ -216,8 +216,8 @@ now ⇒ `full` (before, a `scores` round served an empty event list); the report
 (closes a team-name leak) and delegate to the builders; `missile_log`, `movement_heatmap`,
 `export_round_report` delegate to the builders. Lenient HTML param parsing is unchanged.
 
-**Known follow-ups (PLAN.md Deferred Items).** The H2H / career / benchmark corpora are not
-ownership-filtered (a foreign Account's Match between two Unmanaged Teams can surface in
+**Known follow-ups (PLAN.md Deferred Items).** The H2H / career round sets are not
+ownership-filtered (the HX-02 benchmark population is, since UXP-14) (a foreign Account's Match between two Unmanaged Teams can surface in
 `detail_list`); the HTML `save_batch_games` still trusts the session's team ids.
 
 ## ANG-01d-1 league lifecycle + reads API

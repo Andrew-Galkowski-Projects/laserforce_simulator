@@ -818,12 +818,19 @@ def _build_per_role_overlay(
     return out
 
 
-def build_career_stats(player: Player, *, min_rounds: int, display: str) -> dict:
+def build_career_stats(
+    player: Player,
+    *,
+    min_rounds: int,
+    display: str,
+    user: "AbstractBaseUser | None",
+) -> dict:
     """HX-01 + HX-02 career payload for one Player (the HTML context minus ``player``).
 
     Aggregates every ``PlayerRoundState`` for the player into career totals,
     the per-role breakdown and the rolling-mean trend, then overlays the
-    HX-02 per-role benchmarks (only when the player has rounds).
+    HX-02 per-role benchmarks (only when the player has rounds). UXP-14: the
+    benchmark population is the Rounds ``user`` may see (own + Unmanaged).
     """
     states = (
         PlayerRoundState.objects.filter(player=player)
@@ -842,7 +849,7 @@ def build_career_stats(player: Player, *, min_rounds: int, display: str) -> dict
     # otherwise the per-role table doesn't render at all.
     per_role_with_benchmarks: list[dict] = []
     if total_rounds > 0:
-        samples_by_key, rounds_in_role_by_role = get_all_benchmark_data()
+        samples_by_key, rounds_in_role_by_role = get_all_benchmark_data(user=user)
         per_role_with_benchmarks = _build_per_role_overlay(
             rounds,
             per_role,
@@ -866,12 +873,16 @@ def build_career_stats(player: Player, *, min_rounds: int, display: str) -> dict
     }
 
 
-def build_role_benchmarks(*, min_rounds: int, display: str) -> dict:
-    """HX-02 global role benchmarks payload (the HTML context, verbatim).
+def build_role_benchmarks(
+    *, min_rounds: int, display: str, user: "AbstractBaseUser | None"
+) -> dict:
+    """HX-02 role benchmarks payload (the HTML context, verbatim).
 
-    ``benchmarks_by_role`` is a template-only convenience the API drops.
+    UXP-14: scoped to the Rounds ``user`` may see -- its own plus Unmanaged
+    (ADR-0038), never another Account's. ``benchmarks_by_role`` is a
+    template-only convenience the API drops.
     """
-    samples_by_key, rounds_in_role_by_role = get_all_benchmark_data()
+    samples_by_key, rounds_in_role_by_role = get_all_benchmark_data(user=user)
     summaries = compute_role_benchmarks(
         samples_by_key, rounds_in_role_by_role, min_rounds
     )

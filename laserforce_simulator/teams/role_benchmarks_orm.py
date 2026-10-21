@@ -1,6 +1,6 @@
 """Role benchmarks ORM materialisation.
 
-Owns the single full-table ``PlayerRoundState`` scan, the ``_MvpAdapter``
+Owns the single per-Account ``PlayerRoundState`` scan, the ``_MvpAdapter``
 duck-typing layer, and the assembly of the seam-dict input the pure
 ``teams.role_benchmarks`` reducer consumes.
 
@@ -18,12 +18,16 @@ its single public surface is ``compute_benchmarks_uncached``. The pure
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from matches.models import PlayerRoundState
+from accounts.permissions import owned_game_round_q
+from matches.models import GameRound, PlayerRoundState
 from matches.sim_helpers.score_calculator import calculate_mvp
 
 from .role_benchmarks import ROLES, build_role_populations
+
+if TYPE_CHECKING:
+    from django.contrib.auth.base_user import AbstractBaseUser
 
 # ---------------------------------------------------------------------------
 # MVP adapter — keeps ``calculate_mvp`` happy without exposing ORM internals
@@ -105,7 +109,7 @@ _PLAYER_STATE_FIELDS: tuple[str, ...] = (
 )
 
 
-def compute_benchmarks_uncached() -> tuple[
+def compute_benchmarks_uncached(*, user: "AbstractBaseUser | None") -> tuple[
     dict[tuple[str, str], list[tuple[int, float]]],
     dict[str, dict[int, int]],
 ]:
@@ -121,11 +125,20 @@ def compute_benchmarks_uncached() -> tuple[
       used by the view layer to threshold a population by minimum
       rounds.
 
+    UXP-14: the scan covers only the Rounds ``user`` may see -- its own plus
+    Unmanaged ones (``owned_game_round_q``, ADR-0038). ``user=None`` sees
+    Unmanaged Rounds only.
+
     No caching, no signal interaction, no transaction wrapping. The
     cache layer wraps this for the hot path; direct callers (admin
     diagnostics, fixtures, CLI scripts) use it as-is.
     """
-    rows = list(PlayerRoundState.objects.values(*_PLAYER_STATE_FIELDS))
+    visible_rounds = GameRound.objects.filter(owned_game_round_q(user))
+    rows = list(
+        PlayerRoundState.objects.filter(game_round__in=visible_rounds).values(
+            *_PLAYER_STATE_FIELDS
+        )
+    )
 
     round_dicts: list[dict[str, Any]] = []
     for row in rows:

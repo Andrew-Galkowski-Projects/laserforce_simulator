@@ -7,7 +7,7 @@
     <h1>Role Benchmarks</h1>
     <p class="text-muted">
         Per-role averages computed from every player's career-average when
-        playing the role. Filter the population to players with at least N
+        playing the role, over your saved Rounds (plus any unclaimed ones). Filter the population to players with at least N
         rounds in that role.
     </p>
 
@@ -39,7 +39,12 @@
 
     {% if not any_data %}
         <div class="alert alert-info" id="benchmark-no-data-notice">
-            There is no benchmark data yet. Play and save some rounds first.
+            {% if min_rounds > 0 %}
+                No benchmarks yet: a player needs at least {{ min_rounds }} saved Round{{ min_rounds|pluralize }} in a role to count.
+                Lower <strong>Min rounds in role</strong> above to include players with fewer Rounds.
+            {% else %}
+                No saved Rounds yet. Play and save some Rounds first.
+            {% endif %}
         </div>
     {% endif %}
 

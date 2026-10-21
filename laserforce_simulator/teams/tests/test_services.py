@@ -439,14 +439,18 @@ class TestBuildCareerStats(TestCase):
     def test_key_set_excludes_player(self) -> None:
         from teams.services import build_career_stats
 
-        result = build_career_stats(self.player, min_rounds=5, display="mean")
+        result = build_career_stats(
+            self.player, min_rounds=5, display="mean", user=get_shared_manager()
+        )
         self.assertEqual(set(result), _CAREER_BUILDER_KEYS)
         self.assertNotIn("player", result)
 
     def test_no_rounds_has_empty_overlay(self) -> None:
         from teams.services import build_career_stats
 
-        result = build_career_stats(self.player, min_rounds=5, display="mean")
+        result = build_career_stats(
+            self.player, min_rounds=5, display="mean", user=get_shared_manager()
+        )
         self.assertEqual(result["total_rounds"], 0)
         self.assertFalse(result["has_rounds"])
         self.assertEqual(result["per_role_with_benchmarks"], [])
@@ -454,7 +458,9 @@ class TestBuildCareerStats(TestCase):
     def test_params_passed_through(self) -> None:
         from teams.services import build_career_stats
 
-        result = build_career_stats(self.player, min_rounds=2, display="median")
+        result = build_career_stats(
+            self.player, min_rounds=2, display="median", user=get_shared_manager()
+        )
         self.assertEqual(result["min_rounds"], 2)
         self.assertEqual(result["display"], "median")
 
@@ -469,7 +475,12 @@ class TestBuildCareerStats(TestCase):
         blue, _ = make_team_with_slots("CarBuildBlue")
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             BatchSimulator().save_games(red, blue, [[1357, False]], 1)
-        result = build_career_stats(players["commander"], min_rounds=5, display="mean")
+        result = build_career_stats(
+            players["commander"],
+            min_rounds=5,
+            display="mean",
+            user=get_shared_manager(),
+        )
         self.assertEqual(result["total_rounds"], 1)
         self.assertTrue(result["has_rounds"])
         self.assertTrue(result["per_role_with_benchmarks"])
@@ -481,7 +492,9 @@ class TestBuildCareerStats(TestCase):
         client.force_login(get_shared_manager())
         response = client.get(reverse("player_career_stats", args=[self.player.pk]))
         self.assertEqual(response.status_code, 200)
-        result = build_career_stats(self.player, min_rounds=5, display="mean")
+        result = build_career_stats(
+            self.player, min_rounds=5, display="mean", user=get_shared_manager()
+        )
         for key in _CAREER_BUILDER_KEYS:
             self.assertEqual(response.context[key], result[key], key)
 
@@ -495,14 +508,18 @@ class TestBuildRoleBenchmarks(TestCase):
     def test_key_set_includes_template_only_key(self) -> None:
         from teams.services import build_role_benchmarks
 
-        result = build_role_benchmarks(min_rounds=5, display="mean")
+        result = build_role_benchmarks(
+            min_rounds=5, display="mean", user=get_shared_manager()
+        )
         self.assertEqual(set(result), _BENCHMARK_BUILDER_KEYS)
 
     def test_benchmarks_shape(self) -> None:
         from teams.role_benchmarks import ROLES, STAT_KEYS
         from teams.services import build_role_benchmarks
 
-        result = build_role_benchmarks(min_rounds=5, display="mean")
+        result = build_role_benchmarks(
+            min_rounds=5, display="mean", user=get_shared_manager()
+        )
         self.assertEqual(set(result["benchmarks"]), set(ROLES))
         for role in ROLES:
             self.assertEqual(
@@ -516,13 +533,17 @@ class TestBuildRoleBenchmarks(TestCase):
         from teams.services import build_role_benchmarks
 
         self.assertFalse(
-            build_role_benchmarks(min_rounds=5, display="mean")["any_data"]
+            build_role_benchmarks(
+                min_rounds=5, display="mean", user=get_shared_manager()
+            )["any_data"]
         )
 
     def test_params_passed_through(self) -> None:
         from teams.services import build_role_benchmarks
 
-        result = build_role_benchmarks(min_rounds=0, display="median")
+        result = build_role_benchmarks(
+            min_rounds=0, display="median", user=get_shared_manager()
+        )
         self.assertEqual(result["min_rounds"], 0)
         self.assertEqual(result["display"], "median")
 
@@ -532,7 +553,9 @@ class TestBuildRoleBenchmarks(TestCase):
         self.client.force_login(get_shared_manager())
         response = self.client.get(reverse("role_benchmarks"))
         self.assertEqual(response.status_code, 200)
-        result = build_role_benchmarks(min_rounds=5, display="mean")
+        result = build_role_benchmarks(
+            min_rounds=5, display="mean", user=get_shared_manager()
+        )
         for key in _BENCHMARK_BUILDER_KEYS:
             self.assertEqual(response.context[key], result[key], key)
 

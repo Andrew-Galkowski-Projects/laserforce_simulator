@@ -306,12 +306,12 @@ class TestFillOnMissOnce(TestCase):
         real_compute = orm_mod.compute_benchmarks_uncached
         call_count = {"n": 0}
 
-        def _spy():
+        def _spy(*, user):
             call_count["n"] += 1
-            return real_compute()
+            return real_compute(user=user)
 
         with mock.patch.object(orm_mod, "compute_benchmarks_uncached", _spy):
-            get_all_benchmark_data()
-            get_all_benchmark_data()
+            get_all_benchmark_data(user=None)
+            get_all_benchmark_data(user=None)
 
         self.assertEqual(call_count["n"], 1)

@@ -137,7 +137,33 @@ class TestRoleBenchmarksView(TestCase):
         response = self.client.get(url)
         body = response.content.decode()
         self.assertIn("benchmark-no-data-notice", body)
-        self.assertIn("no benchmark data yet", body.lower())
+        # UXP-14: the notice names the real gate (the default threshold, 5).
+        self.assertIn("at least 5 saved Rounds in a role", body)
+        self.assertIn("Min rounds in role", body)
+
+    def test_no_data_notice_names_the_threshold_in_effect(self) -> None:
+        # UXP-14: three saved Rounds is below the default threshold of 5, so
+        # the page must say why it is empty and name the active value.
+        team, player = _make_player("Few Rounds Team", "Cmdr Few")
+        for _ in range(3):
+            _make_round_state(player, team)
+        response = self.client.get(reverse("role_benchmarks") + "?threshold=7")
+        body = response.content.decode()
+        self.assertFalse(response.context["any_data"])
+        self.assertIn("benchmark-no-data-notice", body)
+        self.assertIn("at least 7 saved Rounds in a role", body)
+        self.assertNotIn("Play and save some rounds first", body)
+
+    def test_no_data_notice_singular_threshold(self) -> None:
+        response = self.client.get(reverse("role_benchmarks") + "?threshold=1")
+        self.assertIn("at least 1 saved Round in a role", response.content.decode())
+
+    def test_no_data_notice_at_threshold_zero_asks_for_rounds(self) -> None:
+        response = self.client.get(reverse("role_benchmarks") + "?threshold=0")
+        body = response.content.decode()
+        self.assertIn("benchmark-no-data-notice", body)
+        self.assertIn("No saved Rounds yet", body)
+        self.assertNotIn("Lower", body)
 
     def test_seeded_db_renders_five_role_tables_and_mean(self) -> None:
         team, player = _make_player("Bench Team", "Cmdr A")

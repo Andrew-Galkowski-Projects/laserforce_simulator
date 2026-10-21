@@ -139,14 +139,14 @@ class TestComputeBenchmarksUncachedEmptyDb(TestCase):
     """
 
     def test_samples_cover_full_cartesian_product(self) -> None:
-        samples, _ = compute_benchmarks_uncached()
+        samples, _ = compute_benchmarks_uncached(user=None)
         for role in ROLES:
             for stat in STAT_KEYS:
                 self.assertIn((role, stat), samples)
                 self.assertEqual(samples[(role, stat)], [])
 
     def test_rounds_in_role_has_every_role(self) -> None:
-        _, rounds_in_role = compute_benchmarks_uncached()
+        _, rounds_in_role = compute_benchmarks_uncached(user=None)
         for role in ROLES:
             self.assertIn(role, rounds_in_role)
             self.assertEqual(rounds_in_role[role], {})
@@ -162,7 +162,7 @@ class TestComputeBenchmarksUncachedHappyPath(TestCase):
         team, player = _make_player("OrmTeam", "OrmPlayer")
         _make_round_state(player, team, role="commander", points_scored=1000)
 
-        samples, rounds_in_role = compute_benchmarks_uncached()
+        samples, rounds_in_role = compute_benchmarks_uncached(user=None)
 
         cmd_pts = samples[("commander", "points_scored")]
         self.assertEqual(len(cmd_pts), 1)
@@ -179,7 +179,7 @@ class TestComputeBenchmarksUncachedHappyPath(TestCase):
         _make_round_state(player, team, role="commander", points_scored=2000)
         _make_round_state(player, team, role="heavy", points_scored=500)
 
-        _, rounds_in_role = compute_benchmarks_uncached()
+        _, rounds_in_role = compute_benchmarks_uncached(user=None)
 
         self.assertEqual(rounds_in_role["commander"][player.id], 2)
         self.assertEqual(rounds_in_role["heavy"][player.id], 1)
@@ -195,7 +195,7 @@ class TestComputeBenchmarksUncachedHappyPath(TestCase):
         _make_round_state(player, team, role="commander", points_scored=1000)
         _make_round_state(player, team, role="commander", points_scored=3000)
 
-        samples, _ = compute_benchmarks_uncached()
+        samples, _ = compute_benchmarks_uncached(user=None)
         cmd_pts = samples[("commander", "points_scored")]
         self.assertEqual(len(cmd_pts), 1)
         _, value = cmd_pts[0]
