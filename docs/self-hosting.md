@@ -101,8 +101,10 @@ is always single-use.
   starts at sign-in.
 - **Start from a fresh database.** Do not restore a pre-UX-01 Fly dump. See the
   `AUTH_USER_MODEL` hazard in the root `CLAUDE.md`.
-- **Media files.** With `DEBUG=False`, Django does not serve `/media/`. Configure the `R2_*`
-  variables (the same bucket as Fly works) if anything you use uploads files.
+- **Media files.** Uploaded map images live in the `media` volume, so they survive rebuilds.
+  Without R2, Django serves them itself (`SERVE_MEDIA: "True"` in the compose file; with
+  `DEBUG=False` nothing else serves `/media/`). That is fine at hobby traffic. To use R2 instead,
+  set the `R2_*` variables (the same bucket as Fly works); `MEDIA_URL` then points at the bucket.
 - **Funnel limits.** Funnel is meant for light traffic. It caps bandwidth and listens only on ports
   443, 8443 and 10000. That is fine for a hobby simulator, but it is not a production CDN.
 - **TLS ends at Tailscale.** Gunicorn sees plain HTTP plus `X-Forwarded-Proto: https`. Django

@@ -18,7 +18,7 @@ Including another URLconf
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.urls import path, include
+from django.urls import path, include, re_path
 from core import views as core_views
 
 urlpatterns = [
@@ -38,3 +38,7 @@ urlpatterns = [
     ),  # HX-01: must be above the "" include
     path("", core_views.landing, name="landing"),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# UXP-02: static() is DEBUG-only; this route serves media when SERVE_MEDIA is on.
+urlpatterns += [
+    re_path(r"^media/(?P<path>.*)$", core_views.serve_media, name="serve_media"),
+]

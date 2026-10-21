@@ -471,3 +471,61 @@ class LandingInProgressLeagueScopingTests(TestCase):
         self.client.force_login(self.me)
         response = self.client.get(reverse("landing"))
         self.assertNotContains(response, "Their League")
+
+
+class ServeMediaTests(TestCase):
+    """UXP-02 — with DEBUG off and no R2, nothing served ``/media/``, so every
+    map image 404'd on the self-hosted stack. ``SERVE_MEDIA`` opts Django in."""
+
+    def setUp(self) -> None:
+        self.media_root = Path(tempfile.mkdtemp())
+        (self.media_root / "maps").mkdir()
+        (self.media_root / "maps" / "arena.png").write_bytes(b"\x89PNG fake")
+
+    def test_serves_media_file_when_enabled(self) -> None:
+        from django.test import override_settings
+
+        with override_settings(SERVE_MEDIA=True, MEDIA_ROOT=self.media_root):
+            response = self.client.get("/media/maps/arena.png")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(b"".join(response.streaming_content), b"\x89PNG fake")
+
+    def test_404_when_disabled(self) -> None:
+        from django.test import override_settings
+
+        with override_settings(SERVE_MEDIA=False, MEDIA_ROOT=self.media_root):
+            response = self.client.get("/media/maps/arena.png")
+        self.assertEqual(response.status_code, 404)
+
+    def test_no_path_traversal_outside_media_root(self) -> None:
+        from django.test import override_settings
+
+        (self.media_root / "secret.txt").write_text("nope")
+        with override_settings(SERVE_MEDIA=True, MEDIA_ROOT=self.media_root / "maps"):
+            response = self.client.get("/media/%2E%2E/secret.txt")
+        self.assertIn(response.status_code, (400, 404))
+
+
+class RestoreDefaultImagesTests(TestCase):
+    """UXP-02 — a default map row whose image file is gone (a fresh media
+    volume, a rebuilt container) gets its file copied back on ``/maps/``."""
+
+    def test_map_list_restores_missing_default_image(self) -> None:
+        from django.test import override_settings
+
+        from .models import ArenaMap
+        from .views import _DEFAULT_MAPS
+
+        name, filename = _DEFAULT_MAPS[0]
+        media_root = Path(tempfile.mkdtemp())
+        ArenaMap.objects.create(
+            name=name,
+            image=f"maps/{filename}",
+            is_default=True,
+            img_width=10,
+            img_height=10,
+        )
+        with override_settings(MEDIA_ROOT=media_root):
+            self.client.get("/maps/")
+        self.assertTrue((media_root / "maps" / filename).exists())
+        self.assertEqual(ArenaMap.objects.count(), 1)

@@ -7,6 +7,7 @@ from django.contrib import messages
 from django.core.exceptions import NON_FIELD_ERRORS
 from django.http import (
     FileResponse,
+    Http404,
     HttpResponse,
     HttpResponseBadRequest,
     HttpResponseNotAllowed,
@@ -14,6 +15,7 @@ from django.http import (
 )
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
+from django.views.static import serve
 from PIL import Image as PILImage
 
 from . import services
@@ -87,9 +89,30 @@ def _seed_defaults():
             )
 
 
+def _restore_default_images() -> None:
+    """UXP-02 — copy back the image of any existing default map whose file is
+    missing (a fresh media volume or a rebuilt container). Never adds rows."""
+    from django.core.files.storage import FileSystemStorage, default_storage
+
+    if not isinstance(default_storage, FileSystemStorage):
+        return
+
+    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
+    maps_dir = settings.MEDIA_ROOT / "maps"
+    for _name, filename in _DEFAULT_MAPS:
+        src = screenshots_dir / filename
+        dst = maps_dir / filename
+        if dst.exists() or not src.exists():
+            continue
+        if ArenaMap.objects.filter(image=f"maps/{filename}").exists():
+            maps_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
 def map_list(request):
     if not ArenaMap.objects.exists():
         _seed_defaults()
+    _restore_default_images()
     maps = ArenaMap.objects.order_by("created_at")
     return render(request, "maps/map_list.html", {"maps": maps})
 
@@ -424,3 +447,12 @@ def landing(request) -> HttpResponse:
         "core/landing.html",
         {"in_progress_leagues": in_progress_leagues},
     )
+
+
+def serve_media(request, path: str) -> HttpResponse:
+    """UXP-02 — serve an uploaded file from ``MEDIA_ROOT`` when ``SERVE_MEDIA``
+    is on (self-hosting without R2); 404 otherwise. ``serve`` rejects paths
+    that escape the document root."""
+    if not settings.SERVE_MEDIA:
+        raise Http404()
+    return serve(request, path, document_root=settings.MEDIA_ROOT)
