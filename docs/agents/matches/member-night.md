@@ -138,7 +138,7 @@ from `round_ids`). NEW Celery task
 cancel checks (`_play_cancel_requested`), loops the unplayed shells playing both Rounds,
 `update_state` PROGRESS in **GAME counts** (`{completed, total}` = completed games / total
 games), `complete_if_finished()` after the loop, and a `finally` clearing
-`active_play_job_id` + `close_old_connections()`. **NO outer `@transaction.atomic`** — each
+`active_play_job_id` (CI-01: no task closes its own DB connection; Celery's worker fixup does). **NO outer `@transaction.atomic`** — each
 Round is its own atomic commit (ADR-0016), so a mid-drain failure leaves completed games
 committed and the run resumable. URLs (`matches/season_urls.py`, bare names):
 `member_night_setup` → `<int:season_id>/member-night/setup/` (POST),

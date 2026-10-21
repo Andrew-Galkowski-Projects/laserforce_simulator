@@ -1072,7 +1072,7 @@ during the RR loop (unchanged), then **STAGE-counts** via
 `play_playoffs_task` precedent) once the bracket drain begins; the final return is
 stage-counts when a tail ran, else the RR shape. `_build_play_status_response`
 reads `{completed, total}` generically and is **UNCHANGED**. No outer
-`@transaction.atomic`; `finally: django.db.close_old_connections()` stays.
+`@transaction.atomic`; the `finally` stays (CI-01: no task closes its own DB connection; Celery's worker fixup does).
 
 **KEPT UNCHANGED (sub-feature B + invariants).** `play_single_round` (one playoff
 Match), `play_playoffs` (async drain-all), `play_playoffs_task`,

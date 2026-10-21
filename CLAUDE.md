@@ -150,6 +150,7 @@ the record:
 - **Per-app:** `<app>/tests/` or `<app>/tests.py`. For example, `matches/tests/simulation_tests.py` holds
   simulator logic and `matches/tests/test_api_*.py` holds the matches API.
 - **Project-wide API behaviour** (envelope, CORS, auth headers): `laserforce_simulator/api/tests/`.
+- **Test harness** (root `conftest.py`, `laserforce_simulator/testing.py`): `laserforce_simulator/tests/`.
 
 **What to test:**
 - Every new public function or method gets at least one test covering the happy path and one covering an edge case or failure mode.

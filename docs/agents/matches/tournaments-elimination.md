@@ -198,7 +198,7 @@ meta={"completed": int, "total": int})`; returns final `{"completed", "total"}`
 early-returns the current stage progress (no-op). **NO outer
 `@transaction.atomic`** — per-node atomicity comes from `play_next_node`'s
 decorator (a mid-loop FAILURE leaves every already-resolved node committed →
-resumable on re-invoke); `django.db.close_old_connections()` in `finally`.
+resumable on re-invoke) (CI-01: no task closes its own DB connection; Celery's worker fixup does).
 
 **Three new views/URLs (`tournament_views.py` / `tournament_urls.py`).**
 `tournament_play_all` (POST-only, `HttpResponseNotAllowed(["POST"])` first line;

@@ -520,9 +520,11 @@ the **CRE-02 tiered generation** subsection in
 **CRE-02 league spread** subsection in
 [`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 
-### CI-01 · [IN PROGRESS] Make the test suite green on PostgreSQL in CI
+### CI-01 · [DONE] Make the test suite green on PostgreSQL in CI
 
 Spec: #215 (ticket #216)
+
+[DONE] Shipped (2026-10-20). Full suite 7861 passed / 0 failed on both SQLite and Postgres. Found a **second** cause the PLAN entry did not know about (two map tests calling `response.close()` on an already-closed streamed response), and that each cause alone breaks the Postgres run. The guard lives in `laserforce_simulator/testing.py` (not the conftest, after review) so tests import it as a normal module. A pre-UX-01 Fly Postgres must be re-provisioned before the first green merge deploys.
 
 Found by ANG-04 (PR #213). ANG-04 fixed `ci.yml`, which GitHub had rejected since at least 2026-06,
 so the `test` job ran on CI's `postgres:16` service for the first time in months. It failed with
@@ -567,6 +569,11 @@ failed**. Nothing else Postgres-only hides behind them.
 6. Deploy gate: the owner checks / re-provisions the Fly Postgres before merge; the PR flags it.
 7. Out: simulation, RNG, models, migrations, ownership, API/HTML behaviour, Postgres as local
    default, Fly / infra. No ADR, no glossary terms. One ticket.
+8. **Added after verify (2026-10-20):** a Postgres run flaked on
+   `TestFin02NextSeasonByteIdenticalOff` (51 != 52). `_developing_players()` iterates three
+   querysets with no `order_by` and hands out one shared develop RNG in that order; Postgres heap order
+   moves after UPDATEs. Fix in CI-01: `.order_by("id")` on all three (SQLite already returns id order,
+   so no re-baseline), with a regression test that fails on Postgres.
 
 ---
 
