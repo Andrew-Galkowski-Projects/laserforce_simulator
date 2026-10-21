@@ -1,0 +1,97 @@
+// The Teams list (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+:host {
+  display: block;
+}
+
+.team-list__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+
+  h1 {
+    margin: 0;
+    font-family: var(--lf-font-heading);
+  }
+}
+
+.team-list__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+}
+
+.team-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--lf-border);
+  border-left: 4px solid var(--lf-accent);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+}
+
+.team-card__name {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.team-card__roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0;
+  font-family: var(--lf-font-numeric);
+}
+
+.team-card__badge {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: var(--lf-radius);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.team-card__badge--valid {
+  color: var(--lf-ev-resupply);
+  background: color-mix(in srgb, var(--lf-ev-resupply) 12%, transparent);
+}
+
+.team-card__badge--incomplete {
+  color: var(--lf-ev-missile);
+  background: color-mix(in srgb, var(--lf-ev-missile) 12%, transparent);
+}
+
+.team-card__created {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--lf-text-muted);
+}
+
+.team-card__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+}
+
+.team-list__empty {
+  padding: 3rem 1rem;
+  text-align: center;
+
+  h2 {
+    margin-top: 0;
+    color: var(--lf-text-muted);
+  }
+}
+
+mat-paginator {
+  margin-top: 1rem;
+  background: transparent;
+}

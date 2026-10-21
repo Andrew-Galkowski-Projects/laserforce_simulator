@@ -1,0 +1,50 @@
+<div class="team-list__header">
+  <h1>Teams</h1>
+  <a mat-flat-button routerLink="/teams/new">Create New Team</a>
+</div>
+
+<div class="team-list__grid">
+  @for (card of cards(); track card.team.id) {
+    <article class="team-card">
+      <h2 class="team-card__name">{{ card.team.name }}</h2>
+      <p class="team-card__roster">
+        <span
+          >{{ card.active }}/6 active
+          @if (card.bench > 0) {
+            (+{{ card.bench }} bench)
+          }
+        </span>
+        @if (card.team.is_valid_roster) {
+          <span class="team-card__badge team-card__badge--valid">Valid Roster</span>
+        } @else {
+          <span class="team-card__badge team-card__badge--incomplete">Incomplete</span>
+        }
+      </p>
+      <p class="team-card__created">Created: {{ card.team.created_date | date: 'MMM dd, y' }}</p>
+      <div class="team-card__actions">
+        <a mat-flat-button [routerLink]="['/teams', card.team.id]">View</a>
+        <a mat-stroked-button [routerLink]="['/teams', card.team.id, 'edit']">Edit</a>
+      </div>
+    </article>
+  }
+</div>
+
+@let meta = page()?.meta;
+@if (meta && meta.total_pages > 1) {
+  <mat-paginator
+    [length]="meta.count"
+    [pageSize]="meta.page_size"
+    [pageIndex]="meta.page - 1"
+    [hidePageSize]="true"
+    (page)="changePage($event)"
+    aria-label="Teams pages"
+  />
+}
+
+@if (page()?.items?.length === 0) {
+  <section class="team-list__empty">
+    <h2>No teams yet</h2>
+    <p>Create your first team to get started!</p>
+    <a mat-flat-button routerLink="/teams/new">Create Team</a>
+  </section>
+}
