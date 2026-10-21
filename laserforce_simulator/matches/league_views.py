@@ -1887,6 +1887,22 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
         # A fired-and-unreassigned Manager (current_team still == the fired team)
         # cannot roll — they must pick a new team first.
         return redirect("new_team_picker", league_id=league.id)
+
+    # UXP-18 — the confirming POST also starts the rolled Season, so the
+    # Manager lands on an ACTIVE dashboard instead of a draft one plus a
+    # separate "Start Season" click. One exception keeps the DRAFT step: the
+    # rollover carries no Conferences and they are editable only in draft, so
+    # a League whose previous Season was partitioned lands on Manage
+    # Conferences to re-partition first. A start that the model refuses
+    # (e.g. < 2 teams) leaves the rolled draft, the pre-UXP-18 outcome; its own
+    # savepoint rolls back only the activation, never the rollover.
+    previous = latest_completed_season(league)
+    if previous is not None and previous.conferences.exists():
+        return redirect("manage_conferences", season_id=new_season.id)
+    try:
+        play_services.start_season(new_season)
+    except ValidationError:
+        pass
     return redirect("season_dashboard", season_id=new_season.id)
 
 

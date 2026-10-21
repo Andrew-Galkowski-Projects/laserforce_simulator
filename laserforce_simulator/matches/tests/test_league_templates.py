@@ -477,3 +477,44 @@ class TestCre01ConferenceRedirectSurvives(TestCase):
             response["Location"],
             reverse("season_standings", args=[season.id]),
         )
+
+
+# ---------------------------------------------------------------------------
+# UXP-18 — a second League draws unused team names, not "#2" copies
+# ---------------------------------------------------------------------------
+
+
+class TestUxp18SecondLeagueGetsUnusedTeamNames(TestCase):
+    def _team_names(self, league_name: str) -> set[str]:
+        season = League.objects.get(name=league_name).seasons.get()
+        return set(season.teams.values_list("name", flat=True))
+
+    def test_two_leagues_from_one_template_get_disjoint_unsuffixed_names(
+        self,
+    ) -> None:
+        key = LEAGUE_TEMPLATES[0].key
+        for name in ("First", "Second"):
+            self.client.post(
+                reverse("league_create"), _chooser_post(key, league_name=name)
+            )
+        first = self._team_names("First")
+        second = self._team_names("Second")
+        self.assertEqual(len(second), LEAGUE_TEMPLATES[0].num_teams)
+        self.assertEqual(first & second, set())
+        self.assertFalse(
+            any("#" in n for n in first | second), f"{first!r} / {second!r}"
+        )
+
+    def test_exhausted_pool_falls_back_to_the_suffix(self) -> None:
+        from teams.constants import TEAM_NAMES
+
+        for name in TEAM_NAMES:
+            Team.objects.create(name=name)
+        response = self.client.post(
+            reverse("league_create_advanced"),
+            _advanced_payload(league_name="Exhausted", num_teams="4"),
+        )
+        self.assertEqual(response.status_code, 302)
+        names = self._team_names("Exhausted")
+        self.assertEqual(len(names), 4)
+        self.assertTrue(all(" #" in n for n in names), names)

@@ -145,18 +145,19 @@ class TestNextSeasonHappyPath(TestCase):
         )
         return league, prev, teams
 
-    def test_post_creates_new_draft_season_with_locked_fields(self) -> None:
-        league, _prev, _teams = self._setup()
+    def test_post_creates_new_started_season_with_locked_fields(self) -> None:
+        league, _prev, teams = self._setup()
         self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
         # The new Season is the highest-id Season in this League.
         new_season = league.seasons.order_by("-id").first()
         self.assertIsNotNone(new_season)
-        self.assertEqual(new_season.state, "draft")
+        # UXP-18 — the HTML POST rolls a draft and then starts it.
+        self.assertEqual(new_season.state, "active")
         self.assertEqual(new_season.league_id, league.id)
         self.assertIsNone(new_season.champion_team)
-        # starting_team_ids_json is NOT set on the new Season (snapshotted
-        # at activation via start_season(), not at create — LG-01 precedent).
-        self.assertIsNone(new_season.starting_team_ids_json)
+        # starting_team_ids_json is written by the activation (start_season),
+        # never at create — LG-01 precedent.
+        self.assertEqual(new_season.starting_team_ids_json, sorted(t.id for t in teams))
 
     def test_post_redirects_to_new_season_dashboard(self) -> None:
         league, _prev, _teams = self._setup()
@@ -861,8 +862,8 @@ class TestLg02Part2aNextSeasonSeasonPhase(TestCase):
         league = self._setup()
         self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
         new_season = league.seasons.order_by("-id").first()
-        # The new draft Season was created.
-        self.assertEqual(new_season.state, "draft")
+        # The new Season was created (and, UXP-18, started).
+        self.assertEqual(new_season.state, "active")
         phases = list(new_season.phases.all())
         self.assertEqual(len(phases), 1)
         self.assertEqual(phases[0].ordinal, 1)
@@ -2012,8 +2013,9 @@ class TestCar02NonFiredRolloverByteEquivalent(TestCase):
         )
         self.assertEqual(response.status_code, 302)
         new_season = league.seasons.order_by("-id").first()
-        # Same Season name / start / teams / schedule_format as today's rollover.
-        self.assertEqual(new_season.state, "draft")
+        # Same Season name / start / teams / schedule_format as today's rollover
+        # (UXP-18 — the HTML POST then starts it).
+        self.assertEqual(new_season.state, "active")
         self.assertEqual(new_season.name, "Season 2")
         self.assertEqual(new_season.start_date, date(2026, 1, 1))
         self.assertEqual(new_season.schedule_format, "single_round_robin")
@@ -2149,7 +2151,7 @@ class TestCar02VerdictGateAtomicity(TestCase):
 
 class TestCar03MultiplayerNextSeason(TestCase):
     """CAR-03 — on a ``multiplayer`` League the owner-mood verdict gate is inert:
-    a completed Season simply rolls into a fresh draft Season (302) with NO
+    a completed Season simply rolls into a fresh Season (302) with NO
     ``OwnerEvaluation`` row written and ``current_team`` unchanged."""
 
     def _setup(self) -> tuple[League, Season, Team]:
@@ -2175,17 +2177,18 @@ class TestCar03MultiplayerNextSeason(TestCase):
         _car02_add_win(prev, manager_team, teams[1])
         return league, prev, manager_team
 
-    def test_post_redirects_to_new_draft_season(self) -> None:
+    def test_post_redirects_to_new_started_season(self) -> None:
         league, _prev, _mgr = self._setup()
         pre_count = league.seasons.count()
         response = self.client.post(
             reverse("next_season", kwargs={"league_id": league.id})
         )
         self.assertEqual(response.status_code, 302)
-        # A new draft Season was created and is the redirect target.
+        # A new Season was created (UXP-18 — and started) and is the redirect
+        # target.
         self.assertEqual(league.seasons.count(), pre_count + 1)
         new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(new_season.state, "draft")
+        self.assertEqual(new_season.state, "active")
         self.assertEqual(
             response["Location"],
             reverse("season_dashboard", args=[new_season.id]),
@@ -2855,3 +2858,107 @@ class TestConf06NextSeasonRotateByConferenceDowngrade(TestCase):
             league = self._completed(f"Conf06Carry-{mode}", map_mode=mode)
             new_season = self._roll(league)
             self.assertEqual(new_season.map_mode, mode, f"mode={mode}")
+
+
+# ---------------------------------------------------------------------------
+# UXP-18 — the Start Next Season POST creates AND starts the new Season
+# ---------------------------------------------------------------------------
+
+from matches.models import Conference as _Uxp18Conference  # noqa: E402
+
+
+class TestUxp18NextSeasonStartsTheNewSeason(TestCase):
+    """UXP-18 — confirming Start Next Season (the owner-evaluation CTA, or the
+    non-career dashboard / topnav button) rolls the Season AND starts it, so the
+    Manager lands on an ACTIVE Season's dashboard without a separate
+    "Start Season" click. A Season that must be edited in DRAFT first (the
+    previous Season was partitioned into Conferences, which the rollover does
+    not carry) stays a draft and lands on Manage Conferences."""
+
+    def _setup(self, *, mode: str = "league", n_teams: int = 2) -> League:
+        teams = _make_teams(f"Uxp18{mode}{n_teams}", n_teams)
+        league = _make_league(f"Uxp18{mode}{n_teams}L")
+        league.mode = mode
+        league.current_team = teams[0]
+        league.save(update_fields=["mode", "current_team"])
+        prev = _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        _Lg02SeasonPhase.objects.create(
+            season=prev,
+            ordinal=1,
+            phase_type="round_robin",
+            schedule_format="single_round_robin",
+        )
+        if n_teams >= 2:
+            _car02_add_win(prev, teams[0], teams[1])
+        return league
+
+    def _post(self, league: League):
+        return self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+
+    def test_career_confirm_creates_an_active_season_and_redirects_to_it(
+        self,
+    ) -> None:
+        league = self._setup(mode="league")
+        response = self._post(league)
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.name, "Season 2")
+        self.assertEqual(new_season.state, "active")
+        # Activation ran (the snapshot is only written by start_season).
+        self.assertEqual(
+            new_season.starting_team_ids_json,
+            sorted(new_season.teams.values_list("id", flat=True)),
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[new_season.id]),
+        )
+
+    def test_non_career_start_next_season_also_starts_it(self) -> None:
+        league = self._setup(mode="multiplayer")
+        response = self._post(league)
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.state, "active")
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[new_season.id]),
+        )
+
+    def test_start_failure_leaves_the_rolled_draft_and_lands_on_its_dashboard(
+        self,
+    ) -> None:
+        # A 1-team snapshot cannot start (< 2 teams) — the rollover still
+        # commits as a draft, exactly the pre-UXP-18 outcome.
+        league = self._setup(mode="multiplayer", n_teams=1)
+        response = self._post(league)
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.name, "Season 2")
+        self.assertEqual(new_season.state, "draft")
+        self.assertEqual(
+            response["Location"],
+            reverse("season_dashboard", args=[new_season.id]),
+        )
+
+    def test_conference_league_keeps_draft_and_lands_on_manage_conferences(
+        self,
+    ) -> None:
+        league = self._setup(mode="league", n_teams=4)
+        prev = league.seasons.get(name="Season 1")
+        teams = list(prev.teams.order_by("id"))
+        for ordinal, members in ((1, teams[:2]), (2, teams[2:])):
+            conf = _Uxp18Conference.objects.create(
+                season=prev, name=f"C{ordinal}", ordinal=ordinal
+            )
+            conf.teams.add(*members)
+        response = self._post(league)
+        new_season = league.seasons.order_by("-id").first()
+        self.assertEqual(new_season.state, "draft")
+        self.assertEqual(
+            response["Location"],
+            reverse("manage_conferences", kwargs={"season_id": new_season.id}),
+        )

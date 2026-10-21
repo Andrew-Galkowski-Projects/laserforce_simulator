@@ -310,6 +310,16 @@ templates `templates/leagues/create.html` (chooser DOM ids `league-create-templa
 `league-create-difficulty` + `league-create-use-template-link`). Seam contract:
 [`.claude/worktrees/cre-01-seam-contract.md`](../../../.claude/worktrees/cre-01-seam-contract.md).
 
+### UXP-18 — a second League gets unused team names
+
+League create pops team names from an **unshuffled** `TEAM_NAMES` copy, so every League used to
+draw the same names and a second League collided into `"Aurora Aces #2"` copies.
+`teams.services._pop_unique_name` now **discards** a taken pool name and tries the next one; the
+`" #k"` suffix (on the first taken name popped) is only the fallback once no unused pool name is
+left. Team-name uniqueness stays global (`_team_name_exists`). `_generate_free_agents` also counts
+names already picked in the current batch as taken, because its Players are written by one
+`bulk_create` at the end.
+
 ## CRE-02 league spread
 
 The *generation-based* complement to CRE-01's *selection-based* **League difficulty**.
