@@ -533,3 +533,42 @@ class TestBuildRoleBenchmarks(TestCase):
         result = build_role_benchmarks(min_rounds=5, display="mean")
         for key in _BENCHMARK_BUILDER_KEYS:
             self.assertEqual(response.context[key], result[key], key)
+
+
+class TestPopUniqueNameSkipsTakenPoolNames(TestCase):
+    """UXP-18 — a taken pool name is skipped for the next unused pool name; the
+    ``" #k"`` suffix is only the fallback once the pool has no unused name."""
+
+    def test_taken_candidate_is_skipped_for_the_next_unused_pool_name(
+        self,
+    ) -> None:
+        from teams.services import _pop_unique_name
+
+        taken = {"Aurora Aces"}
+        pool = ["Blaze", "Comet", "Aurora Aces"]  # pops from the END
+        name = _pop_unique_name(pool, "Fallback", taken.__contains__)
+        self.assertEqual(name, "Comet")
+        self.assertEqual(pool, ["Blaze"])
+
+    def test_free_candidate_is_returned_as_is(self) -> None:
+        from teams.services import _pop_unique_name
+
+        pool = ["Blaze", "Comet"]
+        self.assertEqual(_pop_unique_name(pool, "Fallback", lambda _n: False), "Comet")
+
+    def test_every_pool_name_taken_falls_back_to_the_suffix(self) -> None:
+        from teams.services import _pop_unique_name
+
+        taken = {"Blaze", "Comet", "Comet #2"}
+        pool = ["Blaze", "Comet"]
+        name = _pop_unique_name(pool, "Fallback", taken.__contains__)
+        # The first-popped taken name is suffixed, skipping a taken suffix.
+        self.assertEqual(name, "Comet #3")
+
+    def test_empty_pool_uses_the_fallback_suffix(self) -> None:
+        from teams.services import _pop_unique_name
+
+        taken = {"Fallback #1"}
+        self.assertEqual(
+            _pop_unique_name([], "Fallback", taken.__contains__), "Fallback #2"
+        )

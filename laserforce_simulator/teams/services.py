@@ -192,13 +192,24 @@ def _pop_unique_name(
     True if it collides with a persisted row in the relevant scope (Team
     name globally, or Player name within a specific Team). On pool
     exhaustion, falls back to ``f"{fallback} #{n}"`` with the same dedupe.
-    On collision with an in-pool candidate, appends ``" #2"``, ``" #3"``,
-    ... until a free name is found.
+
+    UXP-18 — a taken pool name is DISCARDED and the next pool name tried, so a
+    second League generated from the same (unshuffled) pool gets fresh names
+    instead of ``"Aurora Aces #2"`` copies. A discarded name stays taken for the
+    rest of the run (generation only adds rows), so dropping it costs nothing.
+    Only when every remaining pool name is taken does the first one popped get
+    ``" #2"``, ``" #3"``, ... until a free name is found.
     """
-    if pool:
+    first_taken: str | None = None
+    while pool:
         candidate = pool.pop()
-    else:
-        # Pool exhausted — synthesize a name based on the last entry.
+        if not name_exists(candidate):
+            return candidate
+        if first_taken is None:
+            first_taken = candidate
+
+    if first_taken is None:
+        # Pool already empty — synthesize a name based on the last entry.
         n = 1
         while True:
             candidate = f"{fallback} #{n}"
@@ -206,11 +217,9 @@ def _pop_unique_name(
                 return candidate
             n += 1
 
-    if not name_exists(candidate):
-        return candidate
     k = 2
     while True:
-        suffixed = f"{candidate} #{k}"
+        suffixed = f"{first_taken} #{k}"
         if not name_exists(suffixed):
             return suffixed
         k += 1
@@ -355,11 +364,19 @@ def _generate_free_agents(
     """
     free_agents = team if team is not None else get_free_agents_team()
     player_fallback = PLAYER_NAMES[-1] if PLAYER_NAMES else "Player"
-    name_exists = _player_name_exists_on_team(free_agents)
+    persisted_name_exists = _player_name_exists_on_team(free_agents)
+    # The batch is only written by the ``bulk_create`` below, so names picked
+    # earlier in THIS run must count as taken too (else a drained pool's
+    # fallback names would repeat within the batch).
+    picked: set[str] = set()
+
+    def name_exists(name: str) -> bool:
+        return name in picked or persisted_name_exists(name)
 
     unsaved: list[Player] = []
     for _player_idx in range(players_per_team):
         player_name = _pop_unique_name(player_names_pool, player_fallback, name_exists)
+        picked.add(player_name)
         unsaved.append(
             Player(
                 team=free_agents,
