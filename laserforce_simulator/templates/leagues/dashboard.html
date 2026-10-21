@@ -58,6 +58,10 @@
         <div id="league-dashboard-standings-snippet" class="card mb-3">{% include "_partials/dashboard_standings_snippet.html" %}</div>
     {% endif %}
 
+    {% if member_night_progress %}
+        <div id="league-dashboard-member-night" class="card mb-3">{% include "_partials/dashboard_member_night.html" with member_night_season_id=displayed_season.id %}</div>
+    {% endif %}
+
     {% if season_mode == "active" or season_mode == "completed" %}
         <div id="league-dashboard-next-round" class="card mb-3">{% include "_partials/dashboard_next_round.html" %}</div>
 

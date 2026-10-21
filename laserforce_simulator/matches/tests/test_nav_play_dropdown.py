@@ -30,6 +30,7 @@ expected TDD red state, not a defect in this file.
 
 from __future__ import annotations
 
+import re
 from datetime import date
 from unittest.mock import patch
 
@@ -675,6 +676,30 @@ class TestNavPlayMemberNightDom(TestCase):
         self.assertIn('name="sites"', body)
         # The retired single-Site select is gone.
         self.assertNotIn('id="topbar-play-member-night-site"', body)
+
+    def test_site_toggles_pre_checked(self) -> None:
+        # UXP-11 — every Site (and the "All Sites" master) starts ticked, so
+        # Confirm sets up a member night in one click.
+        league, _season, _teams = _member_night_active_season("NavMnChecked")
+        body = self._body(league)
+        self.assertRegex(
+            body, r'<input [^>]*id="topbar-play-member-night-all"[^>]*checked'
+        )
+        site_boxes = re.findall(
+            r'<input [^>]*class="topbar-play-member-night-site-cb"[^>]*>', body
+        )
+        self.assertEqual(len(site_boxes), 1)
+        self.assertIn("checked", site_boxes[0])
+
+    def test_setup_form_hidden_once_set_up(self) -> None:
+        # UXP-11 — once the member night has unplayed games, set-up is no
+        # longer the next step: only the play controls render.
+        league, season, _teams = _member_night_active_season("NavMnSetUpDone")
+        _add_member_night_shell(season)
+        body = self._body(league)
+        self.assertNotIn('id="topbar-play-member-night-setup"', body)
+        self.assertNotIn("Set Up Member Night", body)
+        self.assertIn('id="topbar-play-member-night-single"', body)
 
     def test_rr_trio_hidden_during_member_night(self) -> None:
         # On a member_night cursor the RR One Week / Two Months / Until End trio

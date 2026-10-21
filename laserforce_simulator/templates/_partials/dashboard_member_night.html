@@ -1,0 +1,6 @@
+{% comment %}UXP-11 — the dashboard member-night card inner. Context:
+   member_night_progress ({played, total}), member_night_season_id (the Season
+   whose Schedule holds the results section).{% endcomment %}<div class="card-body">
+    <strong>Member night:</strong> {{ member_night_progress.played }} / {{ member_night_progress.total }} games played
+    <a id="dashboard-member-night-results-link" class="ms-2" href="{% url 'season_schedule' member_night_season_id %}#season-schedule-member-nights">View results</a>
+</div>

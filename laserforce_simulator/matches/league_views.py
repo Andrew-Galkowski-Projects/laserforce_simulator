@@ -146,6 +146,7 @@ from .league_services import (  # noqa: F401 - re-exports
     history_seasons,
     is_career_league,
     latest_completed_season,
+    member_night_game_counts,
     pick_displayed_season,
     reassign_and_roll,
     replace_conferences,
@@ -1379,14 +1380,21 @@ def member_night_setup(request, season_id: int) -> HttpResponse:
             return _render_season_dashboard_error(
                 request, season, form.errors["sites"][0]
             )
-        play_services.setup_member_night(
-            season, form.cleaned_data["sites"], manager=manager_or_none(request)
+        sites = form.cleaned_data["sites"]
+        games = play_services.setup_member_night(
+            season, sites, manager=manager_or_none(request)
         )
     except (SeasonNotActiveError, WrongPhaseError) as exc:
         return _render_season_dashboard_error(request, season, str(exc))
     except PlayInProgressError as exc:
         return _redirect_with_play_error(season, request, str(exc))
 
+    # UXP-11 — confirm what the set-up did.
+    site_word = "Site" if len(sites) == 1 else "Sites"
+    messages.success(
+        request,
+        f"Member night set up: {games} games drawn across {len(sites)} {site_word}.",
+    )
     return redirect("season_dashboard", season_id=season.id)
 
 
@@ -1455,11 +1463,20 @@ def play_member_night_single(request, season_id: int) -> HttpResponse:
     season = get_owned_or_404(Season, request, pk=season_id)
     request.session["last_league_id"] = season.league_id
 
-    _result, error = _member_night_play_guarded(
+    phase, error = _member_night_play_guarded(
         request, season, play_services.play_member_night_single
     )
     if error is not None:
         return error
+    assert phase is not None  # no error ⇒ the service returned the phase
+    # UXP-11 — confirm the play and show where the member night stands.
+    played, total = member_night_game_counts(phase)
+    if played < total:
+        messages.success(
+            request, f"Member-night game played: {played} / {total} games done."
+        )
+    else:
+        messages.success(request, f"Member night complete: all {total} games played.")
     return redirect("season_dashboard", season_id=season.id)
 
 
