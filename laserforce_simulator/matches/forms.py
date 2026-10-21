@@ -41,8 +41,19 @@ def _valid_owned_teams(user: "AbstractBaseUser | None") -> QuerySet[Team]:
     )
 
 
-def _maps_with_confirmed_config():
-    return ArenaMap.objects.filter(zone_configs__confirmed=True).distinct()
+def _maps_with_confirmed_config() -> QuerySet[ArenaMap]:
+    """Simulation-ready maps: a confirmed zone config plus a red AND a blue base.
+
+    UXP-10 — ``load_map_context`` refuses a map missing either team base at
+    simulate time, so every simulation map picker offers only these. The map
+    editor / map list keep showing every map.
+    """
+    return (
+        ArenaMap.objects.filter(zone_configs__confirmed=True)
+        .filter(base_configs__base_type="red")
+        .filter(base_configs__base_type="blue")
+        .distinct()
+    )
 
 
 def parse_rotation_ids(

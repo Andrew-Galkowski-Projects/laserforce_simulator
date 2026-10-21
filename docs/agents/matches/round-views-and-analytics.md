@@ -5,7 +5,7 @@ Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index ther
 
 ## Forms (`matches/forms.py`)
 
-**`MatchSetupForm`** and **`SingleRoundSetupForm`** both include an optional `arena_map` `ModelChoiceField` (empty_label="No map (3-zone fallback)"). The queryset is populated in `__init__` via `_maps_with_confirmed_config()` which returns only `ArenaMap` objects with at least one confirmed `MapZoneConfig`. Rounds without a map fall back to the existing 3-zone logic.
+**`MatchSetupForm`** and **`SingleRoundSetupForm`** both include an optional `arena_map` `ModelChoiceField` (empty_label="No map (3-zone fallback)"). The queryset is populated in `__init__` via `_maps_with_confirmed_config()` which returns only simulation-ready `ArenaMap` objects: at least one confirmed `MapZoneConfig` plus both a red and a blue `MapBaseConfig` (UXP-10 — the same helper feeds `BatchSimulateForm` and every League map pool / rotation picker; the map editor and `/maps/` list still show every map). Rounds without a map fall back to the existing 3-zone logic.
 
 The corresponding views (`create_match`, `create_single_round`) extract `arena_map = form.cleaned_data.get("arena_map")`, pass it keyword-only to the simulator, and catch `ValueError` (missing config, missing base, or missing sight lines) to display a form error without crashing.
 

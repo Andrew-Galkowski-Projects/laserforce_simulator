@@ -1458,10 +1458,26 @@ saveBtn.addEventListener("click", () => {
     .then(r => r.json())
     .then(data => {
         saveBtn.disabled = false;
-        saveAlert.textContent = data.status === "ok"
-            ? `Configuration saved! (${zoneSize}px zones, ${Object.keys(bases).length} base(s))`
-            : "Error saving configuration.";
-        saveAlert.className = `alert alert-${data.status === "ok" ? "success" : "danger"}`;
+        const baseCount = Object.keys(bases).length;
+        // UXP-10: a config without both team bases still saves (work in
+        // progress), but simulation map pickers skip it until both are placed.
+        const missingTeamBases = ["red", "blue"].filter(t => !bases[t]);
+        if (data.status !== "ok") {
+            saveAlert.textContent = "Error saving configuration.";
+            saveAlert.className = "alert alert-danger";
+        } else if (missingTeamBases.length) {
+            const missingText = missingTeamBases.length === 2
+                ? "a red and a blue base"
+                : `a ${missingTeamBases[0]} base`;
+            saveAlert.textContent =
+                `Configuration saved (${zoneSize}px zones, ${baseCount} base(s)) - `
+                + `place ${missingText} before using this map in a match. `
+                + "It won't be offered in match, round or League map pickers until then.";
+            saveAlert.className = "alert alert-warning";
+        } else {
+            saveAlert.textContent = `Configuration saved! (${zoneSize}px zones, ${baseCount} base(s))`;
+            saveAlert.className = "alert alert-success";
+        }
         saveAlert.classList.remove("d-none");
     })
     .catch(() => {

@@ -339,6 +339,7 @@ from django.core.files.uploadedfile import (
 
 from core.models import (
     ArenaMap as _Conf06ArenaMap,
+    MapBaseConfig as _Conf06MapBaseConfig,
     MapZoneConfig as _Conf06MapZoneConfig,
 )
 
@@ -368,6 +369,11 @@ def _conf06_confirmed_map(name: str) -> _Conf06ArenaMap:
         zone_data={"zones": [[1, 1], [1, 1]]},
         confirmed=True,
     )
+    # UXP-10 - a simulation-ready map also needs a red and a blue base.
+    for base_type in ("red", "blue"):
+        _Conf06MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type=base_type, x_px=5, y_px=5
+        )
     return arena_map
 
 
