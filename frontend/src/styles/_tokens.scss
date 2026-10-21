@@ -1,17 +1,13 @@
-// The `--lf-*` token contract (ADR-0043). THE token block: the only global stylesheet that may hold
-// a colour literal. Components read colour, fonts, radius and glow from these tokens (and the
-// `--side*` aliases in `_sides.scss`), never from a hex value. The list of names is
-// `LF_TOKENS` in `src/app/theme/theme-tokens.ts`; `theme.spec.ts` fails if one goes missing.
+// The `--lf-*` token contract (ADR-0043). This token block and the generated Material palettes
+// (`_theme-colors.scss`) are the only `.scss` files allowed a colour literal; `theme.spec.ts`
+// scans every other `.scss` under `src/`. Components read colour, fonts, radius and glow from
+// these tokens (and the `--side*` aliases in `_sides.scss`), never from a hex value. The list of
+// names is `LF_TOKENS` in `src/app/theme/theme-tokens.ts`; `theme.spec.ts` fails if one goes
+// missing, in either mode.
 //
 // Light (default) takes palette A's colours, dark takes palette B's (ANG-04b, #252). Both modes
 // share palette B's all-mono typography and shape. The mode follows the OS setting.
-//
-// Changes from the ANG-04b samples (contrast measured as WCAG 2 ratios, see ADR-0043):
-// - light `--lf-ev-elimination` moved from rose to fuchsia, away from `--lf-side-red`;
-// - the Sides now differ in lightness as well as hue (red is the lighter Side in both modes), so
-//   they stay apart under red-green colour blindness; the R / B badges stay too;
-// - light `--lf-ev-missile`, `--lf-ev-miss`, `--lf-ev-resupply` and `--lf-ev-tag` were darkened to
-//   reach 4.5:1 on `--lf-bg`.
+// What changed from the ANG-04b samples, and why: see ADR-0043.
 
 :root {
   color-scheme: light dark;

@@ -14,6 +14,7 @@ the stack every later ANG-* task builds on:
 - **Vitest** is the unit-test runner (the CLI default), headless in CI. **ESLint**
   (`angular-eslint`) and **Prettier** are enforced in CI.
 - **Angular Material**, Material 3 theme, light/dark following the operating system.
+  Refined by ADR-0043 (visual theme and token contract).
 - **In dev the app calls Django directly** at `http://localhost:8000/api` from
   `http://localhost:4200`, the CORS-with-credentials contract ANG-02 set up. The base URL is
   `apiBaseUrl` in `src/environments/` (`/api` in production). The two dev origins are the same

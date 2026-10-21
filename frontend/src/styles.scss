@@ -1,5 +1,6 @@
 // Global styles: the app theme (ADR-0043).
-// - `styles/_tokens.scss`   the `--lf-*` token contract, light and dark (the only colour literals)
+// - `styles/_tokens.scss`   the `--lf-*` token contract, light and dark
+//                            (with the generated `_theme-colors.scss`, the only colour literals)
 // - `styles/_sides.scss`    `[data-lf-side]` -> `--side*`
 // - `styles/_material.scss` Material 3 theme, every `--mat-sys-*` role following the tokens
 // JetBrains Mono is self-hosted through `@fontsource/jetbrains-mono` (the `styles` list in

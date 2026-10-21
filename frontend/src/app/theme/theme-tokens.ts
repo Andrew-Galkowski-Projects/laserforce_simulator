@@ -48,7 +48,5 @@ export const LF_SHARED_TOKENS = [
 /** The full contract: every token a component may read. */
 export const LF_TOKENS = [...LF_COLOUR_TOKENS, ...LF_SHARED_TOKENS] as const;
 
-export type LfToken = (typeof LF_TOKENS)[number];
-
 /** The aliases a `[data-lf-side]` container sets (see `_sides.scss`). */
 export const SIDE_ALIASES = ['--side', '--side-text', '--side-bg', '--side-dim'] as const;

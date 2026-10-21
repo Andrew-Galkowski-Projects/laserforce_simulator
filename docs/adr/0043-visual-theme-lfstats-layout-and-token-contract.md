@@ -21,7 +21,7 @@ The prototype lives on the pushed, never-merged branch
 **Layout B (LFstats-like) is the structural guide for ANG-06.** Its component code does not
 merge; ANG-06 rebuilds the screens to this structure:
 
-- a top header with breadcrumbs, plus a collapsible sidebar that becomes a drawer below 768px;
+- a top header, plus a collapsible sidebar that becomes a drawer below 768px;
 - per-Side **team strips**: a 4px `--side` left border, the team name, a Win / Loss / ELIMINATED
   badge, and the score;
 - **score convention:** the round score shows the base score, with the elimination bonus as a
@@ -71,33 +71,40 @@ itself.
 **Material is kept and themed; the CDK stays.** `mat.theme` (`theme-type: color-scheme`) generates
 the full `--mat-sys-*` role set from tonal palettes seeded with indigo `#6366f1` and slate
 `#64748b` (`_theme-colors.scss`, from `ng generate @angular/material:theme-color`), so every role
-follows the OS mode through `light-dark()`. `mat.theme-overrides` then points the primary,
-background, surface, surface-container, on-surface and outline roles at the `--lf-*` tokens, so a
-Material component and a hand-rolled one match without local patches. Material typography reads
-`--lf-font-body` / `--lf-font-heading`. Data screens (team strips, stat tables, the log) are
-hand-rolled per layout B; Material serves dialogs, forms, menus and the like.
+follows the OS mode through `light-dark()`. `mat.theme-overrides` then points every colour role
+except error, shadow and scrim at the `--lf-*` tokens: primary, secondary and their containers at
+`--lf-accent` (secondary toned towards `--lf-text-muted`), tertiary at `--lf-ev-tag`, the
+surfaces, text, outlines and inverse roles at the surface and text tokens, with containers as
+`color-mix` tints of a token. Because the tokens switch with the mode, light Material follows
+palette A and dark follows palette B; the error roles keep Material's generated red. A Material
+component and a hand-rolled one match without local patches. Material typography reads
+`--lf-font-body` / `--lf-font-heading`; density stays at Material's default (density is a layout
+concern for ANG-06). Data screens (team strips, stat tables, the log) are hand-rolled per layout
+B; Material serves dialogs, forms, menus and the like.
 
 **The font is self-hosted** through the `@fontsource/jetbrains-mono` npm package (weights 400,
 500, 700, in the `angular.json` `styles` list). There is no Google Fonts link or other font CDN.
 
-**A theme spec guards it.** `frontend/src/app/theme/theme.spec.ts` renders the real `App` with
-the compiled global stylesheet and asserts, in light and dark, that every contract token and the
-key Material roles resolve, that dark gives every colour token its own value, and that no
-stylesheet outside the token block hard-codes a Side colour.
+**A theme spec guards it.** `frontend/src/app/theme/theme.spec.ts` compiles the global
+stylesheet into jsdom and reads computed values on the document root and on `[data-lf-side]`
+elements, in light and dark. It asserts that every contract token and the Material roles resolve,
+that every Material colour role but error derives from a `--lf-*` token, that the dark block
+declares every colour token itself and gives each its own value, and that no `.scss` under
+`frontend/src/` other than `_tokens.scss` and the generated `_theme-colors.scss` holds a colour
+literal.
 
 ## Considered options
 
-- **Layout A (dense dashboard), C (clean Material), D (esports broadcast).** Rejected: A's team
-  sidebar and C's stock Material tables are less readable for the 12-column stat table than B's
-  flat sortable tables; D's scoreboard and ticker suit a live broadcast, not browsing results.
-  Layout B also matches lfstats.com, which players already know.
-- **Palette C (clean Material, light) and D (arena neon, dark with glow).** Rejected: C reads as a
-  generic admin app; D's glow hurts dense tables. B (dark) and A (light) were the most readable
-  pair.
-- **A proportional body font with mono numerics only.** Rejected by the owner: all-mono keeps
-  columns aligned everywhere and matches lfstats.
-- **Dropping `@angular/material` (CDK only).** Rejected: dialogs, forms and menus would have to be
-  rebuilt by hand. Theming it from the contract costs one partial.
+- **Layouts A (dense dashboard), C (clean Material), D (esports broadcast) and palettes C (clean
+  Material, light), D (arena neon).** The owner compared all 16 layout x palette combinations,
+  live in the prototype and through the screenshots, and picked layout B with palette B for dark
+  mode and palette A's colours for light mode (#252). The recommendation given was: B is the
+  clearest layout for the densest screen (the round stat table) and matches lfstats.com, which
+  players already know.
+- **A proportional body font with mono numerics only.** Not taken: the owner ruled all-mono
+  JetBrains Mono in both modes (#252).
+- **Dropping `@angular/material` (CDK only).** Not taken: the owner ruled to keep Material, themed
+  with the full `--mat-sys-*` role set, with the CDK kept and data screens hand-rolled (#252).
 
 ## Consequences
 
