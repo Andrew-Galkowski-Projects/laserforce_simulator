@@ -332,6 +332,12 @@ def _developing_players(league: League) -> "list[Player]":
     team-id carry-forward). ``team.players.all()`` covers both active-slot and
     bench players (``Player.team`` membership includes both). Free agents come
     from ``league.free_agent_pool.players.all()`` when the pool is not None.
+
+    The order is by id: Teams in ascending id, each Team's players in
+    ascending id, then the free agents in ascending id. The shared develop RNG
+    in ``_develop_league_for_new_season`` is drawn in this order, so it must
+    not follow the backend's physical row order (Postgres heap order moves
+    after UPDATEs; CI-01 #216).
     """
     latest_completed = league.seasons.filter(state="completed").order_by("-id").first()
     team_ids: list[int] = []
@@ -341,14 +347,14 @@ def _developing_players(league: League) -> "list[Player]":
     seen: set[int] = set()
     players: list[Player] = []
 
-    for team in Team.objects.filter(id__in=team_ids):
-        for player in team.players.all():
+    for team in Team.objects.filter(id__in=team_ids).order_by("id"):
+        for player in team.players.order_by("id"):
             if player.pk not in seen:
                 seen.add(player.pk)
                 players.append(player)
 
     if league.free_agent_pool is not None:
-        for player in league.free_agent_pool.players.all():
+        for player in league.free_agent_pool.players.order_by("id"):
             if player.pk not in seen:
                 seen.add(player.pk)
                 players.append(player)
