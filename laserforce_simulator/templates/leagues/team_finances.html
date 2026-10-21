@@ -48,7 +48,7 @@
             </p>
 
             {# ---- Metric tiles (ZenGM Wins / Hype / Revenue / Expenses / Cash) ---- #}
-            <div class="row g-3 mb-4" id="team-finances-metrics">
+            <div class="row g-3 mb-2" id="team-finances-metrics">
                 <div class="col-6 col-md">
                     <div class="card h-100 text-center">
                         <div class="card-body py-3">
@@ -94,6 +94,12 @@
                     </div>
                 </div>
             </div>
+            {# UXP-13 -- the tiles read the last immutable TeamSeasonFinance row, not a live projection. #}
+            <p id="team-finances-metrics-note" class="text-muted small mb-4">
+                {% if latest_finance %}Revenue and Expenses are {{ latest_finance.season.name }}'s final figures.{% else %}No Season's finances have been settled yet.{% endif %}
+                Finances are settled at the end of each Season with the ticket price and budget
+                levels in effect then, so changes saved below show up once the current Season ends.
+            </p>
 
             <div class="row g-4">
                 {# ---- Expense Settings (the editable budget form) ---- #}

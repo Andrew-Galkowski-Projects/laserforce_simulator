@@ -102,3 +102,25 @@ class TestPlaySingleRoundGuards(TestCase):
             response, 'id="season-dashboard-play-error"', status_code=400
         )
         self.assertContains(response, "Season must be active", status_code=400)
+
+
+class TestStartSeasonConfirmation(TestCase):
+    """UXP-13 -- Start Season flashes a success message with the Round count."""
+
+    def test_starting_a_draft_flashes_the_scheduled_round_count(self) -> None:
+        season = _draft_season("SgM", 4)
+        response = self.client.post(
+            reverse("start_season", args=[season.id]), follow=True
+        )
+        season.refresh_from_db()
+        n_rounds = len(season.scheduled_fixtures())
+        # 4 teams, single round-robin: 6 pairings x 2 Rounds each.
+        self.assertEqual(n_rounds, 12)
+        self.assertContains(response, "S1 started — 12 Rounds scheduled.")
+
+    def test_a_non_draft_start_flashes_nothing(self) -> None:
+        season = _active_season("SgN", 2)
+        response = self.client.post(
+            reverse("start_season", args=[season.id]), follow=True
+        )
+        self.assertNotContains(response, "started —")

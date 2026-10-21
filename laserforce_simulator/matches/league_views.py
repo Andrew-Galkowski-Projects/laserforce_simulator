@@ -1214,6 +1214,10 @@ def start_season(request, season_id: int) -> HttpResponse:
             return redirect("season_dashboard", season_id=season.id)
         return _render_season_dashboard_error(request, season, str(exc))
 
+    # UXP-13 -- confirm the write. One scheduled fixture is one Round.
+    n_rounds = len(season.scheduled_fixtures())
+    noun = "Round" if n_rounds == 1 else "Rounds"
+    messages.success(request, f"{season.name} started — {n_rounds} {noun} scheduled.")
     return redirect("season_dashboard", season_id=season.id)
 
 

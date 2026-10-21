@@ -16,7 +16,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from conftest import get_shared_manager
-from matches.models import Match, Tournament
+from matches.models import BracketNode, Match, Tournament
 from matches.tests.test_api_tournaments_play import _active, _embed, _fast
 from matches.tournament_services.errors import TournamentEmbeddedError
 
@@ -88,3 +88,37 @@ class EmbeddedPlayTests(_PlayViewTestCase):
         self.assertFalse(Match.objects.exists())
         self.t.refresh_from_db()
         self.assertIsNone(self.t.active_play_job_id)
+
+
+class PlayNextConfirmationTests(_PlayViewTestCase):
+    """UXP-13 -- a successful play-next flashes the Match played and its
+    result, plus the champion when it ended the Tournament."""
+
+    def _played_node(self) -> BracketNode:
+        return BracketNode.objects.select_related("team_a", "team_b").get(
+            tournament=self.t, winner__isnull=False, is_bye=False
+        )
+
+    def test_flashes_the_played_match_and_its_series_score(self) -> None:
+        with _fast():
+            response = self.post("tournament_play_next")
+        node = self._played_node()
+        wins_a = 1 if node.winner_id == node.team_a_id else 0
+        expected = (
+            f"Played Round {node.bracket_round}, Match {node.position + 1}: "
+            f"{node.team_a.name} {wins_a}–{1 - wins_a} {node.team_b.name}."
+        )
+        self.assertEqual(_flashes(response), [expected])
+
+    def test_flashes_the_champion_when_the_tournament_ends(self) -> None:
+        # 4-team single elimination: two semifinals, then the final.
+        with _fast():
+            for _ in range(3):
+                response = self.post("tournament_play_next")
+        self.t.refresh_from_db()
+        self.assertEqual(self.t.state, "completed")
+        flash = _flashes(response)[-1]
+        self.assertTrue(flash.startswith("Played Round 2, Match 1: "), flash)
+        self.assertTrue(
+            flash.endswith(f" {self.t.champion.name} win the Tournament!"), flash
+        )

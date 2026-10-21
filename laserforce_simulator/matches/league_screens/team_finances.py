@@ -22,6 +22,7 @@ links with ``sidebar_active="finances_team"``, render
 
 from __future__ import annotations
 
+from django.contrib import messages
 from django.http import (
     HttpRequest,
     HttpResponse,
@@ -112,6 +113,7 @@ def team_finances(request: HttpRequest, league_id: int) -> HttpResponse:
         except (FinanceDisabled, TeamNotEditable):
             return redirect(f"/leagues/{league.id}/team/finances/")
         if not form.errors:
+            messages.success(request, "Expense settings saved.")
             return redirect(f"/leagues/{league.id}/team/finances/")
         # Re-render the current Team with the errors; reload it so the
         # inputs show the saved values, not the rejected ones.
