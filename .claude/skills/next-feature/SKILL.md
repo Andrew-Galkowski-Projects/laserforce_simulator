@@ -38,11 +38,16 @@ holds. In particular: PowerShell, no `cd` or `-C` before git, never `git add
 
 ## Step 1: Pick the task
 
-Read `PLAN.md`. The target is the first task heading (`### ID` or `#### ID`),
+Run `git fetch origin` first. The main checkout is often on someone else's
+feature branch and local `main` lags, so **`origin/main` is the truth** for the
+whole pipeline: read the plan with `git show origin/main:PLAN.md`, and every
+`main` below means `origin/main`.
+
+The target is the first task heading (`### ID` or `#### ID`),
 top to bottom, not marked `[DONE]`, `[DEFERRED]` or sitting under a *Parked*
 section. A heading whose sub-items are tasks is an umbrella: pick its first
 open sub-item. If the user named a task, use that one. A task whose PR has already
-merged (check `git log main --oneline` for its ID) but isn't marked `[DONE]`
+merged (check `git log origin/main --oneline` for its ID) but isn't marked `[DONE]`
 is bookkeeping, not the next feature: say so and offer to close it out.
 
 Print its ID, title and one sentence, and confirm with the user before going
@@ -55,7 +60,7 @@ end; if the spec already has ticket sub-issues, skip to Step 6.
 ## Step 2: Worktree
 
 Enter a worktree (`EnterWorktree`), named for the task in kebab case (e.g.
-`ang-01e-league-stats-api`), and `git merge --ff-only main`. A worktree has no
+`ang-01e-league-stats-api`), and `git merge --ff-only origin/main`. A worktree has no
 `db.sqlite3` and no `.env`: copy `laserforce_simulator/.env` from the main
 checkout into the worktree's `laserforce_simulator/`, then run
 `migrate` before any server or management command. Use the main checkout's
@@ -188,8 +193,9 @@ Add these constraints to every implementer prompt:
   model changes and commit the migration with the model.
 - Ownership is filtered on the server through the `manager` seam.
 - If you need a server, it goes on a free port, never 8000. Before reporting,
-  stop it with `powershell -NoProfile -File scripts/stop_worktree_servers.ps1
-  -Worktree <your worktree>`: stopping the npm wrapper alone leaves node,
+  stop it with `powershell -NoProfile -File scripts/stop_worktree_servers.ps1`
+  through the PowerShell tool (it defaults to the current worktree; the Bash
+  tool's worktree guard refuses it): stopping the npm wrapper alone leaves node,
   esbuild and dart running, and they block `git worktree remove`.
 - When tickets run in parallel, they share one MCP Chrome. Open your own page
   with `new_page`, close only that page, and leave `close_mcp_browser.ps1` to
@@ -201,26 +207,36 @@ Add these constraints to every implementer prompt:
 ## Step 7: Verify
 
 Confirm every ticket landed on the integration branch
-(`git log main..HEAD --oneline`, `git status`). Then check the agents' work by
+(`git log origin/main..HEAD --oneline`, `git status`). Then check the agents' work by
 hand (`CLAUDE.md`, *Sub-Agent Delegation*): off-by-one in tick math, constant
 mismatches, field-name drift between spec and code, missing seam methods.
+**Every gap an implementer reports against a spec invariant** ("not covered",
+"unlikely", "edge case") gets a red test before merge: it is a test to write,
+not a judgement call. (ANG-05: the one real bug was such a reported gap.)
 
 1. **Full suite** on SQLite (`python -m pytest laserforce_simulator`) and, when
    `docker info` succeeds, on Postgres as the `CLAUDE.md` *Database* bullet
    "Test suite on Postgres" says, plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
-   Triage every failure:
+   **Python-free diff:** when
+   `python .claude/skills/verify/scripts/changed_files.py --base origin/main --mode branch`
+   reports empty `python`, `templates` and `migrations` buckets, skip both suite
+   runs and `makemigrations` (CI runs them) and report
+   `Python suite: CI only (no Python changes)`. Otherwise
+   triage every failure:
    - a **regression** from this task: fix the code;
    - a test that encoded the **old contract** on purpose: update it honestly,
      with a comment on why the invariant still holds. Never quietly weaken a
      guard;
-   - **pre-existing**: confirm it fails on `main` too, and say so.
+   - **pre-existing**: confirm it fails on `origin/main` too, and say so.
    Repeat until 0 failed. Report the exact counts.
 2. **Mutation-test** the test that matters most: put the bug back on purpose
    and check the test catches it.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees
    changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
-   existing tab, close what you open, close the browser when done). Server on 8001.
+   existing tab, close what you open, close the browser when done). Server on 8001;
+   for the Angular SPA, `npm --prefix frontend run start:worktree` (4201, API on
+   8001) with Django started as `frontend/CLAUDE.md` **API and auth** says.
    Assert on `innerText` or the API response body, not a status code. Check
    from a second Account when ownership changed. An API-only task checks the
    endpoints in the browsable API or with the test client instead, and says
@@ -231,7 +247,7 @@ mismatches, field-name drift between spec and code, missing seam methods.
 
 ## Step 8: Review
 
-Call `mattpocock-skills:code-review` with fixed point `main`. The Spec axis
+Call `mattpocock-skills:code-review` with fixed point `origin/main`. The Spec axis
 reads the spec issue and its tickets; the Standards axis reads
 `CODING_STANDARDS.md` plus Fowler's smells. Give both reviewers the main
 checkout's `.venv\Scripts\python.exe` for any Python or pip call, so they can
@@ -277,14 +293,17 @@ run with no jobs, or one GitHub reports as "a workflow file issue", is a
 broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
 red job as in Step 7 and report it to the owner with the PR link.
 Then stop again: the owner reviews and says when to merge. PRs are
-**squash-merged**, so after the merge confirm `git diff <integration tip>
-origin/main` is empty: the work is in `main` under a new hash. Then, for every
-implementer worktree, run `scripts/stop_worktree_servers.ps1 -Worktree <path>`,
-`git worktree remove --force <path>`, and `git branch -D` its branch. Leave the
-integration worktree with `ExitWorktree` (`action: "remove"`,
+**squash-merged**, so after the merge `git fetch origin` and confirm `git diff
+<integration tip> origin/main -- <the paths the PR touched>` is empty: the work
+is in `main` under a new hash (other PRs that merged meanwhile show up in an
+unscoped diff). Then, for every implementer worktree, stop its servers with
+`scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
+tool), `git worktree remove --force <path>`, and `git branch -D` its branch.
+Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
 `discard_changes: true`, after stopping its servers too) and delete the remote
 branch. If the main checkout is on `main`, `git pull --ff-only` there.
-Otherwise leave it and tell the owner which branch it is on.
+Otherwise run `git fetch origin main:main` (moves the local ref without a
+checkout), leave the checkout alone, and tell the owner which branch it is on.
 
 ## Step 10: Retro
 

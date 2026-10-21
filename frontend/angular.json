@@ -63,6 +63,17 @@
               "optimization": false,
               "extractLicenses": false,
               "sourceMap": true
+            },
+            "worktree": {
+              "optimization": false,
+              "extractLicenses": false,
+              "sourceMap": true,
+              "fileReplacements": [
+                {
+                  "replace": "src/environments/environment.ts",
+                  "with": "src/environments/environment.worktree.ts"
+                }
+              ]
             }
           },
           "defaultConfiguration": "production"
@@ -75,6 +86,10 @@
             },
             "development": {
               "buildTarget": "frontend:build:development"
+            },
+            "worktree": {
+              "buildTarget": "frontend:build:worktree",
+              "port": 4201
             }
           },
           "defaultConfiguration": "development"

@@ -62,7 +62,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   fails or is cut short). Finish with `list_pages` to confirm only the original
   tab remains.
 - **Close the browser when the pass is done:**
-  `powershell -NoProfile -File scripts/close_mcp_browser.ps1`. The MCP keeps
+  `powershell -NoProfile -File scripts/close_mcp_browser.ps1`, through the
+  PowerShell tool (a worktree session's Bash guard refuses it). The MCP keeps
   its Chrome open until the session ends, and that open browser blocks other
   agents. The script closes only this session's MCP Chrome; the next MCP call
   launches a fresh one.
