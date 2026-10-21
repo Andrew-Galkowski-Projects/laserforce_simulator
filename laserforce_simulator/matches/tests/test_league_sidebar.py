@@ -338,6 +338,42 @@ class TestSidebarLinkShape(TestCase):
 
 
 # ---------------------------------------------------------------------------
+# UXP-12 — unbuilt (coming-soon) entries are flagged and greyed out
+# ---------------------------------------------------------------------------
+
+
+class TestUxp12PlaceholderEntries(TestCase):
+    def setUp(self) -> None:
+        self.league = _make_league("Uxp12")
+        _make_active_season(self.league)
+
+    def test_only_coming_soon_entries_are_placeholders(self) -> None:
+        links = _build_league_sidebar_links(self.league, None, None)
+        flagged = {e["key"] for e in links if e["placeholder"]}
+        self.assertEqual(
+            flagged, {"trade", "trading_block", "prospects", "hall_of_fame"}
+        )
+
+    def test_sidebar_and_topbar_mark_placeholders_soon(self) -> None:
+        html = self.client.get(
+            reverse("league_dashboard", args=[self.league.id])
+        ).content.decode()
+        # Sidebar entry and its top-bar twin both carry the badge.
+        self.assertRegex(html, r'id="sidebar-players-trade"[^>]*class="[^"]*text-muted')
+        self.assertRegex(
+            html, r'class="dropdown-item text-muted" id="topbar-players-trade"'
+        )
+        self.assertGreaterEqual(html.count("placeholder-soon-badge"), 2 * 4 + 10)
+
+    def test_live_entry_has_no_badge(self) -> None:
+        html = self.client.get(
+            reverse("league_dashboard", args=[self.league.id])
+        ).content.decode()
+        start = html.index('id="sidebar-players-free_agents"')
+        self.assertNotIn("placeholder-soon-badge", html[start : start + 300])
+
+
+# ---------------------------------------------------------------------------
 # LG-01g — TEAM > Schedule entry LIVE wiring (§9d)
 # ---------------------------------------------------------------------------
 
@@ -709,39 +745,3 @@ class TestLg01hDisabledFlipsLive(TestCase):
             reverse("coming_soon_trading_block", kwargs={"league_id": league.id}),
         )
         self.assertFalse(entry["disabled"])
-
-
-# ---------------------------------------------------------------------------
-# UXP-12 — unbuilt (coming-soon) entries are flagged and greyed out
-# ---------------------------------------------------------------------------
-
-
-class TestUxp12PlaceholderEntries(TestCase):
-    def setUp(self) -> None:
-        self.league = _make_league("Uxp12")
-        _make_active_season(self.league)
-
-    def test_only_coming_soon_entries_are_placeholders(self) -> None:
-        links = _build_league_sidebar_links(self.league, None, None)
-        flagged = {e["key"] for e in links if e["placeholder"]}
-        self.assertEqual(
-            flagged, {"trade", "trading_block", "prospects", "hall_of_fame"}
-        )
-
-    def test_sidebar_and_topbar_mark_placeholders_soon(self) -> None:
-        html = self.client.get(
-            reverse("league_dashboard", args=[self.league.id])
-        ).content.decode()
-        # Sidebar entry and its top-bar twin both carry the badge.
-        self.assertRegex(html, r'id="sidebar-players-trade"[^>]*class="[^"]*text-muted')
-        self.assertRegex(
-            html, r'class="dropdown-item text-muted" id="topbar-players-trade"'
-        )
-        self.assertGreaterEqual(html.count("placeholder-soon-badge"), 2 * 4 + 10)
-
-    def test_live_entry_has_no_badge(self) -> None:
-        html = self.client.get(
-            reverse("league_dashboard", args=[self.league.id])
-        ).content.decode()
-        start = html.index('id="sidebar-players-free_agents"')
-        self.assertNotIn("placeholder-soon-badge", html[start : start + 300])
