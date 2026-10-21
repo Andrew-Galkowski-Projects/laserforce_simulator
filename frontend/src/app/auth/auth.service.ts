@@ -1,0 +1,94 @@
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { Router } from '@angular/router';
+import {
+  Observable,
+  catchError,
+  finalize,
+  firstValueFrom,
+  map,
+  of,
+  share,
+  switchMap,
+  tap,
+} from 'rxjs';
+import { ApiClient } from '../api/api-client';
+import { RegisterInput, User } from './user';
+
+interface AccessToken {
+  access: string;
+}
+
+/**
+ * The signed-in Account (ADR-0041): the access token lives only in memory;
+ * the refresh token only in the httpOnly `refresh_token` cookie.
+ */
+@Injectable({ providedIn: 'root' })
+export class AuthService {
+  private readonly api = inject(ApiClient);
+  private readonly router = inject(Router);
+  private readonly user = signal<User | null>(null);
+  private token: string | null = null;
+  private inflightRefresh: Observable<string> | null = null;
+
+  readonly currentUser = this.user.asReadonly();
+  readonly isSignedIn = computed(() => this.user() !== null);
+
+  accessToken(): string | null {
+    return this.token;
+  }
+
+  login(email: string, password: string): Observable<User> {
+    return this.api.post<AccessToken>('token/', { email, password }).pipe(
+      tap(({ access }) => (this.token = access)),
+      switchMap(() => this.api.get<User>('accounts/me/')),
+      tap((user) => this.user.set(user)),
+    );
+  }
+
+  /**
+   * Trades the refresh cookie for a new access token. Single-flight: while one
+   * request is in flight every caller shares it, so the rotating cookie is
+   * never spent twice (a second use would be blacklisted).
+   */
+  refresh(): Observable<string> {
+    this.inflightRefresh ??= this.api.post<AccessToken>('token/refresh/', null).pipe(
+      map(({ access }) => access),
+      tap((access) => (this.token = access)),
+      finalize(() => (this.inflightRefresh = null)),
+      share(),
+    );
+    return this.inflightRefresh;
+  }
+
+  /** On app start: one silent refresh, then the user. Never rejects, never navigates. */
+  async restoreSession(): Promise<void> {
+    try {
+      await firstValueFrom(this.refresh());
+      this.user.set(await firstValueFrom(this.api.get<User>('accounts/me/')));
+    } catch {
+      this.clearSession();
+    }
+  }
+
+  /** Blacklists the refresh cookie; the session is forgotten even if the call fails. */
+  logout(): Observable<void> {
+    return this.api.post<void>('token/logout/', null).pipe(
+      catchError(() => of(undefined)),
+      map(() => {
+        this.clearSession();
+        void this.router.navigateByUrl('/login');
+      }),
+    );
+  }
+
+  /** Creates the Account. Does not sign in: call `login` afterwards. */
+  register(body: RegisterInput): Observable<User> {
+    return this.api.post<User>('accounts/register/', body);
+  }
+
+  /** Forgets the access token and the user (no request, no navigation). */
+  clearSession(): void {
+    this.token = null;
+    this.user.set(null);
+  }
+}
