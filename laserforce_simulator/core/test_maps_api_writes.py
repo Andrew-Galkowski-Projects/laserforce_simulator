@@ -375,12 +375,12 @@ class TestReadActions(_MapsWriteTestCase):
 
     def test_processed_image_is_raw_png(self) -> None:
         response = self.api.get(self.url("processed-image"), HTTP_ACCEPT="*/*")
-        try:
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response["Content-Type"], "image/png")
-            body = b"".join(response.streaming_content)
-        finally:
-            response.close()
+        # Read to exhaustion first: the test client then closes the response
+        # (and its file). A manual close() would fire request_finished inside
+        # the test transaction (CI-01).
+        body = b"".join(response.streaming_content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/png")
         self.assertTrue(body.startswith(b"\x89PNG"))
         self.assertTrue(self.processed_cache_path(self.map).exists())
 

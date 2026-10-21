@@ -1356,6 +1356,49 @@ class TestLg04NextSeasonAgeTick(TestCase):
             self.assertEqual(p.age, 31)
 
 
+class TestLg04DevelopingPlayersIdOrder(TestCase):
+    """CI-01 (#216) -- ``_developing_players`` returns the develop order by id.
+
+    ``_develop_league_for_new_season`` hands out one shared ``random.Random``
+    in this order, so it must not depend on the backend's physical row order.
+    Postgres returns heap order, and an UPDATE moves a row's tuple to the end
+    of the heap. So the setup re-saves the lowest-id rows, putting them last
+    physically, and the result must still come back in ascending id.
+    """
+
+    def test_order_is_by_id_not_physical_row_order(self) -> None:
+        from matches.league_services import _developing_players
+
+        league, _prev, teams, fa = _lg04_developing_setup(
+            "OrderL", n_teams=3, n_free_agents=4
+        )
+        # Move the lower-id rows to the end of the heap (Postgres).
+        for team in sorted(teams, key=lambda t: t.id)[:2]:
+            team.name = f"{team.name}-moved"
+            team.save(update_fields=["name"])
+        for team in teams:
+            for player in sorted(team.players.all(), key=lambda p: p.id)[:3]:
+                player.age = 40
+                player.save(update_fields=["age"])
+        for player in sorted(fa, key=lambda p: p.id)[:2]:
+            player.age = 40
+            player.save(update_fields=["age"])
+
+        expected: list[int] = []
+        for team_id in sorted(t.id for t in teams):
+            expected.extend(
+                sorted(
+                    _Lg04Player.objects.filter(team_id=team_id).values_list(
+                        "id", flat=True
+                    )
+                )
+            )
+        expected.extend(sorted(p.id for p in fa))
+
+        result = [p.id for p in _developing_players(league)]
+        self.assertEqual(result, expected)
+
+
 # ---------------------------------------------------------------------------
 # FIN-05 — next_season verdict gate redirects a luxury-challenge-fired manager
 # ---------------------------------------------------------------------------

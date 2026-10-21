@@ -116,6 +116,7 @@ CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci
 
 - **PostgreSQL is canonical** (production, CI, Fly.io deploy); **SQLite is a guarded dev-only convenience**, used automatically when `DATABASE_URL` is unset. See [ADR-0025](docs/adr/0025-postgresql-canonical-sqlite-dev-only.md).
 - **Local Postgres:** `docker compose up` (the `postgres:16` service in `docker-compose.yml` sets `DATABASE_URL` to it). **Zero-setup dev:** leave `DATABASE_URL` unset to fall back to `db.sqlite3`.
+- **Test suite on Postgres (what CI runs):** start a throwaway container once with `docker run -d --name lf-test-pg -e POSTGRES_USER=laserforce -e POSTGRES_PASSWORD=laserforce -e POSTGRES_DB=laserforce_test -p 5433:5432 postgres:16` (later: `docker start lf-test-pg`), then run, via the Bash tool, `DATABASE_URL=postgres://laserforce:laserforce@localhost:5433/laserforce_test python -m pytest laserforce_simulator`. A SQLite run already fails on the main Postgres-only trap: the root conftest's guard raises if a connection is closed inside a test transaction (CI-01).
 - `dbshell` and the management commands above run against whichever backend `DATABASE_URL` selects.
 - **⚠ `AUTH_USER_MODEL` deployment hazard (UX-01).** UX-01 set `AUTH_USER_MODEL = "accounts.User"` *after* the `auth` / `admin` migrations had already been applied against `auth.User`, so **any database created before UX-01** raises `InconsistentMigrationHistory: Migration admin.0001_initial is applied before its dependency accounts.0001_initial` on the next `migrate`. **CI and the test suite are unaffected** — the test database is built fresh every run, so `pytest` goes green while the dev `db.sqlite3` and the Fly.io Postgres both break; do not read a green suite as proof the deploy is healthy. The approved recovery is a **fresh database** ([ADR-0004](docs/adr/0004-simulation-data-is-disposable.md) — simulation data is disposable): delete `db.sqlite3` locally / re-provision the Fly.io Postgres, then `migrate` and `createsuperuser`. It is explicitly **not** a data migration, a migration-history rewrite, or a `--fake` shim. See [ADR-0038](docs/adr/0038-accounts-and-uniform-manager-ownership.md) and `README.md`.
 
@@ -149,6 +150,7 @@ the record:
 - **Per-app:** `<app>/tests/` or `<app>/tests.py`. For example, `matches/tests/simulation_tests.py` holds
   simulator logic and `matches/tests/test_api_*.py` holds the matches API.
 - **Project-wide API behaviour** (envelope, CORS, auth headers): `laserforce_simulator/api/tests/`.
+- **Test harness** (root `conftest.py`, `laserforce_simulator/testing.py`): `laserforce_simulator/tests/`.
 
 **What to test:**
 - Every new public function or method gets at least one test covering the happy path and one covering an edge case or failure mode.

@@ -503,7 +503,7 @@ deferred imports, an inactive/unbuilt-guard early return of `{"completed": 0,
 "total": 0}`, then **`while play_next_node(tournament) is not None`** drains the
 bracket one Match at a time, emitting a stage-progress `update_state(state=
 "PROGRESS", meta={"completed", "total"})` after each, with a
-`finally: django.db.close_old_connections()`. After draining,
+`finally` clearing `active_play_job_id` (CI-01: no task closes its own DB connection; Celery's worker fixup does). After draining,
 `season.complete_if_finished()` crowns the Season champion (the tournament final
 phase is now complete; `tournament.champion` is set). **Return shape LOCKED:**
 `{"completed": int, "total": int}` — **STAGE** counts from
@@ -802,7 +802,7 @@ per-fixture loop unpacks `(phase_id, fixture)` and passes
 phase-less season `scheduled_fixtures_by_phase()` yields one tuple whose
 `phase.id is None`, so `phase_by_id.get(None)` → `None` → `season_phase=None`
 flows through, preserving legacy `season_phase=NULL` Matches. The
-`_resolve_fixture_map` / `in_bulk` / progress / `close_old_connections`
+`_resolve_fixture_map` / `in_bulk` / progress
 machinery, the 405 guard, `last_league_id` write, and the success/error responses
 are otherwise unchanged. **`play_two_months` / `play_until_end` are UNCHANGED** —
 they enqueue `play_season_task`; the `max_matchdays=8 | None` window carries

@@ -9,6 +9,11 @@ from teams.models import Team
 
 from .simulation import BatchSimulator
 
+# CI-01: no task closes its own DB connection. Celery's Django worker fixup
+# closes it after every non-eager task (and deliberately skips eager runs, so
+# an eager call leaves the caller's -- e.g. a test transaction's -- connection
+# alone).
+
 if TYPE_CHECKING:
     from core.models import ArenaMap
 
@@ -192,30 +197,25 @@ def simulate_batch_task(
     ``self.update_state(state="PROGRESS", meta=snap)``, return the final
     aggregate dict on success.
     """
-    import django.db
+    team_red = Team.objects.get(id=team_red_id)
+    team_blue = Team.objects.get(id=team_blue_id)
+    arena_map = _resolve_arena_map(arena_map_id)
 
-    try:
-        team_red = Team.objects.get(id=team_red_id)
-        team_blue = Team.objects.get(id=team_blue_id)
-        arena_map = _resolve_arena_map(arena_map_id)
+    last_snap: dict | None = None
+    for snap in BatchSimulator().run_incremental(
+        team_red,
+        team_blue,
+        n,
+        arena_map=arena_map,
+        workers=_batch_workers(n),
+        master_seed=master_seed,
+    ):
+        self.update_state(state="PROGRESS", meta=snap)
+        last_snap = snap
 
-        last_snap: dict | None = None
-        for snap in BatchSimulator().run_incremental(
-            team_red,
-            team_blue,
-            n,
-            arena_map=arena_map,
-            workers=_batch_workers(n),
-            master_seed=master_seed,
-        ):
-            self.update_state(state="PROGRESS", meta=snap)
-            last_snap = snap
-
-        if last_snap is None:
-            return {}
-        return last_snap["aggregate"]
-    finally:
-        django.db.close_old_connections()
+    if last_snap is None:
+        return {}
+    return last_snap["aggregate"]
 
 
 @shared_task(bind=True, name="matches.save_games")
@@ -235,23 +235,18 @@ def save_games_task(
     ANG-01b — when ``manager_id`` is given, every saved round is stamped to
     that Account (the simulator itself stays manager-agnostic).
     """
-    import django.db
-
     from .models import GameRound
 
-    try:
-        team_red = Team.objects.get(id=team_red_id)
-        team_blue = Team.objects.get(id=team_blue_id)
-        arena_map = _resolve_arena_map(arena_map_id)
-        game_rounds = BatchSimulator().save_games(
-            team_red, team_blue, seeds, n, arena_map=arena_map
-        )
-        round_ids = [gr.id for gr in game_rounds]
-        if manager_id is not None:
-            GameRound.objects.filter(id__in=round_ids).update(manager_id=manager_id)
-        return {"round_ids": round_ids}
-    finally:
-        django.db.close_old_connections()
+    team_red = Team.objects.get(id=team_red_id)
+    team_blue = Team.objects.get(id=team_blue_id)
+    arena_map = _resolve_arena_map(arena_map_id)
+    game_rounds = BatchSimulator().save_games(
+        team_red, team_blue, seeds, n, arena_map=arena_map
+    )
+    round_ids = [gr.id for gr in game_rounds]
+    if manager_id is not None:
+        GameRound.objects.filter(id__in=round_ids).update(manager_id=manager_id)
+    return {"round_ids": round_ids}
 
 
 @shared_task(bind=True, name="matches.play_season")
@@ -281,8 +276,6 @@ def play_season_task(
     Returns:
         ``{"completed": n, "total": n}`` on success (``n = len(to_play)``).
     """
-    import django.db
-
     try:
         from core.models import ArenaMap
         from matches.league_views import (
@@ -526,7 +519,6 @@ def play_season_task(
         Season.objects.filter(id=season_id, active_play_job_id=self.request.id).update(
             active_play_job_id=None
         )
-        django.db.close_old_connections()
 
 
 @shared_task(bind=True, name="matches.play_playoffs")
@@ -553,8 +545,6 @@ def play_playoffs_task(self, season_id: int) -> dict:
     Returns:
         ``{"completed": int, "total": int}`` (STAGE counts, NOT node counts).
     """
-    import django.db
-
     try:
         from matches.bracket import stage_progress
         from matches.models import Season, _node_to_dict
@@ -656,7 +646,6 @@ def play_playoffs_task(self, season_id: int) -> dict:
         Season.objects.filter(id=season_id, active_play_job_id=self.request.id).update(
             active_play_job_id=None
         )
-        django.db.close_old_connections()
 
 
 @shared_task(bind=True, name="matches.play_member_night")
@@ -680,8 +669,6 @@ def play_member_night_task(self, season_id: int) -> dict:
     Returns:
         ``{"completed": int, "total": int}`` — GAME counts (completed / total).
     """
-    import django.db
-
     try:
         from matches.models import Match, Season
 
@@ -728,7 +715,6 @@ def play_member_night_task(self, season_id: int) -> dict:
         Season.objects.filter(id=season_id, active_play_job_id=self.request.id).update(
             active_play_job_id=None
         )
-        django.db.close_old_connections()
 
 
 @shared_task(bind=True, name="matches.play_tournament")
@@ -749,8 +735,6 @@ def play_tournament_task(self, tournament_id: int) -> dict:
     Returns:
         ``{"completed": int, "total": int}`` (STAGE counts, NOT node counts).
     """
-    import django.db
-
     try:
         from matches.bracket import stage_progress
         from matches.models import Tournament, _node_to_dict
@@ -790,4 +774,3 @@ def play_tournament_task(self, tournament_id: int) -> dict:
         Tournament.objects.filter(
             id=tournament_id, active_play_job_id=self.request.id
         ).update(active_play_job_id=None)
-        django.db.close_old_connections()

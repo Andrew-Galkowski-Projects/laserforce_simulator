@@ -194,6 +194,10 @@ pytest matches/tests/test_batch_sim.py
 
 # Run a specific test class or method
 pytest matches/tests/test_map.py::TestMap02CellMovement
+
+# Run the suite on PostgreSQL, as CI does (throwaway container on port 5433)
+docker run -d --name lf-test-pg -e POSTGRES_USER=laserforce -e POSTGRES_PASSWORD=laserforce -e POSTGRES_DB=laserforce_test -p 5433:5432 postgres:16
+DATABASE_URL=postgres://laserforce:laserforce@localhost:5433/laserforce_test pytest
 ```
 
 ## Project Structure

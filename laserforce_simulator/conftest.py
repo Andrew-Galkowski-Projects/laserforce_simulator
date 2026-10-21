@@ -21,9 +21,12 @@ os.environ.setdefault("LF_CELERY_EAGER", "1")
 
 def pytest_configure(config):
     from laserforce_simulator.celery_app import celery_app
+    from laserforce_simulator.testing import install_close_in_transaction_guard
 
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True
+    # CI-01: fail loudly on a DB close inside a test transaction (see testing.py).
+    install_close_in_transaction_guard()
 
 
 # ---------------------------------------------------------------------------

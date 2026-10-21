@@ -36,6 +36,16 @@ Report the exact pass/fail counts (e.g. `877 passed, 0 failed`), not a vague
 "tests pass". If anything fails, surface the failing test names and stop —
 the PR is not ready until the suite is green.
 
+## Step 2b - Run the full suite on PostgreSQL (when Docker is available)
+
+CI runs the suite on `postgres:16`, the canonical database. If `docker info`
+succeeds, start the throwaway container and run the suite exactly as the
+repo-root `CLAUDE.md` *Database* bullet "Test suite on Postgres (what CI
+runs)" says. That bullet is the only copy of the commands.
+
+Report the exact counts, as in Step 2. A failure stops the PR. If Docker is
+not available, say so plainly: `Postgres run skipped: Docker unavailable`.
+
 ## Step 3 — Check for missing migrations
 
 ```powershell
@@ -83,6 +93,7 @@ PR TITLE: <short imperative, <70 chars>
 
 ## Test plan
 - [ ] pytest: <N passed, M failed>
+- [ ] pytest on Postgres: <N passed, M failed / skipped: Docker unavailable>
 - [ ] makemigrations --check: <clean / drift in app X>
 - [ ] frontend: lint / format:check / test:ci <N passed> / build (omit if
       `frontend/` is untouched)
