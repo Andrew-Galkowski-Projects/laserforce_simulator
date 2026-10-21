@@ -1,0 +1,35 @@
+<div class="lc-shell">
+  <mat-toolbar class="lc-toolbar">
+    <span class="lc-toolbar__title">Laserforce Simulator</span>
+    <span class="lc-toolbar__sub">Round {{ fixture.round.roundNumber }}</span>
+  </mat-toolbar>
+
+  <nav mat-tab-nav-bar class="lc-tabs" [tabPanel]="panel" mat-stretch-tabs="false">
+    @for (key of screens; track key) {
+      <a
+        mat-tab-link
+        [routerLink]="[]"
+        [queryParams]="{ screen: key }"
+        queryParamsHandling="merge"
+        [active]="screen() === key"
+        >{{ labels[key] }}</a
+      >
+    }
+  </nav>
+
+  <mat-tab-nav-panel #panel>
+    <main class="lc-main">
+      @switch (screen()) {
+        @case ('teams') {
+          <app-lc-teams />
+        }
+        @case ('timeline') {
+          <app-lc-timeline />
+        }
+        @default {
+          <app-lc-round />
+        }
+      }
+    </main>
+  </mat-tab-nav-panel>
+</div>

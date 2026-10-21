@@ -1,4 +1,795 @@
-// Layout D stylesheet: contract tokens and --side* only, never a colour literal.
+// Layout D -- Esports broadcast. Contract tokens and --side* only, never a colour literal.
 :host {
   display: block;
+  font-family: var(--lf-font-body);
+}
+
+// --- shared bits ------------------------------------------------------------------------------
+
+.bc-num {
+  font-family: var(--lf-font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+.bc-side-text {
+  color: var(--side-text, var(--lf-text));
+  font-weight: 600;
+}
+
+.bc-side-tag {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  background: var(--side);
+  color: var(--lf-bg);
+  font: 800 0.7rem var(--lf-font-heading);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  border-radius: var(--lf-radius);
+}
+
+.bc-mini-side {
+  display: inline-block;
+  min-width: 1.1em;
+  margin-right: 0.3em;
+  padding: 0 0.2em;
+  border: 1px solid var(--side, var(--lf-border));
+  border-radius: var(--lf-radius);
+  color: var(--side-text, var(--lf-text));
+  font: 700 0.65rem var(--lf-font-numeric);
+  text-align: center;
+  vertical-align: 0.1em;
+}
+
+.bc-role {
+  display: inline-block;
+  padding: 0.05rem 0.35rem;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface-alt);
+  color: var(--lf-text);
+  font: 700 0.7rem var(--lf-font-numeric);
+  letter-spacing: 0.05em;
+  border-radius: var(--lf-radius);
+}
+
+.bc-roles {
+  display: inline-flex;
+  gap: 0.25rem;
+}
+
+.bc-tag {
+  display: inline-block;
+  padding: 0.15rem 0.55rem;
+  border: 1px solid var(--lf-border);
+  color: var(--lf-text);
+  background: var(--lf-surface-alt);
+  font: 700 0.7rem var(--lf-font-heading);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  border-radius: var(--lf-radius);
+}
+
+.bc-tag--win {
+  border-color: var(--lf-accent);
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+  box-shadow: var(--lf-glow) var(--lf-accent);
+}
+
+.bc-tag--out {
+  border-style: dashed;
+  border-color: var(--lf-text-muted);
+  color: var(--lf-text-muted);
+  background: transparent;
+  text-decoration: line-through;
+}
+
+.bc-tag--sm {
+  padding: 0 0.35rem;
+  font-size: 0.6rem;
+}
+
+.bc-arrow {
+  margin: 0 0.35rem;
+  color: var(--lf-text-muted);
+}
+
+.bc-h1,
+.bc-h2 {
+  margin: 0 0 1rem;
+  font: 800 1.6rem var(--lf-font-heading);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+
+  small {
+    display: block;
+    color: var(--lf-text-muted);
+    font: 500 0.8rem var(--lf-font-body);
+    letter-spacing: 0.04em;
+  }
+}
+
+.bc-h2 {
+  font-size: 1.1rem;
+}
+
+// --- shell: top bar + lower-third ticker --------------------------------------------------
+
+.bc-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0 0.75rem;
+  background: var(--lf-surface);
+  border-bottom: 2px solid var(--lf-accent);
+  box-shadow: var(--lf-glow) var(--lf-accent);
+}
+
+.bc-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.45rem 0;
+  font: 700 0.95rem var(--lf-font-heading);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+
+  b {
+    color: var(--lf-accent);
+  }
+}
+
+.bc-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.45rem;
+  border: 1px solid var(--lf-ev-elimination);
+  color: var(--lf-text);
+  font: 800 0.7rem var(--lf-font-heading);
+  border-radius: var(--lf-radius);
+}
+
+.bc-live__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--lf-ev-elimination);
+  box-shadow: var(--lf-glow) var(--lf-ev-elimination);
+}
+
+.bc-tabs {
+  display: flex;
+  align-items: stretch;
+
+  a {
+    display: flex;
+    align-items: center;
+    padding: 0.4rem 1.1rem;
+    margin-left: -0.35rem;
+    background: var(--lf-surface-alt);
+    color: var(--lf-text-muted);
+    font: 700 0.8rem var(--lf-font-heading);
+    letter-spacing: 0.12em;
+    text-decoration: none;
+    text-transform: uppercase;
+    clip-path: polygon(0.6rem 0, 100% 0, calc(100% - 0.6rem) 100%, 0 100%);
+  }
+
+  a:hover {
+    color: var(--lf-text);
+  }
+
+  a.is-current {
+    background: var(--lf-accent);
+    color: var(--lf-bg);
+  }
+}
+
+.bc-ticker {
+  display: flex;
+  align-items: stretch;
+  overflow: hidden;
+  background: var(--lf-surface-alt);
+  border-bottom: 1px solid var(--lf-border);
+  font-size: 0.8rem;
+}
+
+.bc-ticker__label {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0.3rem 1rem 0.3rem 0.75rem;
+  background: var(--lf-text);
+  color: var(--lf-bg);
+  font: 800 0.7rem var(--lf-font-heading);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 0.5rem) 100%, 0 100%);
+}
+
+.bc-ticker__items {
+  display: flex;
+  gap: 1.25rem;
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  list-style: none;
+  overflow-x: auto;
+  white-space: nowrap;
+  scrollbar-width: none;
+}
+
+.bc-ticker__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+
+  .bc-num {
+    color: var(--lf-text-muted);
+  }
+
+  .bc-arrow {
+    margin: 0;
+  }
+}
+
+.bc-dot {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+  background: var(--ev);
+}
+
+.bc-main {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+// --- round: scoreboard --------------------------------------------------------------------
+
+.bc-score {
+  margin-bottom: 1.25rem;
+  padding: 0.75rem;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+}
+
+.bc-score__meta {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  color: var(--lf-text-muted);
+  font: 700 0.75rem var(--lf-font-heading);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+
+  b {
+    color: var(--lf-text);
+  }
+}
+
+.bc-score__final {
+  padding: 0 0.5rem;
+  background: var(--lf-text);
+  color: var(--lf-bg);
+  border-radius: var(--lf-radius);
+}
+
+.bc-score__teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.75rem;
+}
+
+.bc-score__team {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+  min-width: 0;
+  padding: 0.6rem 0.8rem;
+  background: var(--side-bg);
+  border-left: 6px solid var(--side);
+  border-radius: var(--lf-radius);
+}
+
+// Blue reads from the right edge, mirroring red: position, not only hue, tells the Sides apart.
+.bc-score__team--blue {
+  align-items: flex-end;
+  text-align: right;
+  border-left: 0;
+  border-right: 6px solid var(--side);
+}
+
+.bc-score__name {
+  margin: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  color: var(--side-text);
+  font: 800 1.4rem var(--lf-font-heading);
+  letter-spacing: 0.04em;
+  line-height: 1.1;
+  text-transform: uppercase;
+}
+
+.bc-score__pts {
+  color: var(--lf-text);
+  font-size: 3rem;
+  font-weight: 700;
+  line-height: 1;
+  text-shadow: var(--lf-glow) var(--side);
+}
+
+.bc-score__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
+
+.bc-score__team--blue .bc-score__tags {
+  justify-content: flex-end;
+}
+
+.bc-bar-wrap {
+  margin-top: 0.75rem;
+}
+
+.bc-sharebar {
+  display: flex;
+  height: 1.6rem;
+  gap: 3px;
+  overflow: hidden;
+  border-radius: var(--lf-radius);
+}
+
+.bc-sharebar__seg {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 3.5rem;
+  padding: 0 0.5rem;
+  background: var(--side);
+  color: var(--lf-bg);
+  font: 700 0.8rem var(--lf-font-numeric);
+  box-shadow: var(--lf-glow) var(--side);
+}
+
+.bc-sharebar__seg--right {
+  justify-content: flex-end;
+  // Hatched so the two segments differ by texture as well as hue.
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--side) 0 8px,
+    color-mix(in srgb, var(--side) 82%, var(--lf-bg)) 8px 12px
+  );
+}
+
+// --- round: team blocks + player cards ----------------------------------------------------
+
+.bc-teams {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-bottom: 1.25rem;
+}
+
+.bc-team {
+  min-width: 0;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-top: 4px solid var(--side);
+  border-radius: var(--lf-radius);
+  box-shadow: var(--lf-glow) var(--side-dim);
+}
+
+.bc-team__head {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  background: var(--side-bg);
+
+  h2 {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    color: var(--side-text);
+    font: 800 1.15rem var(--lf-font-heading);
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+  }
+}
+
+.bc-team__pts {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.bc-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.6rem;
+  list-style: none;
+}
+
+.bc-card {
+  position: relative;
+  padding: 0.5rem 0.65rem;
+  background: var(--lf-surface-alt);
+  border-left: 3px solid var(--side);
+  border-radius: var(--lf-radius);
+}
+
+.bc-card.is-mvp {
+  padding-top: 1.4rem;
+  border: 2px solid var(--lf-accent);
+  border-left-width: 6px;
+  box-shadow: var(--lf-glow) var(--lf-accent);
+}
+
+.bc-mvp-banner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 0.05rem 0.75rem 0.05rem 0.5rem;
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+  font: 900 0.7rem var(--lf-font-heading);
+  letter-spacing: 0.2em;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 0.4rem) 100%, 0 100%);
+}
+
+.bc-card__top {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.bc-card__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: 700 1rem var(--lf-font-heading);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.bc-card__pts {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--side-text);
+}
+
+.bc-card__mid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0.35rem 0;
+}
+
+.bc-lives {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.bc-pip {
+  width: 0.45rem;
+  height: 0.7rem;
+  border: 1px solid var(--side-dim);
+  border-radius: 1px;
+}
+
+.bc-pip.is-on {
+  background: var(--side);
+  border-color: var(--side);
+}
+
+.bc-card__livesn {
+  color: var(--lf-text-muted);
+  font-size: 0.75rem;
+}
+
+.bc-card__stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 0.25rem;
+  margin: 0;
+
+  div {
+    min-width: 0;
+  }
+
+  dt {
+    color: var(--lf-text-muted);
+    font: 700 0.6rem var(--lf-font-heading);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  dd {
+    margin: 0;
+    font-size: 0.85rem;
+  }
+
+  a {
+    color: var(--lf-accent);
+    font-weight: 700;
+  }
+}
+
+// --- round: box score (wide table scrolls in its own container) ----------------------------
+
+.bc-box {
+  padding: 0.75rem;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+}
+
+.bc-scroll {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+th,
+td {
+  padding: 0.3rem 0.5rem;
+  border-bottom: 1px solid var(--lf-border);
+  text-align: left;
+  white-space: nowrap;
+}
+
+th {
+  color: var(--lf-text-muted);
+  background: var(--lf-surface-alt);
+  font: 700 0.7rem var(--lf-font-heading);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+td.num,
+th.num {
+  font-family: var(--lf-font-numeric);
+  text-align: right;
+}
+
+th.num {
+  font-family: var(--lf-font-heading);
+}
+
+tbody tr {
+  box-shadow: inset 3px 0 0 var(--side);
+}
+
+tbody tr.is-mvp td {
+  background: var(--side-bg);
+  font-weight: 700;
+}
+
+td a {
+  color: var(--lf-accent);
+}
+
+// --- teams: lineup cards ------------------------------------------------------------------
+
+.bc-lineups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+  gap: 1rem;
+}
+
+.bc-lineup {
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-top: 6px solid var(--side);
+  border-radius: var(--lf-radius);
+  box-shadow: var(--lf-glow) var(--side-dim);
+}
+
+.bc-lineup__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.9rem 1rem;
+  background: var(--side-bg);
+
+  h2 {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    color: var(--side-text);
+    font: 800 1.5rem var(--lf-font-heading);
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}
+
+.bc-wl {
+  display: flex;
+  align-items: baseline;
+  gap: 0.15rem;
+}
+
+.bc-wl__n {
+  font: 700 1.8rem var(--lf-font-numeric);
+  line-height: 1;
+}
+
+.bc-wl__l {
+  color: var(--lf-text-muted);
+  font: 700 0.7rem var(--lf-font-heading);
+}
+
+.bc-wl__sep {
+  margin: 0 0.3rem;
+  color: var(--lf-text-muted);
+}
+
+.bc-roster {
+  margin: 0;
+  padding: 0.4rem 0;
+  list-style: none;
+
+  li {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.4rem 1rem;
+    border-bottom: 1px solid var(--lf-border);
+  }
+
+  li:last-child {
+    border-bottom: 0;
+  }
+}
+
+.bc-roster__no {
+  width: 1.5rem;
+  color: var(--side-text);
+  font-weight: 700;
+}
+
+.bc-roster__name {
+  flex: 1;
+  min-width: 0;
+  font: 600 1rem var(--lf-font-heading);
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+// --- timeline: ticker feed ----------------------------------------------------------------
+
+.bc-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bc-pill {
+  display: grid;
+  grid-template-columns: 3.2rem 6.5rem 1fr auto;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.35rem 0.9rem 0.35rem 0.35rem;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-left: 5px solid var(--ev);
+  border-radius: 999px;
+}
+
+.bc-pill__time {
+  padding: 0.1rem 0;
+  border-radius: 999px;
+  background: var(--lf-surface-alt);
+  color: var(--lf-text-muted);
+  font-size: 0.8rem;
+  text-align: center;
+}
+
+.bc-pill__type {
+  padding: 0.1rem 0.5rem;
+  border: 1px solid var(--ev);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--ev) 22%, var(--lf-surface));
+  color: var(--lf-text);
+  font: 700 0.7rem var(--lf-font-heading);
+  letter-spacing: 0.08em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.bc-pill__who {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bc-pill__pts {
+  font-weight: 700;
+  color: var(--lf-accent);
+}
+
+.bc-pill__pts.is-zero {
+  color: var(--lf-text-muted);
+}
+
+// --- narrow screens -----------------------------------------------------------------------
+
+@media (max-width: 860px) {
+  .bc-teams {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .bc-bar {
+    padding: 0 0.5rem;
+  }
+
+  .bc-tabs a {
+    padding: 0.4rem 0.75rem;
+    font-size: 0.7rem;
+  }
+
+  .bc-main {
+    padding: 0.75rem;
+  }
+
+  .bc-score__team {
+    padding: 0.5rem;
+  }
+
+  .bc-score__name {
+    font-size: 0.95rem;
+  }
+
+  .bc-score__pts {
+    font-size: 1.8rem;
+  }
+
+  .bc-score__meta {
+    gap: 0.5rem;
+    font-size: 0.65rem;
+  }
+
+  .bc-card__stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .bc-pill {
+    grid-template-columns: 3rem 1fr auto;
+    border-radius: var(--lf-radius);
+  }
+
+  .bc-pill__type {
+    justify-self: start;
+  }
+
+  .bc-pill__who {
+    grid-column: 1 / -1;
+    padding-left: 0.4rem;
+  }
+
+  .bc-pill__pts {
+    grid-row: 1;
+    grid-column: 3;
+  }
 }

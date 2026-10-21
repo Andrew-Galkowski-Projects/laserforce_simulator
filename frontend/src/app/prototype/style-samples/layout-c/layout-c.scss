@@ -1,4 +1,344 @@
-// Layout C stylesheet: contract tokens and --side* only, never a colour literal.
-:host {
+// Layout C -- Clean Material. Contract tokens, --side* and --mat-sys-* only; never a colour
+// literal. Encapsulation is off, so everything is scoped under .lc-shell.
+@use '@angular/material' as mat;
+
+app-layout-c {
   display: block;
+}
+
+.lc-shell {
+  // The palettes drive only five Material roles. Map the rest onto the contract too, so no
+  // stock azure role (containers, variants, outline) leaks into tabs, chips, cards or lists.
+  --mat-sys-background: var(--lf-bg);
+  --mat-sys-on-background: var(--lf-text);
+  --mat-sys-on-surface-variant: var(--lf-text-muted);
+  --mat-sys-outline: var(--lf-border);
+  --mat-sys-surface-variant: var(--lf-surface-alt);
+  --mat-sys-surface-container-lowest: var(--lf-surface);
+  --mat-sys-surface-container-low: var(--lf-surface);
+  --mat-sys-surface-container-high: var(--lf-surface-alt);
+  --mat-sys-surface-container-highest: var(--lf-surface-alt);
+  --mat-sys-primary-container: color-mix(in srgb, var(--lf-accent) 18%, var(--lf-surface));
+  --mat-sys-on-primary-container: var(--lf-text);
+  --mat-sys-secondary-container: color-mix(in srgb, var(--lf-accent) 18%, var(--lf-surface));
+  --mat-sys-on-secondary-container: var(--lf-text);
+  --mat-sys-secondary: var(--lf-accent);
+
+  // Material typography follows the palette's body / heading fonts.
+  @each $scale in (display, headline, title, body, label) {
+    @each $size in (large, medium, small) {
+      --mat-sys-#{$scale}-#{$size}-font: var(--lf-font-body);
+    }
+  }
+
+  min-height: 100vh;
+  background: var(--lf-bg);
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+
+  @include mat.toolbar-overrides(
+    (
+      container-background-color: var(--mat-sys-primary),
+      container-text-color: var(--mat-sys-on-primary),
+    )
+  );
+}
+
+.lc-toolbar {
+  gap: 0.75rem;
+  box-shadow: var(--lf-glow) var(--lf-accent);
+
+  &__title {
+    font-family: var(--lf-font-heading);
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  &__sub {
+    margin-left: auto;
+    font-size: 0.875rem;
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+}
+
+.lc-tabs {
+  background: var(--lf-surface);
+  border-bottom: 1px solid var(--lf-border);
+  padding: 0 0.5rem;
+}
+
+.lc-main {
+  box-sizing: border-box;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+
+  @media (max-width: 600px) {
+    padding: 16px;
+  }
+}
+
+.lc-h1 {
+  margin: 0 0 16px;
+  font: 400 1.75rem/1.25 var(--lf-font-heading);
+}
+
+.lc-h2 {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 32px 0 12px;
+  font: 500 1.25rem/1.3 var(--lf-font-heading);
+  color: var(--side-text, var(--lf-text));
+}
+
+.lc-muted {
+  margin: -8px 0 16px;
+  color: var(--lf-text-muted);
+}
+
+.lc-num {
+  font-family: var(--lf-font-numeric);
+  font-variant-numeric: tabular-nums;
+}
+
+// A Side label badge: Sides differ by text (RED / BLUE, R / B) and fill, not hue alone.
+.lc-side-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--side);
+  color: var(--lf-surface);
+  font: 700 0.75rem/1.4 var(--lf-font-body);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+
+  &--sm {
+    padding: 0 5px;
+    font-size: 0.65rem;
+  }
+}
+
+// --- Teams ---------------------------------------------------------------------------------
+
+.lc-team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 16px;
+}
+
+.lc-team-card {
+  border-radius: var(--lf-radius);
+
+  mat-card-content {
+    padding-top: 12px;
+  }
+}
+
+.lc-chip-roles {
+  margin-left: 6px;
+  color: var(--lf-text-muted);
+  font: 500 0.7rem/1 var(--lf-font-numeric);
+}
+
+// --- Round ---------------------------------------------------------------------------------
+
+.lc-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 16px;
+}
+
+.lc-summary.mat-mdc-card-outlined {
+  border-color: var(--side-dim);
+  border-left: 6px solid var(--side);
+}
+
+.lc-summary {
+  overflow: hidden;
+  border-radius: var(--lf-radius);
+  box-shadow: var(--lf-glow) var(--side);
+
+  &__band {
+    padding: 6px 16px;
+    background: var(--side-bg);
+    color: var(--side-text);
+    font: 700 0.75rem/1.4 var(--lf-font-body);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  mat-card-title {
+    color: var(--side-text);
+  }
+
+  &__body {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 8px;
+  }
+
+  &__score {
+    display: flex;
+    flex-direction: column;
+
+    .lc-num {
+      font-size: 2.25rem;
+      font-weight: 500;
+      line-height: 1.1;
+      color: var(--lf-text);
+    }
+  }
+
+  &__bonus {
+    color: var(--lf-text-muted);
+    font-size: 0.8rem;
+  }
+}
+
+.lc-result.lc-result--win {
+  @include mat.chips-overrides(
+    (
+      elevated-container-color: var(--side),
+      label-text-color: var(--lf-surface),
+      outline-color: var(--side),
+    )
+  );
+  font-weight: 700;
+}
+
+.lc-result.lc-result--loss {
+  @include mat.chips-overrides(
+    (
+      label-text-color: var(--lf-text-muted),
+      outline-color: var(--lf-border),
+    )
+  );
+}
+
+.lc-side-section .lc-table-wrap {
+  border-top: 3px solid var(--side);
+}
+
+.lc-table-wrap {
+  overflow-x: auto;
+  max-height: 70vh;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.lc-table {
+  width: 100%;
+  min-width: 860px;
+
+  th.mat-mdc-header-cell {
+    font-weight: 600;
+    white-space: nowrap;
+    background: var(--lf-surface-alt);
+  }
+
+  td.lc-num,
+  th.mat-mdc-header-cell:not(:first-child):not(:nth-child(2)) {
+    text-align: right;
+  }
+
+  th.mat-mdc-header-cell:not(:first-child):not(:nth-child(2)) .mat-sort-header-container {
+    justify-content: flex-start; // row-reverse (arrow before): start = right
+  }
+
+  .lc-player {
+    font-weight: 500;
+    white-space: nowrap;
+  }
+
+  .lc-row--top td {
+    background: var(--side-bg);
+  }
+
+  .lc-row--top .lc-player::after {
+    content: ' \2605 MVP';
+    color: var(--side-text);
+    font-size: 0.75rem;
+    font-weight: 700;
+  }
+
+  .lc-row--out .lc-player {
+    color: var(--lf-text-muted);
+  }
+}
+
+.lc-mvp {
+  color: var(--lf-accent);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+// --- Timeline ------------------------------------------------------------------------------
+
+.lc-timeline-card {
+  border-radius: var(--lf-radius);
+}
+
+.lc-ev {
+  border-bottom: 1px solid color-mix(in srgb, var(--lf-border) 60%, transparent);
+
+  &:last-child {
+    border-bottom: 0;
+  }
+
+  &__dot {
+    width: 14px !important;
+    height: 14px !important;
+    border-radius: 50%;
+    background: var(--ev);
+    box-shadow: var(--lf-glow) var(--ev);
+    align-self: center !important;
+  }
+
+  &__title {
+    white-space: normal !important;
+  }
+
+  &__actor {
+    color: var(--side-text);
+    font-weight: 500;
+  }
+
+  &__arrow {
+    margin: 0 6px;
+    color: var(--lf-text-muted);
+  }
+
+  &__meta {
+    color: var(--lf-text-muted);
+    white-space: normal !important;
+  }
+
+  &__type {
+    color: var(--ev);
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 0.75rem;
+    letter-spacing: 0.04em;
+  }
+
+  &__pts {
+    min-width: 3rem;
+    text-align: right;
+    color: var(--lf-text);
+    font-weight: 600;
+  }
+}
+
+.lc-timeline .mat-mdc-list-item {
+  height: auto !important;
+  padding-top: 8px;
+  padding-bottom: 8px;
 }

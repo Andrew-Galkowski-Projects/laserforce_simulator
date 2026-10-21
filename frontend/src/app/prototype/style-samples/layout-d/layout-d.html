@@ -1,0 +1,270 @@
+<header class="bc-bar">
+  <div class="bc-brand">
+    <span class="bc-live"><span class="bc-live__dot"></span>LIVE</span>
+    <span class="bc-brand__name">LF <b>Arena</b> Cast</span>
+  </div>
+  <nav class="bc-tabs" aria-label="Screens">
+    @for (s of screens; track s) {
+      <a
+        [routerLink]="[]"
+        [queryParams]="{ screen: s }"
+        queryParamsHandling="merge"
+        [class.is-current]="s === screen()"
+        [attr.aria-current]="s === screen() ? 'page' : null"
+        >{{ s }}</a
+      >
+    }
+  </nav>
+</header>
+
+<div class="bc-ticker" aria-label="Latest events">
+  <span class="bc-ticker__label">Latest</span>
+  <ol class="bc-ticker__items">
+    @for (ev of latest(); track $index) {
+      <li class="bc-ticker__item">
+        <span class="bc-num">{{ clock(ev.tick) }}</span>
+        <span class="bc-dot" [style.--ev]="'var(--lf-ev-' + ev.type + ')'"></span>
+        <span [attr.data-lf-side]="ev.actorSide" class="bc-side-text">{{ ev.actorName }}</span>
+        @if (ev.targetName) {
+          <span class="bc-arrow">&#x279C;</span>
+          <span [attr.data-lf-side]="ev.targetSide" class="bc-side-text">{{ ev.targetName }}</span>
+        }
+      </li>
+    }
+  </ol>
+</div>
+
+<main class="bc-main">
+  @switch (screen()) {
+    @case ('teams') {
+      <h1 class="bc-h1">Lineups</h1>
+      <div class="bc-lineups">
+        @for (team of fixture.teams; track team.id; let i = $index) {
+          <section class="bc-lineup" [attr.data-lf-side]="sides[i % 2]">
+            <header class="bc-lineup__head">
+              <span class="bc-side-tag">{{ sides[i % 2] }}</span>
+              <h2>{{ team.name }}</h2>
+              <div class="bc-wl">
+                <span class="bc-wl__n">{{ team.wins }}</span
+                ><span class="bc-wl__l">W</span>
+                <span class="bc-wl__sep">&ndash;</span>
+                <span class="bc-wl__n">{{ team.losses }}</span
+                ><span class="bc-wl__l">L</span>
+              </div>
+            </header>
+            <ol class="bc-roster">
+              @for (p of team.players; track p.name; let n = $index) {
+                <li>
+                  <span class="bc-roster__no bc-num">{{ n + 1 }}</span>
+                  <span class="bc-roster__name">{{ p.name }}</span>
+                  <span class="bc-roles">
+                    @for (r of p.preferredRoles; track r) {
+                      <span class="bc-role">{{ r }}</span>
+                    }
+                  </span>
+                </li>
+              }
+            </ol>
+          </section>
+        }
+      </div>
+    }
+
+    @case ('timeline') {
+      <h1 class="bc-h1">
+        Event feed <small>{{ feed().length }} events &middot; newest first</small>
+      </h1>
+      <ol class="bc-feed">
+        @for (ev of feed(); track $index) {
+          <li class="bc-pill" [style.--ev]="'var(--lf-ev-' + ev.type + ')'">
+            <span class="bc-pill__time bc-num">{{ clock(ev.tick) }}</span>
+            <span class="bc-pill__type">{{ ev.type }}</span>
+            <span class="bc-pill__who">
+              <span [attr.data-lf-side]="ev.actorSide" class="bc-side-text">
+                <span class="bc-mini-side">{{ sideLetter(ev.actorSide) }}</span
+                >{{ ev.actorName }}
+              </span>
+              @if (ev.targetName) {
+                <span class="bc-arrow">&#x279C;</span>
+                <span [attr.data-lf-side]="ev.targetSide" class="bc-side-text">
+                  <span class="bc-mini-side">{{ sideLetter(ev.targetSide) }}</span
+                  >{{ ev.targetName }}
+                </span>
+              }
+            </span>
+            <span class="bc-pill__pts bc-num" [class.is-zero]="ev.points === 0"
+              >{{ ev.points > 0 ? '+' : '' }}{{ ev.points }}</span
+            >
+          </li>
+        }
+      </ol>
+    }
+
+    @default {
+      <section class="bc-score" aria-label="Scoreboard">
+        <div class="bc-score__meta">
+          <span>Round {{ round.roundNumber }}</span>
+          <span class="bc-score__final">Final</span>
+          @if (round.eliminatedAtTick !== null) {
+            <span
+              >Elim at <b class="bc-num">{{ clock(round.eliminatedAtTick) }}</b></span
+            >
+          }
+        </div>
+        <div class="bc-score__teams">
+          @for (side of sides; track side) {
+            <div class="bc-score__team bc-score__team--{{ side }}" [attr.data-lf-side]="side">
+              <span class="bc-side-tag">{{ side }}</span>
+              <h1 class="bc-score__name">{{ teamNameFor(side) }}</h1>
+              <div class="bc-score__pts bc-num">{{ pointsFor(side) | number }}</div>
+              <div class="bc-score__tags">
+                @if (round.winner === side) {
+                  <span class="bc-tag bc-tag--win">Win</span>
+                }
+                @if (eliminated(side)) {
+                  <span class="bc-tag bc-tag--out">Eliminated</span>
+                }
+                @if (bonusFor(side)) {
+                  <span class="bc-tag">+{{ bonusFor(side) | number }} elim bonus</span>
+                }
+              </div>
+            </div>
+          }
+        </div>
+        <div class="bc-bar-wrap">
+          <div
+            class="bc-sharebar"
+            role="img"
+            [attr.aria-label]="
+              'Points share: red ' + redShare() + '%, blue ' + (100 - redShare()) + '%'
+            "
+          >
+            <span class="bc-sharebar__seg" data-lf-side="red" [style.flex-grow]="redShare()"
+              ><b>R</b> {{ redShare() }}%</span
+            >
+            <span
+              class="bc-sharebar__seg bc-sharebar__seg--right"
+              data-lf-side="blue"
+              [style.flex-grow]="100 - redShare()"
+              >{{ 100 - redShare() }}% <b>B</b></span
+            >
+          </div>
+        </div>
+      </section>
+
+      <div class="bc-teams">
+        @for (side of sides; track side) {
+          <section class="bc-team bc-team--{{ side }}" [attr.data-lf-side]="side">
+            <header class="bc-team__head">
+              <span class="bc-side-tag">{{ side }}</span>
+              <h2>{{ teamNameFor(side) }}</h2>
+              <span class="bc-team__pts bc-num">{{ pointsFor(side) | number }}</span>
+            </header>
+            <ol class="bc-cards">
+              @for (p of statesFor(side); track p.playerName) {
+                <li class="bc-card" [class.is-mvp]="p.mvp === topMvp()">
+                  @if (p.mvp === topMvp()) {
+                    <span class="bc-mvp-banner">MVP</span>
+                  }
+                  <div class="bc-card__top">
+                    <span class="bc-role">{{ p.role }}</span>
+                    <span class="bc-card__name">{{ p.playerName }}</span>
+                    <span class="bc-card__pts bc-num">{{ p.points | number }}</span>
+                  </div>
+                  <div class="bc-card__mid">
+                    <span
+                      class="bc-lives"
+                      [attr.aria-label]="p.lives + ' of ' + p.startingLives + ' lives'"
+                    >
+                      @for (on of pips(p); track $index) {
+                        <i class="bc-pip" [class.is-on]="on"></i>
+                      }
+                    </span>
+                    <span class="bc-card__livesn bc-num">{{ p.lives }}/{{ p.startingLives }}</span>
+                    @if (p.eliminatedAtTick !== null) {
+                      <span class="bc-tag bc-tag--out bc-tag--sm"
+                        >Out {{ clock(p.eliminatedAtTick) }}</span
+                      >
+                    }
+                  </div>
+                  <dl class="bc-card__stats">
+                    <div>
+                      <dt>MVP</dt>
+                      <dd>
+                        <a href="#" class="bc-num" (click)="$event.preventDefault()">{{ p.mvp }}</a>
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>Acc</dt>
+                      <dd class="bc-num">{{ p.accuracy }}%</dd>
+                    </div>
+                    <div>
+                      <dt>Hit diff</dt>
+                      <dd class="bc-num">{{ p.hitDiff }}</dd>
+                    </div>
+                    <div>
+                      <dt>Msls</dt>
+                      <dd class="bc-num">{{ p.missilesLanded }}</dd>
+                    </div>
+                    <div>
+                      <dt>Surv</dt>
+                      <dd class="bc-num">{{ survivedClock(p.survivedSeconds) }}</dd>
+                    </div>
+                  </dl>
+                </li>
+              }
+            </ol>
+          </section>
+        }
+      </div>
+
+      <section class="bc-box">
+        <h2 class="bc-h2">Box score</h2>
+        <div class="bc-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Side</th>
+                <th>Callsign</th>
+                <th>Pos</th>
+                <th class="num">Score</th>
+                <th class="num">MVP</th>
+                <th class="num">Hit diff</th>
+                <th class="num">Acc</th>
+                <th class="num">Medic hits</th>
+                <th class="num">Lives</th>
+                <th class="num">Shots</th>
+                <th class="num">Msls</th>
+                <th class="num">Msld</th>
+                <th class="num">Survived</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of round.playerStates; track p.playerName) {
+                <tr [attr.data-lf-side]="p.side" [class.is-mvp]="p.mvp === topMvp()">
+                  <td>
+                    <span class="bc-mini-side">{{ sideLetter(p.side) }}</span>
+                  </td>
+                  <td class="bc-side-text">{{ p.playerName }}</td>
+                  <td>{{ p.role }}</td>
+                  <td class="num">{{ p.points | number }}</td>
+                  <td class="num">
+                    <a href="#" (click)="$event.preventDefault()">{{ p.mvp }}</a>
+                  </td>
+                  <td class="num">{{ p.hitDiff }}</td>
+                  <td class="num">{{ p.accuracy }}%</td>
+                  <td class="num">{{ p.medicHits }}</td>
+                  <td class="num">{{ p.lives }}</td>
+                  <td class="num">{{ p.shotsFired }}</td>
+                  <td class="num">{{ p.missilesLanded }}</td>
+                  <td class="num">{{ p.timesMissiled }}</td>
+                  <td class="num">{{ survivedClock(p.survivedSeconds) }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+  }
+</main>
