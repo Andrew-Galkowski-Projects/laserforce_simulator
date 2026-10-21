@@ -1,0 +1,280 @@
+<div class="lb" [class.is-collapsed]="collapsed()" [class.is-drawer-open]="drawerOpen()">
+  <header class="lb-header">
+    <button
+      type="button"
+      class="lb-iconbtn"
+      (click)="toggleNav()"
+      [attr.aria-expanded]="drawerOpen() || !collapsed()"
+      aria-controls="lb-sidebar"
+      aria-label="Toggle sidebar"
+    >
+      <span aria-hidden="true">&#9776;</span>
+    </button>
+    <span class="lb-sep" aria-hidden="true"></span>
+    <nav class="lb-crumbs" aria-label="Breadcrumb">
+      <span class="lb-brand">LF<span class="lb-brand__accent">sim</span></span>
+      <span class="lb-crumbs__sep" aria-hidden="true">/</span>
+      @if (screen() !== 'teams') {
+        <span class="lb-crumbs__mid">{{ round.redTeamName }} vs {{ round.blueTeamName }}</span>
+        <span class="lb-crumbs__sep lb-crumbs__mid" aria-hidden="true">/</span>
+      }
+      <span class="lb-crumbs__here" aria-current="page">{{ title() }}</span>
+    </nav>
+  </header>
+
+  <div class="lb-backdrop" (click)="drawerOpen.set(false)" aria-hidden="true"></div>
+
+  <aside id="lb-sidebar" class="lb-sidebar" aria-label="Main navigation">
+    <div class="lb-group">
+      <div class="lb-group__label">Browse</div>
+      <a
+        class="lb-navlink"
+        [routerLink]="[]"
+        [queryParams]="{ screen: 'teams' }"
+        queryParamsHandling="merge"
+        [class.is-current]="screen() === 'teams'"
+        [attr.aria-current]="screen() === 'teams' ? 'page' : null"
+        (click)="drawerOpen.set(false)"
+        title="Teams"
+      >
+        <span class="lb-navlink__icon" aria-hidden="true">&#9873;</span>
+        <span class="lb-navlink__text">Teams</span>
+      </a>
+    </div>
+    <div class="lb-group">
+      <div class="lb-group__label">Round {{ round.roundNumber }}</div>
+      <a
+        class="lb-navlink"
+        [routerLink]="[]"
+        [queryParams]="{ screen: 'round' }"
+        queryParamsHandling="merge"
+        [class.is-current]="screen() === 'round'"
+        [attr.aria-current]="screen() === 'round' ? 'page' : null"
+        (click)="drawerOpen.set(false)"
+        title="Scorecards"
+      >
+        <span class="lb-navlink__icon" aria-hidden="true">&#9638;</span>
+        <span class="lb-navlink__text">Scorecards</span>
+      </a>
+      <a
+        class="lb-navlink"
+        [routerLink]="[]"
+        [queryParams]="{ screen: 'timeline' }"
+        queryParamsHandling="merge"
+        [class.is-current]="screen() === 'timeline'"
+        [attr.aria-current]="screen() === 'timeline' ? 'page' : null"
+        (click)="drawerOpen.set(false)"
+        title="Replay log"
+      >
+        <span class="lb-navlink__icon" aria-hidden="true">&#9776;</span>
+        <span class="lb-navlink__text">Replay log</span>
+      </a>
+    </div>
+  </aside>
+
+  <main class="lb-main">
+    @switch (screen()) {
+      @case ('teams') {
+        <div class="lb-pagehead">
+          <h1>Teams</h1>
+          <p class="lb-meta">{{ fixture.teams.length }} teams &middot; click a header to sort</p>
+        </div>
+        <section class="lb-card">
+          <div class="lb-tablewrap">
+            <table class="lb-table">
+              <thead>
+                <tr>
+                  @for (col of teamColumns; track col.key) {
+                    <th [class.num]="col.num" [attr.aria-sort]="ariaSort('teams', col.key)">
+                      <button type="button" (click)="toggleSort('teams', col.key, col.num)">
+                        {{ col.label }}
+                        <span class="lb-arrow" aria-hidden="true">{{
+                          arrow('teams', col.key)
+                        }}</span>
+                      </button>
+                    </th>
+                  }
+                  <th>Roster</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (team of sortedTeams(); track team.id) {
+                  <tr>
+                    <td class="lb-strong">{{ team.name }}</td>
+                    <td class="num">{{ team.wins }}&ndash;{{ team.losses }}</td>
+                    <td class="num">{{ team.players.length }}</td>
+                    <td class="lb-roster">
+                      @for (p of team.players; track p.name; let last = $last) {
+                        <span
+                          >{{ p.name }}
+                          <span class="lb-muted">{{ p.preferredRoles.join('/') }}</span></span
+                        >{{ last ? '' : ', ' }}
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      }
+
+      @case ('timeline') {
+        <div class="lb-pagehead">
+          <h1>{{ round.redTeamName }} vs {{ round.blueTeamName }}</h1>
+          <p class="lb-meta">
+            Round {{ round.roundNumber }} &middot; replay log &middot;
+            {{ fixture.events.length }} of {{ fixture.capturedFrom.eventCountTotal }} events
+          </p>
+        </div>
+        <ul class="lb-legend" aria-label="Event types">
+          @for (
+            t of ['tag', 'miss', 'missile', 'special', 'nuke', 'resupply', 'elimination'];
+            track t
+          ) {
+            <li [style.--ev]="'var(--lf-ev-' + t + ')'">
+              <span class="lb-ev" aria-hidden="true">{{ evGlyph($any(t)) }}</span
+              >{{ t }}
+            </li>
+          }
+        </ul>
+        <section class="lb-card lb-log" aria-label="Event log">
+          @for (ev of fixture.events; track $index) {
+            <div
+              class="lb-line"
+              [style.--ev]="'var(--lf-ev-' + ev.type + ')'"
+              [class.is-big]="ev.type === 'elimination' || ev.type === 'nuke'"
+            >
+              <span class="lb-line__time">{{ clock(ev.tick) }}</span>
+              <span class="lb-line__type" [title]="ev.rawType">
+                <span class="lb-ev" aria-hidden="true">{{ evGlyph(ev.type) }}</span>
+                <span class="lb-line__typename">{{ ev.type }}</span>
+              </span>
+              <span class="lb-line__who">
+                <span class="lb-who" [attr.data-lf-side]="ev.actorSide">
+                  <span class="lb-sidechip">{{ sideLetter(ev.actorSide) }}</span
+                  >{{ ev.actorName }}
+                </span>
+                @if (ev.targetName) {
+                  <span class="lb-muted" aria-hidden="true">&rarr;</span>
+                  <span class="lb-who" [attr.data-lf-side]="ev.targetSide">
+                    <span class="lb-sidechip">{{ sideLetter(ev.targetSide) }}</span
+                    >{{ ev.targetName }}
+                  </span>
+                }
+              </span>
+              <span class="lb-line__desc">{{ ev.description }}</span>
+              <span
+                class="lb-line__pts"
+                [class.is-neg]="ev.points < 0"
+                [class.is-zero]="ev.points === 0"
+              >
+                {{ ev.points > 0 ? '+' : '' }}{{ ev.points }}
+              </span>
+            </div>
+          }
+        </section>
+      }
+
+      @default {
+        <div class="lb-pagehead">
+          <h1>{{ round.redTeamName }} vs {{ round.blueTeamName }}</h1>
+          <p class="lb-meta">
+            Round {{ round.roundNumber }} &middot; 15:00 &middot;
+            {{ round.winner ? teamName(round.winner) + ' won' : 'Draw' }}
+            @if (round.eliminatedAtTick !== null) {
+              &middot; elimination at {{ clock(round.eliminatedAtTick) }}
+            }
+            &middot; <span class="lb-star" aria-hidden="true">&#9733;</span> top MVP
+          </p>
+        </div>
+
+        @for (side of sides; track side) {
+          <section class="lb-team" [attr.data-lf-side]="side" [attr.aria-label]="teamName(side)">
+            <div class="lb-strip">
+              <div class="lb-strip__name">
+                <span class="lb-sidetag">{{ side === 'red' ? 'Red' : 'Blue' }}</span>
+                <h2>{{ teamName(side) }}</h2>
+                @if (round.winner === side) {
+                  <span class="lb-badge lb-badge--win">Win</span>
+                } @else if (round.winner) {
+                  <span class="lb-badge lb-badge--loss">Loss</span>
+                }
+                @if (eliminated(side)) {
+                  <span class="lb-badge lb-badge--elim">Eliminated</span>
+                }
+              </div>
+              <div class="lb-strip__score">
+                <span class="lb-strip__points">{{ points(side) | number }}</span>
+                @if (bonus(side)) {
+                  <span class="lb-muted">(+{{ bonus(side) | number }} elim bonus)</span>
+                }
+              </div>
+            </div>
+
+            <div class="lb-tablewrap lb-tablewrap--tall">
+              <table class="lb-table lb-table--stats">
+                <thead>
+                  <tr>
+                    @for (col of playerColumns; track col.key) {
+                      <th [class.num]="col.num" [attr.aria-sort]="ariaSort(side, col.key)">
+                        <button type="button" (click)="toggleSort(side, col.key, col.num)">
+                          {{ col.label }}
+                          <span class="lb-arrow" aria-hidden="true">{{
+                            arrow(side, col.key)
+                          }}</span>
+                        </button>
+                      </th>
+                    }
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (p of rowsFor(side); track p.playerName) {
+                    <tr [class.is-top-mvp]="p.playerName === topMvp()">
+                      <td class="lb-strong">
+                        @if (p.playerName === topMvp()) {
+                          <span class="lb-star" title="Top MVP of the round">&#9733;</span>
+                        }
+                        {{ p.playerName }}
+                        @if (p.eliminatedAtTick !== null) {
+                          <span class="lb-out">OUT</span>
+                        }
+                      </td>
+                      <td>{{ p.role }}</td>
+                      <td class="num">{{ p.points | number }}</td>
+                      <td class="num">
+                        <a class="lb-link" href="#" (click)="$event.preventDefault()">{{
+                          p.mvp
+                        }}</a>
+                      </td>
+                      <td class="num">
+                        {{ p.hitDiff | number: '1.2-2' }}
+                        <span class="lb-muted">({{ p.tagsMade }}/{{ p.timesTagged }})</span>
+                      </td>
+                      <td class="num">{{ p.accuracy }}%</td>
+                      <td class="num">{{ p.medicHits }}</td>
+                      <td class="num">{{ p.lives }}</td>
+                      <td class="num">{{ p.shotsFired }}</td>
+                      <td class="num">{{ p.missilesLanded }}</td>
+                      <td class="num">{{ p.timesMissiled }}</td>
+                      <td class="num">
+                        <span
+                          class="lb-bar"
+                          [class.is-out]="p.eliminatedAtTick !== null"
+                          [title]="survivedClock(p)"
+                        >
+                          <span class="lb-bar__fill" [style.width.%]="survivedPct(p)"></span>
+                        </span>
+                        <span class="lb-bar__label">{{ survivedClock(p) }}</span>
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
+          </section>
+        }
+      }
+    }
+  </main>
+</div>
