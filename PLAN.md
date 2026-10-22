@@ -3202,9 +3202,25 @@ need conversion to the TIME-01 tick model. **Scope:** new persistence (the `actu
 error into a reviewable `GameRound` whose scoreboards/event log render in the existing round views, and the
 imported round shows **no** "[Simulated]" watermark on its RV-03 export.
 
-### SIM-12 · Clamp negative action weights before `random.choices`
+### SIM-12 · [DONE] Clamp negative action weights before `random.choices`
 
-Spec: #279
+Spec: #279 (ticket #280)
+
+**[DONE] Shipped (2026-10-22).** `finalize_action_weights` in `weights.py` clamps every slot to
+>= 0 and then applies the UXP-23 all-zero -> hide fallback; `plan_action` and the test twin both
+call it as the last step before `random.choices`. Four per-branch pins, the every-slot grid test,
+and the Scout xfail turned into a real assertion. What the work found:
+- The 55% strong-team win-rate test (`test_strong_team_winpct_not_diluted_by_alternation`) went
+  red on its score assertion (strong team 32343 vs weak 32394 average points at seed 7777), green
+  on `origin/main`. Reported as CAL-01 calibration drift per the grill ruling; nothing retuned.
+- The UXP-23 "League 500" cooldown test no longer hides: with `use_special`, `only_move` and
+  `tag_player` clamped to 0, `missile_player` and `hold` survive and the draw comes from them, so
+  the test now pins the clamped vector slot by slot and the seeded action.
+- `_HIDE_IDX = 2` in `weights.py` mirrors `combat._ACTION_IDX["hide"]` (no import either way);
+  review added a one-line pin test.
+- Left for later (review): the cooldown guard in `plan_action` is now redundant with the
+  helper's fallback (kept, byte-identical replay); the test twin still mirrors the pipeline by
+  hand; the five identical "Invariant (production)" docstring blocks could be one note.
 
 Grill settled (owner, 2026-10-21):
 
@@ -3236,7 +3252,8 @@ vector and feeds it straight to `random.choices` **without clamping per-element 
 weight; instead the negative bucket becomes unreachable in the cumulative-weight bisect **and silently skews
 the neighbouring buckets' probabilities**. Several role branches legitimately emit one negative slot today:
 Heavy/Commander `only_move` while missiles remain (`25/15 → 5` after the MOVE-03 hold draw, then `−15`
-missile cost → `−10`/`−5`), Heavy `only_move` while capturing (`5 − 10 = −5`), and Scout `tag_player` when
+missile cost → `−10` for both), Heavy or Commander `only_move` while capturing (`5 − 10 = −5`, or −20 with the
+missile branch), and Scout `tag_player` when
 shots-critical with no ammo ally (`_SCOUT["seek_no_ammo_tag"]=50` > post-baseline tag `40` → `−10`). So the
 action distribution on those ticks is subtly wrong, not crashing. SIM-01 deliberately left this **unfixed**
 (it is a behavioural change, not a documentation change) and pinned only the true non-raising invariant
