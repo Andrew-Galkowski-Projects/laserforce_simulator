@@ -204,9 +204,35 @@ describe('Teams list (/teams)', () => {
     expect(routerUrl()).toBe('/teams');
   });
 
-  it('has no Generate Players or Import Roster links (not migrated yet)', async () => {
+  const headerLinks = (): [string, string | null][] =>
+    [...(page().querySelector('.team-list__header')?.querySelectorAll('a') ?? [])].map((a) => [
+      a.textContent?.trim() ?? '',
+      a.getAttribute('href'),
+    ]);
+
+  it('has Generate Players and Import Roster in the header, left of Create New Team', async () => {
     await open([row()]);
-    expect(page().textContent).not.toContain('Generate Players');
-    expect(page().textContent).not.toContain('Import Roster');
+    expect(headerLinks()).toEqual([
+      ['Generate Players', '/teams/generate'],
+      ['Import Roster', '/teams/import'],
+      ['Create New Team', '/teams/new'],
+    ]);
+  });
+
+  it.each([
+    ['Generate Players', '/teams/generate'],
+    ['Import Roster', '/teams/import'],
+  ])('opens %s at %s from the header', async (label, url) => {
+    await open([row()]);
+    await follow(link(label));
+    expect(routerUrl()).toBe(url);
+  });
+
+  it('keeps only Create Team in the empty state (no Generate / Import there)', async () => {
+    await open([]);
+    const empty = page().querySelector<HTMLElement>('.team-list__empty');
+    expect(empty).not.toBeNull();
+    const labels = [...(empty?.querySelectorAll('a') ?? [])].map((a) => a.textContent?.trim());
+    expect(labels).toEqual(['Create Team']);
   });
 });

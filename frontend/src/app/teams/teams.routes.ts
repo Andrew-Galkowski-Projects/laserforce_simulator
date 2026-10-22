@@ -12,6 +12,17 @@ import { TeamSlots } from './team-slots/team-slots';
 export const TEAMS_ROUTES: Routes = [
   { path: '', component: TeamList, title: `Teams - ${APP_TITLE}` },
   { path: 'new', component: TeamCreate, title: `Create Team - ${APP_TITLE}` },
+  // The two bulk screens come before `:id` so neither word is read as a Team id.
+  {
+    path: 'generate',
+    loadComponent: () => import('./team-generate/team-generate').then((m) => m.TeamGenerate),
+    title: `Generate Players - ${APP_TITLE}`,
+  },
+  {
+    path: 'import',
+    loadComponent: () => import('./roster-import/roster-import').then((m) => m.RosterImport),
+    title: `Import Roster - ${APP_TITLE}`,
+  },
   { path: ':id', component: TeamDetail, title: `Team - ${APP_TITLE}` },
   { path: ':id/edit', component: TeamEdit, title: `Edit Team - ${APP_TITLE}` },
   { path: ':id/slots', component: TeamSlots, title: `Assign Slots - ${APP_TITLE}` },

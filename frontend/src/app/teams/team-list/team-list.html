@@ -1,6 +1,10 @@
 <div class="team-list__header">
   <h1>Teams</h1>
-  <a mat-flat-button routerLink="/teams/new">Create New Team</a>
+  <div class="team-list__actions">
+    <a mat-stroked-button routerLink="/teams/generate">Generate Players</a>
+    <a mat-stroked-button routerLink="/teams/import">Import Roster</a>
+    <a mat-flat-button routerLink="/teams/new">Create New Team</a>
+  </div>
 </div>
 
 <div class="team-list__grid">

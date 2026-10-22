@@ -2614,6 +2614,62 @@ Grill settled (owner, 2026-10-21):
   tests for the new serializer fields; browser check (4201 / 8001) incl. a cross-Account 404.
 - No GLOSSARY or ADR changes.
 
+#### ANG-06 2b · [DONE] Generate Players + Import Roster
+
+Spec: #275 (tickets #276, #277, #278)
+
+**[DONE] Shipped (2026-10-22).** Angular Generate Players (`/teams/generate`) and Import Roster
+(`/teams/import`) over the ANG-01a endpoints, through `TeamsService.generate` / `importRoster` /
+`importTemplate` and a new `ApiClient.getRaw` for the JWT-protected CSV template. No server
+change. What the work found:
+- Import is disabled until a file is chosen, so the server's `csv_file: required` message never
+  surfaces in Angular (Django lets the submit through and shows "This field is required.").
+- `ApiClient.getRaw` took an optional `options` argument beyond the spec's narrow seam; left in.
+- Review: the `GenerateInput` doc comment and a service fixture used `'random'`, which the server
+  rejects (the markers are `random_2_10` / `random_team` / `random_pool`); `required` added to the
+  mean / std dev inputs; one shared `GENERIC_ERROR_MESSAGE`; `row-errors.ts` renamed
+  `import-errors.ts`.
+- Left for later: `.team-form__error` / `__actions` and the card surface are copied into both
+  screens' SCSS; the "Created teams" link list appears three times; the two bulk routes are lazy
+  while their siblings are eager; `team-detail.ts` carries a fourth generic-message variant.
+
+Grill settled (owner, 2026-10-21):
+
+- **Routes:** `/teams/generate` and `/teams/import`, declared before `:id`; titles "Generate
+  Players" / "Import Roster"; behind `authGuard`.
+- **Entry points:** two outlined buttons "Generate Players" / "Import Roster" on the Teams list
+  header, left of "Create New Team". Empty state keeps only "Create Team".
+- **Generate form:** one "Number of teams" `mat-select` (Django choices, default Random 2-10); one
+  "Players per team" `mat-select` whose options and label swap with the mode (team: 6-9 + Random
+  6-8; pool: "Free-agent players", 12-100 + Random 12-100), reset to the mode's Random value on a
+  mode change; mean (0-100, 50) and std dev (1-40, 15) as number inputs. Selects sent as strings,
+  numbers as numbers; the server's cross-field rule is the only validator.
+- **Generate result:** in place, no done route: "Created teams" links, "Created N free-agent
+  players." when non-zero, "Generate more" (previous values kept) and "Back to Teams". No snackbar.
+- **Import form:** Django intro text (1000 rows, eight required columns, stats optional default
+  50); "Download a template CSV"; Material-styled picker over a hidden `<input type="file"
+  accept=".csv,text/csv">` showing the filename; Import / Cancel; no client-side size or
+  encoding check.
+- **Template download:** the endpoint is behind JWT like every `/api/` route, so a plain link
+  cannot fetch it. New `ApiClient.getRaw(path): Observable<Blob>` (bearer header, no envelope
+  unwrap) and `TeamsService.importTemplate()`; the screen saves the Blob as
+  `roster_template.csv` via an object URL. The client never builds the CSV itself.
+- **Import errors:** file-level errors on the file control; row errors (`row:<n>:<column>` /
+  `row:<n>`, no matching control) as a list in server order: "Row N (column): message",
+  "Row N: message", "File: message" for row 0. Form stays filled.
+- **Import result:** in place: "Imported N players across M rows.", "Created teams" and "Appended
+  to existing teams" link lists when non-empty, "Import another" / "Back to Teams".
+- **Seam:** `TeamsService.generate(GenerateInput): Observable<GenerationResult>`,
+  `importRoster(File): Observable<RosterImportResult>`, `importTemplate(): Observable<Blob>`;
+  models `GenerateInput`, `GenerationResult`, `RosterImportResult`. No server change.
+- **Tickets:** shared-file prep first (routes with lazy stubs, header buttons, service methods,
+  models, `getRaw`, each with its spec), then the Generate and Import screens in parallel, each
+  owning only its own folder.
+- **Scope out:** a Players tab / any view of the Free Agents Team (LG-00c), progress indication
+  beyond the disabled submit, client-side CSV preview or validation, any change to the API.
+- **Ownership / data / simulation:** unchanged. No migration, no engine change.
+- No GLOSSARY or ADR changes.
+
 ### ANG-07 · Serve Angular from Docker (nginx sidecar)
 
 Once Angular is built (`ng build --configuration production`), serve it via an nginx sidecar service.

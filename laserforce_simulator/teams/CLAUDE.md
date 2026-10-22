@@ -2,7 +2,7 @@
 
 Manages teams, players, and rosters, mounted at `/teams/` (the homepage `/` is the `core` landing
 mode-picker). The Angular SPA's Teams screens (ANG-06a: list, detail, create, edit, assign slots; ANG-06b: add /
-edit player) read
+edit player; ANG-06 2b: generate players, import roster) read
 the same data through `/api/teams/`; see `frontend/CLAUDE.md`. The Django templates stay until ANG-08.
 
 This file is the **index**. Feature detail lives in `docs/agents/teams/` — read the doc a pointer
@@ -160,5 +160,5 @@ Paths below are relative to the repo root.
 - Player field history (LG-04 development, LG-05 `potential`, FIN-01 `salary`, FIN-04 `games_unavailable`), `stat_for_simulation`, `PlayerForm`, `_random_player_profile()`, `ROLE_STATS`, `Team.is_draw_team` + draw-team `roster_errors` relaxation, Team finance fields / budgets / `injury_policy`, `Team.manager` (UX-01), Self-insert / "You" badge (UX-02), `PLAYER_NAMES` / `LASERFORCE_SITES` constants — `docs/agents/teams/models-and-fields.md`
 - API analytics reads (head-to-head, career, benchmarks params), `TeamFilterSet` / `PlayerFilterSet` + ordering, `build_career_stats` / `build_role_benchmarks`, roster-import ownership fix, serializer split / `PlayerSerializer` fields (ANG-01a, ANG-01b, ANG-06a, ANG-06b) — `docs/agents/teams/api.md`
 - Career stats page, `teams/career_stats.py`, 12-stat benchmark extension, Role benchmarks, percentile rank, benchmark cache + ownership scope (HX-01, HX-01b, HX-02, UXP-14) — `docs/agents/teams/career-and-benchmarks.md`
-- Bulk generation, `GenerateLeagueForm`, `teams/player_generator.py`, League spread / tier means, CSV roster import + template (LG-00, CRE-02, LG-00b) — `docs/agents/teams/generation-and-import.md`
+- Bulk generation, `GenerateLeagueForm`, `teams/player_generator.py`, League spread / tier means, CSV roster import + template (LG-00, CRE-02, LG-00b), the Angular Generate Players / Import Roster screens (ANG-06 2b) — `docs/agents/teams/generation-and-import.md`
 - Sortable / paginated `/players/` tab, `_SORT_KEYS`, `?per_page=` (LG-00c) — `docs/agents/teams/players-tab.md`

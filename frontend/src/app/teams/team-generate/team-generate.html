@@ -1,0 +1,112 @@
+@if (result(); as result) {
+  <h1>Generation complete</h1>
+  <section class="generate">
+    @if (result.created_teams.length > 0) {
+      <h2>Created teams</h2>
+      <ul>
+        @for (team of result.created_teams; track team.id) {
+          <li>
+            <a [routerLink]="['/teams', team.id]">{{ team.name }}</a>
+          </li>
+        }
+      </ul>
+    }
+    @if (result.free_agent_count) {
+      <p class="generate__notice">
+        <strong>Created {{ result.free_agent_count }} free-agent players.</strong>
+      </p>
+    }
+    <div class="team-form__actions">
+      <a mat-flat-button routerLink="/teams">Back to Teams</a>
+      <button mat-stroked-button type="button" (click)="generateMore()">Generate more</button>
+    </div>
+  </section>
+} @else {
+  <h1>Generate Players</h1>
+  <p class="team-page__sub">
+    Create randomised Teams and/or Players for testing or league bootstrap. Choose
+    <strong>0</strong> teams to populate the Free-Agents pool, or pick 2–20 teams to build full
+    rosters with optional bench players.
+  </p>
+  <section class="generate">
+    <form [formGroup]="form" (ngSubmit)="generate()" novalidate>
+      @for (message of nonFieldErrors(); track $index) {
+        <p class="team-form__error" role="alert">{{ message }}</p>
+      }
+      <mat-form-field appearance="outline">
+        <mat-label>Number of teams</mat-label>
+        <mat-select formControlName="num_teams">
+          @for (choice of numTeamsChoices; track choice.value) {
+            <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+          }
+        </mat-select>
+        @if (form.controls.num_teams.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+      @if (poolMode()) {
+        <mat-form-field appearance="outline">
+          <mat-label>Free-agent players</mat-label>
+          <mat-select formControlName="players_per_team">
+            @for (choice of poolPlayersChoices; track choice.value) {
+              <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+            }
+          </mat-select>
+          <mat-hint>12–100 players for the free-agent pool.</mat-hint>
+          @if (form.controls.players_per_team.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      } @else {
+        <mat-form-field appearance="outline">
+          <mat-label>Players per team</mat-label>
+          <mat-select formControlName="players_per_team">
+            @for (choice of teamPlayersChoices; track choice.value) {
+              <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+            }
+          </mat-select>
+          <mat-hint>6–9 players per team (players 7+ go to the bench).</mat-hint>
+          @if (form.controls.players_per_team.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      }
+      <div class="generate__stats">
+        <mat-form-field appearance="outline">
+          <mat-label>Stat mean</mat-label>
+          <input
+            matInput
+            type="number"
+            name="mean"
+            formControlName="mean"
+            min="0"
+            max="100"
+            required
+          />
+          @if (form.controls.mean.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Stat standard deviation</mat-label>
+          <input
+            matInput
+            type="number"
+            name="std_dev"
+            formControlName="std_dev"
+            min="1"
+            max="40"
+            required
+          />
+          @if (form.controls.std_dev.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      </div>
+      <div class="team-form__actions">
+        <button mat-flat-button type="submit" [disabled]="busy()">Generate</button>
+        <a mat-button routerLink="/teams">Cancel</a>
+      </div>
+    </form>
+  </section>
+}

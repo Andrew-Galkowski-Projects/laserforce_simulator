@@ -160,4 +160,49 @@ describe('TeamsService', () => {
     req.flush({ data: PLAYER, meta: {} }, { status: 201, statusText: 'Created' });
     expect(await result).toEqual(PLAYER);
   });
+
+  it('generates Teams with POST teams/generate/ (selects as strings, stats as numbers)', async () => {
+    const body = { num_teams: '2', players_per_team: 'random_team', mean: 50, std_dev: 15 };
+    const result = firstValueFrom(teams.generate(body));
+    const req = http.expectOne(`${BASE}/teams/generate/`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toEqual(body);
+    expect(typeof req.request.body.num_teams).toBe('string');
+    expect(typeof req.request.body.players_per_team).toBe('string');
+    expect(typeof req.request.body.mean).toBe('number');
+    expect(typeof req.request.body.std_dev).toBe('number');
+    const data = { created_teams: [TEAM_LIST_ITEM], free_agent_count: 0 };
+    req.flush({ data, meta: {} }, { status: 201, statusText: 'Created' });
+    expect(await result).toEqual(data);
+  });
+
+  it('imports a roster as multipart POST teams/import/ with the file under csv_file', async () => {
+    const file = new File(['team,name,role\n'], 'roster.csv', { type: 'text/csv' });
+    const result = firstValueFrom(teams.importRoster(file));
+    const req = http.expectOne(`${BASE}/teams/import/`);
+    expect(req.request.method).toBe('POST');
+    expect(req.request.body).toBeInstanceOf(FormData);
+    const form = req.request.body as FormData;
+    expect([...form.keys()]).toEqual(['csv_file']);
+    expect(form.get('csv_file')).toBe(file);
+    expect(req.request.headers.has('Content-Type')).toBe(false);
+    const data = {
+      created_teams: [TEAM_LIST_ITEM],
+      appended_teams: [],
+      player_count: 6,
+      row_count: 6,
+    };
+    req.flush({ data, meta: {} }, { status: 201, statusText: 'Created' });
+    expect(await result).toEqual(data);
+  });
+
+  it('downloads the roster template as a Blob from GET teams/import/template/, body as-is', async () => {
+    const result = firstValueFrom(teams.importTemplate());
+    const req = http.expectOne(`${BASE}/teams/import/template/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.responseType).toBe('blob');
+    const csv = new Blob(['team,name,role\n'], { type: 'text/csv' });
+    req.flush(csv);
+    expect(await result).toBe(csv);
+  });
 });

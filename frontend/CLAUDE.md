@@ -3,7 +3,7 @@
 The Phase 8 replacement for the Django templates. The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
 layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
-below 768px) behind `authGuard`, and the Teams feature routes (ANG-06a), on top of the client
+below 768px) behind `authGuard`, and the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -81,7 +81,8 @@ src/
     login/                sign-in form; returnUrl honoured only when it is an in-app path
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
                           team-create, team-detail, team-edit, team-slots, player-add,
-                          player-edit;
+                          player-edit, team-generate, roster-import (import-errors.ts:
+                          classifyImportErrors sorts a failed import's errors);
                           shared/: roster.ts (SLOTS, ROLE_LABELS, bench split),
                           player-stats.ts (STAT_GROUPS, STAT_KEYS, overallRating),
                           player-form.ts + .html (app-player-form: Add / Edit Player),
@@ -90,7 +91,7 @@ src/
                           404 or player.team !== :id -> notFound, else loadError),
                           player-not-found.ts (back to /teams/:id),
                           notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
-                          team-name-form.ts, form-errors.ts (applyApiErrors), team-page.scss,
+                          team-name-form.ts, form-errors.ts (applyApiErrors, GENERIC_ERROR_MESSAGE), team-page.scss,
                           team-form.scss; testing/teams-loads.ts (releaseTeamsLoads, specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
@@ -138,7 +139,8 @@ colours in light mode, all-mono JetBrains Mono.
 Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-0041 (JWT).
 
 - **`ApiClient` is the only `HttpClient` user.** Components inject a resource service, never
-  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `delete`, `upload` (multipart). Each takes a
+  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `delete`, `upload` (multipart) and `getRaw` (a Blob
+  with the bearer header and no envelope unwrap: the CSV template, ANG-06 2b). Each takes a
   path relative to `apiBaseUrl` (`'teams/'`, `'rounds/7/events/'`, trailing slash as the API routes
   it) and an optional `{ context }`.
 - **Envelope unwrapped once:** objects come back as `T`, lists as `Page<T>` (`items` plus `meta`:
