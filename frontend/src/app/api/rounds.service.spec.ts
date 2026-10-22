@@ -24,6 +24,9 @@ const ROUND_LIST_ITEM: GameRoundListItem = {
   eliminated_at: 1801,
   winner: 3,
   is_completed: true,
+  team_red_name: 'Alpha',
+  team_blue_name: 'Bravo',
+  winner_name: 'Alpha',
 };
 
 const PLAYER_STATE: PlayerRoundState = {
@@ -117,6 +120,17 @@ describe('RoundsService', () => {
     const meta = { page: 1, page_size: 20, count: 1, total_pages: 1 };
     req.flush({ data: [ROUND_LIST_ITEM], meta });
     expect(await result).toEqual({ items: [ROUND_LIST_ITEM], meta });
+  });
+
+  it('sends the standalone filter as true / false', () => {
+    rounds.list({ standalone: true }).subscribe();
+    rounds.list({ standalone: false }).subscribe();
+    const [singles, matchRounds] = http.match((r) => r.url === `${BASE}/rounds/`);
+    expect(singles.request.params.get('standalone')).toBe('true');
+    expect(matchRounds.request.params.get('standalone')).toBe('false');
+    const meta = { page: 1, page_size: 20, count: 0, total_pages: 1 };
+    singles.flush({ data: [], meta });
+    matchRounds.flush({ data: [], meta });
   });
 
   it('gets one Round with its player states', async () => {

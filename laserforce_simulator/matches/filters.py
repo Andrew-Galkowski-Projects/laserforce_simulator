@@ -46,10 +46,12 @@ class MatchFilterSet(filters.FilterSet):
 class GameRoundFilterSet(filters.FilterSet):
     match = filters.NumberFilter(field_name="match")
     arena_map = filters.NumberFilter(field_name="arena_map")
+    # ANG-06c — ``?standalone=true`` keeps only Single Rounds (no Match).
+    standalone = filters.BooleanFilter(field_name="match", lookup_expr="isnull")
 
     class Meta:
         model = GameRound
-        fields = ["match", "arena_map"]
+        fields = ["match", "arena_map", "standalone"]
 
 
 class GameEventFilterSet(filters.FilterSet):

@@ -21,6 +21,10 @@ export interface GameRoundListItem {
   eliminated_at: number;
   winner: number | null;
   is_completed: boolean;
+  team_red_name: string;
+  team_blue_name: string;
+  /** null when `winner` is null (a tie). */
+  winner_name: string | null;
 }
 
 /** `PlayerRoundStateSerializer` (every model field but `game_round`). */
@@ -125,6 +129,8 @@ export interface RoundInput {
 export interface RoundListParams extends ListParams {
   match?: number;
   arena_map?: number;
+  /** true: only Single Rounds (no Match); false: only a Match's Rounds. */
+  standalone?: boolean;
   ordering?: string;
 }
 

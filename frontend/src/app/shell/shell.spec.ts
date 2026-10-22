@@ -5,6 +5,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
 import { signIn } from '../api/testing/auth-fixtures';
+import { releaseMatchesLoads } from '../matches/testing/matches-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
@@ -55,6 +56,7 @@ describe('App shell (layout B)', () => {
 
   afterEach(() => {
     releaseTeamsLoads();
+    releaseMatchesLoads();
     http.verify();
     delete (window as Partial<Window>).matchMedia;
   });
@@ -105,6 +107,16 @@ describe('App shell (layout B)', () => {
     link?.click();
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/teams');
+  });
+
+  it('has a Matches entry right after Teams that opens /matches', async () => {
+    await open('/teams');
+    const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
+    const labels = links.map((a) => a.textContent?.trim());
+    expect(labels.indexOf('Matches')).toBe(labels.indexOf('Teams') + 1);
+    links.find((a) => a.textContent?.trim() === 'Matches')?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe('/matches');
   });
 
   it('keeps the sidebar open beside the page at 768px and wider, with no menu toggle', async () => {
