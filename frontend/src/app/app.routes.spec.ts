@@ -42,6 +42,14 @@ describe('app routes', () => {
       expect(routerUrl()).toBe('/login?returnUrl=%2Fteams%2F5%2Fedit');
     });
 
+    it('sends the Add and Edit Player deep links to /login with a returnUrl', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/teams/5/players/new');
+      expect(routerUrl()).toBe('/login?returnUrl=%2Fteams%2F5%2Fplayers%2Fnew');
+      await harness.navigateByUrl('/teams/5/players/9/edit');
+      expect(routerUrl()).toBe('/login?returnUrl=%2Fteams%2F5%2Fplayers%2F9%2Fedit');
+    });
+
     it('sends the app root to /login with /teams as the returnUrl', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/');
