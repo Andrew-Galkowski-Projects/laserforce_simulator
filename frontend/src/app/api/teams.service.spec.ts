@@ -7,7 +7,7 @@ import { ApiError } from './api-client';
 import { Player } from './players.models';
 import { Team, TeamListItem } from './teams.models';
 import { TeamsService } from './teams.service';
-import { STATS } from './testing/player-fixtures';
+import { PROFILE, STATS } from './testing/player-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -26,6 +26,7 @@ const PLAYER: Player = {
   name: 'Ace',
   preferred_roles: ['commander'],
   ...STATS,
+  ...PROFILE,
 };
 
 const TEAM: Team = {

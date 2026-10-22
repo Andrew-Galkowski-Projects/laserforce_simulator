@@ -1,0 +1,86 @@
+// The Player form (Add Player, Edit Player), on top of team-form.scss: a wider card, the
+// sticky Overall / presets bar and the responsive Stat grids.
+:host {
+  max-width: 60rem;
+}
+
+fieldset {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 1rem 0.25rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+}
+
+legend {
+  padding: 0 0.25rem;
+  color: var(--lf-text-muted);
+  font-family: var(--lf-font-heading);
+  font-size: 0.85rem;
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* Stays in view while the Stats scroll (the shell's content pane is the scroller). */
+.player-form__summary {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+  margin: -0.5rem 0 0.5rem;
+  padding: 0.5rem 0;
+  border-bottom: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+}
+
+.player-form__overall {
+  margin: 0;
+  font-family: var(--lf-font-numeric);
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: var(--lf-accent);
+}
+
+.player-form__presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.player-form__hint {
+  margin: 0 0 0.5rem;
+  color: var(--lf-text-muted);
+  font-size: 0.85rem;
+}
+
+/* Four or so columns on a wide screen, two below 768px, one on the narrowest phones. */
+.player-form__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  column-gap: 0.75rem;
+
+  @media (max-width: 767.98px) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  @media (max-width: 379.98px) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.player-form__roles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  padding-bottom: 0.5rem;
+}
+
+.player-form__field-error {
+  margin: 0 0 0.5rem;
+  color: var(--mat-sys-error);
+  font-size: 0.85rem;
+}

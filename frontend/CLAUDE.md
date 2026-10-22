@@ -80,8 +80,10 @@ src/
                           over drawer below); toolbar colours via mat.toolbar-overrides
     login/                sign-in form; returnUrl honoured only when it is an in-app path
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
-                          team-create, team-detail, team-edit, team-slots;
-                          shared/: roster.ts (SLOTS, ROLE_LABELS, bench split), route-team.ts
+                          team-create, team-detail, team-edit, team-slots, player-add;
+                          shared/: roster.ts (SLOTS, ROLE_LABELS, bench split),
+                          player-stats.ts (STAT_GROUPS, overallRating), player-form.ts
+                          (app-player-form: Add / Edit Player), route-team.ts
                           (loadRouteTeam: the :id Team, 404 -> notFound, else loadError),
                           notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
                           team-name-form.ts, form-errors.ts (applyApiErrors), team-page.scss,

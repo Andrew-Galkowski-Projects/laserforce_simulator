@@ -6,7 +6,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../environments/environment';
 import { Player, Role } from '../../api/players.models';
-import { STATS } from '../../api/testing/player-fixtures';
+import { PROFILE, STATS } from '../../api/testing/player-fixtures';
 import { USER, signIn } from '../../api/testing/auth-fixtures';
 import { releaseTeamsLoads } from '../testing/teams-loads';
 import { Team } from '../../api/teams.models';
@@ -16,7 +16,7 @@ import { authInterceptor } from '../../auth/auth.interceptor';
 const BASE = environment.apiBaseUrl;
 
 function player(id: number, name: string, preferred_roles: Role[] = []): Player {
-  return { ...STATS, id, team: 7, name, preferred_roles };
+  return { ...STATS, ...PROFILE, id, team: 7, name, preferred_roles };
 }
 
 /** Players in id order; the slots put them in a different order (CMD Cat, SCT 1 Ann, AMO Bob). */
@@ -263,17 +263,18 @@ describe('Team detail page', () => {
     );
   }
 
-  it('links Assign Slots, Edit Team and Back to Teams, and nothing to unmigrated pages', async () => {
+  it('links Add Player, Assign Slots, Edit Team and Back to Teams, and nothing to unmigrated pages', async () => {
     await open();
     const links = actions();
+    expect(links).toContain('Add Player -> /teams/7/players/new');
     expect(links).toContain('Assign Slots -> /teams/7/slots');
     expect(links).toContain('Edit Team -> /teams/7/edit');
     expect(links).toContain('← Back to Teams -> /teams');
     expect(links.filter((l) => l.startsWith('Remove'))).toHaveLength(5);
-    for (const label of ['View ->', 'Edit ->', 'Add Player', 'Match History']) {
+    for (const label of ['View ->', 'Edit ->', 'Match History']) {
       expect(links.some((l) => l.startsWith(label))).toBe(false);
     }
-    expect(links).toHaveLength(8);
+    expect(links).toHaveLength(9);
   });
 
   it('opens Assign Slots at /teams/7/slots', async () => {

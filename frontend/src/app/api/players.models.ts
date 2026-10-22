@@ -35,6 +35,14 @@ export interface Player extends PlayerStats {
   team: number;
   name: string;
   preferred_roles: Role[];
+  /** The profile fields (read-only here; written through `PlayerInput`). */
+  age: number | null;
+  started_playing_age: number | null;
+  total_games: number;
+  home_site: string;
+  height: string;
+  /** `Player.overall_rating`: the unweighted mean of the 19 stats. */
+  overall_rating: number;
 }
 
 /** `PlayerInlineSerializer`: the slim Player inside a Team list row. */

@@ -1,5 +1,18 @@
 // Shared spec fixtures. Imported only by *.spec.ts files.
-import { PlayerStats } from '../players.models';
+import { Player, PlayerStats } from '../players.models';
+
+/** A blank profile (no age, the model defaults) and the Overall of all-50 Stats. */
+export const PROFILE: Pick<
+  Player,
+  'age' | 'started_playing_age' | 'total_games' | 'home_site' | 'height' | 'overall_rating'
+> = {
+  age: null,
+  started_playing_age: null,
+  total_games: 0,
+  home_site: '',
+  height: '',
+  overall_rating: 50,
+};
 
 /** All 19 stats at 50. */
 export const STATS: PlayerStats = {
