@@ -71,6 +71,17 @@ def _full_clean_or_raise(player: Player) -> None:
         raise EnvelopeValidationError(django_validation_error_to_envelope(exc))
 
 
+# The six role-slot FKs of a Team.
+_SLOT_FIELDS = (
+    "slot_commander",
+    "slot_heavy",
+    "slot_scout_1",
+    "slot_scout_2",
+    "slot_medic",
+    "slot_ammo",
+)
+
+
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
 # DRF's 401 JSON rather than an HTML 302 to the login page; the settings-level
 # `IsAuthenticated` is what actually gates it. The class-level `queryset` stays
@@ -94,8 +105,11 @@ class TeamViewSet(
     ordering_tiebreak = ("id",)
 
     def get_queryset(self) -> QuerySet[Team]:
+        # The six slot FKs are joined so `roster_errors` (on every Team
+        # response) adds no per-Team queries.
         return owned_queryset(
-            Team.objects.prefetch_related("players"), self.request.user
+            Team.objects.prefetch_related("players").select_related(*_SLOT_FIELDS),
+            self.request.user,
         )
 
     def get_serializer_class(self) -> type[Serializer]:

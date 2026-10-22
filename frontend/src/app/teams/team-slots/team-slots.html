@@ -1,0 +1,37 @@
+@if (notFound()) {
+  <app-team-not-found />
+} @else if (loadError(); as message) {
+  <p role="alert">{{ message }}</p>
+} @else if (team(); as team) {
+  @if (form(); as form) {
+    <h1>Assign Slots</h1>
+    <p class="team-page__sub">{{ team.name }}</p>
+    <section class="slots">
+      <form [formGroup]="form" (ngSubmit)="save(team, form)" novalidate>
+        @for (message of nonFieldErrors(); track $index) {
+          <p class="slots__error" role="alert">{{ message }}</p>
+        }
+        <div class="slots__grid">
+          @for (slot of slots; track slot.key) {
+            <mat-form-field appearance="outline">
+              <mat-label>{{ slot.label }}</mat-label>
+              <mat-select [formControlName]="slot.key">
+                <mat-option [value]="emptySlot">— empty —</mat-option>
+                @for (player of team.players; track player.id) {
+                  <mat-option [value]="player.id">{{ player.name }}</mat-option>
+                }
+              </mat-select>
+              @if (form.controls[slot.key].getError('server'); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+          }
+        </div>
+        <div class="slots__actions">
+          <button mat-flat-button type="submit" [disabled]="busy()">Save Slots</button>
+          <a mat-button [routerLink]="['/teams', team.id]">Cancel</a>
+        </div>
+      </form>
+    </section>
+  }
+}

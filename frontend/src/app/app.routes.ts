@@ -1,10 +1,31 @@
 import { Routes } from '@angular/router';
 import { APP_TITLE } from './app-title';
-import { Home } from './home/home';
-import { Login } from './login/login';
+import { authGuard, signedOutGuard } from './auth/auth.guard';
 
+/**
+ * `/login` is the only open route; everything else is a child of the layout-B `Shell`
+ * behind `authGuard`. The Shell and every feature area are lazily loaded, so the initial
+ * bundle carries no Material layout code.
+ */
 export const routes: Routes = [
-  { path: '', component: Home, title: APP_TITLE },
-  { path: 'login', component: Login, title: `Sign in - ${APP_TITLE}` },
+  {
+    path: 'login',
+    loadComponent: () => import('./login/login').then((m) => m.Login),
+    canActivate: [signedOutGuard],
+    title: `Sign in - ${APP_TITLE}`,
+  },
+  {
+    path: '',
+    loadComponent: () => import('./shell/shell').then((m) => m.Shell),
+    canActivate: [authGuard],
+    canActivateChild: [authGuard],
+    children: [
+      { path: '', pathMatch: 'full', redirectTo: 'teams' },
+      {
+        path: 'teams',
+        loadChildren: () => import('./teams/teams.routes').then((m) => m.TEAMS_ROUTES),
+      },
+    ],
+  },
   { path: '**', redirectTo: '' },
 ];

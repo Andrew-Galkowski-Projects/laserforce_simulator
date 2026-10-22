@@ -1,0 +1,66 @@
+@use '@angular/material' as mat;
+
+:host {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+// The Material 3 `mat.theme()` mixin ignores the M2 `color="primary"` input, so the header
+// takes its colours through the toolbar's token overrides instead.
+mat-toolbar {
+  @include mat.toolbar-overrides(
+    (
+      container-background-color: var(--lf-surface),
+      container-text-color: var(--lf-text),
+    )
+  );
+
+  gap: 0.5rem;
+  border-bottom: 1px solid var(--lf-border);
+}
+
+.shell__title {
+  font-family: var(--lf-font-heading);
+  font-weight: 700;
+  color: var(--lf-accent);
+}
+
+.shell__spacer {
+  flex: 1;
+}
+
+.shell__user {
+  overflow: hidden;
+  font-size: 0.875rem;
+  color: var(--lf-text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shell__body {
+  flex: 1;
+  background: var(--lf-bg);
+}
+
+.shell__nav {
+  width: 13rem;
+  border-right: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+}
+
+.shell__link--active {
+  border-left: 4px solid var(--lf-accent);
+  background: color-mix(in srgb, var(--lf-accent) 12%, transparent);
+}
+
+.shell__main {
+  padding: 1.5rem 1rem;
+  color: var(--lf-text);
+}
+
+@media (min-width: 768px) {
+  .shell__main {
+    padding: 1.5rem 2rem;
+  }
+}

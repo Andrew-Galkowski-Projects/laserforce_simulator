@@ -1,6 +1,8 @@
 # teams/
 
-Manages teams, players, and rosters. Serves as the homepage (`/`).
+Manages teams, players, and rosters, mounted at `/teams/` (the homepage `/` is the `core` landing
+mode-picker). The Angular SPA's Teams screens (ANG-06a: list, detail, create, edit, assign slots) read
+the same data through `/api/teams/`; see `frontend/CLAUDE.md`. The Django templates stay until ANG-08.
 
 ## Models (`teams/models.py`)
 
@@ -303,7 +305,7 @@ Tournament participant import (`matches.tournament_services.setup.import_partici
 called by both `matches/tournament_views/setup.py` and `POST /api/tournaments/<id>/import-participants/`)
 all pass `manager_or_none(request)`.
 
-**Serializer split:** `TeamListSerializer` (list) nests `PlayerInlineSerializer` (id, name, preferred_roles) to keep list payloads small. `TeamSerializer` (detail) nests the full `PlayerSerializer` with explicit stat fields. Both share `_TEAM_BASE_FIELDS` and `_PLAYER_STAT_FIELDS` constants so the field lists are defined once.
+**Serializer split:** `TeamListSerializer` (list) nests `PlayerInlineSerializer` (id, name, preferred_roles) to keep list payloads small. `TeamSerializer` (detail) nests the full `PlayerSerializer` with explicit stat fields. Both share `_TEAM_BASE_FIELDS` and `_PLAYER_STAT_FIELDS` constants so the field lists are defined once. Both also carry read-only `is_valid_roster` (bool) and `roster_errors` (string list) straight from the model properties (ANG-06a, so the Angular app never re-implements the roster rules); `TeamViewSet.get_queryset` `select_related`s the six slot FKs so the list adds no per-Team queries (`test_api_roster_validity.py`).
 
 **`PlayerInlineSerializer`** — minimal player representation (id, name, preferred_roles) for use anywhere a full player is not needed.
 
@@ -312,8 +314,7 @@ all pass `manager_or_none(request)`.
 ## URLs
 
 ```
-/           → team list (homepage)
-/teams/     → team CRUD, player management
+/teams/     → team list, team CRUD, player management (`/` is core's landing page)
 
 /api/teams/                    → TeamViewSet (list, create, detail, PATCH)
 /api/teams/<id>/slots/         → PUT: full-replace the 6 roster slots

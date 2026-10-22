@@ -3,20 +3,34 @@
 import { ListParams } from './api-client';
 import { Player, PlayerInline } from './players.models';
 
-/** The fields `TeamListSerializer` and `TeamSerializer` share. Slots are Player ids. */
-export interface TeamBase {
-  id: number;
-  name: string;
-  /** ISO 8601 datetime. */
-  created_date: string;
-  wins: number;
-  losses: number;
+/**
+ * `TeamSlotForm` fields for `PUT teams/{id}/slots/`: Player ids (`null` clears a slot).
+ * The endpoint is a full replace, so all six are always sent.
+ */
+export interface TeamSlotsInput {
   slot_commander: number | null;
   slot_heavy: number | null;
   slot_scout_1: number | null;
   slot_scout_2: number | null;
   slot_medic: number | null;
   slot_ammo: number | null;
+}
+
+/**
+ * The fields `TeamListSerializer` and `TeamSerializer` share. The six slots (from
+ * `TeamSlotsInput`) are Player ids.
+ */
+export interface TeamBase extends TeamSlotsInput {
+  id: number;
+  name: string;
+  /** ISO 8601 datetime. */
+  created_date: string;
+  wins: number;
+  losses: number;
+  /** `Team.is_valid_roster`: the server's SM5 roster verdict. */
+  is_valid_roster: boolean;
+  /** `Team.roster_errors`: human-readable problems, `[]` when valid. */
+  roster_errors: string[];
 }
 
 /** `TeamListSerializer`: a row of `GET teams/`. */

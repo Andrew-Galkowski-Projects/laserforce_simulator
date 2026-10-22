@@ -5,7 +5,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
-import { routes } from '../app.routes';
+import { FLOW_ROUTES } from './testing/flow-routes';
 import { authInterceptor } from './auth.interceptor';
 import { AuthService } from './auth.service';
 import { User } from './user';
@@ -27,7 +27,7 @@ describe('AuthService', () => {
   beforeEach(() => {
     TestBed.configureTestingModule({
       providers: [
-        provideRouter(routes),
+        provideRouter(FLOW_ROUTES),
         provideHttpClient(withInterceptors([authInterceptor])),
         provideHttpClientTesting(),
       ],

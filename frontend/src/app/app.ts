@@ -1,14 +1,10 @@
 import { Component } from '@angular/core';
-import { MatToolbar } from '@angular/material/toolbar';
 import { RouterOutlet } from '@angular/router';
-import { APP_TITLE } from './app-title';
 
+/** The root: `/login` renders bare, every other route inside the `Shell` (see app.routes.ts). */
 @Component({
-  imports: [MatToolbar, RouterOutlet],
+  imports: [RouterOutlet],
   selector: 'app-root',
-  styleUrl: './app.scss',
-  templateUrl: './app.html',
+  template: '<router-outlet />',
 })
-export class App {
-  protected readonly title = APP_TITLE;
-}
+export class App {}
