@@ -59,15 +59,17 @@ end; if the spec already has ticket sub-issues, skip to Step 6.
 
 ## Step 2: Worktree
 
+Run one feature per session, started from the main checkout. Parallel features
+each get their own session; a pipeline orchestrator launched as an agent
+inherits its parent's worktree and cannot enter its own (RV-05 retro).
+
 Enter a worktree (`EnterWorktree`), named for the task in kebab case (e.g.
 `ang-01e-league-stats-api`), and `git merge --ff-only origin/main`. A worktree has no
 `db.sqlite3` and no `.env`: copy `laserforce_simulator/.env` from the main
 checkout into the worktree's `laserforce_simulator/`, then run
 `migrate` before any server or management command. When the task touches
 `frontend/`, also run `npm --prefix frontend ci` (a worktree has no
-`node_modules`). Use the main checkout's
-`.venv\Scripts\python.exe` for every Python command (the `.conda` env has no
-Django). Run `migrate` again after merging any ticket that adds a migration,
+`node_modules`). Run `migrate` again after merging any ticket that adds a migration,
 before a browser check. Run any server on `--port 8001` so the owner's 8000
 stays theirs. In a worktree session, give each shell call one plain command,
 with literal values in place of `&&` chains and `$(...)`: the isolation guard
@@ -309,11 +311,11 @@ A migration that drops or rewrites data is a one-way door. Say so plainly.
 
 **Stop and show the owner the commit summary and PR body.** Commit, push and
 `gh pr create --body-file` only on their "go" (`CLAUDE.md`, *Git Workflow*).
-Then wait for the PR's CI run in the background:
-`gh run list --branch <branch> --json databaseId -q '.[0].databaseId'` gives
-the run id, and `gh run watch <run-id> --exit-status` waits on it.
-(`gh pr checks --watch` exits early while checks are still pending.) Then
-read `gh pr checks <n>`. Every job must have **started**: a
+Then wait for the PR's CI in the background with
+`<main checkout>/.venv/Scripts/python.exe scripts/watch_pr_ci.py <n>`: one plain command that
+waits until every check and workflow run has settled, then prints each check,
+the mergeable state and `result: pass|fail` (exit 0 / 1; 2 = timeout).
+Every job must have **started**: a timeout, a
 run with no jobs, or one GitHub reports as "a workflow file issue", is a
 broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
 red job as in Step 7 and report it to the owner with the PR link.
