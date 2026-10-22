@@ -17,7 +17,12 @@ from pathlib import Path
 from reportlab.platypus import Image
 
 from laserforce_simulator.testing import run_project_python
-from matches.sim_helpers.pdf_charts import CHARTS, chart_flowable, render_chart_png
+from matches.sim_helpers.pdf_charts import (
+    CHARTS,
+    chart_flowable,
+    player_colour,
+    render_chart_png,
+)
 
 PAGE_TITLES = [
     "Shots Over Time (per player)",
@@ -64,6 +69,27 @@ def _populated_series() -> dict:
             "2": [(0, 0), (7, 10)],
         },
     }
+
+
+class TestPlayerColour(unittest.TestCase):
+    """The events-page hue rule: ``hsl(base + 40*i/n, 70%, 45%)`` with base 350
+    for red and 210 for blue (``pickColors`` in game_round_events.html)."""
+
+    @staticmethod
+    def _hsl(hue: float) -> tuple[float, float, float]:
+        import colorsys
+
+        return colorsys.hls_to_rgb(hue / 360.0, 0.45, 0.70)
+
+    def test_red_and_blue_bases(self) -> None:
+        self.assertEqual(player_colour("red", 0, 1), self._hsl(350))
+        self.assertEqual(player_colour("blue", 0, 1), self._hsl(210))
+
+    def test_hue_spreads_40_degrees_across_the_team_and_wraps(self) -> None:
+        # red, second of two: 350 + 40 * 1/2 = 370 -> 10 (wraps like CSS)
+        self.assertEqual(player_colour("red", 1, 2), self._hsl(10))
+        # blue, third of four: 210 + 40 * 2/4 = 230
+        self.assertEqual(player_colour("blue", 2, 4), self._hsl(230))
 
 
 class TestChartDefinitions(unittest.TestCase):

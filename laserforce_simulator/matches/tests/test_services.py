@@ -492,6 +492,18 @@ class TestRoundAnalyticsBuilders(_ServicesTestCase):
 
     # ----- RV-05 (#286): chart_series -----
 
+    def test_round_players_data_is_in_id_order(self) -> None:
+        """RV-05 review: the series port echoes this order into the chart
+        legend and the per-team hue index, so the row builder pins ``id``
+        (the insertion order) instead of leaving the order to the database."""
+        from matches.services import _round_players_data
+
+        game_round = _saved_round(self.red, self.blue)
+        ids = [row["id"] for row in _round_players_data(game_round)]
+        expected = [ps.player_id for ps in game_round.player_states.order_by("id")]
+        self.assertEqual(len(ids), 12)
+        self.assertEqual(ids, expected)
+
     def test_report_data_chart_series_for_round_with_events(self) -> None:
         """RV-05: a ``full``-fidelity round with GameEvent rows yields
         ``chart_series`` in the series-port shape, built from the same rows

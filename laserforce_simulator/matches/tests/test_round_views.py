@@ -473,11 +473,13 @@ class TestBuildRoundReport(unittest.TestCase):
         """RV-05: the four charts go through the T2 seam in ``CHARTS`` order,
         each wrapped at the letter content width (8.5in minus two 0.5in
         margins)."""
+        # ``pdf_report`` imports ``pdf_charts`` lazily and calls through the
+        # module, so the seam is patched where it lives.
         with patch(
-            "matches.sim_helpers.pdf_report.render_chart_png",
+            "matches.sim_helpers.pdf_charts.render_chart_png",
             wraps=pdf_charts.render_chart_png,
         ) as render, patch(
-            "matches.sim_helpers.pdf_report.chart_flowable",
+            "matches.sim_helpers.pdf_charts.chart_flowable",
             wraps=pdf_charts.chart_flowable,
         ) as flowable:
             build_round_report(

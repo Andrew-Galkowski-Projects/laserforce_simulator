@@ -1728,7 +1728,7 @@ def play_week_live_watch(request, season_id: int) -> HttpResponse:
     """GET: replay the manager's just-played game (read-only — no commit, no
     discard). Reads the watched round id(s) from the session handoff set by
     :func:`play_week_live`, builds the SIM-05 playback payload from the
-    PERSISTED events (reusing ``matches.views.round_playback_payload``), and
+    PERSISTED events (reusing ``matches.services.round_playback_payload``), and
     renders ``seasons/play_week_live.html``.
 
     405 on non-GET; 400 dashboard re-render when there is no game to watch

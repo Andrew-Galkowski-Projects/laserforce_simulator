@@ -28,7 +28,9 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from .pdf_charts import CHARTS, chart_flowable, render_chart_png
+# ``pdf_charts`` (and with it matplotlib) is imported lazily inside
+# ``_chart_section``: this module loads with ``matches.views`` in every
+# process, and matplotlib is only needed when a report with charts is built.
 
 # Page geometry: letter with 0.5in side margins and 0.6in top / bottom. The
 # RV-05 charts are drawn at the full content width (page width minus the two
@@ -172,16 +174,20 @@ def _chart_section(chart_series: dict) -> list:
     """RV-05: the flowables for the four event-page charts.
 
     A page break after the resource tables, then the charts in ``CHARTS``
-    order, two per page (a page break after each pair), each rendered through
-    the pure ``pdf_charts`` seam at the full content width.
+    order, two per page (a page break after each pair, a small gap inside a
+    pair), each rendered through the pure ``pdf_charts`` seam at the full
+    content width.
     """
+    from . import pdf_charts  # lazy: see the module note above
+
     flowables: list = [PageBreak()]
-    for index, chart in enumerate(CHARTS):
+    for index, chart in enumerate(pdf_charts.CHARTS):
         if index and index % _CHARTS_PER_PAGE == 0:
             flowables.append(PageBreak())
-        png = render_chart_png(chart.key, chart_series)
-        flowables.append(chart_flowable(png, width=_CONTENT_WIDTH))
-        flowables.append(Spacer(1, 0.2 * inch))
+        elif index:
+            flowables.append(Spacer(1, 0.2 * inch))
+        png = pdf_charts.render_chart_png(chart.key, chart_series)
+        flowables.append(pdf_charts.chart_flowable(png, width=_CONTENT_WIDTH))
     return flowables
 
 

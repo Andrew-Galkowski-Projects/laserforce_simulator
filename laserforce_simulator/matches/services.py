@@ -923,7 +923,11 @@ def _round_players_data(game_round: GameRound) -> list[dict]:
             "sl": ps.starting_lives,
             "ss": ps.starting_shots,
         }
-        for ps in game_round.player_states.select_related("player").all()
+        # Explicit order: the series port echoes this order into the chart
+        # legend and the per-team hue index, and an unordered queryset is not
+        # stable on Postgres (the callers UPDATE these rows via ensure_fidelity
+        # just before). ``id`` is the insertion order the page always saw.
+        for ps in game_round.player_states.select_related("player").order_by("id")
     ]
 
 
@@ -1003,7 +1007,11 @@ def build_round_report_data(game_round: GameRound) -> dict:
     )
     map_name = game_round.arena_map.name if game_round.arena_map_id else None
     winner_name = game_round.winner.name if game_round.winner_id else None
-    events_data, players_data = round_playback_payload(game_round)
+    # Movement rows carry only movement metadata (no actor / target snapshots),
+    # so the series port never reads them; leave them out of the query.
+    events_data, players_data = round_playback_payload(
+        game_round, include_movement=False
+    )
 
     return {
         "round_id": game_round.pk,
