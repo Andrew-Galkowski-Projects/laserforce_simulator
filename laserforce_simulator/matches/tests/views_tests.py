@@ -1384,6 +1384,107 @@ class TestRv03ExportRoundReport:
         assert resp["Content-Type"] == "application/pdf"
         assert resp.content.startswith(b"%PDF")
 
+    # ------------------------------------------------------------------ #
+    # RV-05 (#286): the chart section + the fidelity upgrade.             #
+    # ------------------------------------------------------------------ #
+
+    def _round_with_events(self, prefix: str):
+        """A simulated round upgraded to ``full`` so it has GameEvent rows."""
+        red, _ = make_team_with_slots(f"{prefix}R")
+        blue, _ = make_team_with_slots(f"{prefix}B")
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            gr = BatchSimulator().simulate_single_round_detailed(red, blue)
+            BatchSimulator().ensure_fidelity(gr, "full")
+        gr.refresh_from_db()
+        assert gr.events.count() > 0, "fixture round produced no events"
+        return gr
+
+    def _scores_tier_round(self, prefix: str):
+        """A batch-saved round at the default ``scores`` tier: no events yet."""
+        red, _ = make_team_with_slots(f"{prefix}R")
+        blue, _ = make_team_with_slots(f"{prefix}B")
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            rounds = BatchSimulator().save_games(red, blue, [[4242, False]], 1)
+        gr = GameRound.objects.get(pk=rounds[0].pk)
+        assert gr.fidelity == "scores"
+        assert gr.events.count() == 0
+        return gr
+
+    def _export(self, game_round):
+        client = Client()
+        client.force_login(get_shared_manager())
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            return client.get(reverse("export_round_report", args=[game_round.id]))
+
+    def test_round_with_events_exports_four_chart_images(self):
+        """RV-05: the PDF for a round with events ends with the four charts."""
+        from matches.tests.conftest import pdf_image_count
+
+        resp = self._export(self._round_with_events("Rv05Ev"))
+        assert resp.status_code == 200
+        assert resp.content.startswith(b"%PDF")
+        assert pdf_image_count(resp.content) == 4
+
+    def test_round_without_events_exports_four_chart_images(self):
+        """RV-05: a round with no GameEvent rows still gets four charts
+        (start points only, empty axes), never an error."""
+        from matches.tests.conftest import pdf_image_count
+
+        game_round = self._saved_round_with_players("Rv05NoEv")
+        assert game_round.events.count() == 0
+        resp = self._export(game_round)
+        assert resp.status_code == 200
+        assert pdf_image_count(resp.content) == 4
+
+    def test_is_simulated_branch_still_drives_the_watermark_flag(self):
+        """RV-05: the view still hands ``watermark=game_round.is_simulated``
+        to the builder, now alongside report data carrying ``chart_series``."""
+        from matches.sim_helpers.pdf_report import build_round_report
+
+        seen = []
+        for flag in (True, False):
+            game_round = self._saved_round_with_players(
+                f"Rv05Wm{int(flag)}", is_simulated=flag
+            )
+            with patch(
+                "matches.views.build_round_report", wraps=build_round_report
+            ) as spy:
+                resp = self._export(game_round)
+            assert resp.status_code == 200
+            assert spy.call_count == 1
+            report_data = spy.call_args.args[0]
+            assert report_data["chart_series"] is not None
+            seen.append(spy.call_args.kwargs["watermark"])
+        assert seen == [True, False]
+
+    def test_export_upgrades_scores_tier_round_to_full_before_building(self):
+        """RV-05: a ``scores``-tier round is upgraded to ``full`` (and gains
+        events) before the report is built, exactly as the events page does,
+        so its charts are drawn from the same events."""
+        from matches.tests.conftest import pdf_image_count
+
+        game_round = self._scores_tier_round("Rv05Fid")
+        resp = self._export(game_round)
+        assert resp.status_code == 200
+        game_round.refresh_from_db()
+        assert game_round.fidelity == "full"
+        assert game_round.events.count() > 0
+        assert pdf_image_count(resp.content) == 4
+
+    def test_other_accounts_round_is_404(self):
+        """RV-05: ownership unchanged: another Account's round is still 404."""
+        from django.contrib.auth import get_user_model
+
+        game_round = self._saved_round_with_players("Rv05Own")
+        GameRound.objects.filter(pk=game_round.pk).update(manager=get_shared_manager())
+        other = get_user_model().objects.create(
+            email="rv05-other@example.com", is_active=True
+        )
+        client = Client()
+        client.force_login(other)
+        resp = client.get(reverse("export_round_report", args=[game_round.id]))
+        assert resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # HX-03 — head-to-head record view

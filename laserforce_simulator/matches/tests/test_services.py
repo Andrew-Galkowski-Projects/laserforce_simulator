@@ -71,7 +71,10 @@ _REPORT_KEYS = {
     "blue_players",
     "red_totals",
     "blue_totals",
+    # RV-05 (#286): the series-port result the PDF charts are drawn from.
+    "chart_series",
 }
+_SERIES_KEYS = {"players", "shots", "lives", "points", "sp"}
 
 
 def _saved_round(red, blue, *, seed: int = 777, arena_map=None) -> GameRound:
@@ -487,6 +490,65 @@ class TestRoundAnalyticsBuilders(_ServicesTestCase):
         game_round.refresh_from_db()
         self.assertEqual(game_round.fidelity, "scores")
 
+    # ----- RV-05 (#286): chart_series -----
+
+    def test_report_data_chart_series_for_round_with_events(self) -> None:
+        """RV-05: a ``full``-fidelity round with GameEvent rows yields
+        ``chart_series`` in the series-port shape, built from the same rows
+        the events page sends: every player keyed by ``str(id)``, every
+        series starting at second 0, and at least one series that moved."""
+        from matches.services import build_round_report_data
+
+        game_round = _saved_round(self.red, self.blue)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().ensure_fidelity(game_round, "full")
+        game_round.refresh_from_db()
+        self.assertGreater(game_round.events.count(), 0)
+
+        series = build_round_report_data(game_round)["chart_series"]
+
+        self.assertEqual(set(series), _SERIES_KEYS)
+        player_ids = {str(ps.player_id) for ps in game_round.player_states.all()}
+        self.assertEqual(len(player_ids), 12)
+        self.assertEqual({str(p["id"]) for p in series["players"]}, player_ids)
+        for entry in series["players"]:
+            self.assertEqual(set(entry), {"id", "name", "team"})
+            self.assertIn(entry["team"], {"red", "blue"})
+        for key in ("shots", "lives", "points", "sp"):
+            self.assertEqual(set(series[key]), player_ids, key)
+            for points in series[key].values():
+                self.assertEqual(points[0][0], 0.0, key)
+        moved = sum(
+            len(points) > 1
+            for key in ("shots", "lives", "points", "sp")
+            for points in series[key].values()
+        )
+        self.assertGreater(moved, 0, "a simulated round must move some series")
+
+    def test_report_data_chart_series_start_points_only_without_events(self) -> None:
+        """RV-05: a round with no GameEvent rows yields ``chart_series`` with
+        exactly the start point per player per series (shots at ``ss``,
+        lives at ``sl``, points 0, SP 0)."""
+        from matches.services import build_round_report_data
+
+        game_round = _saved_round(self.red, self.blue)
+        self.assertEqual(game_round.events.count(), 0)
+
+        series = build_round_report_data(game_round)["chart_series"]
+
+        self.assertEqual(set(series), _SERIES_KEYS)
+        states = list(game_round.player_states.all())
+        self.assertEqual(len(series["players"]), len(states))
+        for state in states:
+            pid = str(state.player_id)
+            self.assertEqual(series["shots"][pid], [(0.0, state.starting_shots)])
+            self.assertEqual(series["lives"][pid], [(0.0, state.starting_lives)])
+            self.assertEqual(series["points"][pid], [(0.0, 0)])
+            self.assertEqual(series["sp"][pid], [(0.0, 0)])
+        # The builder itself still performs no fidelity upgrade (the callers do).
+        game_round.refresh_from_db()
+        self.assertEqual(game_round.fidelity, "scores")
+
     def test_round_report_filename(self) -> None:
         from matches.services import round_report_filename
 
@@ -526,6 +588,15 @@ class TestViewsReExports(TestCase):
         self.assertIs(views._comparison_row, services._comparison_row)
         self.assertIs(views._cumulative_team_points, services._cumulative_team_points)
         self.assertIs(views._player_row, services._player_row)
+
+    def test_round_row_builders_live_in_services(self) -> None:
+        """RV-05 (#286): the two playback row builders the series port
+        consumes moved to ``services`` (which must not import ``views``);
+        ``views`` keeps re-exporting them for its existing importers."""
+        from matches import services, views
+
+        self.assertIs(views._round_players_data, services._round_players_data)
+        self.assertIs(views.round_playback_payload, services.round_playback_payload)
 
     def test_build_save_status_response_alias(self) -> None:
         from matches import views

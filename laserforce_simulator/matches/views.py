@@ -40,11 +40,12 @@ from .forms import (
     SingleRoundSetupForm,
     BatchSimulateForm,
 )
-from .services import (  # noqa: F401 - _comparison_row / _cumulative_team_points / _player_row re-exported
+from .services import (  # noqa: F401 - _comparison_row / _cumulative_team_points / _player_row / _round_players_data / round_playback_payload re-exported
     MatchSetupError,
     _comparison_row,
     _cumulative_team_points,
     _player_row,
+    _round_players_data,
     build_heatmap,
     build_missile_log,
     build_player_h2h,
@@ -54,6 +55,7 @@ from .services import (  # noqa: F401 - _comparison_row / _cumulative_team_point
     check_matchup,
     create_sandbox_match,
     create_sandbox_round,
+    round_playback_payload,
     round_report_filename,
     shared_team_ids,
 )
@@ -742,60 +744,9 @@ def save_batch_status(request, job_id):
     return JsonResponse(build_save_status_response(async_result))
 
 
-def _round_players_data(game_round: GameRound) -> list[dict]:
-    """The 6-key SIM-05 player rows (the ``players_data`` half of
-    ``round_playback_payload``), built without serializing any events."""
-    return [
-        {
-            "id": ps.player_id,
-            "name": ps.player.name,
-            "team": ps.team_color,
-            "role": ps.role,
-            "sl": ps.starting_lives,
-            "ss": ps.starting_shots,
-        }
-        for ps in game_round.player_states.select_related("player").all()
-    ]
-
-
-def round_playback_payload(game_round, *, include_movement: bool = True):
-    """Build the SIM-05 ``(events_data, players_data)`` JSON payload from a
-    persisted ``GameRound`` — the 13-key event shape + 6-key player shape the
-    client playback engine in ``game_round_events.html`` / ``play_week_live.html``
-    consumes. Extracted from ``game_round_events`` so the LG-01i live-watch view
-    (which replays a just-committed round) reuses the exact same serialization.
-
-    ``include_movement=False`` drops ``event_type="movement"`` rows (the live
-    watch surfaces only gameplay events on its timeline; the scoreboard
-    reconstruction ignores movement either way).
-    """
-    # UXP-06: ``team_id`` lives on the Player row, so no Team join is needed.
-    # UXP-06: GameEvent.Meta orders by timestamp only, so same-tick events came
-    # back in arbitrary order on Postgres; ``id`` is the insertion order.
-    events_qs = game_round.events.order_by("timestamp", "id").select_related(
-        "actor", "target"
-    )
-    if not include_movement:
-        events_qs = events_qs.exclude(event_type="movement")
-    events_data = [
-        {
-            "type": e.event_type,
-            "ts": e.timestamp,  # canonical ticks (1 tick = 0.5 s)
-            "tf": e.formatted_timestamp,  # mm:ss display string
-            "icon": e.get_event_icon(),
-            "desc": e.description,
-            "pts": e.points_awarded,
-            "aid": e.actor_id,
-            "an": e.actor.name,
-            "at": e.actor.team_id,
-            "tid": e.target_id if e.target_id else -1,
-            "tn": e.target.name if e.target_id else "",
-            "tt": e.target.team_id if e.target_id else "",
-            "meta": e.metadata or {},
-        }
-        for e in events_qs
-    ]
-    return events_data, _round_players_data(game_round)
+# RV-05 (#286): ``_round_players_data`` / ``round_playback_payload`` moved to
+# ``matches.services`` (the report builder consumes them there); both stay
+# importable from this module for their existing importers.
 
 
 def _build_playback_map(game_round: GameRound) -> dict | None:
@@ -993,12 +944,15 @@ def export_round_report(request, round_id: int):
     Assembles the report_data dict via ``build_round_report_data`` (scoreboard
     ordering mirrors game_round_detail exactly) and hands it to the pure
     build_round_report builder; the watermark is gated on
-    game_round.is_simulated.
+    game_round.is_simulated. RV-05: the round is upgraded to ``full``
+    fidelity first, exactly as the events page does, so the chart section is
+    drawn from the same events the page would show.
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
 
     game_round = get_owned_or_404(GameRound, request, pk=round_id)
+    BatchSimulator().ensure_fidelity(game_round, "full")
 
     pdf_bytes = build_round_report(
         build_round_report_data(game_round), watermark=game_round.is_simulated

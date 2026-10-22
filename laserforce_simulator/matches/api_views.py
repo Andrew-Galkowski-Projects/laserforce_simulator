@@ -213,8 +213,13 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="report", url_name="report")
     def report(self, request: Request, pk: str | None = None) -> HttpResponse:
-        """RV-03 round report — a raw PDF ``HttpResponse``, never enveloped."""
+        """RV-03 round report — a raw PDF ``HttpResponse``, never enveloped.
+
+        RV-05: upgrades the round to ``full`` fidelity first (as ``events``
+        does) so the PDF's chart section plots the same events.
+        """
         game_round = self.get_object()
+        BatchSimulator().ensure_fidelity(game_round, "full")
         pdf_bytes = build_round_report(
             build_round_report_data(game_round), watermark=game_round.is_simulated
         )

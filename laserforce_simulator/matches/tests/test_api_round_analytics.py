@@ -22,7 +22,7 @@ from rest_framework.test import APIClient
 from conftest import get_shared_manager
 from matches.models import GameRound
 from matches.simulation import BatchSimulator
-from matches.tests.conftest import make_team_with_slots
+from matches.tests.conftest import make_team_with_slots, pdf_image_count
 from matches.tests.test_batch_tasks import _make_minimal_arena_map
 
 User = get_user_model()
@@ -255,11 +255,64 @@ class TestRoundReport(_AnalyticsTestCase):
         response = self.get(f"/api/rounds/{game_round.pk}/report/")
         self.assertFalse(response.content.lstrip().startswith(b"{"))
 
-    def test_report_does_not_upgrade_fidelity(self) -> None:
+    def test_report_upgrades_scores_round_to_full(self) -> None:
+        """RV-05 (#286): the report action upgrades a ``scores``-tier round to
+        ``full`` (gaining events) before building, as the events action does.
+        Replaces the RV-03 ``test_report_does_not_upgrade_fidelity``."""
         game_round = _saved_round(self.red, self.blue)
-        self.get(f"/api/rounds/{game_round.pk}/report/")
+        self.assertEqual(game_round.events.count(), 0)
+        response = self.get(f"/api/rounds/{game_round.pk}/report/")
+        self.assertEqual(response.status_code, 200)
         game_round.refresh_from_db()
-        self.assertEqual(game_round.fidelity, "scores")
+        self.assertEqual(game_round.fidelity, "full")
+        self.assertGreater(game_round.events.count(), 0)
+        self.assertEqual(pdf_image_count(response.content), 4)
+
+    def test_report_for_round_with_events_embeds_four_images(self) -> None:
+        """RV-05: a ``full`` round with events streams a PDF with the four
+        chart images after the tables."""
+        game_round = _saved_round(self.red, self.blue)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            BatchSimulator().ensure_fidelity(game_round, "full")
+        game_round.refresh_from_db()
+        self.assertGreater(game_round.events.count(), 0)
+        response = self.get(f"/api/rounds/{game_round.pk}/report/")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.content.startswith(b"%PDF"))
+        self.assertEqual(pdf_image_count(response.content), 4)
+
+    def test_report_for_round_without_events_embeds_four_images(self) -> None:
+        """RV-05: a hand-built round (no snapshot, so no upgrade possible, no
+        events) still streams four charts with empty axes."""
+        game_round = GameRound.objects.create(
+            round_number=1, team_red=self.red, team_blue=self.blue
+        )
+        response = self.get(f"/api/rounds/{game_round.pk}/report/")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(game_round.events.count(), 0)
+        self.assertEqual(pdf_image_count(response.content), 4)
+
+    def test_report_watermark_follows_is_simulated(self) -> None:
+        """RV-05: the action still passes ``watermark=game_round.is_simulated``
+        to the builder, alongside report data carrying ``chart_series``."""
+        from matches.sim_helpers.pdf_report import build_round_report
+
+        seen = []
+        for flag in (True, False):
+            game_round = GameRound.objects.create(
+                round_number=1, team_red=self.red, team_blue=self.blue
+            )
+            game_round.is_simulated = flag
+            game_round.save()
+            with patch(
+                "matches.api_views.build_round_report", wraps=build_round_report
+            ) as spy:
+                response = self.get(f"/api/rounds/{game_round.pk}/report/")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(spy.call_count, 1)
+            self.assertIsNotNone(spy.call_args.args[0]["chart_series"])
+            seen.append(spy.call_args.kwargs["watermark"])
+        self.assertEqual(seen, [True, False])
 
     def test_report_slug_falls_back_for_unsluggable_names(self) -> None:
         self.red.name = "!!!"
