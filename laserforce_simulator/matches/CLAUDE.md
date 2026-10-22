@@ -78,7 +78,7 @@ Inventory: `docs/agents/matches/tests.md`.
 Paths below are relative to the repo root.
 
 - Engine, `BatchSimulator`, models' field history, TIME-01 ticks, roles, shot resolver, EventLog, Score Calibration, GEN-01 fidelity tiers — `docs/agents/matches/simulation-engine.md`
-- REST API endpoints, ANG-01b match/round actions, ANG-01d-1 league lifecycle API, ANG-01e league screens API, ANG-01f tournaments API, ANG-02 CORS, ANG-03 JWT auth / token endpoints, full API conventions — `docs/agents/matches/api.md`
+- REST API endpoints, ANG-01b match/round actions, ANG-06c team / winner names + Match totals on the match/round serializers and the `?single_round=` filter, ANG-01d-1 league lifecycle API, ANG-01e league screens API, ANG-01f tournaments API, ANG-02 CORS, ANG-03 JWT auth / token endpoints, full API conventions — `docs/agents/matches/api.md`
 - URL table (`/matches/`, `/api/`) — `docs/agents/matches/urls.md`
 - Celery, batch jobs, Job status, polling JSON (API-03), task connection cleanup + close-in-transaction test guard (CI-01) — `docs/agents/matches/async-celery.md`
 - Round pages, event log windowing, playback map, heatmap, round compare, highlights, PDF report + charts (RV-03, RV-05), head-to-head — `docs/agents/matches/round-views-and-analytics.md`

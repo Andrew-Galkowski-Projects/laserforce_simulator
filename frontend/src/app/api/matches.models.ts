@@ -34,6 +34,15 @@ export interface Match {
   team_red: number;
   team_blue: number;
   winner: number | null;
+  team_red_name: string;
+  team_blue_name: string;
+  /** null when `winner` is null (a tie, or a Match not finished yet). */
+  winner_name: string | null;
+  /** The `Match` properties: round 1 + round 2 + elimination bonus. */
+  red_total_points: number;
+  blue_total_points: number;
+  red_rounds_won: number;
+  blue_rounds_won: number;
   season: number | null;
   season_phase: number | null;
   conference: number | null;

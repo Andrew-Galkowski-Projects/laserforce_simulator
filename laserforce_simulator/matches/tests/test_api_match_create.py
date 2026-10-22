@@ -42,6 +42,10 @@ _GAME_ROUND_DETAIL_KEYS = {
     "eliminated_at",
     "winner",
     "is_completed",
+    # ANG-06c: the three name fields joined the detail contract.
+    "team_red_name",
+    "team_blue_name",
+    "winner_name",
     "player_states",
 }
 
@@ -124,6 +128,29 @@ class TestMatchCreate(_CreateTestCase):
         self.assertEqual(data["team_blue"], self.blue.pk)
         self.assertEqual(data["match_type"], "friendly")
         self.assertEqual(len(data["round_ids"]), 2)
+
+    def test_create_carries_names_and_totals(self) -> None:
+        """ANG-06c: the 201 body carries the names and the four totals, which
+        equal the saved Match's properties (no simulated total is asserted)."""
+        response = self._post(
+            {
+                "team_red": self.red.pk,
+                "team_blue": self.blue.pk,
+                "match_type": "friendly",
+            }
+        )
+        self.assertEqual(response.status_code, 201, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["team_red_name"], "CreateRed Team")
+        self.assertEqual(data["team_blue_name"], "CreateBlue Team")
+        match = Match.objects.get(pk=data["id"])
+        self.assertEqual(
+            data["winner_name"], match.winner.name if match.winner else None
+        )
+        self.assertEqual(data["red_total_points"], match.red_total_points)
+        self.assertEqual(data["blue_total_points"], match.blue_total_points)
+        self.assertEqual(data["red_rounds_won"], match.red_rounds_won)
+        self.assertEqual(data["blue_rounds_won"], match.blue_rounds_won)
 
     def test_create_stamps_requesting_account(self) -> None:
         response = self._post(
@@ -348,6 +375,19 @@ class TestRoundCreate(_CreateTestCase):
         self.assertEqual(data["team_red"], self.red.pk)
         self.assertEqual(data["team_blue"], self.blue.pk)
         self.assertEqual(len(data["player_states"]), 12)
+
+    def test_create_carries_team_and_winner_names(self) -> None:
+        """ANG-06c: the 201 body names both Teams and the winner (null on a
+        tie), matching the saved Round."""
+        response = self._post({"team_red": self.red.pk, "team_blue": self.blue.pk})
+        self.assertEqual(response.status_code, 201, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["team_red_name"], "CreateRed Team")
+        self.assertEqual(data["team_blue_name"], "CreateBlue Team")
+        game_round = GameRound.objects.get(pk=data["id"])
+        self.assertEqual(
+            data["winner_name"], game_round.winner.name if game_round.winner else None
+        )
 
     def test_create_stamps_requesting_account(self) -> None:
         response = self._post({"team_red": self.red.pk, "team_blue": self.blue.pk})

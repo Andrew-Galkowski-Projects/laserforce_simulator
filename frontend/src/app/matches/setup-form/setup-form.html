@@ -1,0 +1,84 @@
+<h1>{{ kind === 'match' ? 'New Match' : 'New Single Round' }}</h1>
+<section class="setup">
+  @if (noValidTeams()) {
+    <p>You need at least one Team with a valid roster before you can simulate.</p>
+    <a mat-flat-button routerLink="/teams">Go to Teams</a>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="simulate()" novalidate>
+      @for (message of nonFieldErrors(); track $index) {
+        <p class="setup__error" role="alert">{{ message }}</p>
+      }
+      <div class="setup__row">
+        <mat-form-field appearance="outline" data-lf-side="red">
+          <mat-label>Red Team</mat-label>
+          <mat-select formControlName="team_red">
+            @for (team of teams(); track team.id) {
+              <mat-option [value]="team.id" [disabled]="!team.is_valid_roster">
+                {{ teamLabel(team) }}
+              </mat-option>
+            }
+          </mat-select>
+          @if (form.controls.team_red.hasError('required')) {
+            <mat-error>{{ requiredMessage }}</mat-error>
+          } @else if (form.controls.team_red.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+        <mat-form-field appearance="outline" data-lf-side="blue">
+          <mat-label>Blue Team</mat-label>
+          <mat-select formControlName="team_blue">
+            @for (team of teams(); track team.id) {
+              <mat-option [value]="team.id" [disabled]="!team.is_valid_roster">
+                {{ teamLabel(team) }}
+              </mat-option>
+            }
+          </mat-select>
+          @if (form.controls.team_blue.hasError('required')) {
+            <mat-error>{{ requiredMessage }}</mat-error>
+          } @else if (form.controls.team_blue.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      </div>
+      <div class="setup__row">
+        @if (kind === 'match') {
+          <mat-form-field appearance="outline">
+            <mat-label>Match type</mat-label>
+            <mat-select formControlName="match_type">
+              @for (choice of matchTypes; track choice.value) {
+                <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+              }
+            </mat-select>
+            <mat-hint>Tournament matches are best of 2 rounds with team color switching</mat-hint>
+            @if (form.controls.match_type.getError('server'); as message) {
+              <mat-error>{{ message }}</mat-error>
+            }
+          </mat-form-field>
+        }
+        <mat-form-field appearance="outline">
+          <mat-label>Arena Map</mat-label>
+          <mat-select formControlName="arena_map" canSelectNullableOptions>
+            <mat-option [value]="null">No map (3-zone fallback)</mat-option>
+            @for (arenaMap of maps(); track arenaMap.id) {
+              <mat-option [value]="arenaMap.id">{{ arenaMap.name }}</mat-option>
+            }
+          </mat-select>
+          <mat-hint>Only maps with a confirmed zone config appear here</mat-hint>
+          @if (form.controls.arena_map.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      </div>
+      <div class="setup__actions">
+        <button mat-flat-button type="submit" [disabled]="busy()">
+          @if (busy()) {
+            Simulating...
+          } @else {
+            {{ kind === 'match' ? 'Simulate Match' : 'Simulate Round' }}
+          }
+        </button>
+        <a mat-button routerLink="/matches">Cancel</a>
+      </div>
+    </form>
+  }
+</section>

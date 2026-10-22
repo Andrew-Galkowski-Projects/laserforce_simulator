@@ -8,6 +8,11 @@ import { signIn } from './api/testing/auth-fixtures';
 import { releaseTeamsLoads } from './teams/testing/teams-loads';
 import { routes } from './app.routes';
 import { authInterceptor } from './auth/auth.interceptor';
+import { MatchDetail } from './matches/match-detail/match-detail';
+import { MatchList } from './matches/match-list/match-list';
+import { RoundDetail } from './matches/round-detail/round-detail';
+import { SetupForm } from './matches/setup-form/setup-form';
+import { releaseMatchesLoads } from './matches/testing/matches-loads';
 import { RosterImport } from './teams/roster-import/roster-import';
 import { TeamCreate } from './teams/team-create/team-create';
 import { TeamDetail } from './teams/team-detail/team-detail';
@@ -32,6 +37,7 @@ describe('app routes', () => {
 
   afterEach(() => {
     releaseTeamsLoads();
+    releaseMatchesLoads();
     http.verify();
   });
 
@@ -115,6 +121,58 @@ describe('app routes', () => {
       expect(harness.routeNativeElement?.querySelector('h1')?.textContent?.trim()).toBe(heading);
       expect(TestBed.inject(Title).getTitle()).toBe(`${heading} - Laserforce Simulator`);
     });
+  });
+
+  describe('signed in, Matches area', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    /** The `data` of the deepest activated route (what the routed screen reads). */
+    function leafData(): Record<string, unknown> {
+      let route = TestBed.inject(Router).routerState.snapshot.root;
+      while (route.firstChild) route = route.firstChild;
+      return route.data;
+    }
+
+    it.each([
+      ['/matches', MatchList, 'Match History - Laserforce Simulator'],
+      ['/matches/7', MatchDetail, 'Match - Laserforce Simulator'],
+      ['/rounds/9', RoundDetail, 'Single Round - Laserforce Simulator'],
+    ])('resolves %s to its screen and page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
+
+    it.each([
+      ['/matches/new', 'match', MatchDetail, 'New Match - Laserforce Simulator'],
+      ['/rounds/new', 'round', RoundDetail, 'New Single Round - Laserforce Simulator'],
+    ])(
+      'resolves %s to the setup form (kind %s), not to a detail page',
+      async (url, kind, detail, title) => {
+        const harness = await RouterTestingHarness.create();
+        await harness.navigateByUrl(url);
+        expect(routerUrl()).toBe(url);
+        expect(harness.fixture.debugElement.query(By.directive(SetupForm))).not.toBeNull();
+        expect(harness.fixture.debugElement.query(By.directive(detail))).toBeNull();
+        expect(leafData()['kind']).toBe(kind);
+        expect(TestBed.inject(Title).getTitle()).toBe(title);
+      },
+    );
+  });
+
+  describe('signed out, Matches area', () => {
+    it.each(['/matches', '/matches/new', '/matches/7', '/rounds/new', '/rounds/9'])(
+      'sends %s to /login with a returnUrl',
+      async (url) => {
+        const harness = await RouterTestingHarness.create();
+        await harness.navigateByUrl(url);
+        expect(routerUrl()).toBe(`/login?returnUrl=${encodeURIComponent(url)}`);
+      },
+    );
   });
 
   describe('signed out, bulk screens', () => {

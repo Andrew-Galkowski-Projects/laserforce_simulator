@@ -1,0 +1,63 @@
+// New Match / New Single Round: a bordered surface card, the same as the Team forms.
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+.setup {
+  max-width: 48rem;
+  padding: 1.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setup__row {
+  display: grid;
+  grid-template-columns: 1fr;
+  column-gap: 1rem;
+  row-gap: 0.5rem;
+}
+
+@media (min-width: 768px) {
+  .setup__row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+// Each team picker carries its Side: a 4px Side border, as on the layout B team strips.
+[data-lf-side] {
+  padding-left: 0.75rem;
+  border-left: 4px solid var(--side);
+}
+
+.setup__error {
+  margin: 0 0 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.setup__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+p {
+  margin: 0 0 1rem;
+}

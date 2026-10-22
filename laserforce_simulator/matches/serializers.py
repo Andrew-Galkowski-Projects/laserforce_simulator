@@ -43,15 +43,29 @@ class PlayerRoundStateSerializer(serializers.ModelSerializer):
         exclude = ["game_round"]
 
 
-class GameRoundListSerializer(serializers.ModelSerializer):
+class _TeamNamesMixin(serializers.Serializer):
+    """ANG-06c — read-only ``team_red_name`` / ``team_blue_name`` /
+    ``winner_name`` (null when ``winner`` is null) for Match and GameRound."""
+
+    team_red_name = serializers.CharField(source="team_red.name", read_only=True)
+    team_blue_name = serializers.CharField(source="team_blue.name", read_only=True)
+    winner_name = serializers.CharField(
+        source="winner.name", read_only=True, allow_null=True
+    )
+
+
+_TEAM_NAME_FIELDS = ["team_red_name", "team_blue_name", "winner_name"]
+
+
+class GameRoundListSerializer(_TeamNamesMixin, serializers.ModelSerializer):
     """Slim round serializer for list responses — omits player_states."""
 
     class Meta:
         model = GameRound
-        fields = _GAME_ROUND_FIELDS
+        fields = _GAME_ROUND_FIELDS + _TEAM_NAME_FIELDS
 
 
-class GameRoundSerializer(serializers.ModelSerializer):
+class GameRoundSerializer(_TeamNamesMixin, serializers.ModelSerializer):
     """Full round detail including all player states."""
 
     player_states = PlayerRoundStateSerializer(many=True, read_only=True)
@@ -59,13 +73,18 @@ class GameRoundSerializer(serializers.ModelSerializer):
     class Meta:
         model = GameRound
         # event_log is a legacy text dump; structured data is served via /events/
-        fields = _GAME_ROUND_FIELDS + ["player_states"]
+        fields = _GAME_ROUND_FIELDS + _TEAM_NAME_FIELDS + ["player_states"]
 
 
-class MatchSerializer(serializers.ModelSerializer):
+class MatchSerializer(_TeamNamesMixin, serializers.ModelSerializer):
     round_ids = serializers.PrimaryKeyRelatedField(
         many=True, read_only=True, source="game_rounds"
     )
+    # ANG-06c — the existing Match properties, never re-derived here.
+    red_total_points = serializers.IntegerField(read_only=True)
+    blue_total_points = serializers.IntegerField(read_only=True)
+    red_rounds_won = serializers.IntegerField(read_only=True)
+    blue_rounds_won = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Match

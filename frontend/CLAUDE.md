@@ -3,7 +3,8 @@
 The Phase 8 replacement for the Django templates. The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
 layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
-below 768px) behind `authGuard`, and the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b), on top of the client
+below 768px) behind `authGuard`, the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
+Matches area (ANG-06c: Match History, New Match / New Single Round, detail stubs), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -18,6 +19,8 @@ auth** below.
   following the OS light/dark setting. See **Theme** below and
   [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md).
 - **Vitest** through the `@angular/build:unit-test` builder (`ng test`), on jsdom.
+  `vitest-base.config.mts` (wired by `runnerConfig` in `angular.json`) only raises `testTimeout`
+  to 15 s: under the full parallel run a heavy route spec's first render passed 5 s (ANG-06c).
 - **ESLint** (`angular-eslint`, `eslint.config.js`) and **Prettier** (`.prettierrc`, print width
   100, single quotes, `endOfLine: auto`). Both are enforced in CI.
 - **Node 24** (`.nvmrc`, `engines.node >=24`), npm only, `package-lock.json` committed.
@@ -75,7 +78,9 @@ src/
     app-title.ts          APP_TITLE, shared by the header and the route titles
     app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
     app.routes.ts         'login' (signedOutGuard, lazy) | '' -> lazy Shell behind authGuard:
-                          '' -> /teams, 'teams' -> lazy teams/teams.routes.ts | '**' -> ''
+                          '' -> /teams, 'teams' -> lazy teams/teams.routes.ts,
+                          'matches' / 'rounds' -> lazy matches/matches.routes.ts
+                          (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk) | '**' -> ''
     shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
                           over drawer below); toolbar colours via mat.toolbar-overrides
     login/                sign-in form; returnUrl honoured only when it is an in-app path
@@ -93,6 +98,14 @@ src/
                           notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
                           team-name-form.ts, form-errors.ts (applyApiErrors, GENERIC_ERROR_MESSAGE), team-page.scss,
                           team-form.scss; testing/teams-loads.ts (releaseTeamsLoads, specs only)
+    matches/              matches.routes.ts: /matches (match-list: Match History, two server-paged
+                          tables, each row's teams-cell <a> stretched over the row), /matches/new +
+                          /rounds/new (setup-form, route data kind 'match' | 'round'; also uses
+                          teams/shared/form-errors), /matches/:id + /rounds/:id (match-detail,
+                          round-detail: summary stubs until ANG-06 item 4); shared/: result.ts
+                          (matchResult / roundResult: winner, "Tie", muted "In progress"),
+                          result-chip, result-summary, route-record.ts (loadRouteRecord),
+                          record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures
