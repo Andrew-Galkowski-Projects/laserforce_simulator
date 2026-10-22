@@ -47,6 +47,7 @@ from matches.sim_helpers.weights import (
     apply_decision_making_spread,
     check_stamina_penalty,
     finalize_action_weights,
+    _HIDE_IDX,
 )
 from matches.sim_helpers.combat import (
     plan_action,
@@ -924,7 +925,7 @@ def test_plan_action_low_lives_medic_with_zero_synergy_hides() -> None:
     assert actions[0]["type"] == "hide"
 
 
-def test_plan_action_negative_total_on_cooldown_hides() -> None:
+def test_plan_action_negative_total_on_cooldown_draws_from_clamped_slots() -> None:
     """A negative bucket can drive the raw total below 0; the draw must not raise.
 
     Commander with a charged nuke and 6 active enemies in its zone (only
@@ -964,7 +965,7 @@ def test_plan_action_negative_total_on_cooldown_hides() -> None:
         last_shot_time=0.8,
     )
     plan_action(commander, [commander, *enemies], 1.0)
-    assert commander.last_chosen_action in ("missile_player", "hold")
+    assert commander.last_chosen_action == "missile_player"  # seed 42 is deterministic
 
 
 @pytest.mark.parametrize("role", ["medic", "ammo", "scout", "heavy", "commander"])
@@ -1023,6 +1024,11 @@ def test_finalize_action_weights_all_zero_or_negative_hides() -> None:
         0,
     ]
     assert finalize_action_weights([0] * 9) == [0, 0, 1, 0, 0, 0, 0, 0, 0]
+
+
+def test_finalize_action_weights_hide_index_matches_combat_layout() -> None:
+    """``weights._HIDE_IDX`` mirrors ``combat._ACTION_IDX["hide"]`` (weights.py cannot import combat)."""
+    assert _HIDE_IDX == _COMBAT_ACTION_IDX["hide"]
 
 
 def test_finalize_action_weights_positive_vector_is_identical() -> None:
