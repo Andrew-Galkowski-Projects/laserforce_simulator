@@ -46,6 +46,8 @@ from matches.sim_helpers.weights import (
     _get_commander_weights,
     apply_decision_making_spread,
     check_stamina_penalty,
+    finalize_action_weights,
+    _HIDE_IDX,
 )
 from matches.sim_helpers.combat import (
     plan_action,
@@ -423,13 +425,11 @@ class TestWeightFunctions:
     def test_heavy_with_missiles_drives_only_move_negative(self):
         """Heavy with missiles available: tag/missile split, but only_move goes negative.
 
-        KNOWN PRE-EXISTING (not a SIM-01 regression): with the 9-slot array the
-        hold draw takes 20 off only_move (25 -> 5) BEFORE the missile branch
-        takes a further 15 (5 -> -10). The role function therefore returns
-        only_move = -10. Production tolerates this because ``random.choices``
-        only requires the *total* weight to be > 0, not each element >= 0 (a
-        single negative bucket is simply unreachable in the cumulative-weight
-        bisect). See ``test_plan_action_never_raises_*`` for the true invariant.
+        With the 9-slot array the hold draw takes 20 off only_move (25 -> 5)
+        BEFORE the missile branch takes a further 15 (5 -> -10). The role
+        function therefore returns only_move = -10; ``plan_action`` clamps it
+        to 0 via ``finalize_action_weights`` (SIM-12, pinned at both layers by
+        ``test_heavy_missile_branch_only_move_is_negative_raw_and_clamped``).
         We assert only the meaningful indices here, not a full vector that would
         bake in the -10.
         """
@@ -444,8 +444,10 @@ class TestWeightFunctions:
         """Heavy in opposing zone takes the base instead of engaging in direct fire.
 
         only_move goes negative again here (5 after hold draw, minus 10
-        base_capture_cz_cost → -5); same pre-existing tolerance as the missile
-        branch. Assert the meaningful indices, not a -5-bearing full vector.
+        base_capture_cz_cost → -5); clamped to 0 in ``plan_action`` like the
+        missile branch (SIM-12, see
+        ``test_heavy_capture_branch_only_move_is_negative_raw_and_clamped``).
+        Assert the meaningful indices, not a -5-bearing full vector.
         """
         s = self._state(
             self.gr,
@@ -546,9 +548,10 @@ class TestWeightFunctions:
     def test_commander_with_missiles_drives_only_move_negative(self):
         """Commander prioritises launching available missiles; only_move goes negative.
 
-        KNOWN PRE-EXISTING (not a SIM-01 regression): the hold draw takes 10 off
-        only_move (15 -> 5) then the missile branch takes 15 (5 -> -10). Same
-        ``random.choices`` total-only tolerance as the heavy missile branch.
+        The hold draw takes 10 off only_move (15 -> 5) then the missile branch
+        takes 15 (5 -> -10). Clamped to 0 in ``plan_action`` like the heavy
+        missile branch (SIM-12, see
+        ``test_commander_missile_branch_only_move_is_negative_raw_and_clamped``).
         Assert meaningful indices, not the -10-bearing full vector.
         """
         s = self._state(
@@ -668,19 +671,15 @@ class TestWeightFunctions:
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
         assert w[_ACTION_IDX["capture_base"]] == 5
 
-    def test_scout_shots_critical_tag_goes_negative_xfail(self):
-        """Scout shots-critical drives tag_player negative in the raw role vector.
+    def test_scout_shots_critical_tag_is_negative_raw_and_clamped_to_zero(self):
+        """SIM-12 pin: Scout shots-critical, no Ammo ally -- raw tag -10, final 0.
 
         ``_SCOUT["seek_no_ammo_tag"] = 50`` exceeds the post-baseline tag_player
         (40) when the scout is shots-critical with no ammo ally, so the raw role
-        function returns tag_player = -10. This is xfailed at the ROLE-FUNCTION
-        layer only — it is a pre-existing weight imbalance (predates SIM-01 /
-        MOVE-03; hold is sourced from only_move for Scout, never tag_player).
-
-        It does NOT crash production: ``plan_action`` keeps the *total* weight
-        positive so ``random.choices`` never raises, and the negative tag bucket
-        is simply unreachable. The true production-path invariant is asserted,
-        non-xfailed, by ``test_plan_action_never_raises_across_state_combos``.
+        function returns tag_player = -10 (hold is sourced from only_move for
+        Scout, never tag_player). ``plan_action`` clamps that slot to 0 through
+        ``finalize_action_weights``; both layers are asserted here so a change
+        to either the constant or the clamp is caught at this branch.
         """
         scout = self._state(
             self.gr,
@@ -690,14 +689,10 @@ class TestWeightFunctions:
             final_lives=30,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
-        if w[_ACTION_IDX["tag_player"]] < 0:
-            pytest.xfail(
-                "pre-existing Scout seek_no_ammo_tag (50) > post-baseline "
-                "tag_player (40) when shots-critical (see sim_helpers/CLAUDE.md "
-                "'Known pre-existing test failure'); production-path "
-                "non-raising is covered separately"
-            )
-        assert w[_ACTION_IDX["tag_player"]] >= 0
+        assert w[_ACTION_IDX["tag_player"]] == -10
+        final = finalize_action_weights(w)
+        assert final[_ACTION_IDX["tag_player"]] == 0
+        assert final[_ACTION_IDX["hide"]] == w[_ACTION_IDX["hide"]]  # untouched
 
 
 # --------------------------------------------------------------------------- #
@@ -710,13 +705,14 @@ class TestWeightFunctions:
 # genuine production invariant is "plan_action never raises" (total > 0), which
 # this test pins across every role and the targeted edge states.
 #
-# We deliberately do NOT assert "every weight >= 0": Heavy/Commander with
-# missiles available, Heavy capturing, and Scout shots-critical all legitimately
-# produce a single negative slot in production today (documented above). Pinning
-# "all >= 0" would contradict shipping behaviour. These tests build in-memory
-# ``PlayerState`` objects (no @pytest.mark.django_db, no ORM) and mirror
-# plan_action's exact post-role pipeline so the internal vector is inspectable.
-# RNG is seeded for determinism.
+# SIM-12 strengthens that to "every weight >= 0": the role functions still emit
+# a single negative slot on some branches (Heavy/Commander with missiles
+# available, Heavy capturing, Scout shots-critical -- pinned per branch below),
+# but ``plan_action`` now clamps the final vector through
+# ``finalize_action_weights`` before the draw, and the pipeline twin calls the
+# same helper. These tests build in-memory ``PlayerState`` objects (no
+# @pytest.mark.django_db, no ORM) and mirror plan_action's exact post-role
+# pipeline so the internal vector is inspectable. RNG is seeded for determinism.
 # --------------------------------------------------------------------------- #
 
 _ROLE_WEIGHT_FN = {
@@ -813,9 +809,10 @@ def _plan_action_internal_weights(player, all_alive, second):
     Mirrors combat.plan_action exactly (seconds time_domain): baseline copy →
     check_stamina_penalty → role weight fn → stamina-penalty only_move scaling →
     shot-cooldown tag zeroing (with the all-zero hide=1 guard) →
-    apply_decision_making_spread. Lets us inspect the vector random.choices sees.
-    It deliberately omits plan_action's final UXP-23 zero-total hide fallback, so
-    it returns the raw vector (identical to plan_action's whenever the total > 0).
+    apply_decision_making_spread → ``finalize_action_weights`` (SIM-12: clamp
+    every slot to >= 0, then the UXP-23 all-zero -> hide = 1 fallback). The
+    last step is the shared production helper, not a re-implementation, so the
+    twin returns exactly the vector plan_action hands to ``random.choices``.
 
     DRIFT GUARD: this duplicates combat.plan_action's pipeline. If plan_action
     changes, update here too — the sibling ``test_plan_action_never_raises_*``
@@ -842,7 +839,7 @@ def _plan_action_internal_weights(player, all_alive, second):
     weights = apply_decision_making_spread(
         weights, getattr(player, "decision_making", 50)
     )
-    return weights
+    return finalize_action_weights(weights)
 
 
 @pytest.mark.parametrize("role", ["medic", "ammo", "scout", "heavy", "commander"])
@@ -852,9 +849,9 @@ def test_plan_action_total_weight_is_positive(role, state_name):
 
     This is the inspectable form of ``test_plan_action_never_raises_*`` — it
     reconstructs plan_action's exact internal weight vector and asserts the
-    invariant random.choices actually enforces. (We assert total > 0, NOT every
-    element >= 0, because Heavy/Commander-with-missiles and Scout-shots-critical
-    legitimately carry a single negative slot in production today.)
+    invariant random.choices actually enforces. The stronger per-slot
+    invariant (every element >= 0, SIM-12) is pinned by the sibling
+    ``test_plan_action_every_weight_is_non_negative``.
     """
     random.seed(42)
     player = _make_player_state(role, **_EDGE_STATES[state_name])
@@ -863,6 +860,26 @@ def test_plan_action_total_weight_is_positive(role, state_name):
     assert (
         sum(weights) > 0
     ), f"{role}/{state_name} produced non-positive total: {weights}"
+
+
+@pytest.mark.parametrize("role", ["medic", "ammo", "scout", "heavy", "commander"])
+@pytest.mark.parametrize("state_name", list(_EDGE_STATES))
+def test_plan_action_every_weight_is_non_negative(role: str, state_name: str) -> None:
+    """SIM-12: every slot of the vector random.choices sees is >= 0.
+
+    Strengthens ``test_plan_action_total_weight_is_positive`` (which stays):
+    a negative slot is no longer tolerated as "unreachable", because CPython's
+    cumulative-weight bisect lets it skew the neighbouring buckets. The twin
+    ends with ``finalize_action_weights``, exactly as ``plan_action`` does.
+    """
+    random.seed(42)
+    player = _make_player_state(role, **_EDGE_STATES[state_name])
+    weights = _plan_action_internal_weights(player, [player], 1.0)
+    assert len(weights) == 9
+    negative = [idx for idx, w in enumerate(weights) if w < 0]
+    assert (
+        not negative
+    ), f"{role}/{state_name} has negative slot(s) {negative}: {weights}"
 
 
 # --------------------------------------------------------------------------- #
@@ -908,13 +925,19 @@ def test_plan_action_low_lives_medic_with_zero_synergy_hides() -> None:
     assert actions[0]["type"] == "hide"
 
 
-def test_plan_action_negative_total_on_cooldown_hides() -> None:
-    """A negative bucket can drive the total below 0, which ``sum == 0`` misses.
+def test_plan_action_negative_total_on_cooldown_draws_from_clamped_slots() -> None:
+    """A negative bucket can drive the raw total below 0; the draw must not raise.
 
     Commander with a charged nuke and 6 active enemies in its zone (only
     possible on the 3-zone fallback): use_special = int((100 - 20*6) * 2) = -40,
     only_move is -10 while missiles remain, and the shot cooldown zeroes
-    tag_player, so the total is -25.
+    tag_player, so the raw total is -25 -- the UXP-23 League 500.
+
+    SIM-12: ``finalize_action_weights`` clamps the two negative buckets to 0
+    before the draw, so the vector is legitimately positive (missile_player and
+    hold survive) and the hide fallback no longer fires here -- the fallback is
+    now reserved for an all-zero vector (see the Medic test above). The draw is
+    therefore from the surviving positive slots only.
     """
     random.seed(42)
     commander = _make_player_state(
@@ -925,8 +948,24 @@ def test_plan_action_negative_total_on_cooldown_hides() -> None:
         last_shot_time=0.8,
     )
     enemies = [_blue_enemy(i) for i in range(6)]
+    final = _plan_action_internal_weights(commander, [commander, *enemies], 1.0)
+    assert final[_COMBAT_ACTION_IDX["use_special"]] == 0
+    assert final[_COMBAT_ACTION_IDX["only_move"]] == 0
+    assert final[_COMBAT_ACTION_IDX["tag_player"]] == 0
+    assert final[_COMBAT_ACTION_IDX["hide"]] == 0  # fallback did not fire
+    assert final[_COMBAT_ACTION_IDX["missile_player"]] > 0
+    assert final[_COMBAT_ACTION_IDX["hold"]] > 0
+
+    random.seed(42)
+    commander = _make_player_state(
+        "commander",
+        final_special=99,
+        special_usage=100,
+        missiles_landed=0,
+        last_shot_time=0.8,
+    )
     plan_action(commander, [commander, *enemies], 1.0)
-    assert commander.last_chosen_action == "hide"
+    assert commander.last_chosen_action == "missile_player"  # seed 42 is deterministic
 
 
 @pytest.mark.parametrize("role", ["medic", "ammo", "scout", "heavy", "commander"])
@@ -956,3 +995,109 @@ def test_plan_action_positive_total_choice_and_rng_unchanged(
     plan_action(player, [player], 1.0)
     assert player.last_chosen_action == expected
     assert random.random() == expected_next
+
+
+# --------------------------------------------------------------------------- #
+# SIM-12: ``finalize_action_weights`` is the single clamp-then-fallback step
+# that both ``plan_action`` and the pipeline twin above run immediately before
+# ``random.choices``. These tests pin it at the seam: the vector it returns.
+# --------------------------------------------------------------------------- #
+
+
+def test_finalize_action_weights_clamps_one_negative_slot() -> None:
+    """A single negative slot becomes 0; every other slot is returned unchanged."""
+    raw = [70, -10, 5, 0, 0, 0, 15, 0, 20]
+    assert finalize_action_weights(raw) == [70, 0, 5, 0, 0, 0, 15, 0, 20]
+
+
+def test_finalize_action_weights_all_zero_or_negative_hides() -> None:
+    """With nothing positive left the UXP-23 fallback yields hide = 1, all else 0."""
+    assert finalize_action_weights([0, -10, 0, 0, -40, 0, 0, 0, 0]) == [
+        0,
+        0,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+    ]
+    assert finalize_action_weights([0] * 9) == [0, 0, 1, 0, 0, 0, 0, 0, 0]
+
+
+def test_finalize_action_weights_hide_index_matches_combat_layout() -> None:
+    """``weights._HIDE_IDX`` mirrors ``combat._ACTION_IDX["hide"]`` (weights.py cannot import combat)."""
+    assert _HIDE_IDX == _COMBAT_ACTION_IDX["hide"]
+
+
+def test_finalize_action_weights_positive_vector_is_identical() -> None:
+    """A vector with no negative slot comes back value-for-value identical."""
+    raw = list(BASELINE_ACTION_WEIGHTS)
+    assert finalize_action_weights(raw) == [70, 30, 0, 0, 0, 0, 0, 0, 0]
+
+
+def test_finalize_action_weights_returns_new_list_and_leaves_input_untouched() -> None:
+    """The helper is pure: it returns a new list and does not mutate its argument."""
+    raw = [70, -10, 5, 0, 0, 0, 15, 0, 20]
+    out = finalize_action_weights(raw)
+    assert out is not raw
+    assert raw == [70, -10, 5, 0, 0, 0, 15, 0, 20]
+
+
+# Per-branch pins: each asserts BOTH layers -- the raw role-function slot is
+# negative (the subtraction site is unchanged) AND the finalized slot is 0.
+# The Scout shots-critical pin lives in TestWeightFunctions (it replaced the
+# runtime xfail there).
+
+
+def _raw_role_weights(player: PlayerState) -> list[int]:
+    """Run only the role weight function on a fresh baseline (no post-processing)."""
+    return _ROLE_WEIGHT_FN[player.role](
+        player, _COMBAT_ACTION_IDX, list(BASELINE_ACTION_WEIGHTS), [player], 1.0
+    )
+
+
+def test_heavy_missile_branch_only_move_is_negative_raw_and_clamped() -> None:
+    """Heavy with missiles remaining: raw only_move -10, finalized 0.
+
+    Hold draws 20 off only_move (25 -> 5), then the missile branch takes
+    ``_HEAVY["missile_cz_cost"]`` = 15 (5 -> -10).
+    """
+    heavy = _make_player_state("heavy", missiles_landed=0)
+    raw = _raw_role_weights(heavy)
+    assert raw[_COMBAT_ACTION_IDX["only_move"]] == -10
+    final = finalize_action_weights(raw)
+    assert final[_COMBAT_ACTION_IDX["only_move"]] == 0
+    assert final[_COMBAT_ACTION_IDX["missile_player"]] == 15
+
+
+def test_commander_missile_branch_only_move_is_negative_raw_and_clamped() -> None:
+    """Commander with missiles remaining: raw only_move -10, finalized 0.
+
+    Hold draws 10 off only_move (15 -> 5), then the missile branch takes
+    ``_COMMANDER["missile_cz_cost"]`` = 15 (5 -> -10).
+    """
+    commander = _make_player_state("commander", missiles_landed=0)
+    raw = _raw_role_weights(commander)
+    assert raw[_COMBAT_ACTION_IDX["only_move"]] == -10
+    final = finalize_action_weights(raw)
+    assert final[_COMBAT_ACTION_IDX["only_move"]] == 0
+    assert final[_COMBAT_ACTION_IDX["missile_player"]] == 15
+
+
+def test_heavy_capture_branch_only_move_is_negative_raw_and_clamped() -> None:
+    """Heavy capturing (opposing base, missiles exhausted): raw only_move -5, final 0.
+
+    Red Heavy in zone 2 (``can_capture_base_in_current_zone``) with missiles
+    exhausted so only the capture subtraction applies: hold draws 20 off
+    only_move (25 -> 5), then ``_HEAVY["base_capture_cz_cost"]`` = 10 (5 -> -5).
+    """
+    heavy = _make_player_state("heavy", current_zone=2, missiles_landed=5)
+    assert heavy.can_capture_base_in_current_zone
+    raw = _raw_role_weights(heavy)
+    assert raw[_COMBAT_ACTION_IDX["only_move"]] == -5
+    assert raw[_COMBAT_ACTION_IDX["capture_base"]] == 30
+    final = finalize_action_weights(raw)
+    assert final[_COMBAT_ACTION_IDX["only_move"]] == 0
+    assert final[_COMBAT_ACTION_IDX["capture_base"]] == 30

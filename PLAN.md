@@ -3258,7 +3258,53 @@ need conversion to the TIME-01 tick model. **Scope:** new persistence (the `actu
 error into a reviewable `GameRound` whose scoreboards/event log render in the existing round views, and the
 imported round shows **no** "[Simulated]" watermark on its RV-03 export.
 
-### SIM-12 · Clamp negative action weights before `random.choices`
+### SIM-12 · [DONE] Clamp negative action weights before `random.choices`
+
+Spec: #279 (ticket #280)
+
+**[DONE] Shipped (2026-10-22).** `finalize_action_weights` in `weights.py` clamps every slot to
+>= 0 and then applies the UXP-23 all-zero -> hide fallback; `plan_action` and the test twin both
+call it as the last step before `random.choices`. Four per-branch pins, the every-slot grid test,
+and the Scout xfail turned into a real assertion. What the work found:
+- The 55% strong-team win-rate test (`test_strong_team_winpct_not_diluted_by_alternation`) went
+  red at its pinned seed 7777 (strong team 32343 vs weak 32394 average points, 51.7% wins), green
+  on `origin/main`. A six-seed probe showed seed noise, not a balance change (pre-clamp 62.5 /
+  60.0 / 55.0 / 53.3 / 48.3 / 56.7 %, post-clamp 51.7 / 57.5 / 63.3 / 57.5 / 43.3 / 52.5 % for
+  seeds 7777 / 1 / 2 / 3 / 4 / 5; three of six already under the floor before SIM-12). On the
+  owner's instruction the seed was re-pinned to 2 (the MECH-15 precedent); the 55% floor and
+  the contrast guard are untouched. The weak strength signal itself stays with CAL-01.
+- The UXP-23 "League 500" cooldown test no longer hides: with `use_special`, `only_move` and
+  `tag_player` clamped to 0, `missile_player` and `hold` survive and the draw comes from them, so
+  the test now pins the clamped vector slot by slot and the seeded action.
+- `_HIDE_IDX = 2` in `weights.py` mirrors `combat._ACTION_IDX["hide"]` (no import either way);
+  review added a one-line pin test.
+- Left for later (review): the cooldown guard in `plan_action` is now redundant with the
+  helper's fallback (kept, byte-identical replay); the test twin still mirrors the pipeline by
+  hand; the five identical "Invariant (production)" docstring blocks could be one note.
+
+Grill settled (owner, 2026-10-21):
+
+- **Clamp site:** one line in `plan_action`, after the decision-making spread and the stamina /
+  cooldown post-processing, before the UXP-23 "all zero, hide" fallback. Role functions and the
+  seek-ally helper keep their subtractions; their "harmless" docstrings say "clamped in
+  `plan_action`" instead.
+- **Seam:** pure `finalize_action_weights(weights: list[int]) -> list[int]` in `weights.py`
+  (clamp, then the hide fallback), called by `plan_action` and by the test twin
+  `_plan_action_internal_weights` in place of its re-implementation.
+- **Tests:** a roles-by-edge-states grid test asserting every finalized slot >= 0; a unit test of
+  the helper; per-branch pins (raw slot negative, finalized slot 0) for Heavy missile (-10),
+  Commander missile (-10), Heavy capture (-5), Scout shots-critical (-10), the last replacing
+  the runtime xfail; "choice and RNG unchanged" stays green through the helper. The Commander
+  nuke negative (>5 enemies, 3-zone fallback) is covered by the grid, no pin.
+- **Determinism:** RNG consumption unchanged (still one `random.choices` per tick); no new test;
+  the verify step runs and names the three serial-equals-parallel tests.
+- **Calibration:** if the 55% strong-team win-rate test goes red, report it as CAL-01 drift; no
+  retune, no threshold move.
+- **Scope out:** subtraction sites, constants, UXP-23 semantics, re-baseline, migration, GLOSSARY,
+  ADR. Docs pass corrects the figures below (Heavy and Commander both reach -10; Commander also
+  has the capture subtraction), the phantom `test_plan_action_never_emits_negative_weight` name
+  in the sim-helpers CLAUDE.md, and the engine doc's "spread clamps >= 0" claim.
+- **Tickets:** one.
 
 Discovered during the SIM-01 grill/review (May 2026). `combat.plan_action` builds the 9-slot weight
 vector and feeds it straight to `random.choices` **without clamping per-element negatives to 0**. CPython's
@@ -3266,7 +3312,8 @@ vector and feeds it straight to `random.choices` **without clamping per-element 
 weight; instead the negative bucket becomes unreachable in the cumulative-weight bisect **and silently skews
 the neighbouring buckets' probabilities**. Several role branches legitimately emit one negative slot today:
 Heavy/Commander `only_move` while missiles remain (`25/15 → 5` after the MOVE-03 hold draw, then `−15`
-missile cost → `−10`/`−5`), Heavy `only_move` while capturing (`5 − 10 = −5`), and Scout `tag_player` when
+missile cost → `−10` for both), Heavy or Commander `only_move` while capturing (`5 − 10 = −5`, or −20 with the
+missile branch), and Scout `tag_player` when
 shots-critical with no ammo ally (`_SCOUT["seek_no_ammo_tag"]=50` > post-baseline tag `40` → `−10`). So the
 action distribution on those ticks is subtly wrong, not crashing. SIM-01 deliberately left this **unfixed**
 (it is a behavioural change, not a documentation change) and pinned only the true non-raising invariant

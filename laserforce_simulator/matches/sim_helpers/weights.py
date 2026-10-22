@@ -154,6 +154,30 @@ _COMMANDER = dict(
 # ---------------------------------------------------------------------------
 BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0]
 
+# Index of the ``hide`` slot in the documented layout above. Used by
+# ``finalize_action_weights`` for the UXP-23 fallback; weights.py does not
+# import combat, so this mirrors ``combat._ACTION_IDX["hide"]``.
+_HIDE_IDX = 2
+
+
+def finalize_action_weights(weights: list[int]) -> list[int]:
+    """Clamp every slot to >= 0, then apply the UXP-23 fallback (all zero -> hide = 1).
+
+    SIM-12: the single last step before ``random.choices`` in
+    ``combat.plan_action`` (and in the test suite's pipeline twin, so the two
+    cannot drift). Returns a new list and leaves *weights* untouched.
+
+    Order matters: clamp first, then the UXP-23 "nothing left -> hide"
+    fallback, so after the clamp the fallback fires only on an all-zero vector
+    (the condition it was written for). A vector with a positive total comes
+    back value-for-value identical, so non-affected ticks replay byte-identically.
+    """
+    clamped = [max(0, w) for w in weights]
+    if sum(clamped) <= 0:
+        clamped = [0] * len(clamped)
+        clamped[_HIDE_IDX] = 1
+    return clamped
+
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -186,7 +210,9 @@ def _apply_hold_baseline(w: list, c: dict, i: dict) -> None:
     ``only_move`` for Scout/Heavy/Commander; Medic is 0 so this is a no-op).
     The per-role amounts were verified to leave the source weight >= 0 after the
     role baseline (see each role const dict comment); the ``max(0, ...)`` clamp
-    is a defensive guard so ``random.choices`` never sees a negative weight.
+    is a local defensive guard. Later subtractions (missile, capture, seek-ally)
+    can still drive the source slot negative; ``plan_action`` clamps the final
+    vector through ``finalize_action_weights`` (SIM-12) before the draw.
     Additive on the 9-slot array; consumes no RNG.
     """
     amount = c.get("baseline_hold", 0)
@@ -237,6 +263,10 @@ def _apply_seek_ally(
       block only); None for Scout and for all shots-critical calls.
     - no_resource: True for shots-critical calls; selects seek_no_ammo_* constants for the
       "no ally" fallthrough instead of seek_no_ally_*.
+
+    The tag_player / only_move cuts here can drive a slot negative (e.g. the Scout
+    shots-critical, no-Ammo fallthrough: 40 - 50 = -10). The subtraction is left as
+    is; ``plan_action`` clamps the slot to 0 via ``finalize_action_weights`` (SIM-12).
     """
     if primary_ally is not None:
         if player.current_zone != primary_ally.current_zone:
@@ -439,13 +469,13 @@ def _get_medic_weights(
     resupply (shots only) -> MECH-04 nuke reaction (tag weight -> resupply) ->
     MECH-06 score broadcast.
 
-    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
-    which is all ``random.choices`` enforces — it tolerates an unreachable
-    negative bucket and raises only when the total is <= 0. Most slots stay
-    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
-    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
-    when shots-critical), which is harmless. See ``test_plan_action_*`` in
-    test_weights.py.
+    Invariant (production): every slot ``random.choices`` sees is >= 0. Most
+    slots stay >= 0 here; a few branches deliberately drive one slot negative
+    (Heavy/Commander ``only_move`` while missiles remain, Heavy capture, Scout
+    ``tag_player`` when shots-critical). That slot is clamped to 0 in
+    ``plan_action`` via ``finalize_action_weights`` (SIM-12) immediately before
+    the draw -- a negative bucket would otherwise skew its neighbours in the
+    cumulative-weight bisect. See ``test_plan_action_*`` in test_weights.py.
     """
     w, c, i = weights, _MEDIC, action_to_weight_index
 
@@ -513,13 +543,13 @@ def _get_ammo_weights(
     scaling on ``resupply_ally`` -> request resupply (lives only) -> MECH-04
     nuke reaction (tag weight -> resupply) -> MECH-06 score broadcast.
 
-    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
-    which is all ``random.choices`` enforces — it tolerates an unreachable
-    negative bucket and raises only when the total is <= 0. Most slots stay
-    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
-    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
-    when shots-critical), which is harmless. See ``test_plan_action_*`` in
-    test_weights.py.
+    Invariant (production): every slot ``random.choices`` sees is >= 0. Most
+    slots stay >= 0 here; a few branches deliberately drive one slot negative
+    (Heavy/Commander ``only_move`` while missiles remain, Heavy capture, Scout
+    ``tag_player`` when shots-critical). That slot is clamped to 0 in
+    ``plan_action`` via ``finalize_action_weights`` (SIM-12) immediately before
+    the draw -- a negative bucket would otherwise skew its neighbours in the
+    cumulative-weight bisect. See ``test_plan_action_*`` in test_weights.py.
     """
     w, c, i = weights, _AMMO, action_to_weight_index
 
@@ -604,13 +634,13 @@ def _get_scout_weights(
     rest to ``hide``) -> endgame rush -> request resupply (either resource) ->
     MECH-06 score broadcast.
 
-    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
-    which is all ``random.choices`` enforces — it tolerates an unreachable
-    negative bucket and raises only when the total is <= 0. Most slots stay
-    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
-    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
-    when shots-critical), which is harmless. See ``test_plan_action_*`` in
-    test_weights.py.
+    Invariant (production): every slot ``random.choices`` sees is >= 0. Most
+    slots stay >= 0 here; a few branches deliberately drive one slot negative
+    (Heavy/Commander ``only_move`` while missiles remain, Heavy capture, Scout
+    ``tag_player`` when shots-critical). That slot is clamped to 0 in
+    ``plan_action`` via ``finalize_action_weights`` (SIM-12) immediately before
+    the draw -- a negative bucket would otherwise skew its neighbours in the
+    cumulative-weight bisect. See ``test_plan_action_*`` in test_weights.py.
     """
     w, c, i = weights, _SCOUT, action_to_weight_index
 
@@ -680,13 +710,13 @@ def _get_heavy_weights(
     endgame rush -> request resupply (either resource) -> MECH-06 score
     broadcast.
 
-    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
-    which is all ``random.choices`` enforces — it tolerates an unreachable
-    negative bucket and raises only when the total is <= 0. Most slots stay
-    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
-    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
-    when shots-critical), which is harmless. See ``test_plan_action_*`` in
-    test_weights.py.
+    Invariant (production): every slot ``random.choices`` sees is >= 0. Most
+    slots stay >= 0 here; a few branches deliberately drive one slot negative
+    (Heavy/Commander ``only_move`` while missiles remain, Heavy capture, Scout
+    ``tag_player`` when shots-critical). That slot is clamped to 0 in
+    ``plan_action`` via ``finalize_action_weights`` (SIM-12) immediately before
+    the draw -- a negative bucket would otherwise skew its neighbours in the
+    cumulative-weight bisect. See ``test_plan_action_*`` in test_weights.py.
     """
     w, c, i = weights, _HEAVY, action_to_weight_index
 
@@ -783,13 +813,13 @@ def _get_commander_weights(
     -> endgame rush -> request resupply (either resource) -> MECH-06 score
     broadcast.
 
-    Invariant (production): ``plan_action`` needs only the *total* weight > 0,
-    which is all ``random.choices`` enforces — it tolerates an unreachable
-    negative bucket and raises only when the total is <= 0. Most slots stay
-    >= 0; a few branches deliberately drive one slot negative (Heavy/Commander
-    ``only_move`` while missiles remain, Heavy capture, Scout ``tag_player``
-    when shots-critical), which is harmless. See ``test_plan_action_*`` in
-    test_weights.py.
+    Invariant (production): every slot ``random.choices`` sees is >= 0. Most
+    slots stay >= 0 here; a few branches deliberately drive one slot negative
+    (Heavy/Commander ``only_move`` while missiles remain, Heavy capture, Scout
+    ``tag_player`` when shots-critical). That slot is clamped to 0 in
+    ``plan_action`` via ``finalize_action_weights`` (SIM-12) immediately before
+    the draw -- a negative bucket would otherwise skew its neighbours in the
+    cumulative-weight bisect. See ``test_plan_action_*`` in test_weights.py.
     """
     w, c, i = weights, _COMMANDER, action_to_weight_index
 
