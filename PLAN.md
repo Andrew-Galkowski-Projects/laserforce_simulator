@@ -2490,7 +2490,7 @@ Every component uses the theme chosen in ANG-04b.
    (ANG-06a below)
 2. **[DONE] Player add/edit** — stat form with live `overall_rating` preview (ANG-06b below)
 2b. **[DONE] Generate Players + Import Roster** — the two Teams-list header actions, split out of ANG-06a
-3. **Match list & create** — team picker, match creation, results list (ANG-06c below)
+3. **[DONE] Match list & create** — team picker, match creation, results list (ANG-06c below)
 4. **Round detail** — per-player stat table, MVP scores
 5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
@@ -2670,9 +2670,24 @@ Grill settled (owner, 2026-10-21):
 - **Ownership / data / simulation:** unchanged. No migration, no engine change.
 - No GLOSSARY or ADR changes.
 
-#### ANG-06c · Match list & create
+#### ANG-06c · [DONE] Match list & create
 
-Spec: #289
+Spec: #289 (tickets #290, #291, #292)
+
+**[DONE] Shipped (2026-10-22).** Angular Match History (`/matches`), New Match / New Single Round
+(`/matches/new`, `/rounds/new`, one setup form) and summary stubs at `/matches/:id` /
+`/rounds/:id`, plus two additive server changes: team / winner names and Match totals on the
+match / round serializers, and `/api/rounds/?single_round=`. What the work found:
+- The new specs pushed `teams/player-add`'s first render past Vitest's 5 s default in every full
+  run (green on `origin/main`); `frontend/vitest-base.config.mts` raises `testTimeout` to 15 s.
+- Review: the filter shipped as `?standalone=`, a GLOSSARY avoid-word, and was renamed
+  `?single_round=`; the team pickers gained `required` (CODING_STANDARDS parity); rows first used
+  `<a role="row">` (screen readers heard a row, not a link) and now carry a real link in the teams
+  cell stretched over the row.
+- Left for later: `matches/shared/route-record.ts` duplicates `teams/shared/route-team.ts`;
+  `setup-form` imports `applyApiErrors` from `teams/shared` (move to an app-level shared folder);
+  the two Match History tables repeat their column defs; `ResultSummary` takes four loose side
+  inputs; the first list page is requested without `page`; pickers show at most 100 Teams / maps.
 
 Grill settled (owner, 2026-10-22):
 

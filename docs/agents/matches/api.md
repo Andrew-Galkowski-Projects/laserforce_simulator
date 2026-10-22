@@ -75,7 +75,7 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `GET /api/matches/` | `MatchSerializer` | Includes `round_ids` (PK list, not nested). Filters: `team` (either side), `season`, `match_type` (bad choice ⇒ 400), `date_played_after` / `date_played_before` (`YYYY-MM-DD`, inclusive, bad date ⇒ 400). Ordering `date_played`, `id`; default `-date_played`, tiebreak `-id` |
 | `POST /api/matches/` | `MatchSerializer` | **ANG-01b.** Binds `MatchSetupForm(user=request.user)` (`team_red`, `team_blue`, `match_type` required, `arena_map` optional); simulates synchronously ⇒ **201**, `manager` = requester |
 | `GET /api/matches/<id>/` | `MatchSerializer` | Same — full match fields + round PK list |
-| `GET /api/rounds/` | `GameRoundListSerializer` | Slim — no `player_states`, no `event_log`. Filters: `match`, `arena_map`. Ordering `date_played`, `round_number`, `id`; default `-date_played`, tiebreak `-id` |
+| `GET /api/rounds/` | `GameRoundListSerializer` | Slim — no `player_states`, no `event_log`. Filters: `match`, `arena_map`, **ANG-06c** `single_round` (`true` ⇒ only **Single Rounds**, `match IS NULL`; `false` ⇒ only a Match's Rounds). Ordering `date_played`, `round_number`, `id`; default `-date_played`, tiebreak `-id` |
 | `POST /api/rounds/` | `GameRoundSerializer` | **ANG-01b.** Binds `SingleRoundSetupForm(user=request.user)`; standalone detailed round ⇒ **201**, `manager` = requester |
 | `GET /api/rounds/<id>/` | `GameRoundSerializer` | Full — nested `player_states` array |
 | `GET /api/rounds/<id>/events/` | `GameEventSerializer` | Always paginated, fixed order `timestamp, id` (no `?ordering`). Filters (`GameEventFilterSet`): `event_type` (bad choice ⇒ 400), `actor`, `target`, `timestamp_min` / `timestamp_max` (raw ticks, inclusive). **ANG-01b:** upgrades the round to `full` fidelity first |
@@ -134,6 +134,8 @@ revealed).
 **Serializer split:** `GameRoundListSerializer` (list) omits `player_states` to prevent serializing up to 240 objects per page. `GameRoundSerializer` (detail) adds the full nested `player_states`. Both share `_GAME_ROUND_FIELDS` and explicitly exclude `event_log` (legacy text dump).
 
 **`MatchSerializer`** — exposes `round_ids` as a `PrimaryKeyRelatedField` (source=`game_rounds`). Uses `fields = "__all__"` since Match has no sensitive or volatile fields.
+
+**ANG-06c names and totals (read-only, additive):** `MatchSerializer`, `GameRoundListSerializer` and `GameRoundSerializer` all carry `team_red_name`, `team_blue_name` and `winner_name` (null when `winner` is null — a tie, or an unfinished League Match) through the shared `_TeamNamesMixin`. `MatchSerializer` also carries `red_total_points`, `blue_total_points`, `red_rounds_won`, `blue_rounds_won`, read straight from the `Match` properties of the same names (never re-derived). The viewsets already `select_related` both teams and the winner, so the names add no query per row. `test_api_match_create._GAME_ROUND_DETAIL_KEYS` pins the GameRound detail key set including the names.
 
 **`GameEventSerializer`** / **`PlayerRoundStateSerializer`** — exclude the parent FK (`game_round`) since events and states are always accessed through their parent round.
 
