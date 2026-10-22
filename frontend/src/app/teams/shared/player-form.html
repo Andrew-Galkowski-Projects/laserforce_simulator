@@ -1,0 +1,106 @@
+<form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+  <div class="player-form__summary">
+    <p class="player-form__overall" role="status" aria-live="polite">Overall: {{ overall() }}</p>
+    <div class="player-form__presets">
+      <button mat-stroked-button type="button" (click)="setAllStats(50)">
+        Set all to Average (50)
+      </button>
+      <button mat-stroked-button type="button" (click)="setAllStats(90)">
+        Set all to Elite (90)
+      </button>
+    </div>
+  </div>
+
+  @for (message of nonFieldErrors(); track $index) {
+    <p class="team-form__error" role="alert">{{ message }}</p>
+  }
+
+  <mat-form-field appearance="outline">
+    <mat-label>Name</mat-label>
+    <input matInput formControlName="name" name="name" autocomplete="off" />
+    @if (form.controls.name.getError('server'); as message) {
+      <mat-error>{{ message }}</mat-error>
+    }
+  </mat-form-field>
+
+  <fieldset>
+    <legend>Profile</legend>
+    @if (initial() === null) {
+      <p class="player-form__hint">Leave blank to randomise.</p>
+    }
+    <div class="player-form__grid">
+      @for (field of profileFields; track field.key) {
+        <mat-form-field appearance="outline">
+          <mat-label>{{ field.label }}</mat-label>
+          <!-- A static type: Angular picks the number value accessor from it. -->
+          @if (field.type === 'number') {
+            <input
+              matInput
+              type="number"
+              [min]="field.min"
+              [max]="field.max"
+              step="1"
+              [formControlName]="field.key"
+              [name]="field.key"
+              autocomplete="off"
+            />
+          } @else {
+            <input
+              matInput
+              type="text"
+              [formControlName]="field.key"
+              [name]="field.key"
+              autocomplete="off"
+            />
+          }
+          @if (form.get(field.key)?.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      }
+    </div>
+  </fieldset>
+
+  <fieldset formGroupName="preferred_roles">
+    <legend>Preferred Roles</legend>
+    <div class="player-form__roles">
+      @for (role of roleOptions; track role.key) {
+        <mat-checkbox [formControlName]="role.key">{{ role.label }}</mat-checkbox>
+      }
+    </div>
+    @if (form.controls.preferred_roles.getError('server'); as message) {
+      <p class="player-form__field-error">{{ message }}</p>
+    }
+  </fieldset>
+
+  @for (group of statGroups; track group.label) {
+    <fieldset>
+      <legend>{{ group.label }}</legend>
+      <div class="player-form__grid">
+        @for (stat of group.stats; track stat.key) {
+          <mat-form-field appearance="outline">
+            <mat-label>{{ stat.label }}</mat-label>
+            <input
+              matInput
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              [formControlName]="stat.key"
+              [name]="stat.key"
+              autocomplete="off"
+            />
+            @if (form.get(stat.key)?.getError('server'); as message) {
+              <mat-error>{{ message }}</mat-error>
+            }
+          </mat-form-field>
+        }
+      </div>
+    </fieldset>
+  }
+
+  <div class="team-form__actions">
+    <button mat-flat-button type="submit" [disabled]="busy()">{{ submitLabel() }}</button>
+    <a mat-button [routerLink]="cancelLink()">Cancel</a>
+  </div>
+</form>

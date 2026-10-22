@@ -50,9 +50,32 @@ class PlayerInlineSerializer(serializers.ModelSerializer):
 
 
 class PlayerSerializer(serializers.ModelSerializer):
+    """The full Player. ANG-06b: the profile fields and ``overall_rating`` are
+    read-only here; writes bind ``PlayerForm`` (ADR-0039)."""
+
+    overall_rating = serializers.FloatField(read_only=True)
+
     class Meta:
         model = Player
-        fields = ["id", "team", "name", "preferred_roles"] + _PLAYER_STAT_FIELDS
+        fields = (
+            ["id", "team", "name", "preferred_roles"]
+            + _PLAYER_STAT_FIELDS
+            + [
+                "age",
+                "started_playing_age",
+                "total_games",
+                "home_site",
+                "height",
+                "overall_rating",
+            ]
+        )
+        read_only_fields = [
+            "age",
+            "started_playing_age",
+            "total_games",
+            "home_site",
+            "height",
+        ]
 
 
 class TeamListSerializer(serializers.ModelSerializer):

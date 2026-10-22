@@ -1,7 +1,8 @@
 # teams/
 
 Manages teams, players, and rosters, mounted at `/teams/` (the homepage `/` is the `core` landing
-mode-picker). The Angular SPA's Teams screens (ANG-06a: list, detail, create, edit, assign slots) read
+mode-picker). The Angular SPA's Teams screens (ANG-06a: list, detail, create, edit, assign slots; ANG-06b: add /
+edit player) read
 the same data through `/api/teams/`; see `frontend/CLAUDE.md`. The Django templates stay until ANG-08.
 
 ## Models (`teams/models.py`)
@@ -256,7 +257,8 @@ so the Free Agents Team is still reachable by id):
   `offensive_synergy` → ORM `Offensive_synergy`, `team` → `team__name`, `overall_rating` → the
   `overall_rating_db` annotation from `annotate_overall_rating`); `preferred_roles` and the raw
   `Offensive_synergy` are not valid terms (silently dropped). Default `team__name, name`; tiebreak
-  `name, id`. `PlayerSerializer` output is unchanged (no `overall_rating` field).
+  `name, id`. The `overall_rating_db` annotation never appears in the output; since ANG-06b
+  `PlayerSerializer` returns the model property as `overall_rating` instead.
 
 **Services (`teams/services.py`, ANG-01a).** Shared by the HTML views and the API so both run one
 code path (HTML output byte-identical):
@@ -309,7 +311,7 @@ all pass `manager_or_none(request)`.
 
 **`PlayerInlineSerializer`** — minimal player representation (id, name, preferred_roles) for use anywhere a full player is not needed.
 
-**`PlayerSerializer`** — all 19 stats; explicit field list guarding against accidental exposure of future model fields.
+**`PlayerSerializer`** — all 19 stats; explicit field list guarding against accidental exposure of future model fields. **ANG-06b** added read-only `age`, `started_playing_age`, `total_games`, `home_site`, `height` and `overall_rating` (a `FloatField` over the `Player.overall_rating` property), so the Angular Edit Player screen can pre-fill; writes still bind `PlayerForm` (tests: `test_apis.py::TestPlayerProfileFields`). `potential`, `salary` and `games_unavailable` stay out.
 
 ## URLs
 

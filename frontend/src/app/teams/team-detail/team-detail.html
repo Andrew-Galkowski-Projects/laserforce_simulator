@@ -16,6 +16,7 @@
       </p>
     </div>
     <div class="detail__actions">
+      <a mat-flat-button [routerLink]="['/teams', t.id, 'players', 'new']">Add Player</a>
       <a mat-flat-button [routerLink]="['/teams', t.id, 'slots']">Assign Slots</a>
       <a mat-stroked-button [routerLink]="['/teams', t.id, 'edit']">Edit Team</a>
     </div>
@@ -70,7 +71,10 @@
                         <span class="muted">&mdash;</span>
                       }
                     </td>
-                    <td>
+                    <td class="roster__actions">
+                      <a mat-stroked-button [routerLink]="['/teams', t.id, 'players', p.id, 'edit']"
+                        >Edit</a
+                      >
                       <button mat-stroked-button type="button" (click)="remove(p)">Remove</button>
                     </td>
                   } @else {
@@ -112,7 +116,10 @@
                       <span class="muted">&mdash;</span>
                     }
                   </td>
-                  <td>
+                  <td class="roster__actions">
+                    <a mat-stroked-button [routerLink]="['/teams', t.id, 'players', p.id, 'edit']"
+                      >Edit</a
+                    >
                     <button mat-stroked-button type="button" (click)="remove(p)">Remove</button>
                   </td>
                 </tr>

@@ -106,6 +106,10 @@ h2 {
   }
 }
 
+.roster__actions > * + * {
+  margin-left: 0.5rem;
+}
+
 .badge,
 .tag {
   display: inline-block;

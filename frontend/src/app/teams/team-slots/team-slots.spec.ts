@@ -13,14 +13,14 @@ import { Player } from '../../api/players.models';
 import { Team } from '../../api/teams.models';
 import { signIn } from '../../api/testing/auth-fixtures';
 import { releaseTeamsLoads } from '../testing/teams-loads';
-import { STATS } from '../../api/testing/player-fixtures';
+import { PROFILE, STATS } from '../../api/testing/player-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 
 const BASE = environment.apiBaseUrl;
 
 function player(id: number, name: string): Player {
-  return { id, team: 3, name, preferred_roles: [], ...STATS };
+  return { id, team: 3, name, preferred_roles: [], ...STATS, ...PROFILE };
 }
 
 const TEAM: Team = {
