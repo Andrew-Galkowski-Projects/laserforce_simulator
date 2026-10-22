@@ -2489,8 +2489,8 @@ Every component uses the theme chosen in ANG-04b.
 1. **[DONE] Teams list & detail** — simple CRUD table + form; good first Angular component to build
    (ANG-06a below)
 2. **[DONE] Player add/edit** — stat form with live `overall_rating` preview (ANG-06b below)
-2b. **Generate Players + Import Roster** — the two Teams-list header actions, split out of ANG-06a
-3. **Match list & create** — team picker, match creation, results list
+2b. **[DONE] Generate Players + Import Roster** — the two Teams-list header actions, split out of ANG-06a
+3. **Match list & create** — team picker, match creation, results list (ANG-06c below)
 4. **Round detail** — per-player stat table, MVP scores
 5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
@@ -2669,6 +2669,58 @@ Grill settled (owner, 2026-10-21):
   beyond the disabled submit, client-side CSV preview or validation, any change to the API.
 - **Ownership / data / simulation:** unchanged. No migration, no engine change.
 - No GLOSSARY or ADR changes.
+
+#### ANG-06c · Match list & create
+
+Spec: #289
+
+Grill settled (owner, 2026-10-22):
+
+- **Scope:** three screens: the Match list (Matches + Single Rounds), Create Match and Create
+  Single Round. Out: Compare Rounds, Head-to-Head, Batch simulate, Team match history, and the
+  Match / Round detail pages (item 4); no links to unmigrated screens.
+- **Detail stubs:** `/matches/:id` and `/rounds/:id` show a small result summary (Red vs Blue,
+  score, winner or "Tie", "Back to Matches"). Create navigates there; list rows link there. Item 4
+  replaces them.
+- **Server change (additive):** read-only `team_red_name`, `team_blue_name`, `winner_name` (null
+  on a tie) on `MatchSerializer` and the GameRound serializers; `red_total_points`,
+  `blue_total_points`, `red_rounds_won`, `blue_rounds_won` on `MatchSerializer` from the model
+  properties. The spec lists every test that pins an exact key set.
+- **Server change:** `/api/rounds/?standalone=true|false` (`BooleanFilter` on `match__isnull`);
+  `standalone?: boolean` on `RoundListParams`.
+- **Term:** **Single Round** — a Round with no Match (GLOSSARY.md).
+- **Labels:** page "Match History"; sections "Matches" / "Single Rounds"; buttons "New Match" /
+  "New Single Round". "Tournament" appears only as a `match_type` choice.
+- **List contents:** every owned Match (League / Season Matches included), newest first; no
+  filter controls.
+- **List layout:** two stacked sections, each a Material table with server-side paging (20 a page,
+  `mat-paginator`). Match columns: Red vs Blue (`data-lf-side`), Winner (chip or "Tie"), Score
+  `total - total`, Rounds `won - won`, Date `MMM d, y HH:mm`; Single Round columns the same minus
+  Rounds. Per-section empty text ("No matches played yet." / "No single rounds played yet."); both
+  empty shows Django's centred empty state with both create buttons. Header: "New Match"
+  (primary), "New Single Round" (outlined).
+- **Create form:** one component for both routes, configured by route data
+  (`kind: 'match' | 'round'`); `match_type` only for a Match; posts via `MatchesService.create` or
+  `RoundsService.create`.
+- **Team pickers:** Red / Blue `mat-select`s from the Teams list (`page_size: 100`, by name);
+  invalid-roster Teams are disabled options marked "(invalid roster)". No client red != blue
+  check; field errors on their controls, `MatchSetupError` above the form. No valid Teams: a
+  message linking to `/teams`.
+- **Other fields:** Arena Map `mat-select` of `has_confirmed_config=true` maps, first option
+  "No map (3-zone fallback)" (default, sent `null`), Django's hint. Match type defaults to
+  "Friendly" with Django's hint. Submit reads "Simulating..." and is disabled while the
+  synchronous simulation runs; Cancel returns to `/matches`.
+- **Routes / nav:** lazy `matches` area: `/matches`, `/matches/new`, `/matches/:id`,
+  `/rounds/new`, `/rounds/:id` (`new` before `:id`). Titles "Match History", "New Match",
+  "New Single Round", "Match", "Single Round". Shell gets a "Matches" link after "Teams".
+- **In progress:** a Match with `is_completed=false` (a League Match after round 1) shows a muted
+  "In progress" chip, not "Tie"; score / rounds show what has been played. Same rule on the stub.
+  "Tie" only for a completed Match (or a Round) with no winner.
+- **Names everywhere:** the three name fields go on both GameRound serializers (list and
+  detail/create), so the `/rounds/:id` stub needs one `get`.
+- **Row links:** the whole table row is a link to `/matches/:id` / `/rounds/:id` (keyboard and
+  middle-click work); no separate "View" button.
+- **Ownership / data / simulation:** unchanged. No migration, no engine change.
 
 ### ANG-07 · Serve Angular from Docker (nginx sidecar)
 

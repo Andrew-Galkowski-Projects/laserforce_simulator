@@ -10,8 +10,12 @@ A Django application that simulates competitive laser tag (Laserforce SM5) match
 A contest between two teams, decided over exactly two **Rounds**; the teams swap colours between rounds and the winner is decided by rounds won, then cumulative points.
 
 **Round**:
-One 15-minute simulated game within a **Match** (persisted as `GameRound`).
+One 15-minute simulated game, usually within a **Match** (persisted as `GameRound`); one played on its own is a **Single Round**.
 _Avoid_: "game" (informal — say **Round**), "match" (a Match is the pair, not one round)
+
+**Single Round**:
+A **Round** played on its own, outside any **Match** — a sandbox-only one-off with no colour swap and no second Round.
+_Avoid_: "standalone round", "detailed round"
 
 **Simulated round**:
 A **Round** produced by the **Simulator**, carrying `GameRound.is_simulated = True` — the provenance distinction that drives the "[Simulated]" watermark on the **Round report** (RV-03). The `is_simulated` `BooleanField(default=True)` is added by RV-03; the simulator paths inherit the default and never set it explicitly, so today *every* persisted Round is a Simulated round (there is no real-game import path yet). The eventual source of truth for provenance is the **Actual game log** pairing: a Round not linked to an `actual_game_log` is simulated (`is_simulated = True`); an imported real-game Round links to its `actual_game_log` and is stored `is_simulated = False` (no watermark). That import path — the `.tdf` parser and the `actual_game_log` link — is **IMPORT-01** (PLAN.md), the first writer of `is_simulated = False`.
