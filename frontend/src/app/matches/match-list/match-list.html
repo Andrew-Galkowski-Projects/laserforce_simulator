@@ -1,0 +1,140 @@
+<div class="match-list__header">
+  <h1>Match History</h1>
+  @if (!nothingPlayed()) {
+    <div class="match-list__actions">
+      <ng-container *ngTemplateOutlet="newButtons" />
+    </div>
+  }
+</div>
+
+@if (nothingPlayed()) {
+  <section class="match-list__empty">
+    <h2>No matches played yet</h2>
+    <div class="match-list__actions">
+      <ng-container *ngTemplateOutlet="newButtons" />
+    </div>
+  </section>
+} @else {
+  <section class="history-section" data-section="matches">
+    <h2>Matches</h2>
+    @if (matchPage()?.meta?.count === 0) {
+      <p class="history-section__empty">No matches played yet.</p>
+    } @else {
+      <mat-table [dataSource]="matchPage()?.items ?? []" class="history-table">
+        <ng-container matColumnDef="teams">
+          <mat-header-cell *matHeaderCellDef>Red vs Blue</mat-header-cell>
+          <mat-cell *matCellDef="let m">
+            <ng-container
+              *ngTemplateOutlet="teams; context: { red: m.team_red_name, blue: m.team_blue_name }"
+            />
+          </mat-cell>
+        </ng-container>
+        <ng-container matColumnDef="winner">
+          <mat-header-cell *matHeaderCellDef>Winner</mat-header-cell>
+          <mat-cell *matCellDef="let m"><app-result-chip [result]="matchResult(m)" /></mat-cell>
+        </ng-container>
+        <ng-container matColumnDef="score">
+          <mat-header-cell *matHeaderCellDef>Score</mat-header-cell>
+          <mat-cell *matCellDef="let m" class="history-table__num"
+            >{{ m.red_total_points }} - {{ m.blue_total_points }}</mat-cell
+          >
+        </ng-container>
+        <ng-container matColumnDef="rounds">
+          <mat-header-cell *matHeaderCellDef>Rounds</mat-header-cell>
+          <mat-cell *matCellDef="let m" class="history-table__num"
+            >{{ m.red_rounds_won }} - {{ m.blue_rounds_won }}</mat-cell
+          >
+        </ng-container>
+        <ng-container matColumnDef="date">
+          <mat-header-cell *matHeaderCellDef>Date</mat-header-cell>
+          <mat-cell *matCellDef="let m">{{ m.date_played | date: 'MMM d, y HH:mm' }}</mat-cell>
+        </ng-container>
+
+        <mat-header-row *matHeaderRowDef="matchColumns" />
+        <!-- eslint-disable-next-line @angular-eslint/template/elements-content -- cells render into the row via the CDK cell outlet -->
+        <a
+          app-link-row
+          *matRowDef="let m; columns: matchColumns"
+          [routerLink]="['/matches', m.id]"
+        ></a>
+      </mat-table>
+      @let matchMeta = matchPage()?.meta;
+      @if (matchMeta && matchMeta.total_pages > 1) {
+        <mat-paginator
+          [length]="matchMeta.count"
+          [pageSize]="matchMeta.page_size"
+          [pageIndex]="matchMeta.page - 1"
+          [hidePageSize]="true"
+          (page)="pageMatches($event)"
+          aria-label="Matches pages"
+        />
+      }
+    }
+  </section>
+
+  <section class="history-section" data-section="rounds">
+    <h2>Single Rounds</h2>
+    @if (roundPage()?.meta?.count === 0) {
+      <p class="history-section__empty">No single rounds played yet.</p>
+    } @else {
+      <mat-table [dataSource]="roundPage()?.items ?? []" class="history-table">
+        <ng-container matColumnDef="teams">
+          <mat-header-cell *matHeaderCellDef>Red vs Blue</mat-header-cell>
+          <mat-cell *matCellDef="let r">
+            <ng-container
+              *ngTemplateOutlet="teams; context: { red: r.team_red_name, blue: r.team_blue_name }"
+            />
+          </mat-cell>
+        </ng-container>
+        <ng-container matColumnDef="winner">
+          <mat-header-cell *matHeaderCellDef>Winner</mat-header-cell>
+          <mat-cell *matCellDef="let r"><app-result-chip [result]="roundResult(r)" /></mat-cell>
+        </ng-container>
+        <ng-container matColumnDef="score">
+          <mat-header-cell *matHeaderCellDef>Score</mat-header-cell>
+          <mat-cell *matCellDef="let r" class="history-table__num"
+            >{{ r.red_points }} - {{ r.blue_points }}</mat-cell
+          >
+        </ng-container>
+        <ng-container matColumnDef="date">
+          <mat-header-cell *matHeaderCellDef>Date</mat-header-cell>
+          <mat-cell *matCellDef="let r">{{ r.date_played | date: 'MMM d, y HH:mm' }}</mat-cell>
+        </ng-container>
+
+        <mat-header-row *matHeaderRowDef="roundColumns" />
+        <!-- eslint-disable-next-line @angular-eslint/template/elements-content -- cells render into the row via the CDK cell outlet -->
+        <a
+          app-link-row
+          *matRowDef="let r; columns: roundColumns"
+          [routerLink]="['/rounds', r.id]"
+        ></a>
+      </mat-table>
+      @let roundMeta = roundPage()?.meta;
+      @if (roundMeta && roundMeta.total_pages > 1) {
+        <mat-paginator
+          [length]="roundMeta.count"
+          [pageSize]="roundMeta.page_size"
+          [pageIndex]="roundMeta.page - 1"
+          [hidePageSize]="true"
+          (page)="pageRounds($event)"
+          aria-label="Single Rounds pages"
+        />
+      }
+    }
+  </section>
+}
+
+<ng-template #newButtons>
+  <a mat-flat-button routerLink="/matches/new">New Match</a>
+  <a mat-stroked-button routerLink="/rounds/new">New Single Round</a>
+</ng-template>
+
+<ng-template #teams let-red="red" let-blue="blue">
+  <span class="history-team" data-lf-side="red"
+    ><span class="history-team__badge" aria-hidden="true">R</span>{{ red }}</span
+  >
+  <span class="history-vs">vs</span>
+  <span class="history-team" data-lf-side="blue"
+    ><span class="history-team__badge" aria-hidden="true">B</span>{{ blue }}</span
+  >
+</ng-template>
