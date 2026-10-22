@@ -2486,7 +2486,7 @@ is ANG-08 (owner, 2026-10-21 — until ANG-07 serves Angular, production is Djan
 a URL name raises NoReverseMatch site-wide). "Parity" means the same features, not the same look.
 Every component uses the theme chosen in ANG-04b.
 
-1. **Teams list & detail** — simple CRUD table + form; good first Angular component to build
+1. **[DONE] Teams list & detail** — simple CRUD table + form; good first Angular component to build
    (ANG-06a below)
 2. **Player add/edit** — stat form with live `overall_rating` preview
 2b. **Generate Players + Import Roster** — the two Teams-list header actions, split out of ANG-06a
@@ -2508,9 +2508,18 @@ will have full API coverage from ANG-01d-1 / ANG-01d-2 / ANG-01e / ANG-01f, but 
 ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six
 items above are scoped.
 
-#### ANG-06a · Teams list & detail
+#### ANG-06a · [DONE] Teams list & detail
 
-Spec: #263
+Spec: #263 (tickets #264, #265, #266, #267)
+
+**[DONE] Shipped (2026-10-21).** Angular sign-in page, `authGuard` / `signedOutGuard`, the lazy
+layout-B shell, and the five Teams screens (list, detail + Remove, Create, Edit, Assign Slots) on
+`/api/teams/`, which gained read-only `is_valid_roster` / `roster_errors`. What the work found:
+`ApiClient` had no `put` (added for `PUT teams/{id}/slots/`); an eager shell pushed the initial
+bundle over the 500 kB budget (lazy now, ~320 kB); a slotted player from another Team needs a
+placeholder row ("Player #<id> (not on this Team)") because the Team API returns only its own
+players, while the server's `roster_errors` still names that player (pre-existing Django text).
+Django's Active / Bench counts slots, so a player in two slots counts twice; Angular matches.
 
 Grill settled (owner, 2026-10-21):
 
@@ -2729,7 +2738,7 @@ top of this file. Phase 8 is the critical path. Everything else is an unschedule
 so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
 
 ```
-ANG-06  Migrate views by feature area (Teams -> ... -> Map editor)   <- NEXT
+ANG-06  Migrate views by feature area (Teams [done] -> ... -> Map editor)   <- NEXT
         + still to scope: League / Season, League screens,
           Tournaments, Accounts
     -> ANG-07  Serve Angular from an nginx sidecar

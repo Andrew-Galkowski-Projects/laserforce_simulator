@@ -1,6 +1,8 @@
 # teams/
 
-Manages teams, players, and rosters. Serves as the homepage (`/`).
+Manages teams, players, and rosters, mounted at `/teams/` (the homepage `/` is the `core` landing
+mode-picker). The Angular SPA's Teams screens (ANG-06a: list, detail, create, edit, assign slots) read
+the same data through `/api/teams/`; see `frontend/CLAUDE.md`. The Django templates stay until ANG-08.
 
 ## Models (`teams/models.py`)
 
@@ -312,8 +314,7 @@ all pass `manager_or_none(request)`.
 ## URLs
 
 ```
-/           → team list (homepage)
-/teams/     → team CRUD, player management
+/teams/     → team list, team CRUD, player management (`/` is core's landing page)
 
 /api/teams/                    → TeamViewSet (list, create, detail, PATCH)
 /api/teams/<id>/slots/         → PUT: full-replace the 6 roster slots
