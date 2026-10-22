@@ -286,7 +286,11 @@ class TestPlayerOrdering(_FilterTestCase):
             ["Low", "High", "Mid"],
         )
 
-    def test_serializer_output_unchanged_no_overall_rating(self) -> None:
+    def test_serializer_exposes_property_not_annotation(self) -> None:
+        # ANG-06b added ``overall_rating`` (the model property) to
+        # PlayerSerializer on purpose; the ordering annotation must still not
+        # leak into the output.
         row = self.api.get("/api/players/").json()["data"][0]
-        self.assertNotIn("overall_rating", row)
         self.assertNotIn("overall_rating_db", row)
+        player = Player.objects.get(pk=row["id"])
+        self.assertAlmostEqual(row["overall_rating"], player.overall_rating)
