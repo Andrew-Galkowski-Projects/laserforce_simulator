@@ -3130,9 +3130,22 @@ series the events page builds (per-player SP / shots / lives / points over time,
 `GameEvent` rows — RES-02 contract); the helper does not need Chart.js. Charts won't be pixel-identical
 to the on-screen Chart.js versions, but carry the same data.
 
-### RV-05 · Round report PDF: chart/graph section (extends RV-03)
+### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
 
-Spec: #283
+Spec: #283 (tickets #284, #285, #286)
+
+**[DONE] Shipped (2026-10-22).** The round report PDF ends with the four events-page charts,
+rendered server-side by the pure `pdf_charts` module from a Python port of the page's series
+build (`round_series`). Both report callers upgrade the round to full fidelity first. What the
+work found:
+- The two playback row builders moved from `views.py` to `services.py` (services may not import
+  views); `views.py` re-exports them. The player rows now order by `id`, since the series
+  echoes that order into legend and hue.
+- `/Subtype /Image` overcounts (one shared soft mask), so tests count `/ColorSpace /DeviceRGB`.
+- A module-level matplotlib import logged six DEBUG lines at every `manage.py` start; the chart
+  module is now imported lazily.
+- RV-03's `test_report_does_not_upgrade_fidelity` was replaced by the upgrade test the spec asks
+  for; the builder-level no-upgrade guard stays.
 
 Grill settled (owner, 2026-10-22):
 

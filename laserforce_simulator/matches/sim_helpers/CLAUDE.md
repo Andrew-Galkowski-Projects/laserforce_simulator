@@ -399,6 +399,10 @@ Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The s
 
 ---
 
+## pdf_report.py / pdf_charts.py / round_series.py
+
+The round report PDF (RV-03) and its chart section (RV-05). All three are pure (no Django), subprocess-guarded by a no-Django-imports test. `round_series.build_round_series` ports the events page's per-player series; `pdf_charts` renders them with matplotlib's object-oriented API (never `pyplot`); `pdf_report.build_round_report` lays the tables and, when `chart_series` is present, the four charts out with ReportLab, importing `pdf_charts` lazily. Detail: [`docs/agents/matches/round-views-and-analytics.md`](../../../docs/agents/matches/round-views-and-analytics.md) (**RV-03**, **RV-05**).
+
 ## map_context.py
 
 `MapContext` is a typed `@dataclass` that replaces the former 11-key `movement_ctx` plain dict. It is constructed once per round by `matches.sim_helpers.map_loader.load_map_context` (or the legacy `build_movement_ctx` shim) and passed through the simulation call chain. All callers access it via domain-level methods rather than dict key lookups.

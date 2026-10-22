@@ -1,6 +1,6 @@
 # matches: Round views and analytics
 
-Forms, templates (event-log windowing, playback map), RES-04 heatmap, RV-01 compare, RV-02 highlights, RV-03 PDF report, HX-03 / HX-04 head-to-head.
+Forms, templates (event-log windowing, playback map), RES-04 heatmap, RV-01 compare, RV-02 highlights, RV-03 PDF report, RV-05 PDF charts, HX-03 / HX-04 head-to-head.
 Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index there points here.
 
 ## Forms (`matches/forms.py`)
@@ -90,7 +90,48 @@ A single-**Round** PDF export — the **Round report** (GLOSSARY.md) — at `GET
 
 **Entry point.** An "Export PDF" link in `templates/matches/game_round_detail.html` (`{% url 'export_round_report' round.id %}`) — added by the Code agent; no behavioural logic lives in the template.
 
-**Scope-out.** Charts/graphs are deliberately **deferred to RV-05** (`pdf_charts.py` is a *future* sibling of `pdf_report.py`). The `is_simulated=False` write — the **Actual game log** `.tdf` import that pairs a Round to a real game — is deferred to **IMPORT-01** (the first writer of `is_simulated=False`; the provenance contract was locked at RV-03 planning). **RV-03 runs no simulation and consumes no RNG** → no SIM-07/08 contract interaction and **no Score Calibration re-baseline**. Locked names are pinned by the seam contract at [`.claude/worktrees/rv-03-seam-contract.md`](../../../.claude/worktrees/rv-03-seam-contract.md). **No ADR** — decisions are reversible (a `BooleanField` add + a pure render module).
+**Scope-out.** Charts/graphs were deferred to RV-05 (shipped; see **RV-05 round report charts** below). The `is_simulated=False` write — the **Actual game log** `.tdf` import that pairs a Round to a real game — is deferred to **IMPORT-01** (the first writer of `is_simulated=False`; the provenance contract was locked at RV-03 planning). **RV-03 runs no simulation and consumes no RNG** → no SIM-07/08 contract interaction and **no Score Calibration re-baseline**. Locked names are pinned by the seam contract at [`.claude/worktrees/rv-03-seam-contract.md`](../../../.claude/worktrees/rv-03-seam-contract.md). **No ADR** — decisions are reversible (a `BooleanField` add + a pure render module).
+
+## RV-05 round report charts
+
+Spec #283 (tickets #284 series port, #285 renderer, #286 integration). The RV-03 PDF ends with the
+four events-page charts: shots, lives, points and SP over time, per player. Same endpoint
+(`GET /matches/game-round/<id>/export/`) and the same DRF `report` action; no model change, no
+migration.
+
+- **Series port.** `matches/sim_helpers/round_series.py::build_round_series(players, events) -> dict`
+  is a one-for-one Python port of the page's RES-02b series build in
+  `templates/matches/game_round_events.html`. Inputs are the page's own rows (`_round_players_data`,
+  `round_playback_payload`). Output: `players` (`{id, name, team}` in input order) plus `shots`,
+  `lives`, `points`, `sp`, each keyed by `str(player id)` with `(seconds, value)` tuples. Every player
+  starts at second 0 with shots `ss`, lives `sl`, points 0, SP 0; a point is appended only on change;
+  actor, target and `targets[]` snapshots each feed their own player; seconds are ticks / 2. Pure, no
+  Django. The page keeps its JavaScript; tests pin the port to the RES-02b metadata cases.
+- **Renderer.** `matches/sim_helpers/pdf_charts.py`: `CHARTS` (four `ChartDef`s in card order, titles
+  as the page cards; SP fixed 0..99 with a dashed cap at `SP_CAP = 99`; the rest begin at zero),
+  `render_chart_png(chart_key, series, *, dpi=150) -> bytes` (stepped `steps-post` lines, the page's
+  hues via `player_colour(team, index, team_size)`: red `hsl(350 + 40*i/n, 70%, 45%)`, blue base 210,
+  a legend, x in seconds; empty series gives titled empty axes) and `chart_flowable(png, width) ->
+  Image` (aspect kept). matplotlib's object-oriented API only (`Figure` + Agg canvas), never `pyplot`,
+  never `matplotlib.use`. Reusable by HX-03.
+- **Report.** `build_round_report_data` gains `chart_series` (the series over the round's rows,
+  movement rows excluded since they carry no snapshots); `build_round_report` keeps its signature
+  and, only when `chart_series` is not `None`, adds a page break after the resource tables and the
+  four charts two per page at the content width. `pdf_report` imports `pdf_charts` lazily inside the
+  chart section, so matplotlib does not load with `matches.views`.
+- **Fidelity.** Both callers (`views.export_round_report`, the DRF `report` action) call
+  `BatchSimulator().ensure_fidelity(game_round, "full")` before building, as the events page does
+  (this replaces RV-03's "the report does not upgrade" rule). The builder itself still does not
+  upgrade. A round with no events after that yields four empty-axes charts.
+- **Row builders moved.** `_round_players_data` and `round_playback_payload` now live in
+  `matches/services.py` (services must not import views); `views.py` re-exports both for its
+  importers. `_round_players_data` orders by `id` so legend order and hues are stable.
+- **Tests.** `test_round_series.py`, `test_pdf_charts.py` (both with the subprocess no-Django check;
+  the renderer also checks `pyplot` stays unloaded), `TestBuildRoundReport` (image count by the
+  `/ColorSpace /DeviceRGB` byte marker and images per page, via `pdf_image_count` /
+  `pdf_images_per_page` in `matches/tests/conftest.py`, no PDF parser), `test_services.py`,
+  `TestRv03ExportRoundReport` and the DRF `TestRoundReport`.
+- **Dependency.** `matplotlib>=3.8` in `laserforce_simulator/requirements.txt`.
 
 ## HX-03 head-to-head
 
