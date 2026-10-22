@@ -55,13 +55,15 @@ export interface PlayerInline {
 /**
  * `PlayerForm` fields. Every key is optional: on add-player an omitted field
  * takes the HTML `player_add` initial; on PATCH it keeps the current value.
+ * Edit Player sends a blank `total_games` or Stat as `null`; the server answers
+ * with a field error for it.
  */
-export interface PlayerInput extends Partial<PlayerStats> {
+export interface PlayerInput extends Partial<Record<keyof PlayerStats, number | null>> {
   name?: string;
   preferred_roles?: Role[];
   age?: number | null;
   started_playing_age?: number | null;
-  total_games?: number;
+  total_games?: number | null;
   home_site?: string;
   height?: string;
 }

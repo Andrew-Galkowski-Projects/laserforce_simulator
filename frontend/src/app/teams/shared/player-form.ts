@@ -253,7 +253,7 @@ export class PlayerForm {
   protected submit(): void {
     const value = this.form.getRawValue();
     const editing = this.initial() !== null;
-    const body: Record<string, unknown> = {
+    const body: PlayerInput = {
       name: value.name,
       preferred_roles: ROLE_OPTIONS.filter((r) => value.preferred_roles[r.key]).map((r) => r.key),
     };
@@ -266,6 +266,6 @@ export class PlayerForm {
     for (const key of STAT_KEYS) {
       body[key] = value[key];
     }
-    this.submitted.emit(body as PlayerInput);
+    this.submitted.emit(body);
   }
 }

@@ -155,17 +155,17 @@ describe('Team detail page', () => {
   it('lists the filled slots in CMD, HVY, SCT 1, SCT 2, MED, AMO order, skipping empty ones', async () => {
     await open();
     expect(rows('Active Slots')).toEqual([
-      ['CMD', 'Cat', 'CMD HVY', 'Remove'],
-      ['SCT 1', 'Ann', 'SCT', 'Remove'],
-      ['AMO', 'Bob', '—', 'Remove'],
+      ['CMD', 'Cat', 'CMD HVY', 'Edit Remove'],
+      ['SCT 1', 'Ann', 'SCT', 'Edit Remove'],
+      ['AMO', 'Bob', '—', 'Edit Remove'],
     ]);
   });
 
   it('benches the players in no slot', async () => {
     await open();
     expect(rows('Bench')).toEqual([
-      ['Dan', 'MED', 'Remove'],
-      ['Eve', '—', 'Remove'],
+      ['Dan', 'MED', 'Edit Remove'],
+      ['Eve', '—', 'Edit Remove'],
     ]);
   });
 
@@ -204,10 +204,10 @@ describe('Team detail page', () => {
       }),
     );
     expect(rows('Active Slots')).toEqual([
-      ['CMD', 'Cat', 'CMD HVY', 'Remove'],
+      ['CMD', 'Cat', 'CMD HVY', 'Edit Remove'],
       ['HVY', 'Player #99 (not on this Team)', '—', ''],
-      ['SCT 1', 'Ann', 'SCT', 'Remove'],
-      ['AMO', 'Bob', '—', 'Remove'],
+      ['SCT 1', 'Ann', 'SCT', 'Edit Remove'],
+      ['AMO', 'Bob', '—', 'Edit Remove'],
     ]);
     const card = page().querySelector('.status');
     expect(card?.querySelector('.status__row--total')?.textContent).toContain('4 / 2');
@@ -225,8 +225,8 @@ describe('Team detail page', () => {
   it('marks the signed-in Account\'s self-insert Player with a "You" badge', async () => {
     await open(team(), { ...USER, self_insert: player(14, 'Dan', ['medic']) });
     expect(rows('Bench')).toEqual([
-      ['Dan You', 'MED', 'Remove'],
-      ['Eve', '—', 'Remove'],
+      ['Dan You', 'MED', 'Edit Remove'],
+      ['Eve', '—', 'Edit Remove'],
     ]);
     expect(rows('Active Slots').map((r) => r[1])).toEqual(['Cat', 'Ann', 'Bob']);
   });
@@ -271,10 +271,45 @@ describe('Team detail page', () => {
     expect(links).toContain('Edit Team -> /teams/7/edit');
     expect(links).toContain('← Back to Teams -> /teams');
     expect(links.filter((l) => l.startsWith('Remove'))).toHaveLength(5);
-    for (const label of ['View ->', 'Edit ->', 'Match History']) {
+    expect(links.filter((l) => l.startsWith('Edit ->'))).toHaveLength(5);
+    for (const label of ['View ->', 'Match History']) {
       expect(links.some((l) => l.startsWith(label))).toBe(false);
     }
-    expect(links).toHaveLength(9);
+    expect(links).toHaveLength(14);
+  });
+
+  /** Each row's Edit link href in the table under the heading `title`. */
+  function editLinks(title: string): (string | null)[] {
+    const heading = [...page().querySelectorAll('h2')].find((h) => h.textContent?.trim() === title);
+    const table = heading?.parentElement?.querySelector('table');
+    if (!table) throw new Error(`no ${title} table`);
+    return [...table.querySelectorAll('tbody tr')].map(
+      (tr) =>
+        [...tr.querySelectorAll('a')]
+          .find((a) => a.textContent?.trim() === 'Edit')
+          ?.getAttribute('href') ?? null,
+    );
+  }
+
+  it("gives every active and bench row an Edit link to that Player's edit page", async () => {
+    await open();
+    // Active: CMD Cat (13), SCT 1 Ann (11), AMO Bob (12); Bench: Dan (14), Eve (15).
+    expect(editLinks('Active Slots')).toEqual([
+      '/teams/7/players/13/edit',
+      '/teams/7/players/11/edit',
+      '/teams/7/players/12/edit',
+    ]);
+    expect(editLinks('Bench')).toEqual(['/teams/7/players/14/edit', '/teams/7/players/15/edit']);
+  });
+
+  it("gives a placeholder row for another Team's slotted Player no Edit link", async () => {
+    await open(team({ slot_heavy: 99 }));
+    expect(editLinks('Active Slots')).toEqual([
+      '/teams/7/players/13/edit',
+      null,
+      '/teams/7/players/11/edit',
+      '/teams/7/players/12/edit',
+    ]);
   });
 
   it('opens Assign Slots at /teams/7/slots', async () => {
