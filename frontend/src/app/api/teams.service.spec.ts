@@ -162,7 +162,7 @@ describe('TeamsService', () => {
   });
 
   it('generates Teams with POST teams/generate/ (selects as strings, stats as numbers)', async () => {
-    const body = { num_teams: '2', players_per_team: 'random', mean: 50, std_dev: 15 };
+    const body = { num_teams: '2', players_per_team: 'random_team', mean: 50, std_dev: 15 };
     const result = firstValueFrom(teams.generate(body));
     const req = http.expectOne(`${BASE}/teams/generate/`);
     expect(req.request.method).toBe('POST');

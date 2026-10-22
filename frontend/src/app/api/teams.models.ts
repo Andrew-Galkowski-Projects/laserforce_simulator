@@ -50,9 +50,9 @@ export interface TeamInput {
 
 /**
  * `GenerateLeagueForm` fields for `POST teams/generate/`. The two selects travel as strings
- * (`'0'`, `'2'`..`'20'` or `'random'`; `'6'`..`'9'`, `'12'`..`'100'` or `'random'`) and the two
- * stats as numbers, exactly as the Django form binds them, so the server's cross-field rule stays
- * the only validator.
+ * (`'0'`, `'2'`..`'20'` or the marker `'random_2_10'`; `'6'`..`'9'` or `'random_team'` in team
+ * mode, `'12'`..`'100'` or `'random_pool'` in pool mode) and the two stats as numbers, exactly as
+ * the Django form binds them, so the server's cross-field rule stays the only validator.
  */
 export interface GenerateInput {
   num_teams: string;

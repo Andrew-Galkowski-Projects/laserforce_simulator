@@ -4,7 +4,8 @@ import { MatError } from '@angular/material/form-field';
 import { RouterLink } from '@angular/router';
 import { RosterImportResult } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { classifyImportErrors } from './row-errors';
+import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
+import { classifyImportErrors } from './import-errors';
 
 /** The filename the browser saves the server's template CSV under. */
 const TEMPLATE_FILENAME = 'roster_template.csv';
@@ -20,9 +21,7 @@ function saveBlob(blob: Blob, filename: string): void {
 }
 
 function messageOf(error: unknown): string {
-  return error instanceof Error && error.message
-    ? error.message
-    : 'Something went wrong. Please try again.';
+  return error instanceof Error && error.message ? error.message : GENERIC_ERROR_MESSAGE;
 }
 
 /** `/teams/import`: Roster import (LG-00b) from a CSV, with the result shown in place. */

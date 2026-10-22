@@ -74,14 +74,30 @@
       <div class="generate__stats">
         <mat-form-field appearance="outline">
           <mat-label>Stat mean</mat-label>
-          <input matInput type="number" name="mean" formControlName="mean" min="0" max="100" />
+          <input
+            matInput
+            type="number"
+            name="mean"
+            formControlName="mean"
+            min="0"
+            max="100"
+            required
+          />
           @if (form.controls.mean.getError('server'); as message) {
             <mat-error>{{ message }}</mat-error>
           }
         </mat-form-field>
         <mat-form-field appearance="outline">
           <mat-label>Stat standard deviation</mat-label>
-          <input matInput type="number" name="std_dev" formControlName="std_dev" min="1" max="40" />
+          <input
+            matInput
+            type="number"
+            name="std_dev"
+            formControlName="std_dev"
+            min="1"
+            max="40"
+            required
+          />
           @if (form.controls.std_dev.getError('server'); as message) {
             <mat-error>{{ message }}</mat-error>
           }

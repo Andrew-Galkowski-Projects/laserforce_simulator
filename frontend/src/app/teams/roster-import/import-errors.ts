@@ -1,5 +1,6 @@
 // Sorts a failed Roster import into the three places the screen shows errors.
 import { ApiError } from '../../api/api-client';
+import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
 
 /** The import form's one control; every envelope item with this `field` belongs to it. */
 const FILE_FIELD = 'csv_file';
@@ -34,7 +35,7 @@ function formatRowError(field: string, message: string): string | null {
 export function classifyImportErrors(error: unknown): ImportErrors {
   const result: ImportErrors = { file: [], rows: [], alert: [] };
   if (!(error instanceof ApiError)) {
-    result.alert.push('Something went wrong. Please try again.');
+    result.alert.push(GENERIC_ERROR_MESSAGE);
     return result;
   }
   for (const item of error.errors) {

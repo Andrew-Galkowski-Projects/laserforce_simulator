@@ -161,22 +161,20 @@ describe('Import Roster page', () => {
   const fileError = (): string | undefined =>
     fileInput().closest('.roster-import__field')?.querySelector('mat-error')?.textContent?.trim();
 
-  it('shows a csv_file error next to the file control, not in the alert line', async () => {
-    await open();
-    await choose(csv());
-    await submit(
-      {
-        errors: [
-          { code: 'invalid', message: 'The file must be UTF-8 encoded.', field: 'csv_file' },
-        ],
-        meta: {},
-      },
-      400,
-    );
-    expect(fileError()).toBe('The file must be UTF-8 encoded.');
-    expect(page().querySelector('[role="alert"]')).toBeNull();
-    expect(routerUrl()).toBe('/teams/import');
-  });
+  it.each([
+    ['required', 'This field is required.'],
+    ['invalid', 'The file must be UTF-8 encoded.'],
+  ])(
+    'shows a %s csv_file error next to the file control, not in the alert line',
+    async (code, message) => {
+      await open();
+      await choose(csv());
+      await submit({ errors: [{ code, message, field: 'csv_file' }], meta: {} }, 400);
+      expect(fileError()).toBe(message);
+      expect(page().querySelector('[role="alert"]')).toBeNull();
+      expect(routerUrl()).toBe('/teams/import');
+    },
+  );
 
   const rowErrors = (): string[] =>
     [...page().querySelectorAll('.roster-import__rows li')].map((li) => li.textContent?.trim());

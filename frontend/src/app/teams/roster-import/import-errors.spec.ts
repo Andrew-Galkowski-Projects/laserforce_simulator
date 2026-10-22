@@ -1,5 +1,5 @@
 import { ApiError } from '../../api/api-client';
-import { classifyImportErrors } from './row-errors';
+import { classifyImportErrors } from './import-errors';
 
 describe('classifyImportErrors', () => {
   it('formats row items in the server order: row + column, row only, and row 0 as File', () => {

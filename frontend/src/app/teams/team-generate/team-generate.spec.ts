@@ -326,7 +326,9 @@ describe('Generate Players page', () => {
     );
     expect(control('mean').type).toBe('number');
     expect([control('mean').min, control('mean').max]).toEqual(['0', '100']);
+    expect(control('mean').required).toBe(true);
     expect(control('std_dev').type).toBe('number');
     expect([control('std_dev').min, control('std_dev').max]).toEqual(['1', '40']);
+    expect(control('std_dev').required).toBe(true);
   });
 });
