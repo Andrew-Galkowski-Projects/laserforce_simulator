@@ -8,9 +8,11 @@ import { signIn } from './api/testing/auth-fixtures';
 import { releaseTeamsLoads } from './teams/testing/teams-loads';
 import { routes } from './app.routes';
 import { authInterceptor } from './auth/auth.interceptor';
+import { RosterImport } from './teams/roster-import/roster-import';
 import { TeamCreate } from './teams/team-create/team-create';
 import { TeamDetail } from './teams/team-detail/team-detail';
 import { TeamEdit } from './teams/team-edit/team-edit';
+import { TeamGenerate } from './teams/team-generate/team-generate';
 import { TeamList } from './teams/team-list/team-list';
 import { TeamSlots } from './teams/team-slots/team-slots';
 
@@ -100,5 +102,29 @@ describe('app routes', () => {
       expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
       expect(TestBed.inject(Title).getTitle()).toBe(title);
     });
+
+    it.each([
+      ['/teams/generate', TeamGenerate, 'Generate Players'],
+      ['/teams/import', RosterImport, 'Import Roster'],
+    ])('resolves %s to its bulk screen, not to Team detail', async (url, screen, heading) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(TeamDetail))).toBeNull();
+      expect(harness.routeNativeElement?.querySelector('h1')?.textContent?.trim()).toBe(heading);
+      expect(TestBed.inject(Title).getTitle()).toBe(`${heading} - Laserforce Simulator`);
+    });
+  });
+
+  describe('signed out, bulk screens', () => {
+    it.each(['/teams/generate', '/teams/import'])(
+      'sends %s to /login with a returnUrl',
+      async (url) => {
+        const harness = await RouterTestingHarness.create();
+        await harness.navigateByUrl(url);
+        expect(routerUrl()).toBe(`/login?returnUrl=${encodeURIComponent(url)}`);
+      },
+    );
   });
 });

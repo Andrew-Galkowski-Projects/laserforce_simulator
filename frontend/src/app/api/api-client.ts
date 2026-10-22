@@ -84,6 +84,13 @@ function toApiError(error: HttpErrorResponse): ApiError {
   ]);
 }
 
+/** Turns every HTTP failure into an `ApiError`; anything else is rethrown as-is. */
+function apiErrors<T>(): OperatorFunction<T, T> {
+  return catchError((error: unknown) =>
+    throwError(() => (error instanceof HttpErrorResponse ? toApiError(error) : error)),
+  );
+}
+
 /**
  * Unwraps a success body (a 204's `null` body unwraps to `undefined`) and turns
  * every HTTP failure into an `ApiError`.
@@ -91,9 +98,7 @@ function toApiError(error: HttpErrorResponse): ApiError {
 function unwrap<B, T>(project: (body: B) => T): OperatorFunction<B | null, T> {
   return pipe(
     map((body) => (body === null ? (undefined as T) : project(body))),
-    catchError((error: unknown) =>
-      throwError(() => (error instanceof HttpErrorResponse ? toApiError(error) : error)),
-    ),
+    apiErrors(),
   );
 }
 
@@ -147,6 +152,17 @@ export class ApiClient {
   /** Multipart POST: the browser sets the multipart boundary header itself. */
   upload<T>(path: string, formData: FormData, options: RequestOptions = {}): Observable<T> {
     return this.post<T>(path, formData, options);
+  }
+
+  /**
+   * A non-enveloped GET (e.g. a CSV download behind the JWT): the body as a `Blob`, untouched.
+   * Failures still become `ApiError`s; a Blob error body has no envelope, so the status-based
+   * fallback applies.
+   */
+  getRaw(path: string, options: RequestOptions = {}): Observable<Blob> {
+    return this.http
+      .get(this.url(path), { responseType: 'blob', context: options.context })
+      .pipe(apiErrors());
   }
 
   private url(path: string): string {

@@ -1,9 +1,11 @@
 import { TestBed } from '@angular/core/testing';
-import { provideHttpClient } from '@angular/common/http';
+import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { authInterceptor } from '../auth/auth.interceptor';
 import { ApiClient, ApiError } from './api-client';
+import { signIn } from './testing/auth-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -184,5 +186,49 @@ describe('ApiClient', () => {
       http.expectOne(`${BASE}/maps/`).error(new ProgressEvent('error'), { status: 0 });
       expect((await result).errors[0].code).toBe('network_error');
     });
+  });
+});
+
+/** The raw read runs through the real `authInterceptor`, so the bearer header can be asserted. */
+describe('ApiClient.getRaw', () => {
+  let api: ApiClient;
+  let http: HttpTestingController;
+
+  beforeEach(async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(withInterceptors([authInterceptor])),
+        provideHttpClientTesting(),
+      ],
+    });
+    api = TestBed.inject(ApiClient);
+    http = TestBed.inject(HttpTestingController);
+    await signIn();
+  });
+
+  afterEach(() => http.verify());
+
+  it('GETs a Blob with the bearer header and returns the body as-is, no envelope unwrap', async () => {
+    const result = firstValueFrom(api.getRaw('teams/import/template/'));
+    const req = http.expectOne(`${BASE}/teams/import/template/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.responseType).toBe('blob');
+    expect(req.request.headers.get('Authorization')).toBe('Bearer acc-1');
+    const csv = new Blob(['team,name,role\n'], { type: 'text/csv' });
+    req.flush(csv);
+    const body = await result;
+    expect(body).toBe(csv);
+    expect(await body.text()).toBe('team,name,role\n');
+  });
+
+  it('maps a failure (404 with an empty blob body) to ApiError 404', async () => {
+    const result = firstValueFrom(api.getRaw('teams/import/template/')).catch((e: unknown) => e);
+    http
+      .expectOne(`${BASE}/teams/import/template/`)
+      .flush(new Blob([]), { status: 404, statusText: 'Not Found' });
+    const err = (await result) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
+    expect(err.errors.length).toBeGreaterThan(0);
   });
 });

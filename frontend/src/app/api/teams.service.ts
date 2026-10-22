@@ -2,9 +2,21 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiClient, Page } from './api-client';
 import { Player, PlayerInput } from './players.models';
-import { Team, TeamInput, TeamListItem, TeamListParams, TeamSlotsInput } from './teams.models';
+import {
+  GenerateInput,
+  GenerationResult,
+  RosterImportResult,
+  Team,
+  TeamInput,
+  TeamListItem,
+  TeamListParams,
+  TeamSlotsInput,
+} from './teams.models';
 
-/** `/api/teams/`: list, detail, create, edit, assign slots and add-player. The API has no Team delete. */
+/**
+ * `/api/teams/`: list, detail, create, edit, assign slots, add-player, and the bulk actions
+ * (generate, roster import). The API has no Team delete.
+ */
 @Injectable({ providedIn: 'root' })
 export class TeamsService {
   private readonly api = inject(ApiClient);
@@ -32,5 +44,22 @@ export class TeamsService {
 
   addPlayer(teamId: number, body: PlayerInput): Observable<Player> {
     return this.api.post<Player>(`teams/${teamId}/players/`, body);
+  }
+
+  /** LG-00 generation (`POST teams/generate/`): randomised Teams, or the free-agent pool. */
+  generate(input: GenerateInput): Observable<GenerationResult> {
+    return this.api.post<GenerationResult>('teams/generate/', input);
+  }
+
+  /** Roster import (`POST teams/import/`, multipart): the CSV under `csv_file`. */
+  importRoster(file: File): Observable<RosterImportResult> {
+    const form = new FormData();
+    form.append('csv_file', file);
+    return this.api.upload<RosterImportResult>('teams/import/', form);
+  }
+
+  /** The server's template CSV (`GET teams/import/template/`), raw: the caller saves it. */
+  importTemplate(): Observable<Blob> {
+    return this.api.getRaw('teams/import/template/');
   }
 }
