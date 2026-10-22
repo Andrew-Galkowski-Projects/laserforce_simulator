@@ -89,3 +89,47 @@ CSV-driven roster-import surface at `GET/POST /teams/import/` (URL name `import_
 **Determinism / scope.** Fully deterministic given the input file — no `random.*` calls in either the pure module or the view. `@transaction.atomic` covers the entire POST handler and `transaction.set_rollback(True)` inside the catch block guarantees all-or-nothing semantics even on a 200 error response (pinned by `test_db_slot_collision_rolls_back_all_writes` AND `test_parser_raise_writes_nothing`). **No simulation behaviour change, no `_flush_to_db` touch, no SIM-07 / SIM-08 contract interaction, no Score Calibration re-baseline, no model field change, no migration, no ADR, no new dependency** (the pure module is stdlib-only). **Out of scope (deliberate):** no preview-before-commit UI (POST writes immediately on success); no per-team `/teams/<id>/import/` entry point (single global entry only); no editing the existing per-player Add Player flow (`player_add` view unchanged); no editing LG-00's `generate_players` view or `player_generator.py` (the only cross-link is the `STAT_COLUMNS == _STAT_FIELDS` equality pin); no Django admin / REST API changes (`teams/api_views.py`, `teams/serializers.py` untouched) — *at LG-00b time; **ANG-01a** later added the API import (`POST /api/teams/import/`) and template (`GET /api/teams/import/template/`) on top of the shared `run_roster_import` / `build_roster_template_csv` services*; no async / Celery / progress bar (the 1000-row cap makes the import sub-second, foreground under `@transaction.atomic`); no JS validation / live preview; no per-row commit (all-or-nothing); no CSV dialect detection; no multi-file upload; no clobber / overwrite mode for existing players (the import only CREATES new Players — updating an existing Player is not in scope, and `Player.unique_together = ["team", "name"]` enforces this at the DB layer as a hard backstop). Tests live in **two NEW files** under `teams/tests/`: `test_roster_importer.py` (pure-unit, no Django imports — `TestHeaderValidation`, `TestCoercion`, `TestPreferredRoles`, `TestInFileCollisions`, `TestMultiErrorAccumulation`, `TestRowErrorShape`, `TestParsedRosterShape`, `TestNoDjangoImportsLeaked`) and `test_roster_import_view.py` (Django `TestCase` — `TestImportRosterGet`, `TestImportRosterPostHappyPath`, `TestImportRosterPostDbSlotCollision`, `TestImportRosterPostFormErrors`, `TestImportRosterPostParseErrors`, `TestImportRosterPostAtomic`, `TestImportRosterTemplate`, `TestEntryPointLink`).
 
 Locked names — URLs `path("import/", views.import_roster, name="import_roster")` (full URL `/teams/import/`) + `path("import/template.csv", views.import_roster_template, name="import_roster_template")` (full URL `/teams/import/template.csv`); views `teams.views.import_roster` + `teams.views.import_roster_template` + private helpers `teams.views._check_db_slot_collisions(parsed)` + `teams.views._apply_roster(parsed) -> (created, appended, player_count)` (ANG-01a: now defined in `teams.services` as `(parsed, *, manager)`, re-exported from `teams.views`); form `teams.forms.RosterImportForm` with field `csv_file` and constant `RosterImportForm.MAX_UPLOAD_BYTES = 2 * 1024 * 1024`; pure module `teams/roster_importer.py` with `parse_roster_csv(text: str) -> ParsedRoster`; dataclasses `RowError(row_num: int, field: str | None, message: str)` (frozen) + `ParsedRow(row_num, team, name, role, profile, stats, preferred_roles)` (frozen) + `ParsedRoster(rows, by_team)` (frozen); exception `RosterImportError(Exception)` with `errors: list[RowError]`; module tuples `REQUIRED_COLUMNS` (8) + `OPTIONAL_COLUMNS` (20) + `STAT_COLUMNS` (19, equals `_STAT_FIELDS`) + `ALL_COLUMNS` (28) + `ROLE_NAMES` (5); module dicts `SLOT_LIMITS = {"commander":1, "heavy":1, "scout":2, "medic":1, "ammo":1}` + `PROFILE_BOUNDS = {"age":(5,100), "started_playing_age":(3,100), "total_games":(0,100_000)}`; module constants `STAT_DEFAULT=50, STAT_MIN=0, STAT_MAX=100, MAX_DATA_ROWS=1000, NAME_MAX_LEN=100, TEAM_NAME_MAX_LEN=100, HOME_SITE_MAX_LEN=100, HEIGHT_MAX_LEN=20`; templates `templates/teams/roster_import.html` (form) + `templates/teams/roster_import_done.html` (confirm); DOM ids `roster-import-form` / `roster-import-file` / `roster-import-submit` / `roster-import-template-link` / `roster-import-errors` / `roster-import-errors-summary` / `roster-import-error-{row_num}-{field|"row"}` / `roster-import-confirm-summary` / `roster-import-confirm-teams-list` / `roster-import-confirm-appended-list` / `roster-import-link` (entry-point on team_list); test files `teams/tests/test_roster_importer.py` + `teams/tests/test_roster_import_view.py`; GLOSSARY.md term **Roster import** (already added in grilling — Docs agent does NOT re-add). Pinned by the seam contract at [`.claude/worktrees/lg-00b-seam-contract.md`](../../../.claude/worktrees/lg-00b-seam-contract.md).
+
+## ANG-06 2b Generate Players + Import Roster in Angular
+
+Spec #275 (tickets #276 seam prep, #277 Generate screen, #278 Import screen). Angular screens for
+LG-00 generation and LG-00b import over the ANG-01a endpoints above; **no server change**.
+
+- **Routes** (`frontend/src/app/teams/teams.routes.ts`): `/teams/generate` (title "Generate Players")
+  and `/teams/import` ("Import Roster"), lazy `loadComponent`, declared before `:id`, behind
+  `authGuard`. Entry points: two outlined buttons "Generate Players" / "Import Roster" on the Teams
+  list header, left of "Create New Team" (the empty state keeps only "Create Team").
+- **Seam** (`api/teams.service.ts`): `generate(GenerateInput): Observable<GenerationResult>` (POST
+  `teams/generate/`), `importRoster(File): Observable<RosterImportResult>` (multipart `csv_file`
+  through `ApiClient.upload`), `importTemplate(): Observable<Blob>` through the new
+  `ApiClient.getRaw(path)` (bearer header, no envelope unwrap). Models in `api/teams.models.ts`:
+  `GenerateInput {num_teams, players_per_team: string; mean, std_dev: number}` carrying the server
+  markers `random_2_10` / `random_team` / `random_pool`; `GenerationResult {created_teams,
+  free_agent_count}`; `RosterImportResult {created_teams, appended_teams, player_count, row_count}`.
+- **Generate screen** (`teams/team-generate/`): "Number of teams" `mat-select` (Django choices,
+  default Random 2-10); "Players per team" `mat-select` whose options and label swap with the mode
+  (team: 6-9 + Random 6-8; pool: "Free-agent players", 12-100 + Random 12-100) and reset to the
+  mode's Random value on a change; mean (0-100, default 50) and std dev (1-40, default 15) as
+  required number inputs. Selects post as strings, numbers as numbers; the server's cross-field
+  rule is the only validator. Result in place: "Created teams" links, "Created N free-agent
+  players." when non-zero, "Generate more" (previous values kept) and "Back to Teams". No snackbar.
+- **Import screen** (`teams/roster-import/`): the Django intro text, "Download a template CSV"
+  (saves the Blob as `roster_template.csv` through an object URL), a Material-styled picker over a
+  hidden `<input type="file" accept=".csv,text/csv">` showing the filename, Import (disabled until a
+  file is chosen) / Cancel. No client-side size or encoding check. Errors are sorted by
+  `import-errors.ts#classifyImportErrors`: `csv_file` items go on the file control; row items
+  (`row:<n>:<column>` / `row:<n>`) are listed in server order as "Row N (column): message",
+  "Row N: message", or "File: message" for row 0; everything else goes in the alert line; the form
+  stays filled. Result in place: "Imported N players across M rows.", "Created teams" and
+  "Appended to existing teams" link lists when non-empty, "Import another" / "Back to Teams".
+- **Shared:** `teams/shared/form-errors.ts` exports `GENERIC_ERROR_MESSAGE` ("Something went
+  wrong. Please try again."), used by `applyApiErrors`, `classifyImportErrors` and the Import
+  screen's template-download failure.
+- **Known non-parity:** Import is disabled without a file, so the server's `csv_file: required`
+  message cannot surface in Angular (Django lets the submit through and shows "This field is
+  required."). The done-page sentence about the Players tab (LG-00c) is not carried over.
+- **Scope out:** a Players tab / any view of the Free Agents Team (LG-00c), progress indication
+  beyond the disabled submit, client-side CSV preview or validation, any change to the API.
+- **Tests:** Vitest specs beside each file (`app.routes.spec.ts` route order, `team-list.spec.ts`
+  header order, `teams.service.spec.ts`, `api-client.spec.ts` `getRaw`, `import-errors.spec.ts`,
+  `team-generate.spec.ts`, `roster-import.spec.ts`); browser check on 4201 / 8001 in the PR.

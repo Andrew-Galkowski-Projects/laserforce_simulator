@@ -2614,9 +2614,24 @@ Grill settled (owner, 2026-10-21):
   tests for the new serializer fields; browser check (4201 / 8001) incl. a cross-Account 404.
 - No GLOSSARY or ADR changes.
 
-#### ANG-06 2b · Generate Players + Import Roster
+#### ANG-06 2b · [DONE] Generate Players + Import Roster
 
-Spec: #275
+Spec: #275 (tickets #276, #277, #278)
+
+**[DONE] Shipped (2026-10-22).** Angular Generate Players (`/teams/generate`) and Import Roster
+(`/teams/import`) over the ANG-01a endpoints, through `TeamsService.generate` / `importRoster` /
+`importTemplate` and a new `ApiClient.getRaw` for the JWT-protected CSV template. No server
+change. What the work found:
+- Import is disabled until a file is chosen, so the server's `csv_file: required` message never
+  surfaces in Angular (Django lets the submit through and shows "This field is required.").
+- `ApiClient.getRaw` took an optional `options` argument beyond the spec's narrow seam; left in.
+- Review: the `GenerateInput` doc comment and a service fixture used `'random'`, which the server
+  rejects (the markers are `random_2_10` / `random_team` / `random_pool`); `required` added to the
+  mean / std dev inputs; one shared `GENERIC_ERROR_MESSAGE`; `row-errors.ts` renamed
+  `import-errors.ts`.
+- Left for later: `.team-form__error` / `__actions` and the card surface are copied into both
+  screens' SCSS; the "Created teams" link list appears three times; the two bulk routes are lazy
+  while their siblings are eager; `team-detail.ts` carries a fourth generic-message variant.
 
 Grill settled (owner, 2026-10-21):
 
