@@ -1,0 +1,89 @@
+// Import Roster: the intro, the template action, the file-picker card and the result panel.
+// Tokens only (ADR-0043); the card mirrors `../shared/team-form.scss` without its `:host` sizing.
+.roster-import__template {
+  margin: -0.5rem 0 1rem;
+}
+
+.roster-import__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 32rem;
+  padding: 1.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+}
+
+.roster-import__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.roster-import__label {
+  font-weight: 500;
+}
+
+.roster-import__picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.roster-import__filename {
+  color: var(--lf-text-muted);
+  overflow-wrap: anywhere;
+}
+
+// `mat-error` outside a `mat-form-field` carries no Material styles of its own.
+.roster-import__error {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--mat-sys-error);
+}
+
+.roster-import__rows {
+  margin: 0;
+  padding: 0.75rem 0.75rem 0.75rem 2rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+  font-size: 0.875rem;
+}
+
+.roster-import__summary {
+  margin: 0;
+}
+
+.roster-import__card h2 {
+  margin: 0.5rem 0 0;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.roster-import__teams {
+  margin: 0;
+  padding-left: 1.5rem;
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+.team-form__error {
+  margin: 0 0 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.team-form__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}

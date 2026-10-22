@@ -1,0 +1,77 @@
+@if (result(); as result) {
+  <h1>Import complete</h1>
+  <section class="roster-import__card">
+    <p class="roster-import__summary">
+      Imported <strong>{{ result.player_count }}</strong> players across
+      <strong>{{ result.row_count }}</strong> rows.
+    </p>
+    @if (result.created_teams.length > 0) {
+      <h2>Created teams</h2>
+      <ul class="roster-import__teams">
+        @for (team of result.created_teams; track team.id) {
+          <li>
+            <a [routerLink]="['/teams', team.id]">{{ team.name }}</a>
+          </li>
+        }
+      </ul>
+    }
+    @if (result.appended_teams.length > 0) {
+      <h2>Appended to existing teams</h2>
+      <ul class="roster-import__teams">
+        @for (team of result.appended_teams; track team.id) {
+          <li>
+            <a [routerLink]="['/teams', team.id]">{{ team.name }}</a>
+          </li>
+        }
+      </ul>
+    }
+    <div class="team-form__actions">
+      <a mat-flat-button routerLink="/teams">Back to Teams</a>
+      <button mat-stroked-button type="button" (click)="importAnother()">Import another</button>
+    </div>
+  </section>
+} @else {
+  <h1>Import Roster</h1>
+  <p class="team-page__sub">
+    Upload a roster CSV (max 1000 rows). Required columns: team, name, role, age,
+    started_playing_age, total_games, home_site, height. Stat columns are optional (default 50).
+  </p>
+  <p class="roster-import__template">
+    <button mat-button type="button" (click)="downloadTemplate()">Download a template CSV</button>
+  </p>
+  <form class="roster-import__card" (submit)="$event.preventDefault(); submit()" novalidate>
+    @for (message of alertErrors(); track $index) {
+      <p class="team-form__error" role="alert">{{ message }}</p>
+    }
+    <div class="roster-import__field">
+      <span class="roster-import__label" id="roster-import-label">Roster CSV</span>
+      <input
+        #csvInput
+        type="file"
+        name="csv_file"
+        accept=".csv,text/csv"
+        hidden
+        aria-labelledby="roster-import-label"
+        (change)="choose($event)"
+      />
+      <div class="roster-import__picker">
+        <button mat-stroked-button type="button" (click)="csvInput.click()">Choose CSV</button>
+        <span class="roster-import__filename">{{ file()?.name ?? 'No file chosen' }}</span>
+      </div>
+      @for (message of fileErrors(); track $index) {
+        <mat-error class="roster-import__error">{{ message }}</mat-error>
+      }
+      @if (rowErrors().length > 0) {
+        <ul class="roster-import__rows">
+          @for (message of rowErrors(); track $index) {
+            <li>{{ message }}</li>
+          }
+        </ul>
+      }
+    </div>
+    <div class="team-form__actions">
+      <button mat-flat-button type="submit" [disabled]="busy() || !file()">Import</button>
+      <a mat-button routerLink="/teams">Cancel</a>
+    </div>
+  </form>
+}
