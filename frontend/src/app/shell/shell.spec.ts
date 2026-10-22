@@ -4,7 +4,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
-import { releaseTeamsLoads, signIn } from '../api/testing/auth-fixtures';
+import { signIn } from '../api/testing/auth-fixtures';
+import { releaseTeamsLoads } from '../teams/testing/teams-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
 

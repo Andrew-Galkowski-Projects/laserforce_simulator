@@ -71,13 +71,18 @@ src/
     app.ts                the root: a bare <router-outlet> (/login renders without the shell)
     app-title.ts          APP_TITLE, shared by the header and the route titles
     app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
-    app.routes.ts         'login' (signedOutGuard, lazy) | '' -> Shell behind authGuard:
+    app.routes.ts         'login' (signedOutGuard, lazy) | '' -> lazy Shell behind authGuard:
                           '' -> /teams, 'teams' -> lazy teams/teams.routes.ts | '**' -> ''
     shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
                           over drawer below); toolbar colours via mat.toolbar-overrides
     login/                sign-in form; returnUrl honoured only when it is an in-app path
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
-                          team-create, team-detail, team-edit, team-slots
+                          team-create, team-detail, team-edit, team-slots;
+                          shared/: roster.ts (SLOTS, ROLE_LABELS, bench split), route-team.ts
+                          (loadRouteTeam: the :id Team, 404 -> notFound, else loadError),
+                          notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
+                          team-name-form.ts, form-errors.ts (applyApiErrors), team-page.scss,
+                          team-form.scss; testing/teams-loads.ts (releaseTeamsLoads, specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures

@@ -1,11 +1,11 @@
 import { Routes } from '@angular/router';
 import { APP_TITLE } from './app-title';
 import { authGuard, signedOutGuard } from './auth/auth.guard';
-import { Shell } from './shell/shell';
 
 /**
  * `/login` is the only open route; everything else is a child of the layout-B `Shell`
- * behind `authGuard`. Feature areas are lazily loaded routes files.
+ * behind `authGuard`. The Shell and every feature area are lazily loaded, so the initial
+ * bundle carries no Material layout code.
  */
 export const routes: Routes = [
   {
@@ -16,7 +16,7 @@ export const routes: Routes = [
   },
   {
     path: '',
-    component: Shell,
+    loadComponent: () => import('./shell/shell').then((m) => m.Shell),
     canActivate: [authGuard],
     canActivateChild: [authGuard],
     children: [

@@ -1,5 +1,4 @@
 import { Component, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import {
   FormControl,
   FormGroup,
@@ -9,15 +8,14 @@ import {
 import { MatButton } from '@angular/material/button';
 import { MatError, MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatOption, MatSelect } from '@angular/material/select';
-import { MatSnackBar } from '@angular/material/snack-bar';
-import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { switchMap } from 'rxjs';
-import { ApiError } from '../../api/api-client';
+import { Router, RouterLink } from '@angular/router';
 import { Team, TeamSlotsInput } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
+import { applyApiErrors } from '../shared/form-errors';
+import { injectNotify } from '../shared/notify';
 import { SLOTS, SlotKey } from '../shared/roster';
+import { loadRouteTeam } from '../shared/route-team';
 import { TeamNotFound } from '../shared/team-not-found';
-import { applyApiErrors } from '../team-create/form-errors';
 
 /**
  * The "— empty —" option's value. Material treats a `null` option as a reset option that
@@ -41,55 +39,41 @@ type SlotsForm = FormGroup<Record<SlotKey, FormControl<number>>>;
     MatSelect,
     TeamNotFound,
   ],
-  styleUrls: ['../team-create/team-page.scss', './team-slots.scss'],
+  styleUrls: ['../shared/team-page.scss', './team-slots.scss'],
   templateUrl: './team-slots.html',
 })
 export class TeamSlots {
   private readonly teams = inject(TeamsService);
   private readonly router = inject(Router);
-  private readonly snackBar = inject(MatSnackBar);
   private readonly fb = inject(NonNullableFormBuilder);
+  private readonly notify = injectNotify();
 
   protected readonly slots = SLOTS;
   protected readonly emptySlot = EMPTY_SLOT;
-  protected readonly team = signal<Team | null>(null);
   protected readonly form = signal<SlotsForm | null>(null);
-  protected readonly notFound = signal(false);
-  protected readonly loadError = signal<string | null>(null);
+  private readonly load = loadRouteTeam((team) => this.form.set(this.buildForm(team)));
+  protected readonly team = this.load.team;
+  protected readonly notFound = this.load.notFound;
+  protected readonly loadError = this.load.loadError;
   protected readonly nonFieldErrors = signal<string[]>([]);
   protected readonly busy = signal(false);
-
-  constructor() {
-    inject(ActivatedRoute)
-      .paramMap.pipe(
-        switchMap((params) => this.teams.get(Number(params.get('id')))),
-        takeUntilDestroyed(),
-      )
-      .subscribe({
-        next: (team) => {
-          this.form.set(this.buildForm(team));
-          this.team.set(team);
-        },
-        error: (error: unknown) => {
-          if (error instanceof ApiError && error.status === 404) {
-            this.notFound.set(true);
-          } else {
-            this.loadError.set(error instanceof Error ? error.message : 'Could not load the Team.');
-          }
-        },
-      });
-  }
 
   protected save(team: Team, form: SlotsForm): void {
     this.busy.set(true);
     this.nonFieldErrors.set([]);
     const raw = form.getRawValue();
-    const body = Object.fromEntries(
-      SLOTS.map(({ key }) => [key, raw[key] === EMPTY_SLOT ? null : raw[key]]),
-    ) as unknown as TeamSlotsInput;
+    const slot = (key: SlotKey): number | null => (raw[key] === EMPTY_SLOT ? null : raw[key]);
+    const body: TeamSlotsInput = {
+      slot_commander: slot('slot_commander'),
+      slot_heavy: slot('slot_heavy'),
+      slot_scout_1: slot('slot_scout_1'),
+      slot_scout_2: slot('slot_scout_2'),
+      slot_medic: slot('slot_medic'),
+      slot_ammo: slot('slot_ammo'),
+    };
     this.teams.setSlots(team.id, body).subscribe({
       next: (saved) => {
-        this.snackBar.open('Roster slots updated.', 'Close', { duration: 5000 });
+        this.notify('Roster slots updated.');
         void this.router.navigate(['/teams', saved.id]);
       },
       error: (error: unknown) => {

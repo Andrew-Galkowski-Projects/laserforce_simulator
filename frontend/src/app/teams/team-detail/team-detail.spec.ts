@@ -7,7 +7,8 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../environments/environment';
 import { Player, Role } from '../../api/players.models';
 import { STATS } from '../../api/testing/player-fixtures';
-import { USER, releaseTeamsLoads, signIn } from '../../api/testing/auth-fixtures';
+import { USER, signIn } from '../../api/testing/auth-fixtures';
+import { releaseTeamsLoads } from '../testing/teams-loads';
 import { Team } from '../../api/teams.models';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
@@ -193,6 +194,25 @@ describe('Team detail page', () => {
     expect(rows('Active Slots')).toHaveLength(3);
   });
 
+  it('shows a slotted Player from another Team as a placeholder row, counted as Active', async () => {
+    // Django's active_roster shows (and counts) a slotted Player even when they are not on this
+    // Team (roster_errors reports it); the API only sends this Team's players, so only the id.
+    await open(
+      team({
+        slot_heavy: 99,
+        roster_errors: ['Player in Heavy slot is not on this team.', 'Medic slot is empty.'],
+      }),
+    );
+    expect(rows('Active Slots')).toEqual([
+      ['CMD', 'Cat', 'CMD HVY', 'Remove'],
+      ['HVY', 'Player #99 (not on this Team)', '—', ''],
+      ['SCT 1', 'Ann', 'SCT', 'Remove'],
+      ['AMO', 'Bob', '—', 'Remove'],
+    ]);
+    const card = page().querySelector('.status');
+    expect(card?.querySelector('.status__row--total')?.textContent).toContain('4 / 2');
+  });
+
   it('says "No players added yet." for a Team with no players', async () => {
     await open(team({ slot_commander: null, slot_scout_1: null, slot_ammo: null, players: [] }));
     expect(text()).toContain('0 players');
@@ -360,6 +380,8 @@ describe('Team detail page', () => {
       expect(text()).toContain('4 players');
       expect(text()).toContain('Commander slot is empty.');
       expect(overlay()?.textContent).toContain('Player "Cat" removed from Red Dragons');
+      const action = overlay()?.querySelector('.mat-mdc-snack-bar-action');
+      expect(action?.textContent?.trim()).toBe('Close');
     });
 
     it('keeps the roster and shows the API error when the delete fails', async () => {

@@ -1,11 +1,10 @@
 // Roster helpers shared by the Teams screens (ANG-06a): slot order, role
 // labels and the active / bench split, all derived from the six `slot_*` ids.
 import { Role } from '../../api/players.models';
-import { TeamBase } from '../../api/teams.models';
+import { TeamBase, TeamSlotsInput } from '../../api/teams.models';
 
 /** The six role-slot keys of a Team. */
-export type SlotKey =
-  'slot_commander' | 'slot_heavy' | 'slot_scout_1' | 'slot_scout_2' | 'slot_medic' | 'slot_ammo';
+export type SlotKey = keyof TeamSlotsInput;
 
 /** The slots in display order (CMD, HVY, SCT 1, SCT 2, MED, AMO) with their labels. */
 export const SLOTS: readonly { key: SlotKey; label: string }[] = [

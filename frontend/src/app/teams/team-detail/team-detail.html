@@ -56,24 +56,28 @@
                   <td>
                     <span class="tag tag--slot">{{ row.label }}</span>
                   </td>
-                  <td>
-                    {{ row.player.name }}
-                    @if (row.player.id === selfId()) {
-                      <span class="badge badge--you">You</span>
-                    }
-                  </td>
-                  <td>
-                    @for (r of row.player.preferred_roles; track r) {
-                      <span class="tag">{{ roleLabels[r] }}</span>
-                    } @empty {
-                      <span class="muted">&mdash;</span>
-                    }
-                  </td>
-                  <td>
-                    <button mat-stroked-button type="button" (click)="remove(row.player)">
-                      Remove
-                    </button>
-                  </td>
+                  @if (row.player; as p) {
+                    <td>
+                      {{ p.name }}
+                      @if (p.id === selfId()) {
+                        <span class="badge badge--you">You</span>
+                      }
+                    </td>
+                    <td>
+                      @for (r of p.preferred_roles; track r) {
+                        <span class="tag">{{ roleLabels[r] }}</span>
+                      } @empty {
+                        <span class="muted">&mdash;</span>
+                      }
+                    </td>
+                    <td>
+                      <button mat-stroked-button type="button" (click)="remove(p)">Remove</button>
+                    </td>
+                  } @else {
+                    <td class="muted">Player #{{ row.id }} (not on this Team)</td>
+                    <td><span class="muted">&mdash;</span></td>
+                    <td></td>
+                  }
                 </tr>
               }
             </tbody>
