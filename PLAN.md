@@ -3211,8 +3211,12 @@ Spec: #279 (ticket #280)
 call it as the last step before `random.choices`. Four per-branch pins, the every-slot grid test,
 and the Scout xfail turned into a real assertion. What the work found:
 - The 55% strong-team win-rate test (`test_strong_team_winpct_not_diluted_by_alternation`) went
-  red on its score assertion (strong team 32343 vs weak 32394 average points at seed 7777), green
-  on `origin/main`. Reported as CAL-01 calibration drift per the grill ruling; nothing retuned.
+  red at its pinned seed 7777 (strong team 32343 vs weak 32394 average points, 51.7% wins), green
+  on `origin/main`. A six-seed probe showed seed noise, not a balance change (pre-clamp 62.5 /
+  60.0 / 55.0 / 53.3 / 48.3 / 56.7 %, post-clamp 51.7 / 57.5 / 63.3 / 57.5 / 43.3 / 52.5 % for
+  seeds 7777 / 1 / 2 / 3 / 4 / 5; three of six already under the floor before SIM-12). On the
+  owner's instruction the seed was re-pinned to 2 (the MECH-15 precedent); the 55% floor and
+  the contrast guard are untouched. The weak strength signal itself stays with CAL-01.
 - The UXP-23 "League 500" cooldown test no longer hides: with `use_special`, `only_move` and
   `tag_player` clamped to 0, `missile_player` and `hold` survive and the draw comes from them, so
   the test now pins the clamped vector slot by slot and the seeded action.
