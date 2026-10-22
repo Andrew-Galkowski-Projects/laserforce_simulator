@@ -2686,8 +2686,9 @@ Grill settled (owner, 2026-10-22):
   on a tie) on `MatchSerializer` and the GameRound serializers; `red_total_points`,
   `blue_total_points`, `red_rounds_won`, `blue_rounds_won` on `MatchSerializer` from the model
   properties. The spec lists every test that pins an exact key set.
-- **Server change:** `/api/rounds/?standalone=true|false` (`BooleanFilter` on `match__isnull`);
-  `standalone?: boolean` on `RoundListParams`.
+- **Server change:** `/api/rounds/?single_round=true|false` (`BooleanFilter` on `match__isnull`);
+  `single_round?: boolean` on `RoundListParams`. (Shipped first as `standalone`; renamed in review,
+  2026-10-22, because GLOSSARY.md lists "standalone round" as an avoid-word for **Single Round**.)
 - **Term:** **Single Round** — a Round with no Match (GLOSSARY.md).
 - **Labels:** page "Match History"; sections "Matches" / "Single Rounds"; buttons "New Match" /
   "New Single Round". "Tournament" appears only as a `match_type` choice.

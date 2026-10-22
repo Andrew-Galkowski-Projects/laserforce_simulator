@@ -1,5 +1,10 @@
 import { Component, computed, inject, signal } from '@angular/core';
-import { FormControl, NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
+import {
+  FormControl,
+  NonNullableFormBuilder,
+  ReactiveFormsModule,
+  Validators,
+} from '@angular/forms';
 import { MatButton } from '@angular/material/button';
 import { MatError, MatFormField, MatHint, MatLabel } from '@angular/material/form-field';
 import { MatOption, MatSelect } from '@angular/material/select';
@@ -20,6 +25,12 @@ const MATCH_TYPES: readonly { value: MatchType; label: string }[] = [
   { value: 'friendly', label: 'Friendly' },
   { value: 'tournament', label: 'Tournament' },
 ];
+
+/** The API's max page size: Teams / maps beyond the first 100 are not offered. */
+const PICKER_PAGE_SIZE = 100;
+
+/** Django's wording for a missing required field, as the API sends it for the other forms. */
+const REQUIRED_MESSAGE = 'This field is required.';
 
 /**
  * `/matches/new` and `/rounds/new`: one setup form, configured by the route's `data.kind`.
@@ -59,14 +70,16 @@ export class SetupForm {
 
   /** Control names match the API's `MatchForm` / `GameRoundForm`, so field errors map onto them. */
   protected readonly form = this.fb.group({
-    team_red: new FormControl<number | null>(null),
-    team_blue: new FormControl<number | null>(null),
+    // `required` as on Django's `MatchForm` / `GameRoundForm`; cross-field rules stay server-side.
+    team_red: new FormControl<number | null>(null, Validators.required),
+    team_blue: new FormControl<number | null>(null, Validators.required),
     match_type: ['friendly' as MatchType],
     /** null is the 3-zone fallback. */
     arena_map: new FormControl<number | null>(null),
   });
 
   protected readonly matchTypes = MATCH_TYPES;
+  protected readonly requiredMessage = REQUIRED_MESSAGE;
   /** Errors no control owns (`field: null`, e.g. a `MatchSetupError`), shown above the form. */
   protected readonly nonFieldErrors = signal<string[]>([]);
   /** A simulation is running (the create is synchronous and can be slow). */
@@ -74,25 +87,30 @@ export class SetupForm {
 
   constructor() {
     inject(TeamsService)
-      .list({ page_size: 100, ordering: 'name' })
+      .list({ page_size: PICKER_PAGE_SIZE, ordering: 'name' })
       .subscribe((page) => this.teams.set(page.items));
     inject(MapsService)
-      .list({ has_confirmed_config: true, page_size: 100, ordering: 'name' })
+      .list({ has_confirmed_config: true, page_size: PICKER_PAGE_SIZE, ordering: 'name' })
       .subscribe((page) => this.maps.set(page.items));
   }
 
   /**
-   * Posts the setup and opens the result. Nothing is checked here (not even red !== blue):
-   * the server is the only validator.
+   * Posts the setup and opens the result. Only `required` is checked here; cross-field rules
+   * (e.g. red !== blue) are the server's.
    */
   protected simulate(): void {
     this.nonFieldErrors.set([]);
-    // A control's `server` error only clears on a value change, so drop it here too.
+    // A control's `server` error only clears on a value change, so drop it here too
+    // (re-running the validators keeps `required`).
     for (const control of Object.values(this.form.controls)) {
-      if (control.hasError('server')) control.setErrors(null);
+      if (control.hasError('server')) control.updateValueAndValidity();
+    }
+    if (this.form.invalid) {
+      this.form.markAllAsTouched();
+      return;
     }
     const { team_red, team_blue, match_type, arena_map } = this.form.getRawValue();
-    // An unpicked side posts null, which the server rejects as a field error.
+    // `required` passed, so both sides are picked.
     const sides = { team_red, team_blue } as { team_red: number; team_blue: number };
     const created: Observable<{ id: number }> =
       this.kind === 'match'

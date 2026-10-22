@@ -25,7 +25,10 @@
           <mat-header-cell *matHeaderCellDef>Red vs Blue</mat-header-cell>
           <mat-cell *matCellDef="let m">
             <ng-container
-              *ngTemplateOutlet="teams; context: { red: m.team_red_name, blue: m.team_blue_name }"
+              *ngTemplateOutlet="
+                teams;
+                context: { red: m.team_red_name, blue: m.team_blue_name, link: ['/matches', m.id] }
+              "
             />
           </mat-cell>
         </ng-container>
@@ -51,12 +54,7 @@
         </ng-container>
 
         <mat-header-row *matHeaderRowDef="matchColumns" />
-        <!-- eslint-disable-next-line @angular-eslint/template/elements-content -- cells render into the row via the CDK cell outlet -->
-        <a
-          app-link-row
-          *matRowDef="let m; columns: matchColumns"
-          [routerLink]="['/matches', m.id]"
-        ></a>
+        <mat-row *matRowDef="let m; columns: matchColumns" class="history-row" />
       </mat-table>
       @let matchMeta = matchPage()?.meta;
       @if (matchMeta && matchMeta.total_pages > 1) {
@@ -82,7 +80,10 @@
           <mat-header-cell *matHeaderCellDef>Red vs Blue</mat-header-cell>
           <mat-cell *matCellDef="let r">
             <ng-container
-              *ngTemplateOutlet="teams; context: { red: r.team_red_name, blue: r.team_blue_name }"
+              *ngTemplateOutlet="
+                teams;
+                context: { red: r.team_red_name, blue: r.team_blue_name, link: ['/rounds', r.id] }
+              "
             />
           </mat-cell>
         </ng-container>
@@ -102,12 +103,7 @@
         </ng-container>
 
         <mat-header-row *matHeaderRowDef="roundColumns" />
-        <!-- eslint-disable-next-line @angular-eslint/template/elements-content -- cells render into the row via the CDK cell outlet -->
-        <a
-          app-link-row
-          *matRowDef="let r; columns: roundColumns"
-          [routerLink]="['/rounds', r.id]"
-        ></a>
+        <mat-row *matRowDef="let r; columns: roundColumns" class="history-row" />
       </mat-table>
       @let roundMeta = roundPage()?.meta;
       @if (roundMeta && roundMeta.total_pages > 1) {
@@ -129,12 +125,15 @@
   <a mat-stroked-button routerLink="/rounds/new">New Single Round</a>
 </ng-template>
 
-<ng-template #teams let-red="red" let-blue="blue">
-  <span class="history-team" data-lf-side="red"
-    ><span class="history-team__badge" aria-hidden="true">R</span>{{ red }}</span
-  >
-  <span class="history-vs">vs</span>
-  <span class="history-team" data-lf-side="blue"
-    ><span class="history-team__badge" aria-hidden="true">B</span>{{ blue }}</span
-  >
+<!-- The row's one link: named by its matchup, stretched over the whole row by CSS. -->
+<ng-template #teams let-red="red" let-blue="blue" let-link="link">
+  <a class="history-row__link" [routerLink]="link" [attr.aria-label]="red + ' vs ' + blue">
+    <span class="history-team" data-lf-side="red"
+      ><span class="history-team__badge" aria-hidden="true">R</span>{{ red }}</span
+    >
+    <span class="history-vs">vs</span>
+    <span class="history-team" data-lf-side="blue"
+      ><span class="history-team__badge" aria-hidden="true">B</span>{{ blue }}</span
+    >
+  </a>
 </ng-template>

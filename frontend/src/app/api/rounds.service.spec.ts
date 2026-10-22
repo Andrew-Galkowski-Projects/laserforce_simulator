@@ -122,12 +122,12 @@ describe('RoundsService', () => {
     expect(await result).toEqual({ items: [ROUND_LIST_ITEM], meta });
   });
 
-  it('sends the standalone filter as true / false', () => {
-    rounds.list({ standalone: true }).subscribe();
-    rounds.list({ standalone: false }).subscribe();
+  it('sends the single_round filter as true / false', () => {
+    rounds.list({ single_round: true }).subscribe();
+    rounds.list({ single_round: false }).subscribe();
     const [singles, matchRounds] = http.match((r) => r.url === `${BASE}/rounds/`);
-    expect(singles.request.params.get('standalone')).toBe('true');
-    expect(matchRounds.request.params.get('standalone')).toBe('false');
+    expect(singles.request.params.get('single_round')).toBe('true');
+    expect(matchRounds.request.params.get('single_round')).toBe('false');
     const meta = { page: 1, page_size: 20, count: 0, total_pages: 1 };
     singles.flush({ data: [], meta });
     matchRounds.flush({ data: [], meta });

@@ -130,7 +130,7 @@ export interface RoundListParams extends ListParams {
   match?: number;
   arena_map?: number;
   /** true: only Single Rounds (no Match); false: only a Match's Rounds. */
-  standalone?: boolean;
+  single_round?: boolean;
   ordering?: string;
 }
 

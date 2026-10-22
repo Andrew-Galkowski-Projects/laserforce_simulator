@@ -11,7 +11,7 @@ import { loadRouteRecord } from '../shared/route-record';
   imports: [RecordNotFound, ResultSummary],
   template: `
     @if (load.notFound()) {
-      <app-record-not-found noun="Round" />
+      <app-record-not-found noun="Single Round" />
     } @else if (load.loadError(); as message) {
       <p class="stub__error" role="alert">{{ message }}</p>
     } @else if (load.record(); as r) {

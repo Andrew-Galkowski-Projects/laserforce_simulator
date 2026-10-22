@@ -376,6 +376,19 @@ class TestRoundCreate(_CreateTestCase):
         self.assertEqual(data["team_blue"], self.blue.pk)
         self.assertEqual(len(data["player_states"]), 12)
 
+    def test_create_carries_team_and_winner_names(self) -> None:
+        """ANG-06c: the 201 body names both Teams and the winner (null on a
+        tie), matching the saved Round."""
+        response = self._post({"team_red": self.red.pk, "team_blue": self.blue.pk})
+        self.assertEqual(response.status_code, 201, response.content)
+        data = response.json()["data"]
+        self.assertEqual(data["team_red_name"], "CreateRed Team")
+        self.assertEqual(data["team_blue_name"], "CreateBlue Team")
+        game_round = GameRound.objects.get(pk=data["id"])
+        self.assertEqual(
+            data["winner_name"], game_round.winner.name if game_round.winner else None
+        )
+
     def test_create_stamps_requesting_account(self) -> None:
         response = self._post({"team_red": self.red.pk, "team_blue": self.blue.pk})
         self.assertEqual(response.status_code, 201, response.content)

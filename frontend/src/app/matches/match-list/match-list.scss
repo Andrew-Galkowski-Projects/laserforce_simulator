@@ -63,17 +63,18 @@
     min-width: 40rem;
   }
 
-  // Each row is an <a>: keep the table look, show it is clickable.
-  a.mat-mdc-row {
-    color: inherit;
-    text-decoration: none;
+  // A row stays a row (role="row"); its one link sits in the teams cell and its ::after is
+  // stretched over the whole row, so click, Enter and middle-click anywhere follow it.
+  .history-row {
+    position: relative;
     cursor: pointer;
 
     &:hover {
       background: color-mix(in srgb, var(--lf-accent) 8%, transparent);
     }
 
-    &:focus-visible {
+    // The row shows the focus ring for its link, which has no box of its own to outline.
+    &:focus-within {
       outline: 2px solid var(--lf-accent);
       outline-offset: -2px;
     }
@@ -81,8 +82,25 @@
 
   .mat-column-teams {
     flex: 2 1 16rem;
-    flex-wrap: wrap;
-    gap: 0.5rem;
+  }
+}
+
+.history-row__link {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  color: inherit;
+  text-decoration: none;
+
+  &:focus {
+    outline: none;
+  }
+
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
   }
 }
 

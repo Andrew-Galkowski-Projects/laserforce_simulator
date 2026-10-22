@@ -12,7 +12,6 @@ import { GameRoundListItem } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
 import { matchResult, roundResult } from '../shared/result';
 import { ResultChip } from '../shared/result-chip';
-import { LinkRow } from './link-row';
 
 /** Rows per page in each section; a paginator appears only when there are more. */
 const PAGE_SIZE = 20;
@@ -22,7 +21,6 @@ const PAGE_SIZE = 20;
   selector: 'app-match-list',
   imports: [
     DatePipe,
-    LinkRow,
     MatAnchor,
     MatPaginator,
     MatTableModule,
@@ -74,7 +72,7 @@ export class MatchList {
 
   private loadRounds(page?: number): void {
     this.rounds
-      .list({ standalone: true, page, page_size: PAGE_SIZE })
+      .list({ single_round: true, page, page_size: PAGE_SIZE })
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe((result) => this.roundPage.set(result));
   }

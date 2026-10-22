@@ -78,9 +78,9 @@ describe('Match History (/matches)', () => {
     expect(matches.request.params.get('page_size')).toBe('20');
     const rounds = roundsRequest();
     expect(rounds.request.method).toBe('GET');
-    expect(rounds.request.params.keys().sort()).toEqual(['page_size', 'standalone']);
+    expect(rounds.request.params.keys().sort()).toEqual(['page_size', 'single_round']);
     expect(rounds.request.params.get('page_size')).toBe('20');
-    expect(rounds.request.params.get('standalone')).toBe('true');
+    expect(rounds.request.params.get('single_round')).toBe('true');
     matches.flush(pageEnvelope([]));
     rounds.flush(pageEnvelope([]));
     await harness.fixture.whenStable();
@@ -168,25 +168,40 @@ describe('Match History (/matches)', () => {
     expect(text(rows('rounds')[1].querySelector('.result-chip'))).toBe('Tie');
   });
 
-  it('makes each whole row a real link to its Match or Single Round', async () => {
-    await open([matchRow({ id: 7 }), matchRow({ id: 8 })], [roundRow({ id: 9 })]);
+  /** Each row's anchors as [accessible text, href]. */
+  const rowLinks = (row: HTMLElement): [string, string | null][] =>
+    [...row.querySelectorAll('a')].map((a) => [
+      a.getAttribute('aria-label') ?? text(a),
+      a.getAttribute('href'),
+    ]);
+
+  it('keeps rows as table rows, each holding one link named by its matchup', async () => {
+    await open(
+      [
+        matchRow({ id: 7, team_red_name: 'Crimson Wraiths', team_blue_name: 'Tempest Titans' }),
+        matchRow({ id: 8, team_red_name: 'Alpha', team_blue_name: 'Bravo' }),
+      ],
+      [roundRow({ id: 9, team_red_name: 'Charlie', team_blue_name: 'Delta' })],
+    );
     const matchRows = rows('matches');
-    expect(matchRows.map((r) => r.tagName)).toEqual(['A', 'A']);
-    expect(matchRows.map((r) => r.getAttribute('href'))).toEqual(['/matches/7', '/matches/8']);
-    // The cells sit inside the anchor, so a click anywhere on the row follows it.
-    expect(matchRows[0].querySelectorAll('[role="cell"]')).toHaveLength(5);
+    // A row is announced as a row (not a link); the link lives inside it.
+    expect(matchRows.map((r) => r.getAttribute('role'))).toEqual(['row', 'row']);
+    expect(matchRows.map((r) => r.tagName)).not.toContain('A');
+    expect(matchRows.map(rowLinks)).toEqual([
+      [['Crimson Wraiths vs Tempest Titans', '/matches/7']],
+      [['Alpha vs Bravo', '/matches/8']],
+    ]);
     const roundRows = rows('rounds');
-    expect(roundRows.map((r) => r.tagName)).toEqual(['A']);
-    expect(roundRows[0].getAttribute('href')).toBe('/rounds/9');
+    expect(roundRows.map((r) => r.getAttribute('role'))).toEqual(['row']);
+    expect(roundRows.map(rowLinks)).toEqual([[['Charlie vs Delta', '/rounds/9']]]);
   });
 
   it.each([
     ['matches', '/matches/8'],
     ['rounds', '/rounds/9'],
-  ] as const)('opens a %s row on click at %s', async (name, url) => {
+  ] as const)('opens a %s row through its link at %s', async (name, url) => {
     await open([matchRow({ id: 8 })], [roundRow({ id: 9 })]);
-    const cell = rows(name)[0].querySelector<HTMLElement>('[role="cell"]');
-    cell?.click();
+    rows(name)[0].querySelector<HTMLAnchorElement>('a')?.click();
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe(url);
     releaseMatchesLoads();
@@ -279,7 +294,9 @@ describe('Match History (/matches)', () => {
     await harness.fixture.whenStable();
 
     expect(text(rows('matches')[0])).toContain('Page2');
-    expect(rows('rounds').map((r) => r.getAttribute('href'))).toEqual(['/rounds/9']);
+    expect(rows('rounds').map((r) => r.querySelector('a')?.getAttribute('href'))).toEqual([
+      '/rounds/9',
+    ]);
     expect(routerUrl()).toBe('/matches');
   });
 
@@ -292,13 +309,15 @@ describe('Match History (/matches)', () => {
     const req = roundsRequest();
     expect(req.request.params.get('page')).toBe('2');
     expect(req.request.params.get('page_size')).toBe('20');
-    expect(req.request.params.get('standalone')).toBe('true');
+    expect(req.request.params.get('single_round')).toBe('true');
     http.expectNone((r) => r.url === `${BASE}/matches/`);
     req.flush(pageEnvelope([roundRow({ id: 2, team_red_name: 'Page2' })], 2, 2, 21));
     await harness.fixture.whenStable();
 
     expect(text(rows('rounds')[0])).toContain('Page2');
-    expect(rows('matches').map((r) => r.getAttribute('href'))).toEqual(['/matches/7']);
+    expect(rows('matches').map((r) => r.querySelector('a')?.getAttribute('href'))).toEqual([
+      '/matches/7',
+    ]);
   });
 
   it('shows nothing empty while the lists are still loading', async () => {

@@ -1,5 +1,5 @@
 """ANG-06c T1 -- names and totals on the Match / GameRound API, and the
-``?standalone=`` filter on ``/api/rounds/`` (spec #289, ticket #290).
+``?single_round=`` filter on ``/api/rounds/`` (spec #289, ticket #290).
 
 Additive read-only fields: ``team_red_name`` / ``team_blue_name`` /
 ``winner_name`` (null on a tie) on the Match and both GameRound serializers,
@@ -47,7 +47,7 @@ class _NamesTestCase(TestCase):
             is_completed=True,
         )
 
-    def standalone_round(self, manager=None, tie: bool = False) -> GameRound:
+    def single_round_round(self, manager=None, tie: bool = False) -> GameRound:
         """A completed Single Round; Red wins unless ``tie`` (save() derives
         the winner from the points)."""
         return GameRound.objects.create(
@@ -111,14 +111,14 @@ class TestMatchNames(_NamesTestCase):
 
 class TestRoundNames(_NamesTestCase):
     def test_detail_carries_team_and_winner_names(self) -> None:
-        game_round = self.standalone_round()
+        game_round = self.single_round_round()
         data = self.api.get(f"/api/rounds/{game_round.pk}/").json()["data"]
         self.assertEqual(data["team_red_name"], "NamesRed Team")
         self.assertEqual(data["team_blue_name"], "NamesBlue Team")
         self.assertEqual(data["winner_name"], "NamesRed Team")
 
     def test_list_carries_team_and_winner_names(self) -> None:
-        game_round = self.standalone_round()
+        game_round = self.single_round_round()
         rows = self.api.get("/api/rounds/").json()["data"]
         row = next(r for r in rows if r["id"] == game_round.pk)
         self.assertEqual(row["team_red_name"], "NamesRed Team")
@@ -126,7 +126,7 @@ class TestRoundNames(_NamesTestCase):
         self.assertEqual(row["winner_name"], "NamesRed Team")
 
     def test_winner_name_is_null_on_a_tie(self) -> None:
-        game_round = self.standalone_round(tie=True)
+        game_round = self.single_round_round(tie=True)
         data = self.api.get(f"/api/rounds/{game_round.pk}/").json()["data"]
         self.assertIsNone(data["winner_name"])
         rows = self.api.get("/api/rounds/").json()["data"]
@@ -134,15 +134,15 @@ class TestRoundNames(_NamesTestCase):
         self.assertIsNone(row["winner_name"])
 
 
-class TestStandaloneFilter(_NamesTestCase):
+class TestSingleRoundFilter(_NamesTestCase):
     def setUp(self) -> None:
         super().setUp()
-        self.single = self.standalone_round()
+        self.single = self.single_round_round()
         self.match = self.split_match()
         self.match_round = GameRound.objects.create(
             match=self.match, round_number=1, team_red=self.red, team_blue=self.blue
         )
-        self.foreign_single = self.standalone_round(manager=self.user_b)
+        self.foreign_single = self.single_round_round(manager=self.user_b)
 
     def ids(self, query: str) -> set[int]:
         response = self.api.get(f"/api/rounds/{query}")
@@ -150,12 +150,12 @@ class TestStandaloneFilter(_NamesTestCase):
         return {row["id"] for row in response.json()["data"]}
 
     def test_true_returns_only_single_rounds(self) -> None:
-        ids = self.ids("?standalone=true")
+        ids = self.ids("?single_round=true")
         self.assertIn(self.single.pk, ids)
         self.assertNotIn(self.match_round.pk, ids)
 
     def test_false_returns_only_match_rounds(self) -> None:
-        ids = self.ids("?standalone=false")
+        ids = self.ids("?single_round=false")
         self.assertIn(self.match_round.pk, ids)
         self.assertNotIn(self.single.pk, ids)
 
@@ -165,5 +165,5 @@ class TestStandaloneFilter(_NamesTestCase):
         self.assertIn(self.match_round.pk, ids)
 
     def test_cross_account_single_round_never_appears(self) -> None:
-        self.assertNotIn(self.foreign_single.pk, self.ids("?standalone=true"))
-        self.assertNotIn(self.foreign_single.pk, self.ids("?standalone=false"))
+        self.assertNotIn(self.foreign_single.pk, self.ids("?single_round=true"))
+        self.assertNotIn(self.foreign_single.pk, self.ids("?single_round=false"))

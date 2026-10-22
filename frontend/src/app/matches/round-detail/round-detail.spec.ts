@@ -89,14 +89,14 @@ describe('Single Round stub (/rounds/:id)', () => {
     expect(text(page().querySelector('.result-chip'))).toBe('Tie');
   });
 
-  it('shows "Round not found" with the back link on a 404', async () => {
+  it('shows "Single Round not found" with the back link on a 404', async () => {
     await harness.navigateByUrl('/rounds/99');
     roundRequest(99).flush(
       { errors: [{ code: 'not_found', message: 'Not found.', field: null }], meta: {} },
       { status: 404, statusText: 'Not Found' },
     );
     await harness.fixture.whenStable();
-    expect(text(page().querySelector('h1'))).toBe('Round not found');
+    expect(text(page().querySelector('h1'))).toBe('Single Round not found');
     expect(backLink()?.getAttribute('href')).toBe('/matches');
     expect(page().querySelector('.result-chip')).toBeNull();
   });

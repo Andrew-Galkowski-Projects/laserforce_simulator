@@ -296,21 +296,55 @@ describe('Setup form (/matches/new, /rounds/new)', () => {
     expect(await (await select('Match type')).getValueText()).toBe('Tournament');
   });
 
+  it.each([
+    ['/matches/new', 'Simulate Match'],
+    ['/rounds/new', 'Simulate Round'],
+  ])('on %s, requires both Teams before posting anything', async (url, label) => {
+    await open(url);
+    button(label).click();
+    await harness.fixture.whenStable();
+    http.expectNone(`${BASE}/matches/`);
+    http.expectNone(`${BASE}/rounds/`);
+    expect(await (await field('Red Team')).getTextErrors()).toEqual(['This field is required.']);
+    expect(await (await field('Blue Team')).getTextErrors()).toEqual(['This field is required.']);
+    expect(routerUrl()).toBe(url);
+  });
+
+  it('flags only the empty side when one Team is picked', async () => {
+    await open('/rounds/new');
+    await (await select('Red Team')).clickOptions({ text: 'Bravo' });
+    button('Simulate Round').click();
+    await harness.fixture.whenStable();
+    http.expectNone(`${BASE}/rounds/`);
+    expect(await (await field('Red Team')).getTextErrors()).toEqual([]);
+    expect(await (await field('Blue Team')).getTextErrors()).toEqual(['This field is required.']);
+    expect(await (await select('Red Team')).getValueText()).toBe('Bravo');
+  });
+
   it('shows a field error on its own control and keeps the choices', async () => {
     await open('/rounds/new');
     await (await select('Red Team')).clickOptions({ text: 'Bravo' });
+    await (await select('Blue Team')).clickOptions({ text: 'Alpha' });
     await (await select('Arena Map')).clickOptions({ text: 'Classic Arena' });
     button('Simulate Round').click();
     await harness.fixture.whenStable();
     http.expectOne(`${BASE}/rounds/`).flush(
       {
-        errors: [{ code: 'required', message: 'This field is required.', field: 'team_blue' }],
+        errors: [
+          {
+            code: 'invalid_choice',
+            message: 'Select a valid choice. That choice is not one of the available choices.',
+            field: 'team_blue',
+          },
+        ],
         meta: {},
       },
       { status: 400, statusText: 'Bad Request' },
     );
     await harness.fixture.whenStable();
-    expect(await (await field('Blue Team')).getTextErrors()).toEqual(['This field is required.']);
+    expect(await (await field('Blue Team')).getTextErrors()).toEqual([
+      'Select a valid choice. That choice is not one of the available choices.',
+    ]);
     expect(await (await field('Red Team')).getTextErrors()).toEqual([]);
     expect(page().querySelector('[role="alert"]')).toBeNull();
     expect(await (await select('Red Team')).getValueText()).toBe('Bravo');
@@ -319,6 +353,8 @@ describe('Setup form (/matches/new, /rounds/new)', () => {
 
   it('reads "Simulating..." and is disabled while pending, and recovers after a failure', async () => {
     await open('/matches/new');
+    await (await select('Red Team')).clickOptions({ text: 'Alpha' });
+    await (await select('Blue Team')).clickOptions({ text: 'Bravo' });
     expect(button('Simulate Match').disabled).toBe(false);
     button('Simulate Match').click();
     await harness.fixture.whenStable();
@@ -335,12 +371,14 @@ describe('Setup form (/matches/new, /rounds/new)', () => {
 
   it('clears the previous errors on the next submit', async () => {
     await open('/rounds/new');
+    await (await select('Red Team')).clickOptions({ text: 'Alpha' });
+    await (await select('Blue Team')).clickOptions({ text: 'Bravo' });
     button('Simulate Round').click();
     await harness.fixture.whenStable();
     http.expectOne(`${BASE}/rounds/`).flush(
       {
         errors: [
-          { code: 'required', message: 'This field is required.', field: 'team_red' },
+          { code: 'invalid_choice', message: 'Pick another Team.', field: 'team_red' },
           { code: 'match_setup', message: 'Setup failed.', field: null },
         ],
         meta: {},
@@ -348,7 +386,7 @@ describe('Setup form (/matches/new, /rounds/new)', () => {
       { status: 400, statusText: 'Bad Request' },
     );
     await harness.fixture.whenStable();
-    expect(await (await field('Red Team')).getTextErrors()).toEqual(['This field is required.']);
+    expect(await (await field('Red Team')).getTextErrors()).toEqual(['Pick another Team.']);
     // Resubmit without touching Red Team: its stale server error must still go.
     button('Simulate Round').click();
     await harness.fixture.whenStable();

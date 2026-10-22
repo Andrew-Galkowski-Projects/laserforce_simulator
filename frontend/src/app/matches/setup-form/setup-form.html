@@ -18,7 +18,9 @@
               </mat-option>
             }
           </mat-select>
-          @if (form.controls.team_red.getError('server'); as message) {
+          @if (form.controls.team_red.hasError('required')) {
+            <mat-error>{{ requiredMessage }}</mat-error>
+          } @else if (form.controls.team_red.getError('server'); as message) {
             <mat-error>{{ message }}</mat-error>
           }
         </mat-form-field>
@@ -31,7 +33,9 @@
               </mat-option>
             }
           </mat-select>
-          @if (form.controls.team_blue.getError('server'); as message) {
+          @if (form.controls.team_blue.hasError('required')) {
+            <mat-error>{{ requiredMessage }}</mat-error>
+          } @else if (form.controls.team_blue.getError('server'); as message) {
             <mat-error>{{ message }}</mat-error>
           }
         </mat-form-field>
