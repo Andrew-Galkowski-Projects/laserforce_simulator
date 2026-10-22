@@ -254,8 +254,30 @@ if __name__ == "__main__":
 
 # ===== Round-report PDF export =====
 import unittest
+from unittest.mock import patch
 
+from matches.sim_helpers import pdf_charts
 from matches.sim_helpers.pdf_report import build_round_report, should_watermark
+from matches.tests.conftest import pdf_image_count, pdf_images_per_page
+
+#: The letter content width the charts are drawn at: 8.5in minus two 0.5in
+#: side margins, in points (RV-05 #286).
+_CONTENT_WIDTH_PT = 7.5 * 72
+
+
+def _chart_series() -> dict:
+    """A small series in the #283 series-port shape: one player per team with
+    a couple of value changes on each chart."""
+    return {
+        "players": [
+            {"id": 1, "name": "Alice", "team": "red"},
+            {"id": 2, "name": "Carol", "team": "blue"},
+        ],
+        "shots": {"1": [(0.0, 30), (5.0, 29)], "2": [(0.0, 25), (7.5, 24)]},
+        "lives": {"1": [(0.0, 15), (12.0, 14)], "2": [(0.0, 15)]},
+        "points": {"1": [(0.0, 0), (5.0, 100)], "2": [(0.0, 0), (7.5, 100)]},
+        "sp": {"1": [(0.0, 0), (5.0, 1)], "2": [(0.0, 0)]},
+    }
 
 
 def _player_row(name: str, role: str) -> dict:
@@ -412,6 +434,77 @@ class TestBuildRoundReport(unittest.TestCase):
 
         self.assertNotIn("django", dir(m))
         self.assertNotIn("models", dir(m))
+
+    # ----- RV-05 (#286): the chart section -----
+
+    def test_chart_series_embeds_exactly_four_images(self) -> None:
+        """RV-05: report data carrying ``chart_series`` embeds the four
+        event-page charts as four image XObjects."""
+        pdf = build_round_report(
+            {**_full_report_data(), "chart_series": _chart_series()}, watermark=False
+        )
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertEqual(pdf_image_count(pdf), 4)
+
+    def test_without_chart_series_embeds_no_images(self) -> None:
+        """RV-05: report data without the key renders as before: one page,
+        no image."""
+        pdf = build_round_report(_full_report_data(), watermark=False)
+        self.assertEqual(pdf_image_count(pdf), 0)
+        self.assertEqual(pdf_images_per_page(pdf), [0])
+
+    def test_chart_series_none_embeds_no_images(self) -> None:
+        """RV-05: an explicit ``chart_series=None`` is the chartless report."""
+        pdf = build_round_report(
+            {**_full_report_data(), "chart_series": None}, watermark=False
+        )
+        self.assertEqual(pdf_image_count(pdf), 0)
+        self.assertEqual(pdf_images_per_page(pdf), [0])
+
+    def test_charts_follow_the_tables_two_per_page(self) -> None:
+        """RV-05: a page break after the resource tables, then two charts per
+        page: the first page draws no image, the next two draw two each."""
+        pdf = build_round_report(
+            {**_full_report_data(), "chart_series": _chart_series()}, watermark=False
+        )
+        self.assertEqual(pdf_images_per_page(pdf), [0, 2, 2])
+
+    def test_charts_render_in_charts_order_at_content_width(self) -> None:
+        """RV-05: the four charts go through the T2 seam in ``CHARTS`` order,
+        each wrapped at the letter content width (8.5in minus two 0.5in
+        margins)."""
+        # ``pdf_report`` imports ``pdf_charts`` lazily and calls through the
+        # module, so the seam is patched where it lives.
+        with patch(
+            "matches.sim_helpers.pdf_charts.render_chart_png",
+            wraps=pdf_charts.render_chart_png,
+        ) as render, patch(
+            "matches.sim_helpers.pdf_charts.chart_flowable",
+            wraps=pdf_charts.chart_flowable,
+        ) as flowable:
+            build_round_report(
+                {**_full_report_data(), "chart_series": _chart_series()},
+                watermark=True,
+            )
+
+        self.assertEqual(
+            [call.args[0] for call in render.call_args_list],
+            [chart.key for chart in pdf_charts.CHARTS],
+        )
+        self.assertEqual(
+            [call.kwargs["width"] for call in flowable.call_args_list],
+            [_CONTENT_WIDTH_PT] * 4,
+        )
+
+    def test_empty_series_renders_four_images(self) -> None:
+        """RV-05: a round with no events (start points only, or no players at
+        all) still yields four charts with empty axes."""
+        empty = {"players": [], "shots": {}, "lives": {}, "points": {}, "sp": {}}
+        pdf = build_round_report(
+            {**_empty_report_data(), "chart_series": empty}, watermark=True
+        )
+        self.assertTrue(pdf.startswith(b"%PDF"))
+        self.assertEqual(pdf_image_count(pdf), 4)
 
 
 if __name__ == "__main__":

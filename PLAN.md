@@ -3186,7 +3186,53 @@ series the events page builds (per-player SP / shots / lives / points over time,
 `GameEvent` rows — RES-02 contract); the helper does not need Chart.js. Charts won't be pixel-identical
 to the on-screen Chart.js versions, but carry the same data.
 
-### RV-05 · Round report PDF: chart/graph section (extends RV-03)
+### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
+
+Spec: #283 (tickets #284, #285, #286)
+
+**[DONE] Shipped (2026-10-22).** The round report PDF ends with the four events-page charts,
+rendered server-side by the pure `pdf_charts` module from a Python port of the page's series
+build (`round_series`). Both report callers upgrade the round to full fidelity first. What the
+work found:
+- The two playback row builders moved from `views.py` to `services.py` (services may not import
+  views); `views.py` re-exports them. The player rows now order by `id`, since the series
+  echoes that order into legend and hue.
+- `/Subtype /Image` overcounts (one shared soft mask), so tests count `/ColorSpace /DeviceRGB`.
+- A module-level matplotlib import logged six DEBUG lines at every `manage.py` start; the chart
+  module is now imported lazily.
+- RV-03's `test_report_does_not_upgrade_fidelity` was replaced by the upgrade test the spec asks
+  for; the builder-level no-upgrade guard stays.
+
+Grill settled (owner, 2026-10-22):
+
+- **Series builder:** a pure Python port of the events page's series algorithm in its own module
+  beside the PDF helpers, `build_round_series(players, events) -> dict` over the same player rows
+  and playback rows the page receives: start at second 0 with shots `ss`, lives `sl`, points 0,
+  SP 0; push a point only on change; actor / target / `targets[]` snapshots; seconds = ticks / 2.
+  The page keeps its JavaScript; tests pin the port to the same metadata cases.
+- **Fidelity:** both report callers (HTML export view, DRF report action) upgrade the round to
+  full fidelity before building the report, as the events page does; no events afterwards means
+  four charts with empty axes.
+- **Appearance:** four charts, two per page on new pages after the resource tables, full content
+  width; per-player stepped lines, red hues / blue hues per team, legend of player names, titles
+  as the page cards; SP fixed 0-99 with the dashed cap line. No team / average / event overlays.
+- **Report seam:** the report data builder gains one optional key `chart_series`;
+  `build_round_report` keeps its signature and renders the charts section only when the key is
+  present, so chartless fixtures still render.
+- **Matplotlib:** `matplotlib>=3.8` in requirements; object-oriented API (`Figure` + Agg canvas),
+  never `pyplot`; PNG at 150 dpi into an in-memory buffer; `render_chart_png` / `chart_flowable`
+  in a pure `pdf_charts` module.
+- **Tests:** series port against the RES-02b metadata cases; renderer on PNG magic bytes and
+  empty series; the report test counts four ReportLab image markers in the bytes (no PDF-parsing
+  dependency); subprocess no-Django-imports check on both modules; caller tests for a round with
+  events, without events, the watermark branch and the fidelity upgrade.
+- **Tickets:** three. T1 series port and T2 chart renderer in parallel (own modules); T3
+  integration (the key, the section, the fidelity upgrade in both callers, the requirement, view
+  tests), blocked by both.
+- **Scope out:** the events page switching to server-side series, overlays, HX-02 / HX-03, a PDF
+  text-extraction dependency, any playback payload change.
+- **Ownership / data / simulation:** unchanged (owned-or-404 lookup already in place). No
+  migration, no GLOSSARY term, no ADR.
 
 Add a **charts section** to the RV-03 PDF (same `GET /matches/game-round/<id>/export/` endpoint — one
 PDF = summary + scoreboards + per-player table + resource summary + **graphs**). Render the same four

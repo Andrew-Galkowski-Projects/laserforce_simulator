@@ -31,6 +31,7 @@ from . import (
     round_summary,
 )
 from .models import GameEvent, GameRound, Match, PlayerRoundState
+from .sim_helpers.round_series import build_round_series
 from .simulation import BatchSimulator
 
 if TYPE_CHECKING:
@@ -910,11 +911,77 @@ def _player_row(state: PlayerRoundState) -> dict:
     }
 
 
+def _round_players_data(game_round: GameRound) -> list[dict]:
+    """The 6-key SIM-05 player rows (the ``players_data`` half of
+    ``round_playback_payload``), built without serializing any events."""
+    return [
+        {
+            "id": ps.player_id,
+            "name": ps.player.name,
+            "team": ps.team_color,
+            "role": ps.role,
+            "sl": ps.starting_lives,
+            "ss": ps.starting_shots,
+        }
+        # Explicit order: the series port echoes this order into the chart
+        # legend and the per-team hue index, and an unordered queryset is not
+        # stable on Postgres (the callers UPDATE these rows via ensure_fidelity
+        # just before). ``id`` is the insertion order the page always saw.
+        for ps in game_round.player_states.select_related("player").order_by("id")
+    ]
+
+
+def round_playback_payload(
+    game_round: GameRound, *, include_movement: bool = True
+) -> tuple[list[dict], list[dict]]:
+    """Build the SIM-05 ``(events_data, players_data)`` JSON payload from a
+    persisted ``GameRound`` — the 13-key event shape + 6-key player shape the
+    client playback engine in ``game_round_events.html`` / ``play_week_live.html``
+    consumes. Extracted from ``game_round_events`` so the LG-01i live-watch view
+    (which replays a just-committed round) reuses the exact same serialization;
+    RV-05 moved it here so the round report can chart the same rows.
+
+    ``include_movement=False`` drops ``event_type="movement"`` rows (the live
+    watch surfaces only gameplay events on its timeline; the scoreboard
+    reconstruction ignores movement either way).
+    """
+    # UXP-06: ``team_id`` lives on the Player row, so no Team join is needed.
+    # UXP-06: GameEvent.Meta orders by timestamp only, so same-tick events came
+    # back in arbitrary order on Postgres; ``id`` is the insertion order.
+    events_qs = game_round.events.order_by("timestamp", "id").select_related(
+        "actor", "target"
+    )
+    if not include_movement:
+        events_qs = events_qs.exclude(event_type="movement")
+    events_data = [
+        {
+            "type": e.event_type,
+            "ts": e.timestamp,  # canonical ticks (1 tick = 0.5 s)
+            "tf": e.formatted_timestamp,  # mm:ss display string
+            "icon": e.get_event_icon(),
+            "desc": e.description,
+            "pts": e.points_awarded,
+            "aid": e.actor_id,
+            "an": e.actor.name,
+            "at": e.actor.team_id,
+            "tid": e.target_id if e.target_id else -1,
+            "tn": e.target.name if e.target_id else "",
+            "tt": e.target.team_id if e.target_id else "",
+            "meta": e.metadata or {},
+        }
+        for e in events_qs
+    ]
+    return events_data, _round_players_data(game_round)
+
+
 def build_round_report_data(game_round: GameRound) -> dict:
-    """RV-03: the 15-key ``report_data`` dict ``build_round_report`` consumes.
+    """RV-03: the ``report_data`` dict ``build_round_report`` consumes (the 15
+    RV-03 keys plus RV-05's ``chart_series``).
 
     Scoreboard ordering mirrors ``game_round_detail`` exactly. No fidelity
-    upgrade (the report reads only the scoreboard rows).
+    upgrade here: the callers upgrade the round to ``full`` first (RV-05), so
+    ``chart_series`` is built over the same player and playback rows the
+    events page sends; a round with no events yields start points only.
     """
     red_states = (
         # LG-07: group by the physical Side (team_color), NOT player__team — a
@@ -940,6 +1007,11 @@ def build_round_report_data(game_round: GameRound) -> dict:
     )
     map_name = game_round.arena_map.name if game_round.arena_map_id else None
     winner_name = game_round.winner.name if game_round.winner_id else None
+    # Movement rows carry only movement metadata (no actor / target snapshots),
+    # so the series port never reads them; leave them out of the query.
+    events_data, players_data = round_playback_payload(
+        game_round, include_movement=False
+    )
 
     return {
         "round_id": game_round.pk,
@@ -957,6 +1029,7 @@ def build_round_report_data(game_round: GameRound) -> dict:
         "blue_players": blue_players,
         "red_totals": round_summary.team_totals(red_players, game_round.red_points),
         "blue_totals": round_summary.team_totals(blue_players, game_round.blue_points),
+        "chart_series": build_round_series(players_data, events_data),
     }
 
 

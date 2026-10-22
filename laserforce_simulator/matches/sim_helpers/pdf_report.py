@@ -20,12 +20,27 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import inch
 from reportlab.platypus import (
+    PageBreak,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
     Table,
     TableStyle,
 )
+
+# ``pdf_charts`` (and with it matplotlib) is imported lazily inside
+# ``_chart_section``: this module loads with ``matches.views`` in every
+# process, and matplotlib is only needed when a report with charts is built.
+
+# Page geometry: letter with 0.5in side margins and 0.6in top / bottom. The
+# RV-05 charts are drawn at the full content width (page width minus the two
+# side margins).
+_SIDE_MARGIN = 0.5 * inch
+_VERTICAL_MARGIN = 0.6 * inch
+_CONTENT_WIDTH = letter[0] - 2 * _SIDE_MARGIN
+
+#: RV-05: charts per chart page.
+_CHARTS_PER_PAGE = 2
 
 # Per-player columns: the RV-01 stat set, in the frozen seam-contract order.
 # (header label, report_data["..._players"][i] key)
@@ -155,6 +170,27 @@ def _totals_table(totals: dict) -> Table:
     return table
 
 
+def _chart_section(chart_series: dict) -> list:
+    """RV-05: the flowables for the four event-page charts.
+
+    A page break after the resource tables, then the charts in ``CHARTS``
+    order, two per page (a page break after each pair, a small gap inside a
+    pair), each rendered through the pure ``pdf_charts`` seam at the full
+    content width.
+    """
+    from . import pdf_charts  # lazy: see the module note above
+
+    flowables: list = [PageBreak()]
+    for index, chart in enumerate(pdf_charts.CHARTS):
+        if index and index % _CHARTS_PER_PAGE == 0:
+            flowables.append(PageBreak())
+        elif index:
+            flowables.append(Spacer(1, 0.2 * inch))
+        png = pdf_charts.render_chart_png(chart.key, chart_series)
+        flowables.append(pdf_charts.chart_flowable(png, width=_CONTENT_WIDTH))
+    return flowables
+
+
 def build_round_report(report_data: dict, *, watermark: bool) -> bytes:
     """Render a Round-report PDF entirely in memory.
 
@@ -171,10 +207,10 @@ def build_round_report(report_data: dict, *, watermark: bool) -> bytes:
     doc = SimpleDocTemplate(
         buffer,
         pagesize=letter,
-        leftMargin=0.5 * inch,
-        rightMargin=0.5 * inch,
-        topMargin=0.6 * inch,
-        bottomMargin=0.6 * inch,
+        leftMargin=_SIDE_MARGIN,
+        rightMargin=_SIDE_MARGIN,
+        topMargin=_VERTICAL_MARGIN,
+        bottomMargin=_VERTICAL_MARGIN,
         title=f"Round {report_data.get('round_id')} Report",
     )
 
@@ -231,6 +267,11 @@ def build_round_report(report_data: dict, *, watermark: bool) -> bytes:
     story.append(Spacer(1, 0.15 * inch))
     story.append(Paragraph(f"{blue_name} (Blue)", styles["Normal"]))
     story.append(_totals_table(report_data.get("blue_totals", {})))
+
+    # ----- RV-05: chart section (only when the report data carries series) -----
+    chart_series = report_data.get("chart_series")
+    if chart_series is not None:
+        story.extend(_chart_section(chart_series))
 
     on_page = _make_watermark_callback(should_watermark(watermark))
     doc.build(story, onFirstPage=on_page, onLaterPages=on_page)
