@@ -11,6 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Tooling
 
+- Python: use the main checkout's `.venv\Scripts\python.exe`, also from a
+  worktree (worktrees have no `.venv`). The `python` on PATH is the `.conda`
+  env, which has no Django or pytest.
 - Shell: PowerShell on Windows (use PowerShell-compatible commands, not bash-isms like `&&`)
 - Path separators: prefer forward slashes or `os.path.join` in Python
 - **Never prepend `cd` to any command — git especially.** The shell already
@@ -57,6 +60,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Start with `list_pages` and reuse the existing tab** — drive it with
   `navigate_page` / `select_page`. Only call `new_page` when you genuinely need
   two pages open at once (e.g. a cross-Account isolation check).
+- **File paths go under the session scratchpad.** `take_screenshot`'s
+  `filePath` and `upload_file`'s `filePaths` are refused anywhere else
+  (worktrees, Downloads).
 - **Close every page you opened with `new_page`** via `close_page` as soon as you
   are done with it, and again before you report results (also when the pass
   fails or is cut short). Finish with `list_pages` to confirm only the original
@@ -237,6 +243,9 @@ Match (2 rounds, winner by rounds then points)
 ```
 
 ### App Guides
+
+Django templates live in `laserforce_simulator/templates/<app>/`, not per app.
+The test harness is `laserforce_simulator/laserforce_simulator/testing.py`.
 
 - [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) — the `accounts` app (UX-01): the custom `User` (the **Account**), the `manager` ownership seam in `accounts/permissions.py`, the `/accounts/` auth URLs, and `claim_unmanaged`
 - [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/teams/` URLs

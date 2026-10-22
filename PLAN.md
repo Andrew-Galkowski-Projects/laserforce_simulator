@@ -3155,6 +3155,13 @@ scheduled later — revisiting action selection, movement selection, and goal se
 themselves — is tracked by `MECH-07` below (extended to cover actions/movement, not
 just goals); do that only if calibration tuning alone cannot hit the targets.
 
+**Follow-up (SIM-12 / RV-05 retro, 2026-10-22):** de-flake
+`test_strong_team_winpct_not_diluted_by_alternation` (`test_batch_sim.py`). It
+asserts one master seed's batch, and has been hand-tuned twice (threshold 58% ->
+55%, then seed 7777 -> 2 in SIM-12); six seeds spanned 43-63%. Either assert the
+mean across several seeds, or move it behind a `calibration` pytest marker run in
+a non-blocking CI job.
+
 ### MECH-07 · Role-aware action / movement / goal-selection rework (MAP-05 follow-up)
 
 Make changes to role-aware goal selection (MAP-05) — and, per the 2026-06-25 review,
