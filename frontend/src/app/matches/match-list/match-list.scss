@@ -60,13 +60,14 @@
 
   .mat-mdc-header-row,
   .mat-mdc-row {
-    min-width: 40rem;
+    min-width: 47.5rem;
   }
 
   // A row stays a row (role="row"); its one link sits in the teams cell and its ::after is
   // stretched over the whole row, so click, Enter and middle-click anywhere follow it.
   .history-row {
     position: relative;
+    padding-block: 0.5rem;
     cursor: pointer;
 
     &:hover {
@@ -80,8 +81,40 @@
     }
   }
 
+  // Widths fit the content plus cell padding (measured: a team chip ~10.5rem, a winner chip
+  // ~8rem, a score ~8rem), so nothing is clipped; winner, score and rounds stay on one line and
+  // the date wraps to "Oct 22, 2026" over the time. The rows' min-width is the sum, so a
+  // narrower screen scrolls the table sideways rather than squeezing a column.
   .mat-column-teams {
-    flex: 2 1 16rem;
+    flex: 1 1 13rem;
+  }
+
+  .mat-column-winner {
+    flex: 0 0 10.5rem;
+  }
+
+  .mat-column-score {
+    flex: 0 0 10rem;
+  }
+
+  .mat-column-rounds {
+    flex: 0 0 4.5rem;
+  }
+
+  .mat-column-date {
+    flex: 0 0 9.5rem;
+  }
+
+  .mat-column-winner,
+  .mat-column-score,
+  .mat-column-rounds {
+    white-space: nowrap;
+  }
+
+  .mat-column-winner app-result-chip {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 
@@ -110,6 +143,7 @@
 
 .history-team {
   display: inline-flex;
+  white-space: nowrap;
   align-items: center;
   gap: 0.4rem;
   padding: 0.1rem 0.5rem;
