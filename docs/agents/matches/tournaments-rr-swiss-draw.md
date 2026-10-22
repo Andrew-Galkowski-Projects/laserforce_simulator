@@ -899,7 +899,7 @@ Tournament / Match** — the durable link lives on `TournamentPlayerEntry`, avoi
 `player.team_id != self.pk` check) is wrapped in `if not self.is_draw_team:`. **Kept
 unchanged** for draw teams: the all-6-slots-filled check, the duplicate-player check,
 and the role-distribution (Scout-only-twice) check — only the ownership check is
-relaxed. See [`teams/CLAUDE.md`](../../../laserforce_simulator/teams/CLAUDE.md) `### Team.is_draw_team`.
+relaxed. See [`docs/agents/teams/models-and-fields.md`](../teams/models-and-fields.md) `### Team.is_draw_team`.
 
 **NEW pure module `matches/draw.py`.** Tier-balanced draw math + the two
 role-assignment-mode bijection builders — **pure Python, no Django / ORM / I/O /

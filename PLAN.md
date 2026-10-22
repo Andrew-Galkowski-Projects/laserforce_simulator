@@ -516,7 +516,7 @@ direction/magnitude gap rather than an exact point total. See the seam contract
 [`.claude/worktrees/cre-02-seam-contract.md`](.claude/worktrees/cre-02-seam-contract.md),
 the GLOSSARY.md **League spread** term (and the amended **League difficulty** entry),
 the **CRE-02 tiered generation** subsection in
-[`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md), and the
+[`docs/agents/teams/generation-and-import.md`](docs/agents/teams/generation-and-import.md), and the
 **CRE-02 league spread** subsection in
 [`docs/agents/matches/league-lifecycle.md`](docs/agents/matches/league-lifecycle.md).
 

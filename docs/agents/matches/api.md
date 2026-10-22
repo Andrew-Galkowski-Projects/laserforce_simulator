@@ -112,7 +112,7 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 HX-03 / HX-04 head-to-head, HX-01 career and HX-02 benchmark endpoints live on the `teams` viewsets
 (`/api/teams/head-to-head/`, `/api/players/head-to-head/`, `/api/players/<id>/career/`,
 `/api/players/benchmarks/`) but their builders are in `matches/services.py` / `teams/services.py` —
-see **ANG-01b** below and `teams/CLAUDE.md`.
+see **ANG-01b** below, `teams/CLAUDE.md` (Services) and `docs/agents/teams/api.md`.
 
 `MatchFilterSet` / `GameRoundFilterSet` / `GameEventFilterSet` live in `matches/filters.py`. The
 `events` action resolves the round with `get_object()` (cross-Account ⇒ 404) and validates the

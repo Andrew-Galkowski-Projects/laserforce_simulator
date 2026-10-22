@@ -63,7 +63,9 @@ Enter a worktree (`EnterWorktree`), named for the task in kebab case (e.g.
 `ang-01e-league-stats-api`), and `git merge --ff-only origin/main`. A worktree has no
 `db.sqlite3` and no `.env`: copy `laserforce_simulator/.env` from the main
 checkout into the worktree's `laserforce_simulator/`, then run
-`migrate` before any server or management command. Use the main checkout's
+`migrate` before any server or management command. When the task touches
+`frontend/`, also run `npm --prefix frontend ci` (a worktree has no
+`node_modules`). Use the main checkout's
 `.venv\Scripts\python.exe` for every Python command (the `.conda` env has no
 Django). Run `migrate` again after merging any ticket that adds a migration,
 before a browser check. Run any server on `--port 8001` so the owner's 8000
@@ -116,7 +118,10 @@ function in a `*services.py` module, or a DRF endpoint tested through the API
 client. Every new public name, signature and return shape at the seam goes in
 the spec's Implementation Decisions. Grep each name the spec cites that already
 exists (a model field, a service method) before publishing: ANG-06a's spec said
-`currentUser().player` where the field is `self_insert`.
+`currentUser().player` where the field is `self_insert`. For every field the
+spec adds to an API output, grep the tests for it as well (`assertNotIn`,
+exact key-set asserts) and name each hit in the spec as a test to update:
+ANG-06b's full suite found one that pinned `overall_rating` absent.
 
 When tickets will run in parallel, give each parallel ticket its own
 module(s) at the seam (e.g. a package with one file per ticket) so
@@ -243,7 +248,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    - **pre-existing**: confirm it fails on `origin/main` too, and say so.
    Repeat until 0 failed. Report the exact counts.
 2. **Mutation-test** the test that matters most: put the bug back on purpose
-   and check the test catches it.
+   and check the test catches it. Mutate the feature code (a route, a
+   formula, a condition), never an auth or permission guard: the auto-mode
+   classifier refuses a run against a removed guard.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees
    changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
    existing tab, close what you open, close the browser when done). Server on 8001;
@@ -265,7 +272,12 @@ reads the spec issue and its tickets; the Standards axis reads
 checkout's `.venv\Scripts\python.exe` for any Python or pip call, so they can
 verify installs and runtime claims. Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
-tests, and review again only if a fix changed behaviour.
+tests, and review again only if a fix changed behaviour. The fix pass is
+the orchestrator's own work, not a ticket: tell its agent to **stage** its
+files and report, not commit (the auto-mode classifier refuses its commit).
+Read the staged files with Read (`git -C` into its worktree is refused),
+copy them onto the integration branch, re-run the frontend / Python checks
+there, and commit them yourself.
 
 ## Step 9: PR
 
