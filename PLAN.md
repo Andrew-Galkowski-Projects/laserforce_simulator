@@ -3204,6 +3204,32 @@ imported round shows **no** "[Simulated]" watermark on its RV-03 export.
 
 ### SIM-12 · Clamp negative action weights before `random.choices`
 
+Spec: #279
+
+Grill settled (owner, 2026-10-21):
+
+- **Clamp site:** one line in `plan_action`, after the decision-making spread and the stamina /
+  cooldown post-processing, before the UXP-23 "all zero, hide" fallback. Role functions and the
+  seek-ally helper keep their subtractions; their "harmless" docstrings say "clamped in
+  `plan_action`" instead.
+- **Seam:** pure `finalize_action_weights(weights: list[int]) -> list[int]` in `weights.py`
+  (clamp, then the hide fallback), called by `plan_action` and by the test twin
+  `_plan_action_internal_weights` in place of its re-implementation.
+- **Tests:** a roles-by-edge-states grid test asserting every finalized slot >= 0; a unit test of
+  the helper; per-branch pins (raw slot negative, finalized slot 0) for Heavy missile (-10),
+  Commander missile (-10), Heavy capture (-5), Scout shots-critical (-10), the last replacing
+  the runtime xfail; "choice and RNG unchanged" stays green through the helper. The Commander
+  nuke negative (>5 enemies, 3-zone fallback) is covered by the grid, no pin.
+- **Determinism:** RNG consumption unchanged (still one `random.choices` per tick); no new test;
+  the verify step runs and names the three serial-equals-parallel tests.
+- **Calibration:** if the 55% strong-team win-rate test goes red, report it as CAL-01 drift; no
+  retune, no threshold move.
+- **Scope out:** subtraction sites, constants, UXP-23 semantics, re-baseline, migration, GLOSSARY,
+  ADR. Docs pass corrects the figures below (Heavy and Commander both reach -10; Commander also
+  has the capture subtraction), the phantom `test_plan_action_never_emits_negative_weight` name
+  in the sim-helpers CLAUDE.md, and the engine doc's "spread clamps >= 0" claim.
+- **Tickets:** one.
+
 Discovered during the SIM-01 grill/review (May 2026). `combat.plan_action` builds the 9-slot weight
 vector and feeds it straight to `random.choices` **without clamping per-element negatives to 0**. CPython's
 `random.choices` only raises when the *total* weight is ≤ 0 — it does **not** reject an individual negative
