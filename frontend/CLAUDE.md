@@ -83,9 +83,12 @@ src/
                           team-create, team-detail, team-edit, team-slots, player-add,
                           player-edit;
                           shared/: roster.ts (SLOTS, ROLE_LABELS, bench split),
-                          player-stats.ts (STAT_GROUPS, overallRating), player-form.ts
-                          (app-player-form: Add / Edit Player), route-team.ts
-                          (loadRouteTeam: the :id Team, 404 -> notFound, else loadError),
+                          player-stats.ts (STAT_GROUPS, STAT_KEYS, overallRating),
+                          player-form.ts + .html (app-player-form: Add / Edit Player),
+                          route-team.ts (loadRouteTeam: the :id Team, 404 -> notFound, else
+                          loadError), route-player.ts (loadRoutePlayer: the :playerId Player,
+                          404 or player.team !== :id -> notFound, else loadError),
+                          player-not-found.ts (back to /teams/:id),
                           notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
                           team-name-form.ts, form-errors.ts (applyApiErrors), team-page.scss,
                           team-form.scss; testing/teams-loads.ts (releaseTeamsLoads, specs only)

@@ -14,7 +14,7 @@ import { RouterLink } from '@angular/router';
 import { map } from 'rxjs';
 import { Player, PlayerInput, PlayerStats, Role } from '../../api/players.models';
 import { applyApiErrors } from './form-errors';
-import { STAT_GROUPS, overallRating } from './player-stats';
+import { STAT_GROUPS, STAT_KEYS, overallRating } from './player-stats';
 
 /** The five Preferred-role checkboxes, in the order they are emitted. */
 const ROLE_OPTIONS: readonly { key: Role; label: string }[] = [
@@ -25,18 +25,35 @@ const ROLE_OPTIONS: readonly { key: Role; label: string }[] = [
   { key: 'ammo', label: 'Ammo' },
 ];
 
-const STAT_KEYS: readonly (keyof PlayerStats)[] = STAT_GROUPS.flatMap((g) =>
-  g.stats.map((s) => s.key),
-);
+/**
+ * The profile fields, in form order: the numbers (blank is `null`, bounded as the Django
+ * `PlayerForm` widgets are) and the texts (blank is `''`).
+ */
+const PROFILE_FIELDS = [
+  { key: 'age', label: 'Age', type: 'number', min: 5, max: 100 },
+  { key: 'started_playing_age', label: 'Started Playing Age', type: 'number', min: 3, max: 100 },
+  { key: 'total_games', label: 'Total Games', type: 'number', min: 0, max: 100000 },
+  { key: 'home_site', label: 'Home Site', type: 'text' },
+  { key: 'height', label: 'Height', type: 'text' },
+] as const;
 
-/** The profile fields: the numbers (blank is `null`) and the texts (blank is `''`). */
-const PROFILE_NUMBERS = ['age', 'started_playing_age', 'total_games'] as const;
-const PROFILE_TEXTS = ['home_site', 'height'] as const;
+type ProfileField = (typeof PROFILE_FIELDS)[number];
+type ProfileNumber = Extract<ProfileField, { type: 'number' }>['key'];
+type ProfileText = Extract<ProfileField, { type: 'text' }>['key'];
+
+const PROFILE_NUMBERS = PROFILE_FIELDS.flatMap((f) =>
+  f.type === 'number' ? [f.key] : [],
+) as readonly ProfileNumber[];
+const PROFILE_TEXTS = PROFILE_FIELDS.flatMap((f) =>
+  f.type === 'text' ? [f.key] : [],
+) as readonly ProfileText[];
 
 /** A new Player's Stats (the Django `player_add` initial). */
 const NEW_STAT = 50;
 
 type StatControls = Record<keyof PlayerStats, FormControl<number | null>>;
+type ProfileNumberControls = Record<ProfileNumber, FormControl<number | null>>;
+type ProfileTextControls = Record<ProfileText, FormControl<string>>;
 
 /**
  * The Player form shared by Add Player and Edit Player (`PlayerForm`): name, profile,
@@ -59,115 +76,7 @@ type StatControls = Record<keyof PlayerStats, FormControl<number | null>>;
     MatLabel,
   ],
   styleUrls: ['./team-form.scss', './player-form.scss'],
-  template: `
-    <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
-      <div class="player-form__summary">
-        <p class="player-form__overall" role="status" aria-live="polite">
-          Overall: {{ overall() }}
-        </p>
-        <div class="player-form__presets">
-          <button mat-stroked-button type="button" (click)="setAllStats(50)">
-            Set all to Average (50)
-          </button>
-          <button mat-stroked-button type="button" (click)="setAllStats(90)">
-            Set all to Elite (90)
-          </button>
-        </div>
-      </div>
-
-      @for (message of nonFieldErrors(); track $index) {
-        <p class="team-form__error" role="alert">{{ message }}</p>
-      }
-
-      <mat-form-field appearance="outline">
-        <mat-label>Name</mat-label>
-        <input matInput formControlName="name" name="name" autocomplete="off" />
-        @if (form.controls.name.getError('server'); as message) {
-          <mat-error>{{ message }}</mat-error>
-        }
-      </mat-form-field>
-
-      <fieldset>
-        <legend>Profile</legend>
-        @if (initial() === null) {
-          <p class="player-form__hint">Leave blank to randomise.</p>
-        }
-        <div class="player-form__grid">
-          @for (field of profileFields; track field.key) {
-            <mat-form-field appearance="outline">
-              <mat-label>{{ field.label }}</mat-label>
-              <!-- A static type: Angular picks the number value accessor from it. -->
-              @if (field.type === 'number') {
-                <input
-                  matInput
-                  type="number"
-                  min="0"
-                  step="1"
-                  [formControlName]="field.key"
-                  [name]="field.key"
-                  autocomplete="off"
-                />
-              } @else {
-                <input
-                  matInput
-                  type="text"
-                  [formControlName]="field.key"
-                  [name]="field.key"
-                  autocomplete="off"
-                />
-              }
-              @if (form.get(field.key)?.getError('server'); as message) {
-                <mat-error>{{ message }}</mat-error>
-              }
-            </mat-form-field>
-          }
-        </div>
-      </fieldset>
-
-      <fieldset formGroupName="preferred_roles">
-        <legend>Preferred Roles</legend>
-        <div class="player-form__roles">
-          @for (role of roleOptions; track role.key) {
-            <mat-checkbox [formControlName]="role.key">{{ role.label }}</mat-checkbox>
-          }
-        </div>
-        @if (form.controls.preferred_roles.getError('server'); as message) {
-          <p class="player-form__field-error">{{ message }}</p>
-        }
-      </fieldset>
-
-      @for (group of statGroups; track group.label) {
-        <fieldset>
-          <legend>{{ group.label }}</legend>
-          <div class="player-form__grid">
-            @for (stat of group.stats; track stat.key) {
-              <mat-form-field appearance="outline">
-                <mat-label>{{ stat.label }}</mat-label>
-                <input
-                  matInput
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="1"
-                  [formControlName]="stat.key"
-                  [name]="stat.key"
-                  autocomplete="off"
-                />
-                @if (form.get(stat.key)?.getError('server'); as message) {
-                  <mat-error>{{ message }}</mat-error>
-                }
-              </mat-form-field>
-            }
-          </div>
-        </fieldset>
-      }
-
-      <div class="team-form__actions">
-        <button mat-flat-button type="submit" [disabled]="busy()">{{ submitLabel() }}</button>
-        <a mat-button [routerLink]="cancelLink()">Cancel</a>
-      </div>
-    </form>
-  `,
+  templateUrl: './player-form.html',
 })
 export class PlayerForm {
   readonly submitLabel = input.required<string>();
@@ -181,26 +90,17 @@ export class PlayerForm {
 
   protected readonly statGroups = STAT_GROUPS;
   protected readonly roleOptions = ROLE_OPTIONS;
-  protected readonly profileFields: readonly {
-    key: (typeof PROFILE_NUMBERS)[number] | (typeof PROFILE_TEXTS)[number];
-    label: string;
-    type: 'number' | 'text';
-  }[] = [
-    { key: 'age', label: 'Age', type: 'number' },
-    { key: 'started_playing_age', label: 'Started Playing Age', type: 'number' },
-    { key: 'total_games', label: 'Total Games', type: 'number' },
-    { key: 'home_site', label: 'Home Site', type: 'text' },
-    { key: 'height', label: 'Height', type: 'text' },
-  ];
+  protected readonly profileFields = PROFILE_FIELDS;
 
   private readonly fb = inject(NonNullableFormBuilder);
   protected readonly form = new FormGroup({
     name: this.fb.control(''),
-    age: new FormControl<number | null>(null),
-    started_playing_age: new FormControl<number | null>(null),
-    total_games: new FormControl<number | null>(null),
-    home_site: this.fb.control(''),
-    height: this.fb.control(''),
+    ...(Object.fromEntries(
+      PROFILE_NUMBERS.map((k) => [k, new FormControl<number | null>(null)]),
+    ) as ProfileNumberControls),
+    ...(Object.fromEntries(
+      PROFILE_TEXTS.map((k) => [k, this.fb.control('')]),
+    ) as ProfileTextControls),
     preferred_roles: this.fb.group(
       Object.fromEntries(ROLE_OPTIONS.map((r) => [r.key, false])) as Record<Role, boolean>,
     ),
@@ -226,11 +126,14 @@ export class PlayerForm {
       if (player === null) return;
       this.form.setValue({
         name: player.name,
-        age: player.age,
-        started_playing_age: player.started_playing_age,
-        total_games: player.total_games,
-        home_site: player.home_site,
-        height: player.height,
+        ...(Object.fromEntries(PROFILE_NUMBERS.map((k) => [k, player[k]])) as Record<
+          ProfileNumber,
+          number | null
+        >),
+        ...(Object.fromEntries(PROFILE_TEXTS.map((k) => [k, player[k]])) as Record<
+          ProfileText,
+          string
+        >),
         preferred_roles: Object.fromEntries(
           ROLE_OPTIONS.map((r) => [r.key, player.preferred_roles.includes(r.key)]),
         ) as Record<Role, boolean>,

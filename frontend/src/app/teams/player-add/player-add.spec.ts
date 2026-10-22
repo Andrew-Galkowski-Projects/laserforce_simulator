@@ -104,6 +104,14 @@ describe('Add Player page', () => {
     expect(TestBed.inject(Title).getTitle()).toBe(`Add Player - ${APP_TITLE}`);
   });
 
+  it('bounds the profile numbers as the Django PlayerForm widgets do', async () => {
+    await open();
+    const bounds = (name: string): [string, string] => [control(name).min, control(name).max];
+    expect(bounds('age')).toEqual(['5', '100']);
+    expect(bounds('started_playing_age')).toEqual(['3', '100']);
+    expect(bounds('total_games')).toEqual(['0', '100000']);
+  });
+
   it('groups the Stats into the five sections', async () => {
     await open();
     const headings = [...page().querySelectorAll('fieldset legend')].map((l) =>

@@ -52,7 +52,7 @@ export const STAT_GROUPS: readonly {
 ];
 
 /** Every Stat key, in group order. */
-const STAT_KEYS: readonly (keyof PlayerStats)[] = STAT_GROUPS.flatMap((g) =>
+export const STAT_KEYS: readonly (keyof PlayerStats)[] = STAT_GROUPS.flatMap((g) =>
   g.stats.map((s) => s.key),
 );
 
