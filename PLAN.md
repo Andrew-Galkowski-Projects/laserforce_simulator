@@ -2561,6 +2561,45 @@ Grill settled (owner, 2026-10-21):
   `setSlots`, in parallel, each in its own `teams/<screen>/` folder.
 - No GLOSSARY or ADR changes.
 
+#### ANG-06b · Player add/edit
+
+Spec: #270
+
+Grill settled (owner, 2026-10-21):
+
+- **Scope in:** Add Player and Edit Player screens; on Angular team detail an "Add Player" header
+  link and an "Edit" action per active / bench row (beside Remove). **Scope out:** player detail
+  page, Generate / Import (item 2b), `potential` / `salary` (not on the Django form either), the
+  Django "Current Team Composition" line.
+- **Serializer:** `PlayerSerializer` gains read-only `age`, `started_playing_age`, `total_games`,
+  `home_site`, `height` and `overall_rating` (model property). Additive; nested `TeamSerializer`
+  rows get them too. No migration.
+- **Add initials:** no initials endpoint. Angular starts the 19 stats at 50 and the profile fields
+  blank ("Leave blank to randomise"); blank profile fields are omitted from the POST, so
+  `player_form_initial()` fills them server-side. (Cost: Add can't set `age` to null on purpose.)
+- **Live overall:** a pure TS `overallRating(stats): number` = `sum(19) / 19` (matches
+  `Player.overall_rating`), shown as "Overall: 72.4" in a sticky summary by the form header,
+  updating per keystroke; "—" while any stat is empty or outside 0-100. Edit starts from the
+  server's `overall_rating`, then shows the live value.
+- **Layout:** the 19 stats grouped in the five `_STAT_GROUPS` sections (Awareness,
+  Decision-making, Physical, Team, Role), Material number inputs 0-100 step 1 in a responsive
+  grid, human labels. No sliders. Presets "Set all to Average (50)" / "Set all to Elite (90)".
+  Preferred roles: five `mat-checkbox`es with full labels, sent as a list.
+- **Errors:** envelope field errors inline via `applyApiErrors`; the duplicate-name
+  `unique_together` error arrives with `field: null` and shows in the alert line (no server change).
+- **Routes:** `/teams/:id/players/new`, `/teams/:id/players/:playerId/edit`, behind `authGuard`.
+  Edit loads via `PlayersService.get` and shows "Player not found" on 404 or when
+  `player.team !== :id`. Cancel and success go to `/teams/:id`; success snackbars use the Django
+  flash text (`Player "<name>" added to <team>!` / `Player "<name>" updated!`). One shared
+  `player-form` component (like `team-name-form`); Edit PATCHes every field.
+- **Ownership / data / simulation:** unchanged — the API filters through the `manager` seam,
+  cross-Account is 404. No migration, no engine change.
+- **Tickets:** T1 serializer fields + `overallRating` + shared `player-form` + Add screen + "Add
+  Player" link; T2 Edit screen + per-row Edit links, blocked by T1.
+- **Tests:** Vitest (`HttpTestingController`) for both screens and `overallRating`; Django API
+  tests for the new serializer fields; browser check (4201 / 8001) incl. a cross-Account 404.
+- No GLOSSARY or ADR changes.
+
 ### ANG-07 · Serve Angular from Docker (nginx sidecar)
 
 Once Angular is built (`ng build --configuration production`), serve it via an nginx sidecar service.
