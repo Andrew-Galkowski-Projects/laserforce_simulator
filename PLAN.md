@@ -2488,7 +2488,7 @@ Every component uses the theme chosen in ANG-04b.
 
 1. **[DONE] Teams list & detail** — simple CRUD table + form; good first Angular component to build
    (ANG-06a below)
-2. **Player add/edit** — stat form with live `overall_rating` preview
+2. **[DONE] Player add/edit** — stat form with live `overall_rating` preview (ANG-06b below)
 2b. **Generate Players + Import Roster** — the two Teams-list header actions, split out of ANG-06a
 3. **Match list & create** — team picker, match creation, results list
 4. **Round detail** — per-player stat table, MVP scores
@@ -2561,9 +2561,23 @@ Grill settled (owner, 2026-10-21):
   `setSlots`, in parallel, each in its own `teams/<screen>/` folder.
 - No GLOSSARY or ADR changes.
 
-#### ANG-06b · Player add/edit
+#### ANG-06b · [DONE] Player add/edit
 
-Spec: #270
+Spec: #270 (tickets #271, #272)
+
+**[DONE] Shipped (2026-10-21).** Angular Add Player (`/teams/:id/players/new`) and Edit Player
+(`/teams/:id/players/:playerId/edit`) on one shared `PlayerForm`, with a live Overall rating,
+presets and grouped Stats; "Add Player" and per-row "Edit" links on team detail.
+`PlayerSerializer` gained six read-only fields. What the work found:
+- A dynamic `[type]` binding on an input skips Angular's number value accessor, so `age` was
+  POSTed as a string. The inputs are now static `type="number"` / `type="text"`.
+- `PlayerInput` was widened (Stats and `total_games` accept `null`), so Edit sends a blank as
+  `null` and gets a server field error, with no cast.
+- One pre-existing test (`test_api_filters.py`) had pinned "no `overall_rating` in the Player
+  output". It now pins the annotation staying out instead.
+- Review added the Django widget bounds to the profile inputs (5-100 / 3-100 / 0-100000), and
+  `loadRoutePlayer` / `PlayerNotFound` beside `loadRouteTeam`.
+- Left for later: one save helper for the four Teams screens' save handlers.
 
 Grill settled (owner, 2026-10-21):
 

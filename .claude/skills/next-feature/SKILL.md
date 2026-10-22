@@ -281,8 +281,9 @@ Run `/update-docs` so the `docs/agents/` feature docs, the app `CLAUDE.md` index
 - **Before:** <what happened before, or the failing test>
 - **After:** <what happens now>; full suite: <N passed, 0 failed>; browser: <what was read off the page>
 - **Screenshots:** <before / after images or a video from `python scripts/pr_assets.py`; required when
-  the diff touches templates, CSS, static assets or `frontend/src/`, else "No visual change: <reason>"
-  (the `PR evidence` check enforces it; see `/pr-ready`)>
+  the diff touches templates, CSS, static assets or `frontend/src/` (the `PR evidence` check enforces
+  it; see `/pr-ready`). With no visual change, replace this bullet with the line below instead>
+No visual change: <reason, on its own line: `scripts/check_pr_evidence.py` accepts nothing else>
 
 ## Merge Danger
 **Door:** <one-way or two-way>. <migrations? AUTH/ownership changes? determinism?>
