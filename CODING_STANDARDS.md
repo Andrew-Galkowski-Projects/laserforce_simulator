@@ -29,6 +29,13 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 - A row owned by another Account returns 404. An anonymous request returns 401
   with `WWW-Authenticate: Bearer` (ADR-0041).
 
+## Angular frontend
+
+- **Parity with the Django form it replaces.** An Angular form that ports a Django
+  form carries each widget's constraints (`min`, `max`, `maxlength`, `required`) on the
+  matching control. Flag a control missing one (ANG-06b shipped the Player profile
+  inputs without their bounds).
+
 ## Tests
 
 - Each new public function has a happy-path test and an edge-case or failure test.

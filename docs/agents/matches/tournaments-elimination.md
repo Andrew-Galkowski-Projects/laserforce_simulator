@@ -227,7 +227,7 @@ appended_teams, player_count)` (**ANG-01a:** both now receive
 `manager=manager_or_none(request)` — they resolve existing Teams only among the
 Account's own + Unmanaged Teams, so a CSV naming another Account's Team creates a
 **new Team stamped with the importer** instead of appending to the foreign one, and
-tournament-created Teams are now stamped; see `teams/CLAUDE.md` **Roster-import
+tournament-created Teams are now stamped; see `docs/agents/teams/api.md` **Roster-import
 ownership fix**); **ONLY `created_teams`** become
 `TournamentParticipant`s (brand-new Teams ⇒ no `uniq_tournament_team` collision;
 `appended_teams` are created/extended but **NOT auto-added**); then **re-seed the

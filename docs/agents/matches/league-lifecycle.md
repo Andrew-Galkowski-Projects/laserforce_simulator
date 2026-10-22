@@ -337,7 +337,7 @@ Tiered, ~32 at Steep) while its **average** talent stays unchanged at every spre
 GLOSSARY.md **League spread** term (and the amended **League difficulty** entry) is the
 domain language; the ramp arithmetic and the generation call live in the teams app —
 see the **CRE-02 tiered generation** subsection in
-[`../teams/CLAUDE.md`](../../../laserforce_simulator/teams/CLAUDE.md). **No model change, no migration, no
+[`docs/agents/teams/generation-and-import.md`](../teams/generation-and-import.md). **No model change, no migration, no
 simulator / RNG-into-the-sim touch, no Score Calibration re-baseline, no ADR** (a
 transient form field + a pure function + an additive kwarg over the shipped CRE-01
 creation path — reversible). Seam contract:
