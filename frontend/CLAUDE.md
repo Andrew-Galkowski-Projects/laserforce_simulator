@@ -39,6 +39,9 @@ npm --prefix frontend run build           # production build (environment.prod.t
 npm --prefix frontend exec -- ng generate component foo   # any other ng command
 ```
 
+Agents reading test output: `NO_COLOR=1 npm --prefix frontend run test:ci 2>&1 | tail -5` gives a
+plain summary; without `NO_COLOR` the ANSI codes defeat `grep`.
+
 `ng add` / `ng generate` resolve paths against the project in `frontend/`, so
 `npm --prefix frontend exec -- ng ...` works from the root.
 
@@ -159,6 +162,11 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   `provideHttpClientTesting()` / `HttpTestingController`. Assert the request (URL, method, body,
   headers) and what the caller receives. `teams.service.spec.ts` is the template for a service
   spec, and `auth.interceptor.spec.ts` for the flow.
+- **Route specs:** assert the routed screen with
+  `fixture.debugElement.query(By.directive(Screen))`. A failing `toBeInstanceOf` / `toEqual` on a
+  component instance makes Vitest print its whole object graph and run Node out of memory, with
+  no test summary. A spec that lands on a screen it isn't testing (shell, login, routes) releases
+  that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`).
 - **Live check without the owner's ports:**
   - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 manage.py runserver 8001`.
   - Run `npm --prefix frontend run start:worktree`. Its `worktree` configuration serves on 4201

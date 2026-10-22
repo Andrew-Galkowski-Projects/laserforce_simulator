@@ -114,7 +114,9 @@ Follow `to-spec`. Agree the **seams** with the owner first: prefer existing
 ones, fewest possible, ideally one. In this app that is usually a service
 function in a `*services.py` module, or a DRF endpoint tested through the API
 client. Every new public name, signature and return shape at the seam goes in
-the spec's Implementation Decisions.
+the spec's Implementation Decisions. Grep each name the spec cites that already
+exists (a model field, a service method) before publishing: ANG-06a's spec said
+`currentUser().player` where the field is `self_insert`.
 
 When tickets will run in parallel, give each parallel ticket its own
 module(s) at the seam (e.g. a package with one file per ticket) so
@@ -154,10 +156,20 @@ against the spec issue. Implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
 another agent is still committing can branch from a stale tip, so confirm
 each one's base before starting the next. Before starting tickets that run in
-parallel, grep the integration tip for every helper two of them will need,
-and move each into a neutral service module yourself; every new action goes
-in its own ticket's file. Point each one at the spec issue and its ticket issue rather
-than pasting them.
+parallel, prepare the integration tip yourself:
+
+- Grep it for every helper two of them will need, and move each into a neutral
+  service module; every new action goes in its own ticket's file.
+- For each new public seam method, grep what it calls (an `ApiClient` verb, a
+  model method). Add anything missing to its shared module first, or the ticket
+  that is barred from that file stops half-done (ANG-06a: `ApiClient.put`).
+- When an earlier ticket left **stubs** for later tickets to replace, check its
+  specs against the real screen: they assert *which* component routed (not
+  the stub's text), and a spec that opens another ticket's screen releases
+  that screen's requests before `verify()`. Otherwise every parallel ticket
+  breaks the earlier specs.
+
+Point each one at the spec issue and its ticket issue rather than pasting them.
 
 Merge each finished ticket branch yourself. Into the branch checked out in your
 worktree, use `git merge`. Into a branch checked out nowhere (a
