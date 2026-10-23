@@ -1566,7 +1566,8 @@ def compute_season_award_set(season: Season) -> AwardSet:
 
     The single shared path used by ``season_awards`` (the view),
     ``build_history_row`` (League History, through
-    :func:`compute_season_award_sets`), and the player-page awards badge.
+    :func:`compute_season_award_sets`), and the player-page awards badge (also
+    through :func:`compute_season_award_sets`).
     UXP-09: a completed Season's set is stored in its summary snapshot
     (``matches.season_snapshot``) after the first computation.
     """
@@ -2114,17 +2115,46 @@ def teardown_league(league: League) -> None:
             _delete_team_if_orphaned(team_id)
 
 
-def _team_winp_for_season(season: Season, team_id: int) -> float:
+def _team_winp_for_season(
+    season: Season,
+    team_id: int,
+    wins_games: tuple[int, int] | None = None,
+) -> float:
     """Win fraction (wins / matches_played) for ``team_id`` in ``season``.
 
     Reads the regular-season ``StandingsRow`` via ``_team_wins_games_for_season``
-    (the same ``compute_standings`` assembly). 0 games ⇒ a neutral 0.5 (no
-    div-by-zero), matching the ZenGM new-team 0.500 default.
+    (the same ``compute_standings`` assembly), unless the caller passes the
+    already-read ``wins_games`` (PERF-01: the finance writer's per-Season memo).
+    0 games ⇒ a neutral 0.5 (no div-by-zero), matching the ZenGM new-team 0.500
+    default.
     """
-    won, games = _team_wins_games_for_season(season, team_id)
+    if wins_games is None:
+        wins_games = _team_wins_games_for_season(season, team_id)
+    won, games = wins_games
     if games == 0:
         return 0.5
     return won / games
+
+
+def _enrolled_team_ids_by_season(seasons: list[Season]) -> dict[int, list[int]]:
+    """Enrolled Team ids of each completed Season, keyed by Season id.
+
+    The frozen ``starting_team_ids_json`` snapshot the standings use, with a
+    defensive fallback to the live M2M for a Season whose snapshot is empty --
+    read in one query for all such Seasons.
+    """
+    team_ids_by_season: dict[int, list[int]] = {
+        season.id: list(season.starting_team_ids_json or []) for season in seasons
+    }
+    fallback_ids = [sid for sid, ids in team_ids_by_season.items() if not ids]
+    if fallback_ids:
+        for season_id, team_id in (
+            Season.teams.through.objects.filter(season_id__in=fallback_ids)
+            .order_by("season_id", "team_id")
+            .values_list("season_id", "team_id")
+        ):
+            team_ids_by_season[season_id].append(team_id)
+    return team_ids_by_season
 
 
 def _ensure_team_finances(league: League, up_to_season: Season) -> None:
@@ -2171,19 +2201,7 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
         ).values_list("team_id", "season_id", "hype")
     }
 
-    # Enrolled Teams of each completed Season: the frozen snapshot the
-    # standings use (defensive fallback to the live M2M, read in one query).
-    team_ids_by_season: dict[int, list[int]] = {
-        season.id: list(season.starting_team_ids_json or []) for season in seasons
-    }
-    fallback_ids = [sid for sid, ids in team_ids_by_season.items() if not ids]
-    if fallback_ids:
-        for season_id, team_id in (
-            Season.teams.through.objects.filter(season_id__in=fallback_ids)
-            .order_by("season_id", "team_id")
-            .values_list("season_id", "team_id")
-        ):
-            team_ids_by_season[season_id].append(team_id)
+    team_ids_by_season = _enrolled_team_ids_by_season(seasons)
 
     missing_team_ids = {
         team_id
@@ -2207,8 +2225,7 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
         return standings_by_season[season.id].get(team_id, (0, 0))
 
     def _winp(season: Season, team_id: int) -> float:
-        won, games = _wins_games(season, team_id)
-        return 0.5 if games == 0 else won / games
+        return _team_winp_for_season(season, team_id, _wins_games(season, team_id))
 
     # Per-Team carried state across Seasons: the prior hype, and the Season
     # whose win fraction is the next Season's ``winp_old`` (read lazily, as it

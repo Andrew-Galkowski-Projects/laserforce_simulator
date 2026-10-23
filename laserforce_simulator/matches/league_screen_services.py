@@ -1244,10 +1244,9 @@ def _team_season_rows(team: Team, seasons_by_id: dict[int, Season]) -> list[Seas
     # Season's Matches in one query, grouped per Season below (id order kept).
     team_ids_by_season = {season.id: enrolled_team_ids(season) for season in seasons}
     all_team_ids = {tid for ids in team_ids_by_season.values() for tid in ids}
-    names_by_id = {
-        tid: team.name
-        for tid, team in Team.objects.only("id", "name").in_bulk(all_team_ids).items()
-    }
+    names_by_id: dict[int, str] = dict(
+        Team.objects.filter(id__in=all_team_ids).values_list("id", "name")
+    )
 
     # Completed Matches -> standings dicts for rank, and the team's own
     # per-Round record for the W-L-T columns.
