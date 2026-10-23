@@ -25,6 +25,7 @@
         <a mat-stroked-button [routerLink]="['/matches', r.match]">&larr; Back to Match</a>
       }
       <a mat-stroked-button [routerLink]="['/rounds', r.id, 'events']">Event log</a>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'playback']">Playback</a>
       <button mat-flat-button type="button" [disabled]="exporting()" (click)="exportPdf(r.id)">
         {{ exporting() ? 'Generating...' : 'Export PDF' }}
       </button>

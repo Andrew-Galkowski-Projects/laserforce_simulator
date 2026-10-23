@@ -1,0 +1,138 @@
+// Playback, ADR-0043 layout B: contract tokens and --side* only, never a colour literal.
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1 {
+  margin: 0;
+  font: 700 1.5rem/1.2 var(--lf-font-heading);
+}
+
+h2 {
+  margin: 0;
+  font: 700 1rem var(--lf-font-heading);
+}
+
+.pb-error {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.pb-pagehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.pb-kicker {
+  margin: 0.25rem 0;
+  color: var(--lf-text-muted);
+  font-size: 0.8rem;
+}
+
+.pb-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+// ---- Transport ------------------------------------------------------------------------------
+.pb-transport {
+  display: flex;
+  flex-direction: column;
+  padding: 0.5rem 0.75rem 0;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.pb-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.5rem;
+}
+
+.pb-clock {
+  margin: 0 0.5rem;
+  font-family: var(--lf-font-numeric);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.pb-speeds {
+  display: inline-flex;
+  margin-left: auto;
+  overflow: hidden;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+}
+
+.pb-speed {
+  padding: 0.3rem 0.65rem;
+  border: 0;
+  border-left: 1px solid var(--lf-border);
+  background: transparent;
+  color: var(--lf-text-muted);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+
+  &:first-child {
+    border-left: 0;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background: var(--lf-surface-alt);
+  }
+
+  &.is-active {
+    background: var(--lf-accent);
+    color: var(--lf-surface);
+    font-weight: 700;
+  }
+}
+
+// RV-04's Highlight pips sit here; empty until then.
+.pb-markers {
+  position: relative;
+  margin: 0 0.5rem;
+}
+
+.pb-scrubber {
+  width: auto;
+  margin: 0 0.5rem;
+}
+
+// ---- Panels ---------------------------------------------------------------------------------
+// Red | Blue side by side from 1024px up, stacked below.
+.pb-boards {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 1024px) {
+  .pb-boards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.pb-feed__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
