@@ -1,0 +1,150 @@
+// Match detail (ADR-0043 layout B): `--lf-*` tokens and `data-lf-side` only, no colour literals.
+:host {
+  display: block;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+.match-detail__error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.match-detail__head {
+  margin-bottom: 1.5rem;
+}
+
+.match-detail__teams {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.match-detail__team {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.2rem 0.75rem;
+  border-left: 4px solid var(--side);
+  border-radius: var(--lf-radius);
+  background: var(--side-bg);
+  color: var(--side-text);
+}
+
+.match-detail__badge {
+  padding: 0 0.35rem;
+  border-radius: var(--lf-radius);
+  background: var(--side);
+  color: var(--lf-bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.match-detail__vs {
+  color: var(--lf-text-muted);
+  font-size: 1rem;
+}
+
+.match-detail__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0;
+  color: var(--lf-text-muted);
+}
+
+.match-detail__score {
+  color: var(--lf-text);
+  font-family: var(--lf-font-numeric);
+  font-weight: 700;
+}
+
+.match-detail__card {
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  h2 {
+    margin: 0;
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--lf-border);
+    font-family: var(--lf-font-heading);
+    font-size: 1.125rem;
+  }
+}
+
+.match-detail__tablewrap {
+  overflow-x: auto;
+}
+
+.summary-table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+
+  th,
+  td {
+    padding: 0.5rem 1rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  thead th {
+    background: var(--lf-surface-alt);
+    color: var(--lf-text-muted);
+    font-size: 0.8rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  thead th[data-lf-side] {
+    border-top: 3px solid var(--side);
+    color: var(--side-text);
+  }
+
+  .num {
+    font-family: var(--lf-font-numeric);
+    text-align: right;
+  }
+
+  tbody tr:last-child > * {
+    border-bottom: none;
+  }
+}
+
+.match-detail__bonus,
+.match-detail__muted {
+  color: var(--lf-text-muted);
+  font-size: 0.85rem;
+}
+
+.match-detail__note {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border-top: 1px solid var(--lf-border);
+  color: var(--lf-text-muted);
+  font-size: 0.85rem;
+}
+
+.match-detail__link {
+  color: var(--lf-accent);
+  font-weight: 500;
+}
+
+.match-detail__back {
+  margin-top: 2rem;
+}
