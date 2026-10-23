@@ -198,7 +198,7 @@ h2 {
 // left border and the chip, the names in their Side's text colour.
 .re-row {
   display: grid;
-  grid-template-columns: 3.25rem 7.5rem minmax(0, 1fr) auto auto;
+  grid-template-columns: 3.25rem 6.5rem minmax(10rem, 1fr) minmax(0, max-content) auto;
   grid-template-rows: 36px;
   align-items: center;
   gap: 0 0.6rem;
@@ -243,6 +243,16 @@ h2 {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  // Below the wide breakpoint (the component's `WIDE`) the names cell goes: it would clip
+  // mid-name, and the description already names both players.
+  @media (max-width: 1023.98px) {
+    grid-template-columns: 3.25rem 6.5rem minmax(0, 1fr) auto;
+
+    .re-row__who {
+      display: none;
+    }
   }
 
   &__who {
