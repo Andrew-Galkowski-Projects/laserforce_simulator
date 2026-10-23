@@ -4,7 +4,7 @@ The Phase 8 replacement for the Django templates. The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
 layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
 below 768px) behind `authGuard`, the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
-Matches area (ANG-06c: Match History, New Match / New Single Round, detail stubs), on top of the client
+Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 

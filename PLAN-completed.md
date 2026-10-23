@@ -6169,6 +6169,69 @@ Grill settled (owner, 2026-10-22):
   middle-click work); no separate "View" button.
 - **Ownership / data / simulation:** unchanged. No migration, no engine change.
 
+#### ANG-06d · [DONE] Round detail (+ Match detail)
+
+Spec: #295 (tickets #296, #297)
+
+**[DONE] Shipped (2026-10-22).** Angular `/rounds/:id` (layout B: page head, Side strips with the
+base score and a muted elim bonus, one sortable **Round scoreboard** table per Side, ★ top MVP, You
+badge, Export PDF) and `/matches/:id` (Match Summary per Round with View Round links), replacing
+the ANG-06c stubs. Server: `round_scoreboard` (shared by the Django round page and the new
+`scoreboard` field on `GET /api/rounds/<id>/`) and `round_ids` ordered by `round_number`. What the
+work found:
+- `GameRound` has no `Meta.ordering`, so `round_ids` came back in an undefined order; ordered in
+  the serializer (no migration).
+- `team_eliminated([])` is True, so a legacy Round with an empty Side showed a false `+10000` on
+  the Django page; a Side with no rows is now never eliminated (API and Django page).
+- Review: the Match list ran one `round_ids` query per row (pre-existing); `game_rounds` is now
+  prefetched and the Round retrieve's `player_states` prefetch feeds the scoreboard, both pinned by
+  query-count tests. `saveBlob` moved to `frontend/src/app/shared/save-blob.ts`; Msls keys on
+  `starting_missiles > 0`, not role.
+- Left for later: `round_scoreboard` returns a plain dict (a `TypedDict` would document it);
+  `match-detail` derives each Round's winner from points beside `shared/result.ts`.
+
+Grill settled (owner, 2026-10-22):
+
+- **Scope:** replace both ANG-06c stubs: `/rounds/:id` becomes the full Round detail and
+  `/matches/:id` the Django Match detail (Round 1 / Round 2 / Total table, a "View Round" link per
+  row, the colour-swap note, the tiebreak line). Out: Event Log, Missile Log, Heatmap, Team History
+  (item 5+ / unmigrated, so no links), the MVP breakdown dialog (no backend breakdown exists), the
+  Resource Usage Summary (every number is already in the table).
+- **Server change (additive):** a read-only `scoreboard` on the GameRound **detail** serializer
+  only, built from the existing `_player_row` (the 28-key **Round scoreboard**, so HTML, PDF and
+  API cannot drift): `{"red": {"players": [row + player_id ...], "survivors", "eliminated",
+  "elim_bonus"}, "blue": {...}}`, rows ordered like Django (`-points_scored, role, player__name`),
+  grouped by `team_color`. `elim_bonus` is `BatchSimulator.elimination_bonus` when the opponent
+  was eliminated, else 0 (no literal). `player_states` unchanged; update the
+  `_GAME_ROUND_DETAIL_KEYS` pin (`matches/tests/test_api_match_create.py`).
+- **Layout:** ADR-0043 layout B as in the ANG-04b round sample: page head "Round N · date ·
+  result · elimination at m:ss", two `data-lf-side` team strips (name, Win / Loss / Tie /
+  Eliminated badges, base score plus a muted `(+10,000 elim bonus)`, players and survivors), one
+  hand-rolled player table per side.
+- **Columns:** Callsign (+ You badge from `self_insert`, ★ top MVP, OUT tag), Pos
+  (CMD/HVY/SCT/AMO/MED text), Score, MVP, Hit Diff (`1.25` + muted `(t/tt)`; `—` + `(t/0)` when
+  times tagged is 0), Acc %, Medic Hits (commanders add `(n)` nuke medic lives), Lives, Shots, Msls
+  (`landed/starting` when `starting_missiles > 0`), Msld, Shot Team, SP (spent/earned), Elim (m:ss
+  or "Survived"). Eliminated rows muted/danger.
+- **Sorting:** client-side sortable headers per table, default server order (Score desc), sticky
+  header.
+- **Top MVP:** one ★ for the highest MVP across both teams; every tied player gets it.
+- **Export PDF:** a button calling `GET /api/rounds/<id>/report/` via `ApiClient.getRaw`, saved as
+  `round-<id>.pdf`, disabled "Generating..." while it runs.
+- **Nav / titles:** `/rounds/:id` route title "Round"; subtitle "Match Round N – date" or
+  "Single Round – date"; back button "Back to Match" (`/matches/<match>`) or "Back to Matches".
+  `/matches/:id` keeps title "Match".
+- **Match detail:** an `is_completed=false` Match shows the "In progress" chip and a Round 2 row
+  "Not played yet" (no link). Round rows show base points with a muted "+ elim bonus" on the side
+  that eliminated the other, and the Winner ("Tie" when level); a round with no GameRound shows
+  muted "No round data".
+- **Empty side:** a side with no player rows shows "No player data for this round." in its table;
+  the strip still shows the score.
+- **Doc drift:** fix `docs/agents/matches/api.md` — the report endpoint does upgrade fidelity
+  (`ensure_fidelity(..., "full")`).
+- **Ownership / data / simulation:** unchanged. Existing viewsets 404 cross-Account; no
+  migration; no engine or RNG change (`get_mvp` is read-only).
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
