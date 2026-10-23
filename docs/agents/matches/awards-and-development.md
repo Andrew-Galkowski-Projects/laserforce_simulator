@@ -102,8 +102,9 @@ links: `season-dashboard-awards-link` on `templates/seasons/dashboard.html` and
 same regular-season seam dicts) and takes only its `.season_mvp`, plus the `pick_finals_mvp`
 path for `.finals_mvp` — NOT a lighter bespoke helper; the regular-season-dicts +
 finals-corpus assembly is factored out of the `season_awards` view into a **shared private
-helper** so the view and the History row call ONE path. Query cost is accepted: at most 10
-extra `PlayerRoundState` queries on the paginated (10-row) History page. The template
+helper** so the view and the History row call ONE path. (PERF-01: the History callers now
+batch the page's award sets through `compute_season_award_sets`, so the page runs a constant
+number of queries however many Seasons it shows; see `league-foundation.md` § PERF-01.) The template
 (`templates/leagues/history.html`) gains **2 rightmost columns** — Season MVP and Finals MVP —
 appended after the top-3 / Tournament-Champion cells, with cell DOM-id substrings
 `league-history-season-mvp-{season_id}` / `league-history-finals-mvp-{season_id}` (`None` →

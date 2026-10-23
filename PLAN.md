@@ -17,7 +17,7 @@ goal-balling) were distributed into the **Phase 3 — Simulation Mechanics Backl
 (see `MECH-15` / `MOVE-05` / `MOVE-06`), and the score-rebase ask into `CAL-01`
 there. GEN-01, NAV-01, PLAY-01, DEL-01, CRE-01, CRE-02 and CI-01 are shipped (see
 [`PLAN-completed.md`](PLAN-completed.md)); the deferred GEN-02 stub remains here, plus
-PERF-01 (found by the ANG-06f retro's query-count guardrail) and PERF-02 (CI test time).
+PERF-02 (CI test time) and PERF-03 (a PERF-01 follow-up). PERF-01 is shipped.
 
 ### GEN-02 · [DEFERRED to bottom — see "Parked — deferred compute-tier work" (2026-06-26)]
 
@@ -30,59 +30,17 @@ Standings-shift, the ADR-0029 hazard) or leave an incoherent scoreboard-vs-repla
 that doesn't exist yet (entangled with the still-pending CAL-01 re-baseline). Full
 write-up parked below.
 
-### PERF-01 · Fix the five known N+1 read actions
+PERF-01 (the five known N+1 read actions) is **[DONE]**; see `PLAN-completed.md`.
 
-Spec: #313
+### PERF-03 · Narrow the Team history Season scan
 
-**Prio: Medium (found 2026-10-23, ANG-06f retro).** The detail-action query-count guardrail
-(`laserforce_simulator/api/tests/test_detail_action_query_counts.py`) found five `/api/`
-read actions whose query count grows with the data. Each is a strict xfail in its
-`KNOWN_N_PLUS_ONE` map:
-
-- `leagues/history`: award queries per Season (its docstring calls this bounded by page size).
-- `leagues/league-player`: `build_player_detail` runs several queries per Season.
-- `leagues/team-history`: `_team_season_rows` runs 3 queries per Season.
-- `leagues/power-rankings`: `_team_mean_rating` reads `team.active_players`, about 6 queries per
-  Team.
-- `seasons/owner-evaluation`: `_ensure_team_finances` re-reads each Team's finance rows on every
-  GET.
-
-Fix each with `select_related` / `prefetch_related` or one aggregate query, then delete its
-`KNOWN_N_PLUS_ONE` entry: the strict xfail turns red (XPASS) once the fix lands, so the two go in
-one change. Behaviour must not change; the League screen tests pin the payloads. For any item
-judged acceptable as bounded, record that in the entry's reason instead of fixing it.
-
-**Grill (2026-10-23, owner):**
-
-- **Scope:** only the five `KNOWN_N_PLUS_ONE` actions. HTML views that share a fixed
-  service speed up as a side effect; any other N+1 found goes into PLAN.md as a follow-up, unfixed.
-- **No behaviour change:** payloads stay byte-identical, order included; ownership (`manager`
-  seam, cross-Account 404) and the engine / RNG / ordering are untouched. Proof: the existing
-  payload tests pass unchanged and each strict xfail goes green once its entry is deleted.
-- **No migration by default:** `select_related` / `prefetch_related`, aggregates, batched
-  helpers or an existing snapshot. A new cached column comes back to the owner first.
-- **Seam:** the guardrail case per action (delete the entry: strict xfail XPASS is the red,
-  pass is the green). A new batched helper in a services module gets its own unit tests and a
-  named signature in the spec.
-- **Tickets:** one per action, run in parallel; actions sharing a services module merge into
-  one ticket or chain with blocked-by.
-- **history:** fix, don't accept as page-bounded (`?page_size=` reaches 100, ~200 extra
-  queries). New `compute_season_award_sets(seasons) -> dict[int, AwardSet]` in
-  `league_services.py`: snapshot awards plus one Player and one Team name query; in-progress,
-  stale or missing snapshots fall back to `compute_season_award_set`. `_refresh_names` takes
-  optional name maps; `build_history_row` takes an optional `award_set`. Fix the stale docstrings.
-- **league-player:** one League-wide `build_round_dicts` tagged with `season_id`, grouped in
-  Python; the career row from the same list; the Season-id set replaces the per-Season
-  `exists()`; awards via `compute_season_award_sets`. Ordering unchanged.
-- **team-history:** one `Team.in_bulk` and one completed-Match query (`game_rounds` prefetched)
-  grouped by Season; `team_history_seasons` gains `prefetch_related("teams")`. Narrowing its
-  `Season.objects.all()` scan is a follow-up, not built here.
-- **power-rankings:** `select_related` the six slot FKs on `Team.in_bulk`.
-- **owner-evaluation:** `_ensure_team_finances` early-exits when every required
-  `(team, season)` finance row exists (starting ids, else `season.teams`; deleted Teams
-  ignored), and memoises standings per Season on the slow path (`winp`, `games_played`).
-- **Breakdown:** T1 award batch + history; T2 owner-evaluation; T3 power-rankings + team-history
-  (T1-T3 in parallel); T4 league-player, blocked by T1 and T3.
+**Prio: Low (found 2026-10-23, PERF-01).** `team_history_seasons(team)` (League screen services)
+scans `Season.objects.all()`, across every Account and League, to find the Seasons a Team enrolled
+in. PERF-01 made it run a constant number of queries (`prefetch_related("teams")`), but it still
+loads every Season in the database on each Team history read. The fix is to filter in the database
+instead: the Season's `teams` M2M, or `starting_team_ids_json` containing the Team id. A JSON
+`contains` lookup behaves differently on SQLite and Postgres, so it needs a test on both backends.
+Behaviour must not change: the walk still spans every League the Team enrolled in.
 
 ### PERF-02 · Speed up the CI Python test job
 
@@ -364,7 +322,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** PERF-01, PERF-02, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** PERF-02, PERF-03, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
