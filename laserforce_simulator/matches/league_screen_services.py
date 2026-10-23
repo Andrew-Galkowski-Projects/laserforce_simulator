@@ -1170,9 +1170,10 @@ def team_history_seasons(team: Team) -> dict[int, Season]:
 
     Walks every Season across every League the team is enrolled in. Used
     to scope the Overall tab's round corpus and the Seasons tab's rows.
+    ``teams`` is prefetched, so a draft Season's live M2M costs no query each.
     """
     out: dict[int, Season] = {}
-    for season in Season.objects.select_related("league").all():
+    for season in Season.objects.select_related("league").prefetch_related("teams"):
         if team.id in enrolled_team_ids(season):
             out[season.id] = season
     return out
@@ -1239,22 +1240,39 @@ def _team_season_rows(team: Team, seasons_by_id: dict[int, Season]) -> list[Seas
     """The Seasons tab -- one row per enrolled Season (newest id first)."""
     seasons = sorted(seasons_by_id.values(), key=lambda s: s.id, reverse=True)
 
+    # PERF-01 -- every Season's enrolled names in one ``in_bulk`` and every
+    # Season's Matches in one query, grouped per Season below (id order kept).
+    team_ids_by_season = {season.id: enrolled_team_ids(season) for season in seasons}
+    all_team_ids = {tid for ids in team_ids_by_season.values() for tid in ids}
+    names_by_id = {
+        tid: team.name
+        for tid, team in Team.objects.only("id", "name").in_bulk(all_team_ids).items()
+    }
+
+    # Completed Matches -> standings dicts for rank, and the team's own
+    # per-Round record for the W-L-T columns.
+    # LG-07a -- exclude social member-night Matches from the Seasons-tab rank.
+    matches_by_season: dict[int, list[Match]] = defaultdict(list)
+    for match in (
+        Match.objects.filter(season_id__in=list(team_ids_by_season), is_completed=True)
+        .exclude(season_phase__phase_type="member_night")
+        .prefetch_related("game_rounds")
+        .order_by("id")
+    ):
+        matches_by_season[match.season_id].append(match)
+
     season_dicts: list[dict] = []
     for season in seasons:
-        team_ids = enrolled_team_ids(season)
-        enrolled = list(Team.objects.filter(id__in=team_ids).values_list("id", "name"))
-
-        # Per-Season completed Matches -> standings dicts for rank, and the
-        # team's own per-Round record for the W-L-T columns.
-        # LG-07a -- exclude social member-night Matches from the Seasons-tab rank.
-        completed = list(
-            season.matches.filter(is_completed=True)
-            .exclude(season_phase__phase_type="member_night")
-            .prefetch_related("game_rounds")
-        )
+        # Id order, ids whose Team is gone skipped -- as the old per-Season
+        # ``filter(id__in=...)`` read.
+        enrolled = [
+            (tid, names_by_id[tid])
+            for tid in sorted(set(team_ids_by_season[season.id]))
+            if tid in names_by_id
+        ]
         match_dicts: list[dict] = []
         wins = losses = ties = 0
-        for match in completed:
+        for match in matches_by_season[season.id]:
             match_dicts.append(
                 {
                     "match_id": match.id,
@@ -1524,6 +1542,16 @@ def build_team_stats(
 
 # Power Rankings -- moved from ``league_screens/power_rankings.py`` (LG-01z-b).
 
+# The six roster-slot FKs ``Team.active_players`` reads.
+_ACTIVE_SLOT_FIELDS: tuple[str, ...] = (
+    "slot_commander",
+    "slot_heavy",
+    "slot_scout_1",
+    "slot_scout_2",
+    "slot_medic",
+    "slot_ammo",
+)
+
 
 def _team_mean_rating(team: Team) -> float:
     """Mean ``overall_rating`` over a team's active-roster players.
@@ -1555,7 +1583,11 @@ def build_power_rankings(
     if round_filter is None:
         return []
     team_ids = enrolled_team_ids(displayed_season) if displayed_season else []
-    teams_by_id: dict[int, Team] = Team.objects.in_bulk(team_ids)
+    # PERF-01 -- join the six active slots so ``_team_mean_rating`` reads no
+    # Player per Team.
+    teams_by_id: dict[int, Team] = Team.objects.select_related(
+        *_ACTIVE_SLOT_FIELDS
+    ).in_bulk(team_ids)
 
     # Re-point the scope onto the two join shapes: Match filters directly
     # (strip the leading ``match__``); GameRound joins via ``match__season...``.
