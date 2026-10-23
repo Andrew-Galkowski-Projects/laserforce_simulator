@@ -60,9 +60,16 @@ Throwaway data for a browser check in a worktree's disposable database (ADR-0004
 
 ```bash
 python manage.py seed_browser_check          # Accounts browser-a / browser-b@example.com, password browser-check-pass
-python manage.py seed_browser_check --clean  # delete both Accounts and every row they own
+python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, and the map
 ```
 
-Account A gets four valid Teams, a simulated sandbox Match, a Single Round and an unfinished Match
-(round 1 only, `is_completed=False`, no winner: what a League Match looks like mid-Season).
-Account B owns nothing, for cross-Account checks. A second seed without `--clean` is refused.
+Account A gets four valid Teams, a simulated sandbox Match, a map-less Single Round, a **mapped
+Single Round** and an unfinished Match (round 1 only, `is_completed=False`, no winner: what a League
+Match looks like mid-Season). The mapped Single Round plays on "Browser Check Arena", a 30x20-cell
+map (zone size 20) whose PNG is drawn in code with PIL (no `media/` file needed) and uploaded via
+`core/services.py::upload_map`, then given a confirmed zone config with red/blue bases, sight lines
+and base sight lines, so `load_map_context` resolves. The Round is upgraded to `fidelity="full"`
+(movement events) for Playback's map, the heatmap and map-editor checks. The summary prints the map
+id and the mapped Round id. `--clean` removes the map through `delete_map` (image and processed
+cache go on commit). Account B owns nothing, for cross-Account checks. A second seed without
+`--clean` is refused.

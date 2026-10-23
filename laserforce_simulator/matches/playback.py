@@ -64,9 +64,10 @@ def build_playback_map(game_round: GameRound) -> dict | None:
     moves_by_player: dict[int, list] = defaultdict(list)
     # (tick, event id) order; the per-player lists below keep it as-is.
     move_events = (
-        game_round.events.filter(event_type="movement")
-        .order_by("timestamp", "id")
-        .only("actor_id", "timestamp", "metadata")
+        game_round.events.filter(event_type="movement").order_by("timestamp", "id")
+        # GameEvent reads game_round_id on load; deferring it costs one query
+        # per movement event.
+        .only("game_round_id", "actor_id", "timestamp", "metadata")
     )
     for ev in move_events:
         m = ev.metadata or {}

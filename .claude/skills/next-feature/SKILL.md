@@ -177,7 +177,11 @@ parallel, prepare the integration tip yourself:
   specs against the real screen: they assert *which* component routed (not
   the stub's text), and a spec that opens another ticket's screen releases
   that screen's requests before `verify()`. Otherwise every parallel ticket
-  breaks the earlier specs.
+  breaks the earlier specs. Also check each stub's **inputs** against the
+  ticket that replaces it: every acceptance criterion must be computable from
+  them (ANG-06f: the map stub could not dim deactivated players). A slot for
+  later work needs a caller that can fill it; a routed component gets no
+  projected content (ANG-06f's RV-04 `<ng-content>`).
 - When a ticket adds a **required** field to a shared API model type, add the
   field to every shared spec fixture that builds that type first. Otherwise
   the ticket must edit fixtures another ticket owns (ANG-06d: `scoreboard`
@@ -272,7 +276,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    for the Angular SPA, `npm --prefix frontend run start:worktree` (4201, API on
    8001) with Django started as `frontend/CLAUDE.md` **API and auth** says.
    Seed with `python laserforce_simulator/manage.py seed_browser_check` (two
-   Accounts, Teams, a Match, a Single Round, an unfinished Match) and remove it
+   Accounts, Teams, a Match, a Single Round, an unfinished Match, and a
+   full-fidelity Single Round on the configured "Browser Check Arena" map for
+   map features) and remove it
    with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Take a
    screenshot of each changed screen at 1280px and at 768px (`resize_page`),

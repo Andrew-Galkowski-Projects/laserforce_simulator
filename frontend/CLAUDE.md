@@ -199,6 +199,10 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   component instance makes Vitest print its whole object graph and run Node out of memory, with
   no test summary. A spec that lands on a screen it isn't testing (shell, login, routes) releases
   that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`).
+- **Timer-driven code** (a play loop, a timed flash): fake only the timer you drive
+  (`vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })`), and only after the first
+  render, so zoneless `whenStable` keeps its real `setTimeout` / rAF. Call `vi.useRealTimers()` in
+  `afterEach`. Example: `matches/playback/playback.spec.ts`.
 - **Live check without the owner's ports:**
   - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 manage.py runserver 8001`.
   - Run `npm --prefix frontend run start:worktree`. Its `worktree` configuration serves on 4201
