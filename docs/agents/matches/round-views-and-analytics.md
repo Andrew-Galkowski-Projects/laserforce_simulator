@@ -219,8 +219,81 @@ query counts, the Django page's empty-Side bonus).
 The Angular screen is `/rounds/:id/events` (`frontend/src/app/matches/round-events/`). The browser
 filters the timeline by **Event group** (`matches/shared/event-groups.ts`, the nine groups and their
 `--lf-ev-*` tokens) and by player (actor or target), as the Django page did. The kill feed was
-dropped. SIM-05 playback and the four charts are ANG-06f / ANG-06g; the Django page stays until
-ANG-08.
+dropped. SIM-05 playback shipped as ANG-06f (below); the four charts are ANG-06g. The Django page
+stays until ANG-08.
 
 Tests: `matches/tests/test_api_round_timeline.py` (shape, order, null targets, Sides, ownership,
 405, the drift guard against `round_playback_payload`, query count).
+
+## ANG-06f Playback
+
+`matches/playback.py` (its own module; it imports no view module) serves
+`GET /api/rounds/<id>/playback/` (see `api.md`). Glossary: **Playback**, **Playback snapshot**.
+[ADR-0044](../../adr/0044-playback-state-from-logged-after-event-values.md) records why the state is
+computed this way.
+
+- `round_playback(game_round) -> dict` returns `{duration_ticks, not_targetable_ticks,
+  respawn_ticks, players: [{id, snapshots}], map}`, with players in `PlayerRoundState.id` order.
+  - A snapshot is `{tick, score, lives, shots, missiles, sp, tags, misses, downed_at, eliminated,
+    rapid_fire, nuking}`. Each player has one tick-0 opening snapshot (from the `starting_*`
+    fields), then one per tick at which any of their fields changed. Events on the same tick
+    collapse into the state after the last one.
+  - **Values are read, never re-derived.** Score, lives, shots and SP come from the after-event
+    values every event logs: `actor_*`, `sp`, `target_*`, and `special.targets[]`.
+  - **Derived values:**
+    - `missiles`: −1 per `locking`, and −1 more per `missiled` hit. The second −1 mirrors the
+      engine's double spend (**MECH-16**); drop it in the same change that fixes MECH-16.
+    - `eliminated`: from the target's `elimination` event.
+    - `tags` / `misses`: counts of `tag` / `miss` events.
+    - `downed_at`: set on a lives decrease (`record_down` is the engine's life-loss chokepoint) or
+      on a received `resupply_*`.
+    - `rapid_fire`: on from "activates rapid fire" until the player's next received resupply.
+    - `nuking`: on from "activates nuke" until a detonation, a `nuke_cancelled` or `fires_at`.
+  - The description match for the specials lives only in `_special_kind`. A test checks it against
+    the engine's `specials_used` over seeded rounds.
+- `build_playback_map(game_round) -> dict | None`, moved here from `views._build_playback_map`
+  (`views.py` still re-exports the old name), adds `arena_map: {id, name}`. Players come in state-id
+  order and moves in (tick, event id) order.
+- **Final-state invariant:** each player's last snapshot equals their `PlayerRoundState`. The fields
+  compared are score, lives, shots, missiles, sp, eliminated, `tags_made` and `shots_missed`.
+- The action upgrades the round to `full` fidelity. Its query count does not grow with the number of
+  events. `.only()` must keep `game_round_id`, or every event costs a query.
+
+The Angular screen is `/rounds/:id/playback` (`frontend/src/app/matches/playback/`). It is styled
+after LFstats's Replay tab, within ADR-0043.
+
+- **The shell** (`playback.ts`):
+  - It loads round + timeline + playback with `forkJoin` and owns the `cursor` tick.
+  - A 100 ms loop advances the cursor by `speed × 0.2` ticks.
+  - Controls: 1x / 2x / 4x / 8x, start / end, and step to the previous / next event tick, skipping
+    Movement. Previous floors a fractional cursor first.
+  - A tick slider pauses playback while it is dragged, and `seek(tick)` moves the cursor.
+  - A `.pb-markers` anchor above the slider is reserved for RV-04's pips. They must render inside
+    the shell, because a routed component gets no projected content.
+- **The live state** comes from the pure `snapshotAt` binary search.
+- **`PlaybackScoreboard`** shows one Side each, using LFstats's columns and live rank. It adds:
+  - a conic respawn dot;
+  - an OUT badge;
+  - "—" for a Heavy's SP;
+  - Acc as `tags / (tags + misses)`;
+  - the rapid-fire pulse, the nuke rainbow, and the 700 ms rank-up flash.
+
+  Under reduced motion the flash is gone entirely, while the static rainbow and glow stay.
+- **`PlaybackFeed`** lists events newest first; the first row is `is-current`. It has search, plus
+  Misses and Movement toggles that start off.
+- **`PlaybackMap`** is **beta**: the owner is reworking movement in MOVE-07.
+  - It stays collapsed behind "Show map (beta)", and only its contract is tested.
+  - On first open it fetches the processed image through `MapsService.processedImage`, and revokes
+    the object URL on destroy.
+  - It draws on a canvas, ported from the Django overlay's Catmull-Rom and 16 s trails.
+  - It dims a player's marker and trail while they are deactivated (`deactivatedAt`).
+- Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
+- The Django page's own playback (`pbApply`) drifts from the final scoreboard (ADR-0044). It is left
+  as it is, and ANG-08 deletes it.
+
+Tests:
+- `matches/tests/test_playback.py`: the invariant over seeds 1 / 7 / 42, unit cases on hand-built
+  events, and the special-kind check.
+- `test_api_round_playback.py`: shape, map, ownership, fidelity and query count.
+- `test_playback_map.py`: the map and its order.
+- The Vitest specs beside each component.
