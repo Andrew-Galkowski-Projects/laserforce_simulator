@@ -2,15 +2,15 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, computed, inject, signal } from '@angular/core';
 import { MatAnchor, MatButton } from '@angular/material/button';
 import { RouterLink } from '@angular/router';
-import { Role } from '../../api/players.models';
 import { GameRound, ScoreboardRow, ScoreboardSide, Side } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
 import { AuthService } from '../../auth/auth.service';
 import { saveBlob } from '../../shared/save-blob';
-import { ROLE_LABELS } from '../../teams/shared/roster';
 import { tickClock } from '../shared/clock';
 import { RecordNotFound } from '../shared/record-not-found';
+import { roleLabel } from '../shared/role-label';
 import { loadRouteRecord } from '../shared/route-record';
+import { sideTag } from '../shared/side-tag';
 
 type SortDir = 'asc' | 'desc';
 
@@ -67,10 +67,6 @@ const COLUMNS: Column[] = [
 
 const DEFAULT_SORT: SortState = { key: 'score', dir: 'desc' };
 
-function roleLabel(role: Role): string {
-  return ROLE_LABELS[role] ?? String(role).toUpperCase();
-}
-
 /** `m:ss` for a tick count. */
 const clock = (ticks: number): string => tickClock(ticks);
 
@@ -115,6 +111,7 @@ export class RoundDetail {
   protected readonly columns = COLUMNS;
   protected readonly clock = clock;
   protected readonly roleLabel = roleLabel;
+  protected readonly sideTag = sideTag;
   protected readonly specialSpent = specialSpent;
 
   /** The signed-in Account's Self-insert Player id, for the "You" badge. */

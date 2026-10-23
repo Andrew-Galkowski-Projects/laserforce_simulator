@@ -1,0 +1,116 @@
+// Playback feed, ADR-0043 layout B: contract tokens and --side* only, never a colour literal.
+// Rows reuse the Event log's look (group colour on the left border and the chip).
+:host {
+  display: block;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+.pf-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.pf-search {
+  flex: 1 1 12rem;
+  min-width: 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.pf-empty {
+  margin: 0;
+  padding: 0.9rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text-muted);
+}
+
+.pf-muted {
+  color: var(--lf-text-muted);
+}
+
+.pf-box {
+  max-height: 24rem;
+  overflow-y: auto;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.pf-sidetag {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--side);
+  border-radius: var(--lf-radius);
+  color: var(--side-text);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.pf-row {
+  display: grid;
+  grid-template-columns: 3.25rem 6.5rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.15rem 0.6rem;
+  padding: 0.3rem 0.6rem;
+  border-bottom: 1px solid var(--lf-border);
+  border-left: 4px solid var(--pf-ev);
+  font-size: 0.82rem;
+
+  &.is-current {
+    background: color-mix(in srgb, var(--lf-accent) 14%, var(--lf-surface));
+    box-shadow: inset 0 0 0 1px var(--lf-accent);
+  }
+
+  &__time {
+    color: var(--lf-text-muted);
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__chip {
+    overflow: hidden;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--pf-ev);
+    border-radius: var(--lf-radius);
+    background: color-mix(in srgb, var(--pf-ev) 14%, transparent);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  // The names on their own line under the description, so neither is clipped.
+  &__who {
+    display: flex;
+    grid-column: 3;
+    align-items: center;
+    gap: 0.3rem;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  &__actor,
+  &__target {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--side-text);
+    font-weight: 600;
+  }
+}

@@ -1,0 +1,98 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Round" />
+} @else if (load.loadError(); as message) {
+  <p class="pb-error" role="alert">{{ message }}</p>
+} @else if (load.record(); as rec) {
+  @let r = rec.round;
+  @let t = rec.timeline;
+  @let p = rec.playback;
+  <div class="pb-pagehead">
+    <div>
+      <p class="pb-kicker">Playback</p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+    </div>
+    <div class="pb-actions">
+      <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+    </div>
+  </div>
+
+  <section class="pb-transport" aria-label="Playback controls">
+    <div class="pb-controls">
+      <button mat-icon-button type="button" aria-label="Jump to start" (click)="seek(0)">
+        <span aria-hidden="true">&#x23EE;&#xFE0E;</span>
+      </button>
+      <button mat-icon-button type="button" aria-label="Previous event" (click)="stepPrevious()">
+        <span aria-hidden="true">&#x23EA;&#xFE0E;</span>
+      </button>
+      @if (playing()) {
+        <button mat-icon-button type="button" aria-label="Pause" (click)="pause()">
+          <span aria-hidden="true">&#x23F8;&#xFE0E;</span>
+        </button>
+      } @else {
+        <button mat-icon-button type="button" aria-label="Play" (click)="play()">
+          <span aria-hidden="true">&#x25B6;&#xFE0E;</span>
+        </button>
+      }
+      <button mat-icon-button type="button" aria-label="Next event" (click)="stepNext()">
+        <span aria-hidden="true">&#x23E9;&#xFE0E;</span>
+      </button>
+      <button mat-icon-button type="button" aria-label="Jump to end" (click)="seek(duration())">
+        <span aria-hidden="true">&#x23ED;&#xFE0E;</span>
+      </button>
+      <span class="pb-clock">{{ clock() }}</span>
+      <div class="pb-speeds" role="group" aria-label="Speed">
+        @for (s of speeds; track s) {
+          <button
+            type="button"
+            class="pb-speed"
+            [class.is-active]="speed() === s"
+            [attr.aria-pressed]="speed() === s"
+            (click)="speed.set(s)"
+          >
+            {{ s }}x
+          </button>
+        }
+      </div>
+    </div>
+    <!-- RV-04: Highlight pips project in here, above the scrubber. -->
+    <div class="pb-markers"><ng-content select="[scrubberMarkers]" /></div>
+    <mat-slider class="pb-scrubber" [min]="0" [max]="duration()" [step]="1" aria-label="Scrubber">
+      <input
+        matSliderThumb
+        aria-label="Round position in ticks"
+        [value]="wholeTick()"
+        (input)="scrub($any($event.target).valueAsNumber)"
+      />
+    </mat-slider>
+  </section>
+
+  <div class="pb-boards">
+    @for (side of sides; track side) {
+      <app-playback-scoreboard
+        [attr.data-lf-side]="side"
+        [side]="side"
+        [teamName]="side === 'red' ? r.team_red_name : r.team_blue_name"
+        [players]="playersOn(t.players, side)"
+        [snapshots]="snapshots()"
+        [cursor]="cursor()"
+        [notTargetableTicks]="p.not_targetable_ticks"
+        [respawnTicks]="p.respawn_ticks"
+      />
+    }
+  </div>
+
+  <app-playback-map
+    [map]="p.map"
+    [cursor]="cursor()"
+    [snapshots]="snapshots()"
+    [respawnTicks]="p.respawn_ticks"
+  />
+
+  <section class="pb-feed" aria-labelledby="pb-feed-title">
+    <div class="pb-feed__head">
+      <h2 id="pb-feed-title">Events</h2>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'events']">Full event log</a>
+    </div>
+    <app-playback-feed [events]="t.events" [cursor]="cursor()" />
+  </section>
+}

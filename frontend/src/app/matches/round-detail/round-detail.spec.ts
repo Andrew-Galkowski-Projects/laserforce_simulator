@@ -191,6 +191,13 @@ describe('Round detail (/rounds/:id)', () => {
       expect(events?.getAttribute('href')).toBe('/rounds/9/events');
     });
 
+    it("links to the Round's Playback, right after the Event log", async () => {
+      await open(round());
+      const playback = [...page().querySelectorAll('a')].find((a) => text(a) === 'Playback');
+      expect(playback?.getAttribute('href')).toBe('/rounds/9/playback');
+      expect(text(playback?.previousElementSibling)).toBe('Event log');
+    });
+
     it('subtitles a Match round "Match Round N – date", back to its Match', async () => {
       await open(round({ match: 7, round_number: 2 }));
       expect(text(page().querySelector('.rd-kicker'))).toBe('Match Round 2 – Mar 17, 2026 09:05');

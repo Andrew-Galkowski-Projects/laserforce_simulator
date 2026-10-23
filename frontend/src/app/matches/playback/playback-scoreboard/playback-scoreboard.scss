@@ -1,0 +1,234 @@
+// One Side's live Playback scoreboard (ANG-06f T3), after LFstats's Replay tab. Contract tokens
+// and --side* only (ADR-0043), never a colour literal. Every animation sits in the
+// `prefers-reduced-motion: no-preference` block at the bottom; without it the specials stay
+// visible but still (a glow, static rainbow text) and the rank-up flash does not show.
+:host {
+  display: block;
+  min-width: 0;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+// ---- Header strip: team name in the Side colour, live total, 4px Side border ----------------
+.sb-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-left: 4px solid var(--side);
+  border-radius: var(--lf-radius) var(--lf-radius) 0 0;
+
+  &__name {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-width: 0;
+  }
+
+  &__badge {
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--side);
+    border-radius: var(--lf-radius);
+    color: var(--side-text);
+    font-size: 0.65rem;
+    font-weight: 700;
+  }
+
+  &__team {
+    overflow: hidden;
+    color: var(--side-text);
+    font: 700 1.05rem var(--lf-font-heading);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__total {
+    color: var(--side-text);
+    font: 700 1.3rem var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// ---- Table ----------------------------------------------------------------------------------
+.sb-tablewrap {
+  overflow-x: auto;
+  border: 1px solid var(--lf-border);
+  border-top: 0;
+  border-radius: 0 0 var(--lf-radius) var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.sb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+
+  th,
+  td {
+    padding: 0.35rem 0.5rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th {
+    background: var(--lf-surface-alt);
+    color: var(--lf-text-muted);
+    font-size: 0.7rem;
+    font-weight: 600;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  .num {
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+}
+
+.sb-rank {
+  color: var(--lf-text-muted);
+}
+
+.sb-name {
+  font-weight: 600;
+
+  // Down: dimmed until respawn_ticks have passed.
+  &.is-down .sb-name__text {
+    opacity: 0.5;
+  }
+}
+
+// Eliminated: the whole row dimmed, with an OUT badge by the name.
+tr.is-out td {
+  color: var(--lf-text-muted);
+  opacity: 0.6;
+}
+
+.sb-out {
+  margin-left: 0.35rem;
+  padding: 0 0.3rem;
+  border: 1px solid var(--lf-ev-elimination);
+  border-radius: var(--lf-radius);
+  color: var(--lf-text);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+// ---- Respawn dot: a pie filling over respawn_ticks, coloured by phase ------------------------
+.sb-table .sb-dotcol {
+  width: 0.7rem;
+  padding-inline: 0;
+}
+
+.sb-dot {
+  --sb-dot-colour: var(--lf-ev-locking);
+  display: inline-block;
+  width: 0.65rem;
+  height: 0.65rem;
+  border: 1px solid var(--lf-border);
+  border-radius: 50%;
+  vertical-align: middle;
+  background: conic-gradient(
+    var(--sb-dot-colour) var(--sb-dot-fill, 0deg),
+    transparent var(--sb-dot-fill, 0deg)
+  );
+
+  // Not targetable (the first not_targetable_ticks), then resetting.
+  &.is-not-targetable {
+    --sb-dot-colour: var(--lf-ev-locking);
+  }
+
+  &.is-resetting {
+    --sb-dot-colour: var(--lf-ev-nuke);
+  }
+}
+
+// ---- Specials and rank changes (still versions; the motion is below) --------------------------
+// Rapid fire: the name glows in the Side colour.
+.sb-rapid {
+  color: var(--side-text);
+  text-shadow: 0 0 0.35em var(--side);
+}
+
+// Nuke arming: the name in rainbow text, from the event-type tokens.
+.sb-rainbow {
+  background: linear-gradient(
+      90deg,
+      var(--lf-ev-locking),
+      var(--lf-ev-missile),
+      var(--lf-ev-nuke),
+      var(--lf-ev-resupply),
+      var(--lf-ev-tag),
+      var(--lf-ev-special),
+      var(--lf-ev-locking)
+    )
+    0 center / 200% auto;
+  background-clip: text;
+  color: transparent;
+  font-weight: 700;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  // Rank up: the rank turns resupply green for the flash. Reduced motion shows no flash at all.
+  tr.sb-flash .sb-rank {
+    color: var(--lf-ev-resupply);
+    font-weight: 700;
+  }
+
+  .sb-rapid {
+    animation: sb-rapid-pulse 1s ease-in-out infinite;
+  }
+
+  .sb-rainbow {
+    animation: sb-rainbow-text 2s linear infinite;
+  }
+
+  tr.sb-flash td {
+    animation: sb-rank-up 0.7s ease-out;
+  }
+
+  @keyframes sb-rapid-pulse {
+    0%,
+    100% {
+      text-shadow: 0 0 0.15em var(--side);
+    }
+
+    50% {
+      text-shadow: 0 0 0.6em var(--side);
+    }
+  }
+
+  @keyframes sb-rainbow-text {
+    to {
+      background-position: 200% center;
+    }
+  }
+
+  @keyframes sb-rank-up {
+    0%,
+    100% {
+      background-color: transparent;
+      transform: translateY(0);
+    }
+
+    25% {
+      background-color: color-mix(in srgb, var(--lf-ev-resupply) 18%, transparent);
+      transform: translateY(-4px);
+    }
+
+    50% {
+      transform: translateY(1px);
+    }
+
+    75% {
+      transform: translateY(-2px);
+    }
+  }
+}

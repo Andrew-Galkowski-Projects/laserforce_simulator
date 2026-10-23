@@ -141,6 +141,11 @@ describe('Event log (/rounds/:id/events)', () => {
       expect(text(link('Back to Round'))).toBe('← Back to Round');
     });
 
+    it("links to the Round's Playback", async () => {
+      await open();
+      expect(link('Playback')?.getAttribute('href')).toBe('/rounds/9/playback');
+    });
+
     it('titles the tab "Event Log - <app title>"', async () => {
       await open();
       expect(TestBed.inject(Title).getTitle()).toBe(`Event Log - ${APP_TITLE}`);

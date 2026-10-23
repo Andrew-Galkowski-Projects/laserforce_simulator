@@ -59,8 +59,8 @@ Every component uses the theme chosen in ANG-04b.
 4. **[DONE] Round detail** — per-player stat table, MVP scores (ANG-06d, in `PLAN-completed.md`)
 5. **[DONE] Event timeline** — filtered event log, color-coded by type (ANG-06e, in
    `PLAN-completed.md`)
-5b. **Playback (ANG-06f)** — SIM-05 scrubber, play/step/speed, live Side scoreboards, current-row
-   highlight, map overlay. RV-04's timeline pips and MECH-15's tick-0 frame attach here.
+5b. **[DONE] Playback** — scrubber, play/step/speed, live Side scoreboards, current row, beta map
+   (ANG-06f, in `PLAN-completed.md`). RV-04's timeline pips and MECH-15's tick-0 frame attach here.
 5c. **Event charts (ANG-06g)** — choose the charting library, then build the four Shots / Lives / Points
    / SP charts with filters and overlays. RES-05 attaches here.
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
@@ -274,7 +274,7 @@ Mechanics items can run in parallel with Phase 8, because they don't touch the f
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, CAL-01, then MECH-07
+- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
@@ -531,6 +531,17 @@ round-playback and the LG-01i live-watch an authoritative opening state instead 
 reconstructing it. **Locked (grilled 2026-06-25):** persisted event, **not** a
 playback-only derivation. Pairs with the replay system but is logged for *all* rounds.
 
+### MECH-16 · Missile spent twice on a hit (bug)
+
+**Prio: Medium (found 2026-10-23, ANG-06f probe).** A missile is spent at lock
+(`combat.start_missile_lock`) and spent **again** when it hits (`_complete_missile`:
+`attacker.final_missiles -= 1`, `entrypoints.py` ~L1838). Some players end a round with
+`final_missiles == -1`. Spend it once, at lock. Add a regression test that `final_missiles` never goes
+below 0 and equals starting missiles minus locks. **Changes seeded outcomes**, because a missile
+holder may lock again sooner, so it folds into the `CAL-01` re-baseline. ANG-06f's `round_playback`
+mirrors the double spend so its final-state invariant holds. When this lands, drop the extra −1 per
+`missiled` hit there too.
+
 ### MOVE-05 · Enforce cell occupancy (no two players end a tick on the same cell)
 
 **Prio: Medium (found 2026-06-25).** Players sometimes **end a tick on the same cell
@@ -554,6 +565,29 @@ perturb the chosen goal within a small radius. Reactive overrides (MECH-04
 nuke-reaction, critical-resource, `seek_medic`) stay deterministic; only the
 steady-state positioning layer gains jitter. **Consumes RNG** → shifts seeded
 outcomes; folds into the `CAL-01` re-baseline (no separate obligation).
+
+### MOVE-07 · Varied pathing + action-choice sweep
+
+**Prio: Medium (found 2026-10-23, ANG-06f grill).** Watching the playback map overlay, the
+routes look too standard: every player walks the textbook A* shortest path, so movement is
+predictable and samey. Two parts:
+
+- **Pathing variation.** Give routes human-looking variety instead of always the single shortest
+  A* route (`sim_helpers/pathfinding.py`, `astar_advance_cached`, **Path commitment**). Candidates:
+  pick among near-shortest routes, add per-player cost noise or role/stat-driven preferences
+  (cover-hugging, flanking, high ground), and vary the pace along a route. This differs from
+  `MOVE-06`, which spreads the *goal* cells; MOVE-07 varies the *route* to a goal.
+- **Full sweep of the action-choice logic.** Review the weighted **Action** selection end to end
+  (weights, role scripts, carry-over of hide / hold, how memory and comms feed in) for flat or
+  unrealistic behaviour, and fix what the sweep finds. This overlaps `MECH-07`'s action-selection
+  half and `MECH-14`; settle in this task's grill whether MOVE-07 absorbs them or stays a sweep
+  that feeds them.
+
+**Open for its own grill:** how much variation, and from which inputs (RNG noise vs player
+Stats); whether Path commitment still holds a route once it has been picked; how to judge
+"varied enough" (the playback map overlay plus the movement heatmap). **Consumes RNG** and
+shifts seeded outcomes, so it folds into the `CAL-01` re-baseline. The ANG-06f map overlay ships
+as **beta** partly so this work can change what it shows.
 
 ### CAL-01 · Score Calibration re-baseline
 

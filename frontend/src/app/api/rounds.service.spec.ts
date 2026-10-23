@@ -14,6 +14,7 @@ import {
 } from './rounds.models';
 import { RoundsService } from './rounds.service';
 import { highlight, timeline, timelineEvent } from '../matches/testing/timeline-fixtures';
+import { playbackMap, roundPlayback } from '../matches/testing/playback-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -279,6 +280,32 @@ describe('RoundsService', () => {
       missile_dodge: true,
     };
     expect(Object.keys(all)).toHaveLength(15);
+  });
+
+  it("gets a Round's Playback snapshots and map in one call and unwraps data", async () => {
+    const body = roundPlayback({ map: playbackMap() });
+    const result = firstValueFrom(rounds.playback(21));
+    const req = http.expectOne(`${BASE}/rounds/21/playback/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.keys()).toEqual([]);
+    req.flush({ data: body, meta: {} });
+    const got = await result;
+    expect(got).toEqual(body);
+    expect(got.map?.arena_map).toEqual({ id: 7, name: 'Warehouse' });
+    expect(got.players[0].snapshots[0].downed_at).toBeNull();
+  });
+
+  it('surfaces a cross-Account Playback as ApiError 404', async () => {
+    const result = firstValueFrom(rounds.playback(99)).catch((e: unknown) => e);
+    http
+      .expectOne(`${BASE}/rounds/99/playback/`)
+      .flush(
+        { errors: [{ code: 'not_found', message: 'Not found.', field: null }], meta: {} },
+        { status: 404, statusText: 'Not Found' },
+      );
+    const err = (await result) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
   });
 
   it('surfaces a cross-Account timeline as ApiError 404', async () => {

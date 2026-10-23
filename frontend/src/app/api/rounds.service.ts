@@ -8,12 +8,13 @@ import {
   GameRoundListItem,
   RoundInput,
   RoundListParams,
+  RoundPlayback,
   RoundTimeline,
 } from './rounds.models';
 
 /**
- * `/api/rounds/`: list, detail, create, the report PDF, the paged event list and the
- * whole timeline. No edit or delete.
+ * `/api/rounds/`: list, detail, create, the report PDF, the paged event list, the
+ * whole timeline and the Playback snapshots. No edit or delete.
  */
 @Injectable({ providedIn: 'root' })
 export class RoundsService {
@@ -45,5 +46,10 @@ export class RoundsService {
   /** The Round's whole **Event log** (movement included), unpaged; full fidelity server-side. */
   timeline(roundId: number): Observable<RoundTimeline> {
     return this.api.get<RoundTimeline>(`rounds/${roundId}/timeline/`);
+  }
+
+  /** The Round's **Playback snapshots** per player plus the beta map; full fidelity server-side. */
+  playback(roundId: number): Observable<RoundPlayback> {
+    return this.api.get<RoundPlayback>(`rounds/${roundId}/playback/`);
   }
 }

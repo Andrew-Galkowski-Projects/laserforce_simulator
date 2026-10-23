@@ -60,6 +60,16 @@ describe('MapsService', () => {
     expect(await result).toEqual(MAP);
   });
 
+  it("fetches a Map's processed image as a raw Blob", async () => {
+    const result = firstValueFrom(maps.processedImage(7));
+    const req = http.expectOne(`${BASE}/maps/7/processed-image/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.responseType).toBe('blob');
+    const png = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
+    req.flush(png);
+    expect(await result).toBe(png);
+  });
+
   it('surfaces an unknown Map as ApiError 404', async () => {
     const result = firstValueFrom(maps.get(99)).catch((e: unknown) => e);
     http

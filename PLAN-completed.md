@@ -6299,6 +6299,106 @@ Grill settled (owner, 2026-10-22):
   - The Django page is left as is, including its dead `missile` / `nuke_detonated` code; ANG-08
     deletes it.
 
+#### ANG-06f · [DONE] Playback
+
+Spec: #305 (tickets #306, #307, #308, #309)
+
+**[DONE] Shipped (2026-10-23).** Angular `/rounds/:id/playback`, linked from Round detail and the
+Event log. It has transport controls (start / previous event / play / next event / end, 1-8x, a
+tick slider), live Red | Blue scoreboards in LFstats's columns, a newest-first event feed and a
+beta map. Server: `GET /api/rounds/<id>/playback/` from `matches/playback.py::round_playback`
+(ADR-0044). What the work found:
+- The Django page's `pbApply` drifts from the final scoreboard (probe: score 45/60, lives 34/60,
+  shots 12/60). The snapshots read the logged after-event values instead, and match 60/60.
+- The engine spends a hit missile twice, so a player can end on -1 missiles. Logged as MECH-16;
+  Playback mirrors it so the final-state invariant holds.
+- Pathing looks too uniform on the map overlay. Logged as MOVE-07, which also sweeps action
+  choice.
+- `/playback/` ran one query per event: `.only()` deferred `game_round_id`. Caught by a
+  query-count test and fixed.
+- The RV-04 marker slot can't receive projected content (Playback is a routed component); RV-04
+  draws its pips inside the shell at `.pb-markers`.
+- The map needed the snapshots too, to dim deactivated players; the shell passes them.
+- Review: the map output order is pinned, `round_playback` is split into single-job helpers,
+  `roleLabel` / `sideTag` are shared, Previous floors a fractional cursor, and reduced motion
+  drops the rank-up flash.
+
+Grill settled (owner, 2026-10-23):
+
+**Grill (2026-10-23), settled so far.** Styled after lfstats's game Replay tab
+(`zmaniacz/lfstats`, `apps/web/src/components/games/ReplayTab.tsx`), within ADR-0043. The
+screen is **Playback** ("Replay" is the glossary's re-simulation term).
+- **Route:** its own screen at `/rounds/:id/playback` (declared before `:id`), linked from Round
+  detail and the Event log. Layout: controls + scrubber, Red | Blue scoreboards side by side
+  (stacked below 1024px), map, event feed.
+- **State source:** the server computes per-player **state snapshots** in a pure service
+  (`round_playback`) served at `GET /api/rounds/<id>/playback/`. The client only looks up each
+  player's latest snapshot at or before the cursor tick. There is no TS port of the Django JS
+  replay rules. MECH-15's tick-0 event will later seed the opening state on the server.
+- **Map overlay: in scope, marked beta** (the owner plans pathing changes, MOVE-07). It is
+  collapsed by default behind a "Show map (beta)" toggle and carries a Beta chip when open. The
+  endpoint's `map` key is `_build_playback_map`'s output unchanged, drawn on a canvas with
+  Catmull-Rom and 16 s trails. Tests pin only the contract: `map` present or `null`, the toggle
+  shows the panel, and the map-less notice renders. Canvas pixels, interpolation and trails are
+  not pinned.
+- **Scoreboard** (lfstats columns): `# | Player | respawn dot | Pos | Score | Acc | Lives | Shots |
+  Msl | SP`, rows re-sorted by score live. Down: name dimmed plus a conic-gradient respawn dot.
+  Eliminated: row dimmed plus an OUT badge. Heavy: SP is "—". Positions stay text. Colours only
+  via `data-lf-side` / `--lf-*`. Sides keep Red vs Blue and stay fixed (Red left, no
+  leader-left swap).
+- **Animations:** rapid-fire pulse, nuke-arming rainbow, rank-up flash; all off under
+  `prefers-reduced-motion`. No lead-change bounce.
+- **Controls:** start, prev event, play/pause, next event, end; speeds 1x / 2x / 4x / 8x;
+  `mm:ss / mm:ss` via `tickClock`; tick-step scrubber; dragging pauses. No keyboard shortcuts.
+- **Event feed:** events up to the cursor, newest first. The newest row is the current row
+  (`is-current`, as in ANG-06e). Search box, plus Misses and Movement toggles (both off by
+  default), `EVENT_GROUPS` colours, and a "Full event log" link.
+- **Hooks only:** a `seek(tick)` plus an overlay slot on the scrubber for RV-04's pips. RV-04
+  and MECH-15 are not built here.
+- **Ownership / fidelity:** the `manager` seam (cross-Account 404, `assert_owner_only`), plus
+  `ensure_fidelity("full")` like the Django view. Read-only, no engine or RNG change, so no
+  determinism test.
+- **Out:** removing the Django page (ANG-08), the One Week Live engine copy
+  (`play_week_live.html`), charts (ANG-06g), keyboard shortcuts.
+- **Probe finding (2026-10-23):** the Django page's client replay (`pbApply`) drifts from the
+  final scoreboard. Across 60 seeded player-rows it matched score 45, lives 34, shots 12 and
+  missiles 47. The causes:
+  - it reads `target_*_resupplied` where events carry `amount`;
+  - it has no −100 for being missiled;
+  - it ignores special `targets[]` deltas;
+  - it charges Ammo shots.
+
+  **Don't trust that page's numbers.** It is left as is; ANG-08 removes it.
+- **Snapshots from logged values (Q14):** `round_playback` reads the post-event values every
+  event already carries in `meta`: `actor_*`, `target_*`, `sp` and `special.targets[]`. It
+  derives only missiles (−1 per `locking`, −1 more per `missiled` hit, mirroring the engine,
+  see MECH-16) and elimination (`elimination` events). A probe of this method matched 60/60.
+- **Final-state invariant (Q15):** a pytest over several seeded rounds asserts each player's
+  last snapshot equals their Round scoreboard row: score, lives, shots, missiles, SP,
+  eliminated, and tags / misses against `tags_made` / `shots_missed`. Seed **before** creating
+  players, or rounds don't reproduce.
+- **Seam (Q19):** pure `matches/playback.py::round_playback(game_round) -> dict` (its own
+  module, not `services.py`), served by a `playback` action on the rounds viewset at
+  `GET /api/rounds/<id>/playback/`. Frontend: `RoundsService.playback(id)` plus a
+  `RoundPlayback` type in `rounds.models.ts`.
+- **Shape (Q18),** inside the ADR-0039 envelope:
+  `{duration_ticks, not_targetable_ticks: 8, respawn_ticks: 16, players: [{id, snapshots:
+  [{tick, score, lives, shots, missiles, sp, tags, misses, downed_at: tick|null, eliminated,
+  rapid_fire, nuking}]}], map: _build_playback_map(...) | null}`.
+  - One tick-0 opening snapshot per player, then one per tick at which that player changes.
+  - Names, Sides, roles and events come from the existing `/timeline/` (`forkJoin`).
+  - Acc = `tags / (tags + misses)`. The respawn dot comes from `downed_at` and the cursor tick.
+  - `nuking` runs from "activates nuke" to its detonation or `nuke_cancelled`.
+  - `rapid_fire` runs from activation to the next resupply that player receives (the engine
+    cancels it silently).
+- **Map image (Q20):** `map` also carries `arena_map: {id, name}`. The screen fetches
+  `/api/maps/<id>/processed-image/` as a blob through `ApiClient`, which carries auth, and shows
+  it from an object URL that is revoked on destroy. A failed fetch shows the map-less notice.
+- **Unplayed round (Q21):** behaves like `/timeline/`. The screen shows tick-0 snapshots and
+  "No events yet."
+- **ADR (Q22):** [ADR-0044](docs/adr/0044-playback-state-from-logged-after-event-values.md).
+  Grill complete, 2026-10-23.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

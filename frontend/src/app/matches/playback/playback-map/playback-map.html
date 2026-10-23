@@ -1,0 +1,35 @@
+<button
+  mat-stroked-button
+  type="button"
+  class="pm-toggle"
+  aria-controls="pm-panel"
+  [attr.aria-expanded]="open()"
+  (click)="toggleOpen()"
+>
+  {{ open() ? 'Hide map (beta)' : 'Show map (beta)' }}
+</button>
+@if (open()) {
+  <section id="pm-panel" class="pm-panel" aria-labelledby="pm-title">
+    <div class="pm-head">
+      <h2 id="pm-title">{{ map()?.arena_map?.name ?? 'Map' }}</h2>
+      <span class="pm-beta">Beta</span>
+    </div>
+    @if (!map() || failed()) {
+      <p class="pm-notice">No map — playback map unavailable</p>
+    } @else if (imageUrl(); as src) {
+      <div class="pm-stage">
+        <img
+          #image
+          class="pm-image"
+          [src]="src"
+          [alt]="'Arena map ' + (map()?.arena_map?.name ?? '')"
+          (load)="loaded.set(true)"
+          (error)="failed.set(true)"
+        />
+        <canvas #canvas class="pm-canvas" aria-hidden="true"></canvas>
+      </div>
+    } @else {
+      <p class="pm-loading">Loading map…</p>
+    }
+  </section>
+}

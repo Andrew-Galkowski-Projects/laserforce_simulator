@@ -25,6 +25,7 @@ from matches.api_refs import round_ref
 from matches.filters import GameEventFilterSet, GameRoundFilterSet, MatchFilterSet
 from matches.forms import MatchSetupForm, SaveBatchGamesForm, SingleRoundSetupForm
 from matches.models import GameRound, Match, PlayerRoundState
+from matches.playback import round_playback
 from matches.serializers import (
     GameEventSerializer,
     GameRoundListSerializer,
@@ -199,6 +200,15 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
         game_round = self.get_object()
         BatchSimulator().ensure_fidelity(game_round, "full")
         return Response(round_timeline(game_round))
+
+    @action(detail=True, methods=["get"], url_path="playback", url_name="playback")
+    def playback(self, request: Request, pk: str | None = None) -> Response:
+        """ANG-06f: the Round's Playback snapshots plus the beta map payload
+        (ADR-0044); upgrades the round to ``full`` as ``timeline`` does.
+        Cross-Account and missing ids are 404 via ``get_object``."""
+        game_round = self.get_object()
+        BatchSimulator().ensure_fidelity(game_round, "full")
+        return Response(round_playback(game_round))
 
     @action(
         detail=True, methods=["get"], url_path="missile-log", url_name="missile-log"
