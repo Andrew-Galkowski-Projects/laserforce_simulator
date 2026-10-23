@@ -174,3 +174,26 @@ A single read-only view `player_head_to_head(request)` (`matches/views.py`) at `
 **Determinism / scope.** **Read-only view** — no RNG, no simulation, no `_flush_to_db` touch, no SIM-07 / SIM-08 contract interaction, no Score Calibration re-baseline obligation. **No model change, no migration, no ADR** (decisions are reversible — pure read-only view + pure aggregation module). **No GLOSSARY.md edit** (the **Player head-to-head record** term was added inline during the grilling session that produced this contract and already lives at the bottom of the `### Analytics and review` section adjacent to **Head-to-head record**). **Scope-out (locked):** same-team Rounds excluded entirely; no MVP / most-impactful surface (HX-03 only — pairwise comparison doesn't transfer); no per-player-per-role asymmetric matchup view (deferred — `?role=` is symmetric 'both' only); no seasonal/tournament/month filter; no model change / migration / ADR / GLOSSARY.md edit; no simulation-mechanics change; no new ORM column / serializer / REST API surface; no backfill; no Score Calibration re-baseline; no top-nav / match_list / team-history entry point.
 
 **Locked names.** URL `GET /matches/h2h/player/` (URL name `player_head_to_head`); view `matches/views.py::player_head_to_head`; pure module `matches/player_h2h_stats.py` (7 functions: `compute_round_record`, `compute_score_margin`, `compute_tag_stats`, `compute_per_role_breakdown`, `compute_per_map_breakdown`, `margin_series`, `cumulative_wl_series`); template `templates/matches/player_head_to_head.html`; DOM ids `player-h2h-picker-form` / `player-h2h-select-a` / `player-h2h-select-b` / `player-h2h-role` / `player-h2h-provenance` / `player-h2h-from` / `player-h2h-to` / `player-h2h-submit` / `player-h2h-round-record` / `player-h2h-score-margin` / `player-h2h-tags-a-to-b` / `player-h2h-tags-b-to-a` / `player-h2h-per-role-table` / `player-h2h-per-map-table` / `player-h2h-detail-list` / `player-h2h-no-games-notice` / `player-h2h-error-banner` / `player-h2h-link`; canvas ids `player-h2h-margin-chart` / `player-h2h-cumulative-wl-chart`; `json_script` ids `player-h2h-margin-series` / `player-h2h-cumulative-wl-series`; test files `matches/tests/test_player_h2h_stats.py` (NEW) + `matches/tests/views_tests.py::TestHx04PlayerHeadToHead` (EXTENDED). Seam contract: [`.claude/worktrees/hx-04-seam-contract.md`](../../../.claude/worktrees/hx-04-seam-contract.md).
+
+## ANG-06d Round scoreboard builder
+
+`matches/services.py::round_scoreboard(game_round) -> dict` builds the **Round scoreboard** per Side:
+`{"red" | "blue": {"players", "survivors", "eliminated", "elim_bonus"}}`. Each row is the 28
+`PLAYER_ROW_KEYS` from `_player_row` plus `player_id` (the UX-02 "You" badge). Rows are grouped by
+`team_color` (LG-07: never `player__team`) and ordered `-points_scored, role, player__name`.
+`survivors` / `eliminated` come from `round_summary`, but a Side with **no rows** (a legacy Round)
+is never eliminated. `elim_bonus` is `BatchSimulator.elimination_bonus` when the other Side is
+eliminated, else 0. It reuses a `player_states` prefetch when one is set (the API retrieve sets
+one); otherwise it queries.
+
+Two consumers, so the shape cannot drift:
+
+- `game_round_detail` (`/matches/game-round/<id>/`) reads its six context keys (`red_players`,
+  `blue_players`, `red_survivors`, `blue_survivors`, `red_eliminated`, `blue_eliminated`) from it.
+  The template is unchanged; the empty-Side rule removes the false `+10000` a legacy Round showed.
+- `GameRoundSerializer.scoreboard` (`GET /api/rounds/<id>/`, see `api.md`), which the Angular
+  `/rounds/:id` page renders.
+
+The PDF export (`export_round_report`) still builds its own 14-key subset from `_player_row`.
+Tests: `matches/tests/test_api_round_scoreboard.py` (shape, grouping, ordering, bonus, empty Side,
+query counts, the Django page's empty-Side bonus).

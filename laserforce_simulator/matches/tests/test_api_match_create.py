@@ -47,6 +47,8 @@ _GAME_ROUND_DETAIL_KEYS = {
     "team_blue_name",
     "winner_name",
     "player_states",
+    # ANG-06d-A: the Round scoreboard joined the detail / create contract.
+    "scoreboard",
 }
 
 

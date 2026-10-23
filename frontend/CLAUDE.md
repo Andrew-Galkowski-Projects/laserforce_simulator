@@ -4,7 +4,7 @@ The Phase 8 replacement for the Django templates. The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
 layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
 below 768px) behind `authGuard`, the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
-Matches area (ANG-06c: Match History, New Match / New Single Round, detail stubs), on top of the client
+Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -84,6 +84,8 @@ src/
     shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
                           over drawer below); toolbar colours via mat.toolbar-overrides
     login/                sign-in form; returnUrl honoured only when it is an in-app path
+    shared/               cross-feature helpers: save-blob.ts (saveBlob: a Blob as a named
+                          download; roster-import's template CSV, round-detail's Export PDF)
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
                           team-create, team-detail, team-edit, team-slots, player-add,
                           player-edit, team-generate, roster-import (import-errors.ts:
@@ -102,10 +104,11 @@ src/
                           tables, each row's teams-cell <a> stretched over the row), /matches/new +
                           /rounds/new (setup-form, route data kind 'match' | 'round'; also uses
                           teams/shared/form-errors), /matches/:id + /rounds/:id (match-detail,
-                          round-detail: summary stubs until ANG-06 item 4); shared/: result.ts
-                          (matchResult / roundResult: winner, "Tie", muted "In progress"),
-                          result-chip, result-summary, route-record.ts (loadRouteRecord),
-                          record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures)
+                          round-detail: ANG-06d, layout B, from the Round API's `scoreboard`);
+                          shared/: result.ts (matchResult / roundResult: winner, "Tie", muted
+                          "In progress"), result-chip, route-record.ts (loadRouteRecord),
+                          record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
+                          scoreboard-fixtures)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures

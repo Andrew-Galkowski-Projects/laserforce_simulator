@@ -21,10 +21,7 @@ from accounts.permissions import (
     owned_queryset,
 )
 from teams.models import Team, Player
-from . import (
-    round_comparison,
-    round_summary,
-)
+from . import round_comparison
 from .job_status import celery_state_to_job_status
 from .models import (
     Match,
@@ -57,6 +54,7 @@ from .services import (  # noqa: F401 - _comparison_row / _cumulative_team_point
     create_sandbox_round,
     round_playback_payload,
     round_report_filename,
+    round_scoreboard,
     shared_team_ids,
 )
 from .tasks import save_games_task, simulate_batch_task
@@ -266,40 +264,21 @@ def game_round_detail(request, round_id):
 
     Materialises the same 28-key **Round scoreboard** dict the
     ``export_round_report`` PDF consumes (GLOSSARY.md, ``Round scoreboard``)
-    so the HTML scoreboard and the PDF scoreboard cannot drift.
+    so the HTML scoreboard and the PDF scoreboard cannot drift. ANG-06d: the
+    rows come from ``round_scoreboard``, the builder ``GET /api/rounds/<id>/``
+    serves as ``scoreboard``.
     """
     game_round = get_owned_or_404(GameRound, request, id=round_id)
-
-    red_states = (
-        # LG-07: group by the physical Side (team_color), NOT player__team — a
-        # member-night drawn-team game BORROWS Players (their Player.team is their
-        # real team, not the drawn team), so a player__team filter matches 0. For
-        # a regular game player.team == team_red ⟺ team_color == "red", so this is
-        # behaviour-neutral there and fixes the empty drawn-team scoreboard.
-        game_round.player_states.filter(team_color="red")
-        .select_related("player")
-        .order_by("-points_scored", "role", "player__name")
-    )
-    blue_states = (
-        game_round.player_states.filter(team_color="blue")
-        .select_related("player")
-        .order_by("-points_scored", "role", "player__name")
-    )
-
-    # UX-02 — view-local ``player_id`` enrichment for the "You" badge. NOT a
-    # scoreboard key: ``_player_row`` / ``PLAYER_ROW_KEYS`` and the PDF export
-    # are unchanged.
-    red_players = [{**_player_row(s), "player_id": s.player_id} for s in red_states]
-    blue_players = [{**_player_row(s), "player_id": s.player_id} for s in blue_states]
+    board = round_scoreboard(game_round)
 
     context = {
         "round": game_round,
-        "red_players": red_players,
-        "blue_players": blue_players,
-        "red_survivors": round_summary.survivor_count(red_players),
-        "blue_survivors": round_summary.survivor_count(blue_players),
-        "red_eliminated": round_summary.team_eliminated(red_players),
-        "blue_eliminated": round_summary.team_eliminated(blue_players),
+        "red_players": board["red"]["players"],
+        "blue_players": board["blue"]["players"],
+        "red_survivors": board["red"]["survivors"],
+        "blue_survivors": board["blue"]["survivors"],
+        "red_eliminated": board["red"]["eliminated"],
+        "blue_eliminated": board["blue"]["eliminated"],
     }
 
     return render(request, "matches/game_round_detail.html", context)

@@ -911,6 +911,58 @@ def _player_row(state: PlayerRoundState) -> dict:
     }
 
 
+def _scoreboard_rows(game_round: GameRound, team_color: str) -> list[dict]:
+    """One Side's **Round scoreboard** rows plus ``player_id`` (UX-02 "You"
+    badge; not a ``PLAYER_ROW_KEYS`` key, so the PDF export is unchanged).
+
+    Reuses a ``player_states`` prefetch (the API retrieve sets one, with
+    ``select_related("player")``) and sorts in Python; otherwise queries.
+    """
+    # LG-07: group by the physical Side (team_color), NOT player__team — a
+    # member-night drawn-team game BORROWS Players (their Player.team is their
+    # real team, not the drawn team), so a player__team filter matches 0.
+    if "player_states" in getattr(game_round, "_prefetched_objects_cache", {}):
+        states = sorted(
+            (s for s in game_round.player_states.all() if s.team_color == team_color),
+            key=lambda s: (-s.points_scored, s.role, s.player.name),
+        )
+    else:
+        states = (
+            game_round.player_states.filter(team_color=team_color)
+            .select_related("player")
+            .order_by("-points_scored", "role", "player__name")
+        )
+    return [{**_player_row(s), "player_id": s.player_id} for s in states]
+
+
+def round_scoreboard(game_round: GameRound) -> dict:
+    """ANG-06d: the **Round scoreboard** per Side, for the Django round page and
+    the ``scoreboard`` field of ``GET /api/rounds/<id>/``.
+
+    ``{"red" | "blue": {"players", "survivors", "eliminated", "elim_bonus"}}``.
+    ``elim_bonus`` is ``BatchSimulator.elimination_bonus`` when the *other*
+    Side is eliminated, else 0; ``players`` carry base scores only. A Side with
+    no rows is not eliminated (nobody was wiped), so it gives no bonus.
+    """
+    rows = {color: _scoreboard_rows(game_round, color) for color in ("red", "blue")}
+    eliminated = {
+        color: bool(players) and round_summary.team_eliminated(players)
+        for color, players in rows.items()
+    }
+    other = {"red": "blue", "blue": "red"}
+    return {
+        color: {
+            "players": players,
+            "survivors": round_summary.survivor_count(players),
+            "eliminated": eliminated[color],
+            "elim_bonus": (
+                BatchSimulator.elimination_bonus if eliminated[other[color]] else 0
+            ),
+        }
+        for color, players in rows.items()
+    }
+
+
 def _round_players_data(game_round: GameRound) -> list[dict]:
     """The 6-key SIM-05 player rows (the ``players_data`` half of
     ``round_playback_payload``), built without serializing any events."""

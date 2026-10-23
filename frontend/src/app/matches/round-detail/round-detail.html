@@ -1,0 +1,134 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Round" />
+} @else if (load.loadError(); as message) {
+  <p class="rd-error" role="alert">{{ message }}</p>
+} @else if (load.record(); as r) {
+  <div class="rd-pagehead">
+    <div class="rd-pagehead__text">
+      <p class="rd-kicker">
+        {{ r.match === null ? 'Single Round' : 'Match Round ' + r.round_number }} –
+        {{ r.date_played | date: 'MMM d, y HH:mm' }}
+      </p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+      <p class="rd-meta">
+        Round {{ r.round_number }} &middot;
+        {{ r.winner_name === null ? 'Tie' : r.winner_name + ' won' }}
+        @if (eliminatedAt(r); as at) {
+          &middot; elimination at {{ at }}
+        }
+      </p>
+    </div>
+    <div class="rd-actions">
+      @if (r.match === null) {
+        <a mat-stroked-button routerLink="/matches">&larr; Back to Matches</a>
+      } @else {
+        <a mat-stroked-button [routerLink]="['/matches', r.match]">&larr; Back to Match</a>
+      }
+      <button mat-flat-button type="button" [disabled]="exporting()" (click)="exportPdf(r.id)">
+        {{ exporting() ? 'Generating...' : 'Export PDF' }}
+      </button>
+    </div>
+  </div>
+
+  @if (exportError(); as message) {
+    <p class="rd-error" role="alert">{{ message }}</p>
+  }
+
+  @for (side of sides; track side) {
+    @let b = board(r, side);
+    <section class="rd-team" [attr.data-lf-side]="side" [attr.aria-label]="teamName(r, side)">
+      <div class="rd-strip">
+        <div class="rd-strip__name">
+          <span class="rd-sidetag">{{ side === 'red' ? 'R' : 'B' }}</span>
+          <h2>{{ teamName(r, side) }}</h2>
+          <span class="rd-badge rd-badge--{{ outcome(r, side).toLowerCase() }}">{{
+            outcome(r, side)
+          }}</span>
+          @if (b.eliminated) {
+            <span class="rd-badge rd-badge--elim">Eliminated</span>
+          }
+        </div>
+        <div class="rd-strip__counts rd-muted">
+          {{ b.players.length }} {{ b.players.length === 1 ? 'player' : 'players' }} &middot;
+          {{ b.survivors }} {{ b.survivors === 1 ? 'survivor' : 'survivors' }}
+        </div>
+        <div class="rd-strip__score">
+          <span class="rd-strip__points">{{ points(r, side) | number }}</span>
+          @if (b.elim_bonus; as bonus) {
+            <span class="rd-strip__bonus rd-muted">(+{{ bonus | number }} elim bonus)</span>
+          }
+        </div>
+      </div>
+
+      @if (b.players.length === 0) {
+        <p class="rd-empty">No player data for this round.</p>
+      } @else {
+        <div class="rd-tablewrap">
+          <table class="rd-table">
+            <thead>
+              <tr>
+                @for (col of columns; track col.key) {
+                  <th scope="col" [class.num]="col.num" [attr.aria-sort]="ariaSort(side, col.key)">
+                    <button type="button" (click)="toggleSort(side, col)">
+                      {{ col.label }}
+                      <span class="rd-arrow" aria-hidden="true">{{ arrow(side, col.key) }}</span>
+                    </button>
+                  </th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (p of rows(r, side); track p.player_id) {
+                <tr [class.is-out]="p.is_eliminated" [class.is-top-mvp]="p.mvp === topMvp()">
+                  <td>
+                    @if (p.mvp === topMvp()) {
+                      <span class="rd-star" title="Top MVP of the round">&#9733;</span>
+                    }
+                    {{ p.name }}
+                    @if (p.player_id === selfId()) {
+                      <span class="rd-you">You</span>
+                    }
+                    @if (p.is_eliminated) {
+                      <span class="rd-out">OUT</span>
+                    }
+                  </td>
+                  <td>{{ roleLabel(p.role) }}</td>
+                  <td class="num">{{ p.points_scored | number }}</td>
+                  <td class="num">{{ p.mvp | number: '1.2-2' }}</td>
+                  <td class="num">
+                    {{
+                      p.times_tagged > 0 ? (p.tags_made / p.times_tagged | number: '1.2-2') : '—'
+                    }}
+                    <span class="rd-muted">({{ p.tags_made }}/{{ p.times_tagged }})</span>
+                  </td>
+                  <td class="num">{{ p.accuracy }}%</td>
+                  <td class="num">
+                    {{ p.final_medic_hits }}
+                    @if (p.role === 'commander') {
+                      ({{ p.medic_lives_removed_from_nuke }})
+                    }
+                  </td>
+                  <td class="num">{{ p.final_lives }}</td>
+                  <td class="num">{{ p.final_shots }}</td>
+                  <td class="num">
+                    {{ p.missiles_landed }}{{ carriesMissiles(p) ? '/' + p.starting_missiles : '' }}
+                  </td>
+                  <td class="num">{{ p.times_missiled }}</td>
+                  <td class="num">{{ p.specific_tags_count }}</td>
+                  <td class="num">{{ specialSpent(p) }}/{{ specialSpent(p) + p.final_special }}</td>
+                  <td class="num">
+                    @if (p.is_eliminated) {
+                      {{ p.eliminated_timestamp || '—' }}
+                    } @else {
+                      Survived
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+  }
+}

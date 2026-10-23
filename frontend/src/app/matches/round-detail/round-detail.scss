@@ -1,0 +1,278 @@
+// Round detail, ADR-0043 layout B (the ANG-04b round sample): contract tokens and --side* only,
+// never a colour literal.
+:host {
+  display: block;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1 {
+  margin: 0;
+  font: 700 1.5rem/1.2 var(--lf-font-heading);
+}
+
+.rd-error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.rd-pagehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.rd-kicker,
+.rd-meta {
+  margin: 0.25rem 0;
+  color: var(--lf-text-muted);
+  font-size: 0.8rem;
+}
+
+.rd-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.rd-muted {
+  color: var(--lf-text-muted);
+  font-weight: 400;
+}
+
+// ---- Team strip -----------------------------------------------------------------------------
+.rd-team {
+  margin-bottom: 1.75rem;
+}
+
+.rd-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--lf-surface);
+  border: 1px solid var(--lf-border);
+  border-left: 4px solid var(--side);
+  border-radius: var(--lf-radius) var(--lf-radius) 0 0;
+
+  &__name {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+
+    h2 {
+      margin: 0;
+      color: var(--side-text);
+      font: 700 1.15rem var(--lf-font-heading);
+    }
+  }
+
+  &__counts {
+    font-size: 0.8rem;
+  }
+
+  &__score {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.4rem;
+    margin-left: auto;
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+    font-size: 0.8rem;
+  }
+
+  &__points {
+    color: var(--side-text);
+    font-size: 1.4rem;
+    font-weight: 700;
+  }
+}
+
+.rd-sidetag {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--side);
+  border-radius: var(--lf-radius);
+  color: var(--side-text);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.rd-badge {
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--lf-radius);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+
+  &--win {
+    background: var(--lf-accent);
+    color: var(--lf-bg);
+  }
+
+  &--loss,
+  &--tie {
+    border: 1px solid var(--lf-border);
+    color: var(--lf-text-muted);
+  }
+
+  &--elim {
+    border: 1px solid var(--lf-ev-elimination);
+    background: color-mix(in srgb, var(--lf-ev-elimination) 15%, transparent);
+    color: var(--lf-text);
+  }
+}
+
+// ---- Table (or the no-data line) under the strip --------------------------------------------
+.rd-empty,
+.rd-tablewrap {
+  margin: 0;
+  border: 1px solid var(--lf-border);
+  border-top: 0;
+  border-radius: 0 0 var(--lf-radius) var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.rd-empty {
+  padding: 0.9rem;
+  color: var(--lf-text-muted);
+}
+
+.rd-tablewrap {
+  max-height: 26rem;
+  overflow: auto;
+}
+
+.rd-table {
+  width: 100%;
+  min-width: 68rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 0.85rem;
+
+  th,
+  td {
+    padding: 0.45rem 0.65rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  // Sticky header: the columns stay labelled while the table scrolls.
+  th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    padding: 0;
+    background: var(--lf-surface-alt);
+    color: var(--lf-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+
+    button {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      width: 100%;
+      padding: 0.5rem 0.65rem;
+      border: 0;
+      background: none;
+      color: inherit;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    &.num button {
+      justify-content: center;
+    }
+
+    &[aria-sort='ascending'],
+    &[aria-sort='descending'] {
+      color: var(--lf-text);
+
+      .rd-arrow {
+        color: var(--lf-accent);
+        opacity: 1;
+      }
+    }
+  }
+
+  .num {
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+  }
+
+  // Callsign stays pinned while the wide table scrolls sideways.
+  td:first-child,
+  th:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--lf-surface);
+    border-right: 1px solid var(--lf-border);
+    font-weight: 600;
+  }
+
+  th:first-child {
+    z-index: 2;
+    background: var(--lf-surface-alt);
+  }
+}
+
+.rd-arrow {
+  font-size: 0.65rem;
+  opacity: 0.45;
+}
+
+tr.is-top-mvp td {
+  background: color-mix(in srgb, var(--side) 16%, var(--lf-surface));
+  font-weight: 600;
+}
+
+tr.is-top-mvp td:first-child {
+  box-shadow: inset 3px 0 0 var(--side);
+}
+
+// An eliminated player's row: muted text on an elimination tint.
+tr.is-out td {
+  background: color-mix(in srgb, var(--lf-ev-elimination) 8%, var(--lf-surface));
+  color: var(--lf-text-muted);
+}
+
+.rd-star {
+  color: var(--lf-ev-nuke);
+  text-shadow: var(--lf-glow) var(--lf-ev-nuke);
+}
+
+.rd-out,
+.rd-you {
+  margin-left: 0.35rem;
+  padding: 0 0.3rem;
+  border-radius: var(--lf-radius);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.rd-out {
+  border: 1px solid var(--lf-ev-elimination);
+  color: var(--lf-text-muted);
+}
+
+.rd-you {
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+}

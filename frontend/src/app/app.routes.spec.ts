@@ -138,7 +138,7 @@ describe('app routes', () => {
     it.each([
       ['/matches', MatchList, 'Match History - Laserforce Simulator'],
       ['/matches/7', MatchDetail, 'Match - Laserforce Simulator'],
-      ['/rounds/9', RoundDetail, 'Single Round - Laserforce Simulator'],
+      ['/rounds/9', RoundDetail, 'Round - Laserforce Simulator'],
     ])('resolves %s to its screen and page title', async (url, screen, title) => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl(url);

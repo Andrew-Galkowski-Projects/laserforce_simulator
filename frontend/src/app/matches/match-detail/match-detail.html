@@ -1,0 +1,98 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Match" />
+} @else if (load.loadError(); as message) {
+  <p class="match-detail__error" role="alert">{{ message }}</p>
+} @else if (load.record(); as m) {
+  <div class="match-detail__head">
+    <h1 class="match-detail__teams">
+      <span class="match-detail__team" data-lf-side="red"
+        ><span class="match-detail__badge" aria-hidden="true">R</span>{{ m.team_red_name }}</span
+      >
+      <span class="match-detail__vs">vs</span>
+      <span class="match-detail__team" data-lf-side="blue"
+        ><span class="match-detail__badge" aria-hidden="true">B</span>{{ m.team_blue_name }}</span
+      >
+    </h1>
+    <p class="match-detail__meta">
+      {{ matchTypeLabels[m.match_type] }} &middot; {{ m.date_played | date: 'MMM d, y HH:mm' }}
+      &middot;
+      <span class="match-detail__score"
+        >{{ m.red_total_points | number: '1.0-0' }} -
+        {{ m.blue_total_points | number: '1.0-0' }}</span
+      >
+      &middot; <app-result-chip [result]="result(m)" />
+    </p>
+  </div>
+
+  <section class="match-detail__card" aria-labelledby="match-summary-heading">
+    <h2 id="match-summary-heading">Match Summary</h2>
+    <div class="match-detail__tablewrap">
+      <table class="summary-table">
+        <thead>
+          <tr>
+            <th scope="col">Round</th>
+            <th scope="col" class="num" data-lf-side="red">
+              {{ m.team_red_name }} (Red in Round 1)
+            </th>
+            <th scope="col" class="num" data-lf-side="blue">
+              {{ m.team_blue_name }} (Blue in Round 1)
+            </th>
+            <th scope="col">Winner</th>
+            <th scope="col">Details</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of rounds(m); track r.label) {
+            <tr>
+              <th scope="row">{{ r.label }}</th>
+              @if (!r.played) {
+                <td colspan="4" class="match-detail__muted">Not played yet</td>
+              } @else {
+                <td class="num">
+                  {{ r.redPoints | number: '1.0-0' }}
+                  @if (r.redBonus) {
+                    <span class="match-detail__bonus">+ elim bonus</span>
+                  }
+                </td>
+                <td class="num">
+                  {{ r.bluePoints | number: '1.0-0' }}
+                  @if (r.blueBonus) {
+                    <span class="match-detail__bonus">+ elim bonus</span>
+                  }
+                </td>
+                <td>{{ r.winner }}</td>
+                <td>
+                  @if (r.roundId !== null) {
+                    <a class="match-detail__link" [routerLink]="['/rounds', r.roundId]"
+                      >View Round</a
+                    >
+                  } @else {
+                    <span class="match-detail__muted">No round data</span>
+                  }
+                </td>
+              }
+            </tr>
+          }
+          <tr class="summary-table__total">
+            <th scope="row">Total</th>
+            <td class="num">{{ m.red_total_points | number: '1.0-0' }}</td>
+            <td class="num">{{ m.blue_total_points | number: '1.0-0' }}</td>
+            <td><app-result-chip [result]="result(m)" /></td>
+            <td class="match-detail__muted">-</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="match-detail__note">
+      Teams swap colours for Round 2.
+      @if (m.winner !== null && m.red_rounds_won === m.blue_rounds_won) {
+        Rounds split {{ m.red_rounds_won }}&ndash;{{ m.blue_rounds_won }}, so total points decided
+        the Match.
+      }
+    </p>
+  </section>
+
+  <p class="match-detail__back">
+    <a mat-stroked-button routerLink="/matches">&larr; Back to Matches</a>
+  </p>
+}
