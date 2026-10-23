@@ -19,6 +19,11 @@ export class MapsService {
     return this.api.get<ArenaMap>(`maps/${id}/`);
   }
 
+  /** The B&W processed image (a raw PNG, not enveloped), e.g. under the Playback map. */
+  processedImage(id: number): Observable<Blob> {
+    return this.api.getRaw(`maps/${id}/processed-image/`);
+  }
+
   /** Multipart POST of `name` + `image`; resolves to the new map (201). */
   upload(body: MapUploadInput): Observable<ArenaMap> {
     const formData = new FormData();
