@@ -6,8 +6,8 @@
   @let r = rec.round;
   <div class="re-pagehead">
     <div>
-      <h1>Event Log</h1>
-      <p class="re-meta">{{ r.team_red_name }} vs {{ r.team_blue_name }}</p>
+      <p class="re-kicker">Event Log</p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
     </div>
     <div class="re-actions">
       <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
@@ -38,6 +38,9 @@
               [attr.data-lf-side]="h.team"
               (click)="jumpTo(h)"
             >
+              @if (h.team !== null) {
+                <span class="re-sidetag">{{ sideTag(h.team) }}</span>
+              }
               <span class="re-highlight__kind">{{ kindLabel(h) }}</span>
               <span class="re-highlight__time">{{ h.tick === null ? '' : clock(h.tick) }}</span>
               <span class="re-highlight__label">{{ h.label }}</span>
@@ -102,29 +105,35 @@
       } @else {
         <cdk-virtual-scroll-viewport
           class="re-viewport"
-          [itemSize]="showMetadata() ? rowHeightWithMeta : rowHeight"
+          [itemSize]="rowHeight()"
           minBufferPx="400"
           maxBufferPx="800"
         >
           <div
             *cdkVirtualFor="let e of visibleEvents(); trackBy: trackByIndex"
             class="re-row"
-            [class.re-row--meta]="showMetadata()"
+            [class.re-row--narrow]="!wide()"
             [class.is-current]="e === currentEvent()"
             [style.--re-ev]="'var(' + group(e).token + ')'"
+            [style.height.px]="rowHeight()"
+            [style.grid-template-rows]="rowTracks()"
           >
             <span class="re-row__time">{{ clock(e.tick) }}</span>
             <span class="re-row__chip">{{ group(e).label }}</span>
             <span class="re-row__desc">{{ e.description }}</span>
             <span class="re-row__who">
-              <span class="re-row__actor" [attr.data-lf-side]="e.actor_side">{{
-                e.actor_name
-              }}</span>
+              <span class="re-row__actor" [attr.data-lf-side]="e.actor_side">
+                <span class="re-sidetag">{{ sideTag(e.actor_side) }}</span>
+                {{ e.actor_name }}
+              </span>
               @if (e.target_name !== null) {
                 <span class="re-muted">&rarr;</span>
-                <span class="re-row__target" [attr.data-lf-side]="e.target_side">{{
-                  e.target_name
-                }}</span>
+                <span class="re-row__target" [attr.data-lf-side]="e.target_side">
+                  @if (e.target_side !== null) {
+                    <span class="re-sidetag">{{ sideTag(e.target_side) }}</span>
+                  }
+                  {{ e.target_name }}
+                </span>
               }
             </span>
             @if (e.points !== 0) {

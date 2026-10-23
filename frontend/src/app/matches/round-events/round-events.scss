@@ -27,10 +27,21 @@ h1 {
   margin-bottom: 1rem;
 }
 
-.re-meta {
+.re-kicker {
   margin: 0.25rem 0;
   color: var(--lf-text-muted);
   font-size: 0.8rem;
+}
+
+// The R / B Side badge (as Round detail's team strip), kept next to Side colour for colour-blind
+// users. It reads `--side*` from the nearest `[data-lf-side]` element.
+.re-sidetag {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--side);
+  border-radius: var(--lf-radius);
+  color: var(--side-text);
+  font-size: 0.65rem;
+  font-weight: 700;
 }
 
 .re-actions {
@@ -194,25 +205,29 @@ h2 {
   background: var(--lf-surface);
 }
 
-// One row per event: a fixed height (the virtual scroll's item size), the group's colour on the
-// left border and the chip, the names in their Side's text colour.
+// One row per event: a fixed height (the virtual scroll's item size) and its grid rows, both bound
+// from the component's line heights; the group's colour on the left border and the chip, the
+// names in their Side's text colour.
 .re-row {
   display: grid;
   grid-template-columns: 3.25rem 6.5rem minmax(10rem, 1fr) minmax(0, max-content) auto;
-  grid-template-rows: 36px;
   align-items: center;
   gap: 0 0.6rem;
   box-sizing: border-box;
-  height: 36px;
   padding: 0 0.6rem;
   border-bottom: 1px solid var(--lf-border);
   border-left: 4px solid var(--re-ev);
   font-size: 0.82rem;
 
-  // "Show metadata" on: every row gets the second line, so the item size stays fixed.
-  &--meta {
-    grid-template-rows: 36px 20px;
-    height: 56px;
+  // Below the wide breakpoint (the component's `WIDE`) the names take a second line under the
+  // description, so neither is clipped.
+  &--narrow {
+    grid-template-columns: 3.25rem 6.5rem minmax(0, 1fr) auto;
+
+    .re-row__who {
+      grid-row: 2;
+      grid-column: 3 / -1;
+    }
   }
 
   &.is-current {
@@ -245,24 +260,19 @@ h2 {
     white-space: nowrap;
   }
 
-  // Below the wide breakpoint (the component's `WIDE`) the names cell goes: it would clip
-  // mid-name, and the description already names both players.
-  @media (max-width: 1023.98px) {
-    grid-template-columns: 3.25rem 6.5rem minmax(0, 1fr) auto;
-
-    .re-row__who {
-      display: none;
-    }
-  }
-
   &__who {
     display: flex;
+    align-items: center;
     gap: 0.3rem;
+    overflow: hidden;
     white-space: nowrap;
   }
 
   &__actor,
   &__target {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
     color: var(--side-text);
     font-weight: 600;
   }
@@ -272,7 +282,9 @@ h2 {
     font-variant-numeric: tabular-nums;
   }
 
+  // Always the last grid row (the second wide, the third narrow).
   &__meta {
+    grid-row: -2;
     grid-column: 3 / -1;
     font-size: 0.72rem;
   }

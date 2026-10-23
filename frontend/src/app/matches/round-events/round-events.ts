@@ -26,7 +26,14 @@ import {
   TimelinePlayer,
 } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
-import { EVENT_GROUPS, EventGroup, HIDDEN_BY_DEFAULT, eventGroupOf } from '../shared/event-groups';
+import { tickClock } from '../shared/clock';
+import {
+  EVENT_GROUPS,
+  EventGroup,
+  EventGroupKey,
+  HIDDEN_BY_DEFAULT,
+  eventGroupOf,
+} from '../shared/event-groups';
 import { RecordNotFound } from '../shared/record-not-found';
 import { loadRouteRecord } from '../shared/route-record';
 
@@ -51,23 +58,16 @@ const KIND_LABELS: Record<HighlightKind, string> = {
   scoring_burst: 'Scoring Burst',
 };
 
-/** Ticks per second (1 tick = 0.5 s, as `GameEvent.formatted_timestamp`). */
-const TICKS_PER_SECOND = 2;
-
 /** The filter panel sits beside the timeline from here up; narrower (768px) it folds above. */
 const WIDE = '(min-width: 1024px)';
 
-/** A timeline row's fixed height in px (the virtual scroll's item size). */
-const ROW_HEIGHT = 36;
-/** The row height with "Show metadata" on (a second, one-line metadata line). */
-const ROW_HEIGHT_WITH_META = 56;
+/** A timeline row's first line in px: time, chip, description (wide: the names), points. */
+const LINE_HEIGHT = 36;
+/** Each further one-line row line in px: the names when narrow, the metadata when shown. */
+const SUB_LINE_HEIGHT = 20;
 
 /** `mm:ss` for a tick count. */
-function clock(ticks: number): string {
-  const seconds = Math.floor(ticks / TICKS_PER_SECOND);
-  const mm = String(Math.floor(seconds / 60)).padStart(2, '0');
-  return `${mm}:${String(seconds % 60).padStart(2, '0')}`;
-}
+const clock = (ticks: number): string => tickClock(ticks, { pad: true });
 
 /**
  * `/rounds/:id/events`: the **Event log** of one Round. The page head (from the Round), the
@@ -101,8 +101,6 @@ export class RoundEvents {
   );
   protected readonly cards = CARDS;
   protected readonly clock = clock;
-  protected readonly rowHeight = ROW_HEIGHT;
-  protected readonly rowHeightWithMeta = ROW_HEIGHT_WITH_META;
   /** True at `WIDE` and wider: the filters sit beside the timeline, else in a folded panel. */
   protected readonly wide = toSignal(
     inject(BreakpointObserver)
@@ -115,6 +113,24 @@ export class RoundEvents {
   protected readonly currentEvent = signal<TimelineEvent | null>(null);
   /** "Show metadata": off at first. */
   protected readonly showMetadata = signal(false);
+  /**
+   * Every row's line heights in px: the first line; below `WIDE` the names on their own line;
+   * with "Show metadata" on, the metadata line. Every row gets the same lines, so the virtual
+   * scroll's item size stays fixed.
+   */
+  private readonly rowLines = computed(() => [
+    LINE_HEIGHT,
+    ...(this.wide() ? [] : [SUB_LINE_HEIGHT]),
+    ...(this.showMetadata() ? [SUB_LINE_HEIGHT] : []),
+  ]);
+  /** A row's height in px: the virtual scroll's item size. */
+  protected readonly rowHeight = computed(() => this.rowLines().reduce((sum, px) => sum + px, 0));
+  /** The rows' `grid-template-rows`, one track per line. */
+  protected readonly rowTracks = computed(() =>
+    this.rowLines()
+      .map((px) => `${px}px`)
+      .join(' '),
+  );
   protected readonly group = (e: TimelineEvent): EventGroup => eventGroupOf(e.event_type);
   /** Timeline rows carry no id (the API sends none), so they are tracked by index. */
   protected readonly trackByIndex = (index: number): number => index;
@@ -122,7 +138,7 @@ export class RoundEvents {
   protected readonly sides: Side[] = ['red', 'blue'];
 
   /** The checked Event groups' keys: all but Movement at first. */
-  private readonly checkedGroups = signal<ReadonlySet<string>>(
+  private readonly checkedGroups = signal<ReadonlySet<EventGroupKey>>(
     new Set(EVENT_GROUPS.map((g) => g.key).filter((key) => !HIDDEN_BY_DEFAULT.includes(key))),
   );
 
@@ -161,11 +177,11 @@ export class RoundEvents {
     });
   }
 
-  protected groupChecked(key: string): boolean {
+  protected groupChecked(key: EventGroupKey): boolean {
     return this.checkedGroups().has(key);
   }
 
-  protected toggleGroup(key: string, checked: boolean): void {
+  protected toggleGroup(key: EventGroupKey, checked: boolean): void {
     this.checkedGroups.update((all) => {
       const next = new Set(all);
       if (checked) next.add(key);
@@ -184,7 +200,13 @@ export class RoundEvents {
       .join(' · ');
   }
 
+  /** A Side's R / B badge, kept next to its colour for colour-blind users. */
+  protected sideTag(side: Side): string {
+    return side === 'red' ? 'R' : 'B';
+  }
+
   protected kindLabel(h: Highlight): string {
+    // Defence against the server sending a kind the client doesn't know yet: show it, don't crash.
     return KIND_LABELS[h.kind] ?? h.kind;
   }
 

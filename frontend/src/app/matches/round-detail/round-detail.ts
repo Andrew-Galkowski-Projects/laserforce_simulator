@@ -8,6 +8,7 @@ import { RoundsService } from '../../api/rounds.service';
 import { AuthService } from '../../auth/auth.service';
 import { saveBlob } from '../../shared/save-blob';
 import { ROLE_LABELS } from '../../teams/shared/roster';
+import { tickClock } from '../shared/clock';
 import { RecordNotFound } from '../shared/record-not-found';
 import { loadRouteRecord } from '../shared/route-record';
 
@@ -26,8 +27,6 @@ interface Column {
   value: (row: ScoreboardRow) => number | string;
 }
 
-/** Ticks per second (1 tick = 0.5 s). */
-const TICKS_PER_SECOND = 2;
 /**
  * The tick past a 0-1800 round: `was_eliminated_at` / `eliminated_at` at or above it mean nobody
  * was eliminated (the server's TIME-01 survived sentinel). Survivors sort last on Elim with it.
@@ -73,10 +72,7 @@ function roleLabel(role: Role): string {
 }
 
 /** `m:ss` for a tick count. */
-function clock(ticks: number): string {
-  const seconds = Math.floor(ticks / TICKS_PER_SECOND);
-  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-}
+const clock = (ticks: number): string => tickClock(ticks);
 
 const columnFor = (key: string): Column | undefined => COLUMNS.find((c) => c.key === key);
 

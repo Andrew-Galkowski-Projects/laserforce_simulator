@@ -1,9 +1,21 @@
 // The nine **Event groups** the Event log filters and colours by (GLOSSARY, ANG-06e).
 import { TimelineEventType } from '../../api/rounds.models';
 
+/** The nine Event groups' keys. */
+export type EventGroupKey =
+  | 'tag'
+  | 'elimination'
+  | 'miss'
+  | 'special'
+  | 'missile'
+  | 'locking'
+  | 'resupply'
+  | 'base'
+  | 'movement';
+
 /** One Event group: its label, its `--lf-ev-*` colour token and the event types it covers. */
 export interface EventGroup {
-  key: string;
+  key: EventGroupKey;
   label: string;
   token: string;
   types: readonly TimelineEventType[];
@@ -43,7 +55,7 @@ export const EVENT_GROUPS: readonly EventGroup[] = [
 ];
 
 /** The groups that start unchecked on the Event log: only Movement. */
-export const HIDDEN_BY_DEFAULT: readonly string[] = ['movement'];
+export const HIDDEN_BY_DEFAULT: readonly EventGroupKey[] = ['movement'];
 
 const BY_TYPE = new Map<string, EventGroup>(
   EVENT_GROUPS.flatMap((group) => group.types.map((type) => [type, group] as const)),
@@ -51,5 +63,6 @@ const BY_TYPE = new Map<string, EventGroup>(
 
 /** The Event group of an event type (Tag for a type the table doesn't know). */
 export function eventGroupOf(type: TimelineEventType): EventGroup {
+  // Defence against the server sending a type the client doesn't know yet: show it, don't crash.
   return BY_TYPE.get(type) ?? EVENT_GROUPS[0];
 }

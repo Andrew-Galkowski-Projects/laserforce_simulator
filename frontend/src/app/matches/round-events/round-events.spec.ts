@@ -1,7 +1,8 @@
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
-import { Title } from '@angular/platform-browser';
+import { CdkFixedSizeVirtualScroll } from '@angular/cdk/scrolling';
+import { By, Title } from '@angular/platform-browser';
 import { provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../environments/environment';
@@ -130,10 +131,12 @@ describe('Event log (/rounds/:id/events)', () => {
   }
 
   describe('page head', () => {
-    it('reads "Event Log", names both teams and links back to the Round', async () => {
+    it('titles the page with both teams under an "Event Log" eyebrow and links back', async () => {
       await open();
-      expect(text(page().querySelector('h1'))).toBe('Event Log');
-      expect(text(page().querySelector('.re-meta'))).toBe('Comets vs Vipers');
+      expect(text(page().querySelector('h1'))).toBe('Comets vs Vipers');
+      const kicker = page().querySelector('.re-kicker');
+      expect(text(kicker)).toBe('Event Log');
+      expect(kicker?.nextElementSibling?.tagName).toBe('H1');
       expect(link('Back to Round')?.getAttribute('href')).toBe('/rounds/9');
       expect(text(link('Back to Round'))).toBe('← Back to Round');
     });
@@ -181,7 +184,7 @@ describe('Event log (/rounds/:id/events)', () => {
       ...page().querySelectorAll<HTMLElement>('.re-highlights .re-highlight'),
     ];
 
-    it('lists each with its kind label, mm:ss, label text and Side', async () => {
+    it('lists each with its kind label, mm:ss, label text and Side, with an R / B badge', async () => {
       await open(
         timeline({
           highlights: [
@@ -195,19 +198,27 @@ describe('Event log (/rounds/:id/events)', () => {
         }),
       );
       const rows = highlightRows().map((h) => [
+        text(h.querySelector('.re-sidetag')),
         text(h.querySelector('.re-highlight__kind')),
         text(h.querySelector('.re-highlight__time')),
         text(h.querySelector('.re-highlight__label')),
         h.getAttribute('data-lf-side'),
       ]);
       expect(rows).toEqual([
-        ['Nuke', '00:30', 'Ace nuked', 'red'],
-        ['Nuke Cancelled', '02:30', 'Nuke stopped', 'blue'],
-        ['Medic Reset', '03:45', 'Cleo reset x2', 'blue'],
-        ['First Elim', '02:00', 'Bolt eliminated Ace', 'blue'],
-        ['Team Wipe', '12:30', 'Blue wiped', 'red'],
-        ['Scoring Burst', '10:00', '+900 in 30s', 'red'],
+        ['R', 'Nuke', '00:30', 'Ace nuked', 'red'],
+        ['B', 'Nuke Cancelled', '02:30', 'Nuke stopped', 'blue'],
+        ['B', 'Medic Reset', '03:45', 'Cleo reset x2', 'blue'],
+        ['B', 'First Elim', '02:00', 'Bolt eliminated Ace', 'blue'],
+        ['R', 'Team Wipe', '12:30', 'Blue wiped', 'red'],
+        ['R', 'Scoring Burst', '10:00', '+900 in 30s', 'red'],
       ]);
+    });
+
+    it('gives a Highlight with no team no Side badge', async () => {
+      await open(timeline({ highlights: [highlight({ team: null, label: 'Nobody' })] }));
+      const [row] = highlightRows();
+      expect(row.getAttribute('data-lf-side')).toBeNull();
+      expect(row.querySelector('.re-sidetag')).toBeNull();
     });
 
     it('scrolls the timeline to the first visible event at or after its tick', async () => {
@@ -273,10 +284,12 @@ describe('Event log (/rounds/:id/events)', () => {
       expect(text(tag.querySelector('.re-row__chip'))).toBe('Tag');
       expect(text(tag.querySelector('.re-row__desc'))).toBe('Ace tagged Bolt');
       const actor = tag.querySelector('.re-row__actor');
-      expect(text(actor)).toBe('Ace');
+      expect(text(actor)).toBe('R Ace');
+      expect(text(actor?.querySelector('.re-sidetag'))).toBe('R');
       expect(actor?.getAttribute('data-lf-side')).toBe('red');
       const target = tag.querySelector('.re-row__target');
-      expect(text(target)).toBe('Bolt');
+      expect(text(target)).toBe('B Bolt');
+      expect(text(target?.querySelector('.re-sidetag'))).toBe('B');
       expect(target?.getAttribute('data-lf-side')).toBe('blue');
       const points = tag.querySelector('.re-row__points');
       expect(text(points)).toBe('+100');
@@ -534,6 +547,45 @@ describe('Event log (/rounds/:id/events)', () => {
       expect(text(panel?.querySelector('mat-panel-title'))).toBe('Filters');
       expect(panel?.querySelector('[aria-expanded]')?.getAttribute('aria-expanded')).toBe('false');
       expect(panel?.nextElementSibling?.classList).toContain('re-timeline');
+    });
+
+    /** The virtual scroll's item size, as the directive holds it. */
+    const itemSize = (): number =>
+      harness.fixture.debugElement
+        .query(By.directive(CdkFixedSizeVirtualScroll))
+        .injector.get(CdkFixedSizeVirtualScroll).itemSize;
+    async function showMetadata(): Promise<void> {
+      page().querySelector<HTMLElement>('mat-slide-toggle button[role="switch"]')?.click();
+      await harness.fixture.whenStable();
+    }
+
+    it('keeps each row on one line at 1280px: 36px, 56px with metadata', async () => {
+      viewport(1280);
+      await open();
+      expect(rows()[0].classList).not.toContain('re-row--narrow');
+      expect(itemSize()).toBe(36);
+      expect(rows()[0].style.height).toBe('36px');
+      await showMetadata();
+      expect(itemSize()).toBe(56);
+      expect(rows()[0].style.height).toBe('56px');
+    });
+
+    it('puts the names on a second line at 768px: 56px, 76px with metadata', async () => {
+      viewport(768);
+      await open();
+      const [row] = rows();
+      expect(row.classList).toContain('re-row--narrow');
+      const actor = row.querySelector('.re-row__who .re-row__actor');
+      expect(actor?.getAttribute('data-lf-side')).toBe('red');
+      expect(text(actor?.querySelector('.re-sidetag'))).toBe('R');
+      const target = row.querySelector('.re-row__who .re-row__target');
+      expect(target?.getAttribute('data-lf-side')).toBe('blue');
+      expect(text(target?.querySelector('.re-sidetag'))).toBe('B');
+      expect(itemSize()).toBe(56);
+      expect(row.style.height).toBe('56px');
+      await showMetadata();
+      expect(itemSize()).toBe(76);
+      expect(rows()[0].style.height).toBe('76px');
     });
   });
 
