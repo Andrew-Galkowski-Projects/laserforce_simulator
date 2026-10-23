@@ -28,6 +28,9 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 - Filters use an explicit `django-filter` allowlist.
 - A row owned by another Account returns 404. An anonymous request returns 401
   with `WWW-Authenticate: Bearer` (ADR-0041).
+- A list of related ids or rows in an API output declares its order (`order_by`, or
+  a sort in the serializer). A model without `Meta.ordering` (e.g. `GameRound`) never
+  supplies one, so `round_ids` came back in an undefined order until ANG-06d.
 
 ## Angular frontend
 

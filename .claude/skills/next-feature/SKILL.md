@@ -178,6 +178,10 @@ parallel, prepare the integration tip yourself:
   the stub's text), and a spec that opens another ticket's screen releases
   that screen's requests before `verify()`. Otherwise every parallel ticket
   breaks the earlier specs.
+- When a ticket adds a **required** field to a shared API model type, add the
+  field to every shared spec fixture that builds that type first. Otherwise
+  the ticket must edit fixtures another ticket owns (ANG-06d: `scoreboard`
+  on `GameRound` broke `match-fixtures.ts`).
 
 Point each one at the spec issue and its ticket issue rather than pasting them.
 
@@ -240,8 +244,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    `docker info` succeeds, on Postgres as the `CLAUDE.md` *Database* bullet
    "Test suite on Postgres" says, plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
-   Run the suites one after another: a Postgres run beside `test:ci` starves
-   Vitest into false timeouts (ANG-06c). **Python-free diff:** when
+   Run every suite on its own, never in the background beside another: any
+   `pytest -n auto` run (SQLite or Postgres) beside `test:ci` starves Vitest
+   into false timeouts (ANG-06c, ANG-06d). **Python-free diff:** when
    `python .claude/skills/verify/scripts/changed_files.py --base origin/main --mode branch`
    reports empty `python`, `templates` and `migrations` buckets, skip both suite
    runs and `makemigrations` (CI runs them) and report
@@ -287,9 +292,10 @@ findings the owner agrees with in one implementer pass, re-run the affected
 tests, and review again only if a fix changed behaviour. The fix pass is
 the orchestrator's own work, not a ticket: tell its agent to **stage** its
 files and report, not commit (the auto-mode classifier refuses its commit).
-Read the staged files with Read (`git -C` into its worktree is refused),
-copy them onto the integration branch, re-run the frontend / Python checks
-there, and commit them yourself.
+Copy them onto the integration branch with
+`python scripts/copy_staged.py <fix worktree>` (one plain command; a `cp` loop
+or `git -C` into that worktree is refused). Review the result with `git diff`,
+re-run the frontend / Python checks there, and commit them yourself.
 
 ## Step 9: PR
 
