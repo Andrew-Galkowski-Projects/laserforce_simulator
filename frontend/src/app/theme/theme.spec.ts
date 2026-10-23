@@ -141,6 +141,55 @@ function sideValues(): string[] {
   );
 }
 
+/** Tokens used as text colour: each must reach 4.5:1 (WCAG AA) on both page backgrounds. */
+const TEXT_TOKENS = LF_COLOUR_TOKENS.filter(
+  (name) => name === '--lf-text' || name.endsWith('-text') || name.startsWith('--lf-ev-'),
+);
+const TEXT_BACKGROUNDS = ['--lf-bg', '--lf-surface'] as const;
+const MIN_TEXT_CONTRAST = 4.5;
+
+/** An sRGB channel (0..1) to linear light. */
+function linearise(channel: number): number {
+  return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+}
+
+/** Linear sRGB of a token value: `#rrggbb` or `oklch(L C H)`, the two forms `_tokens.scss` uses. */
+function linearRgb(value: string): [number, number, number] {
+  const hex = /^#([0-9a-f]{6})$/i.exec(value);
+  if (hex) {
+    return [0, 2, 4].map((i) => linearise(parseInt(hex[1].slice(i, i + 2), 16) / 255)) as [
+      number,
+      number,
+      number,
+    ];
+  }
+  const oklch = /^oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\)$/.exec(value);
+  if (!oklch) throw new Error(`unsupported colour value: ${value}`);
+  const [lightness, chroma, hue] = oklch.slice(1).map(Number);
+  const a = chroma * Math.cos((hue * Math.PI) / 180);
+  const b = chroma * Math.sin((hue * Math.PI) / 180);
+  // OKLab to linear sRGB (Ottosson), clamped to the gamut.
+  const l = (lightness + 0.3963377774 * a + 0.2158037573 * b) ** 3;
+  const m = (lightness - 0.1055613458 * a - 0.0638541728 * b) ** 3;
+  const s = (lightness - 0.0894841775 * a - 1.291485548 * b) ** 3;
+  const rgb = [
+    4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+    -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+    -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+  ];
+  return rgb.map((channel) => Math.min(1, Math.max(0, channel))) as [number, number, number];
+}
+
+/** WCAG 2 contrast ratio between two token values. */
+function contrast(foreground: string, background: string): number {
+  const luminance = (value: string) => {
+    const [r, g, b] = linearRgb(value);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  };
+  const [high, low] = [luminance(foreground), luminance(background)].sort((x, y) => y - x);
+  return (high + 0.05) / (low + 0.05);
+}
+
 let styleElement: HTMLStyleElement | undefined;
 
 /** Injects the compiled stylesheet as `scheme` and returns the document root's computed style. */
@@ -186,6 +235,17 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
         (role) => !root.getPropertyValue(role).includes('var(--lf-'),
       );
       expect(generated).toEqual([]);
+    });
+
+    it(`gives every text colour token 4.5:1 on --lf-bg and --lf-surface in ${scheme} mode`, () => {
+      const root = applyStylesheet(scheme);
+      const value = (name: string) => root.getPropertyValue(name).trim();
+      const failing = TEXT_TOKENS.flatMap((token) =>
+        TEXT_BACKGROUNDS.map((bg) => ({ token, bg, ratio: contrast(value(token), value(bg)) }))
+          .filter(({ ratio }) => ratio < MIN_TEXT_CONTRAST)
+          .map(({ token, bg, ratio }) => `${token} on ${bg}: ${ratio.toFixed(2)}`),
+      );
+      expect(failing).toEqual([]);
     });
 
     it(`points a [data-lf-side] element's --side* aliases at its Side in ${scheme} mode`, () => {

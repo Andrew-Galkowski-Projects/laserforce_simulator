@@ -17,6 +17,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
+from laserforce_simulator.testing import assert_owner_only
 from matches.models import GameEvent, GameRound, PlayerRoundState
 from matches.services import round_playback_payload
 from matches.simulation import BatchSimulator
@@ -267,14 +268,15 @@ class TestTimelineAccess(_TimelineTestCase):
         errors = response.json()["errors"]
         self.assertEqual(errors[0]["code"], "not_found")
 
-    def test_foreign_round_is_404(self) -> None:
-        foreign = GameRound.objects.create(
-            round_number=1,
-            team_red=self.red,
-            team_blue=self.blue,
-            manager=self.user_b,
+    def test_round_is_owner_only(self) -> None:
+        # An Unmanaged round is readable by every Account (ADR-0038): own it first.
+        self.game_round.manager = self.user_a
+        self.game_round.save(update_fields=["manager"])
+        assert_owner_only(
+            f"/api/rounds/{self.game_round.pk}/timeline/",
+            owner=self.user_a,
+            other=self.user_b,
         )
-        self.assert_404(self.api.get(f"/api/rounds/{foreign.pk}/timeline/"))
 
     def test_missing_round_is_404(self) -> None:
         self.assert_404(self.api.get("/api/rounds/999999/timeline/"))

@@ -60,6 +60,12 @@ with no event-type token of their own (Locking, Base capture, Movement on the Ev
 the same 4.5:1 on `--lf-bg` (light: locking `#b4235a` 5.43, base `#467010` 5.04, movement
 `#706a62` 4.60). Light base was `#4d7c0f` (4.30) and movement `#8a94a6` (2.63), so both were
 darkened; movement is a warm grey so it stays apart from the cool-grey `--lf-ev-miss`.
+Dark movement was `oklch(0.58 0.03 256)` (3.43 on `--lf-surface`); it is now the warm grey
+`oklch(0.66 0.03 60)` (5.70 on `--lf-bg`, 4.68 on `--lf-surface`).
+
+**The contrast bar is a test.** Every text colour token (`--lf-text`, each `*-text` and each
+`--lf-ev-*`) reaches 4.5:1 (WCAG AA) on both `--lf-bg` and `--lf-surface`, in light and dark;
+`theme.spec.ts` computes the ratios from the compiled tokens and fails below that.
 
 **The token contract.** `frontend/src/styles/_tokens.scss` defines, and `LF_TOKENS` in
 `frontend/src/app/theme/theme-tokens.ts` lists, exactly these custom properties. Components read

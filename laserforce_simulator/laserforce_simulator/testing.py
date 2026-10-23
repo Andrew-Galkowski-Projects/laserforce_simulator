@@ -13,6 +13,8 @@ where pytest was started.
 ``install_close_in_transaction_guard`` (CI-01) makes closing a DB connection
 inside a test transaction raise on every backend. The root conftest's
 ``pytest_configure`` installs it once per pytest run.
+
+``assert_owner_only`` is the cross-Account 404 check for an ``/api/`` read.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from django.contrib.auth.models import AbstractBaseUser
     from django.db.backends.base.base import BaseDatabaseWrapper
 
 # The directory holding manage.py (and the matches / teams / core packages).
@@ -103,3 +106,31 @@ def run_project_python(
         errors="replace",
         timeout=timeout,
     )
+
+
+def assert_owner_only(
+    url: str, *, owner: AbstractBaseUser, other: AbstractBaseUser
+) -> None:
+    """Assert ``owner`` reads ``url`` (200) and ``other`` gets ADR-0039's 404.
+
+    The owner half is what makes the check honest: a bare "other Account gets
+    404" test also passes when the endpoint 404s for every Account (an empty
+    or over-filtered queryset), so it proves nothing about ownership. The row
+    behind ``url`` must be owned by ``owner``: an Unmanaged row is readable by
+    every Account (ADR-0038).
+    """
+    from rest_framework.test import APIClient
+
+    owner_client = APIClient()
+    owner_client.force_authenticate(owner)
+    owned = owner_client.get(url)
+    assert owned.status_code == 200, f"owner got {owned.status_code} on {url}"
+
+    other_client = APIClient()
+    other_client.force_authenticate(other)
+    foreign = other_client.get(url)
+    assert (
+        foreign.status_code == 404
+    ), f"other Account got {foreign.status_code} on {url}"
+    code = foreign.json()["errors"][0]["code"]
+    assert code == "not_found", f"other Account got code {code!r} on {url}"
