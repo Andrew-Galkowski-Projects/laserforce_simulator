@@ -80,7 +80,7 @@
             <tbody>
               @for (p of rows(r, side); track p.player_id) {
                 <tr [class.is-out]="p.is_eliminated" [class.is-top-mvp]="p.mvp === topMvp()">
-                  <td class="rd-strong">
+                  <td>
                     @if (p.mvp === topMvp()) {
                       <span class="rd-star" title="Top MVP of the round">&#9733;</span>
                     }

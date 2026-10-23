@@ -102,10 +102,11 @@ src/
                           tables, each row's teams-cell <a> stretched over the row), /matches/new +
                           /rounds/new (setup-form, route data kind 'match' | 'round'; also uses
                           teams/shared/form-errors), /matches/:id + /rounds/:id (match-detail,
-                          round-detail: summary stubs until ANG-06 item 4); shared/: result.ts
-                          (matchResult / roundResult: winner, "Tie", muted "In progress"),
-                          result-chip, result-summary, route-record.ts (loadRouteRecord),
-                          record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures)
+                          round-detail: ANG-06d, layout B, from the Round API's `scoreboard`);
+                          shared/: result.ts (matchResult / roundResult: winner, "Tie", muted
+                          "In progress"), result-chip, route-record.ts (loadRouteRecord),
+                          record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
+                          scoreboard-fixtures)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures

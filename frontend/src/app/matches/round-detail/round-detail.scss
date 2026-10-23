@@ -28,18 +28,11 @@ h1 {
   margin-bottom: 1rem;
 }
 
-.rd-kicker {
-  margin: 0 0 0.2rem;
-  color: var(--lf-text-muted);
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
+.rd-kicker,
 .rd-meta {
-  margin: 0.25rem 0 0;
+  margin: 0.25rem 0;
   color: var(--lf-text-muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
 }
 
 .rd-actions {
@@ -51,10 +44,6 @@ h1 {
 .rd-muted {
   color: var(--lf-text-muted);
   font-weight: 400;
-}
-
-.rd-strong {
-  font-weight: 600;
 }
 
 // ---- Team strip -----------------------------------------------------------------------------
@@ -73,7 +62,6 @@ h1 {
   border: 1px solid var(--lf-border);
   border-left: 4px solid var(--side);
   border-radius: var(--lf-radius) var(--lf-radius) 0 0;
-  box-shadow: var(--lf-glow) var(--side);
 
   &__name {
     display: flex;
@@ -117,7 +105,6 @@ h1 {
   color: var(--side-text);
   font-size: 0.65rem;
   font-weight: 700;
-  letter-spacing: 0.08em;
 }
 
 .rd-badge {
@@ -146,24 +133,24 @@ h1 {
   }
 }
 
-.rd-empty {
+// ---- Table (or the no-data line) under the strip --------------------------------------------
+.rd-empty,
+.rd-tablewrap {
   margin: 0;
-  padding: 0.9rem;
   border: 1px solid var(--lf-border);
   border-top: 0;
   border-radius: 0 0 var(--lf-radius) var(--lf-radius);
   background: var(--lf-surface);
+}
+
+.rd-empty {
+  padding: 0.9rem;
   color: var(--lf-text-muted);
 }
 
-// ---- Table ----------------------------------------------------------------------------------
 .rd-tablewrap {
   max-height: 26rem;
   overflow: auto;
-  border: 1px solid var(--lf-border);
-  border-top: 0;
-  border-radius: 0 0 var(--lf-radius) var(--lf-radius);
-  background: var(--lf-surface);
 }
 
 .rd-table {
@@ -207,11 +194,6 @@ h1 {
       color: inherit;
       font: inherit;
       cursor: pointer;
-      white-space: nowrap;
-
-      &:hover {
-        color: var(--lf-text);
-      }
     }
 
     &.num button {
@@ -235,10 +217,6 @@ h1 {
     text-align: center;
   }
 
-  tbody tr:hover td {
-    background: var(--lf-surface-alt);
-  }
-
   // Callsign stays pinned while the wide table scrolls sideways.
   td:first-child,
   th:first-child {
@@ -246,6 +224,7 @@ h1 {
     left: 0;
     background: var(--lf-surface);
     border-right: 1px solid var(--lf-border);
+    font-weight: 600;
   }
 
   th:first-child {
@@ -279,28 +258,21 @@ tr.is-out td {
   text-shadow: var(--lf-glow) var(--lf-ev-nuke);
 }
 
-.rd-out {
+.rd-out,
+.rd-you {
   margin-left: 0.35rem;
   padding: 0 0.3rem;
-  border: 1px solid var(--lf-ev-elimination);
   border-radius: var(--lf-radius);
-  color: var(--lf-text-muted);
   font-size: 0.65rem;
   font-weight: 700;
+}
+
+.rd-out {
+  border: 1px solid var(--lf-ev-elimination);
+  color: var(--lf-text-muted);
 }
 
 .rd-you {
-  margin-left: 0.35rem;
-  padding: 0 0.35rem;
-  border-radius: var(--lf-radius);
   background: var(--lf-accent);
   color: var(--lf-bg);
-  font-size: 0.65rem;
-  font-weight: 700;
-}
-
-@media (max-width: 767.98px) {
-  h1 {
-    font-size: 1.2rem;
-  }
 }
