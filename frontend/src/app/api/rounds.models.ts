@@ -81,9 +81,66 @@ export interface PlayerRoundState {
   was_eliminated_at: number;
 }
 
+/**
+ * One **Round scoreboard** row (`matches/services.py` `_player_row`): the 28
+ * `round_summary.PLAYER_ROW_KEYS` plus `player_id`.
+ */
+export interface ScoreboardRow {
+  player_id: number;
+  name: string;
+  role: string;
+  team_color: 'red' | 'blue';
+  /** Ticks; 1801 (or 0, legacy) means survived; null on legacy rows (then `final_lives` decides). */
+  was_eliminated_at: number | null;
+  /** `m:ss` when eliminated, else `''`. */
+  eliminated_timestamp: string;
+  is_eliminated: boolean;
+  final_lives: number;
+  points_scored: number;
+  /** The SM5 MVP score (2 decimals). */
+  mvp: number;
+  tags_made: number;
+  times_tagged: number;
+  /** Integer percentage, 0-100. */
+  accuracy: number;
+  final_shots: number;
+  final_special: number;
+  shots_used: number;
+  missiles_used: number;
+  starting_missiles: number;
+  missiles_landed: number;
+  times_missiled: number;
+  final_medic_hits: number;
+  medic_lives_removed_from_nuke: number;
+  follow_up_shots: number;
+  reaction_shots: number;
+  resupplies_given: number;
+  specials_used: number;
+  combo_resupply_count: number;
+  specific_tags_count: number;
+  special_cost: number;
+}
+
+/** One Side of `round_scoreboard`: rows ordered `-points_scored, role, name`. */
+export interface ScoreboardSide {
+  players: ScoreboardRow[];
+  survivors: number;
+  /** True when no player on this Side has lives left. */
+  eliminated: boolean;
+  /** The elimination bonus this Side earned (the other Side was eliminated), else 0. */
+  elim_bonus: number;
+}
+
+/** `GameRoundSerializer.scoreboard`, grouped by the Side each player played. */
+export interface RoundScoreboard {
+  red: ScoreboardSide;
+  blue: ScoreboardSide;
+}
+
 /** `GameRoundSerializer`: `GET rounds/{id}/` and the create response. */
 export interface GameRound extends GameRoundListItem {
   player_states: PlayerRoundState[];
+  scoreboard: RoundScoreboard;
 }
 
 /** `GameEvent.EVENT_TYPES` keys. */

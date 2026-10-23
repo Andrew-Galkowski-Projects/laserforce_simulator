@@ -78,7 +78,12 @@ const PLAYER_STATE: PlayerRoundState = {
   was_eliminated_at: 1801,
 };
 
-const ROUND: GameRound = { ...ROUND_LIST_ITEM, player_states: [PLAYER_STATE] };
+const SIDE = { players: [], survivors: 0, eliminated: false, elim_bonus: 0 };
+const ROUND: GameRound = {
+  ...ROUND_LIST_ITEM,
+  player_states: [PLAYER_STATE],
+  scoreboard: { red: SIDE, blue: SIDE },
+};
 
 const EVENT: GameEvent = {
   id: 9001,
@@ -164,6 +169,16 @@ describe('RoundsService', () => {
     expect(req.request.body).toEqual(body);
     req.flush({ data: ROUND, meta: {} }, { status: 201, statusText: 'Created' });
     expect(await result).toEqual(ROUND);
+  });
+
+  it('downloads the Round report PDF as a Blob, no envelope unwrap', async () => {
+    const result = firstValueFrom(rounds.report(21));
+    const req = http.expectOne(`${BASE}/rounds/21/report/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.responseType).toBe('blob');
+    const pdf = new Blob(['%PDF-1.4'], { type: 'application/pdf' });
+    req.flush(pdf);
+    expect(await result).toBe(pdf);
   });
 
   it("pages through a Round's events with filters", async () => {

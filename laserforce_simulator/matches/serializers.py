@@ -12,6 +12,7 @@ from matches.models import (
     SeasonPhase,
     Tournament,
 )
+from matches.services import round_scoreboard
 from matches.tournament_services.detail import tournament_fields
 
 _GAME_ROUND_FIELDS = [
@@ -69,17 +70,25 @@ class GameRoundSerializer(_TeamNamesMixin, serializers.ModelSerializer):
     """Full round detail including all player states."""
 
     player_states = PlayerRoundStateSerializer(many=True, read_only=True)
+    # ANG-06d: the Round scoreboard, built by the same ``round_scoreboard`` the
+    # Django round page renders (named, ordered, MVP-scored rows per Side).
+    scoreboard = serializers.SerializerMethodField()
 
     class Meta:
         model = GameRound
         # event_log is a legacy text dump; structured data is served via /events/
-        fields = _GAME_ROUND_FIELDS + _TEAM_NAME_FIELDS + ["player_states"]
+        fields = (
+            _GAME_ROUND_FIELDS + _TEAM_NAME_FIELDS + ["player_states", "scoreboard"]
+        )
+
+    def get_scoreboard(self, obj: GameRound) -> dict:
+        return round_scoreboard(obj)
 
 
 class MatchSerializer(_TeamNamesMixin, serializers.ModelSerializer):
-    round_ids = serializers.PrimaryKeyRelatedField(
-        many=True, read_only=True, source="game_rounds"
-    )
+    # ANG-06d: ``GameRound`` has no ``Meta.ordering``, so order explicitly;
+    # clients read ``round_ids[i]`` as Round ``i + 1``.
+    round_ids = serializers.SerializerMethodField()
     # ANG-06c — the existing Match properties, never re-derived here.
     red_total_points = serializers.IntegerField(read_only=True)
     blue_total_points = serializers.IntegerField(read_only=True)
@@ -89,6 +98,11 @@ class MatchSerializer(_TeamNamesMixin, serializers.ModelSerializer):
     class Meta:
         model = Match
         fields = "__all__"
+
+    def get_round_ids(self, obj: Match) -> list[int]:
+        return [
+            r.pk for r in sorted(obj.game_rounds.all(), key=lambda r: r.round_number)
+        ]
 
 
 # ---------------------------------------------------------------------------

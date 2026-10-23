@@ -74,14 +74,14 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 |----------|-----------|-------|
 | `GET /api/matches/` | `MatchSerializer` | Includes `round_ids` (PK list, not nested). Filters: `team` (either side), `season`, `match_type` (bad choice ⇒ 400), `date_played_after` / `date_played_before` (`YYYY-MM-DD`, inclusive, bad date ⇒ 400). Ordering `date_played`, `id`; default `-date_played`, tiebreak `-id` |
 | `POST /api/matches/` | `MatchSerializer` | **ANG-01b.** Binds `MatchSetupForm(user=request.user)` (`team_red`, `team_blue`, `match_type` required, `arena_map` optional); simulates synchronously ⇒ **201**, `manager` = requester |
-| `GET /api/matches/<id>/` | `MatchSerializer` | Same — full match fields + round PK list |
+| `GET /api/matches/<id>/` | `MatchSerializer` | Same — full match fields + round PK list (`round_ids`, ordered by `round_number` since ANG-06d: `round_ids[i]` is Round `i + 1`) |
 | `GET /api/rounds/` | `GameRoundListSerializer` | Slim — no `player_states`, no `event_log`. Filters: `match`, `arena_map`, **ANG-06c** `single_round` (`true` ⇒ only **Single Rounds**, `match IS NULL`; `false` ⇒ only a Match's Rounds). Ordering `date_played`, `round_number`, `id`; default `-date_played`, tiebreak `-id` |
 | `POST /api/rounds/` | `GameRoundSerializer` | **ANG-01b.** Binds `SingleRoundSetupForm(user=request.user)`; standalone detailed round ⇒ **201**, `manager` = requester |
-| `GET /api/rounds/<id>/` | `GameRoundSerializer` | Full — nested `player_states` array |
+| `GET /api/rounds/<id>/` | `GameRoundSerializer` | Full — nested `player_states` array, plus **ANG-06d** read-only `scoreboard` (also on the `POST` 201): `round_scoreboard(gr)` ⇒ `{red, blue: {players, survivors, eliminated, elim_bonus}}`, each row the 28 `PLAYER_ROW_KEYS` + `player_id`, grouped by `team_color`, ordered `-points_scored, role, player__name`; `elim_bonus` = `BatchSimulator.elimination_bonus` when the other Side is eliminated, else 0. Not on list rows |
 | `GET /api/rounds/<id>/events/` | `GameEventSerializer` | Always paginated, fixed order `timestamp, id` (no `?ordering`). Filters (`GameEventFilterSet`): `event_type` (bad choice ⇒ 400), `actor`, `target`, `timestamp_min` / `timestamp_max` (raw ticks, inclusive). **ANG-01b:** upgrades the round to `full` fidelity first |
 | `GET /api/rounds/<id>/missile-log/` | — (builder dict) | **ANG-01b.** RES-03 `{round_id, fired, hit, efficiency, rows}`; upgrades to `combat` |
 | `GET /api/rounds/<id>/heatmap/` | — (builder dict) | **ANG-01b.** RES-04 `{round_id, has_map, arena_map: {id, name} \| null, zone_size, processed_image_url, cell_occupancy_json, player_roster}`; upgrades to `full` |
-| `GET /api/rounds/<id>/report/` | — (raw PDF) | **ANG-01b.** RV-03 PDF attachment, **not enveloped**, no fidelity upgrade |
+| `GET /api/rounds/<id>/report/` | — (raw PDF) | **ANG-01b.** RV-03 PDF attachment, **not enveloped**. **RV-05:** upgrades the round to `full` fidelity first (`ensure_fidelity(..., "full")`, as `/events/` does) so the chart section plots the same events |
 | `GET /api/rounds/compare/?round_a=&round_b=` | — (builder dict) | **ANG-01b.** RV-01 `{round_a, round_b, stat_keys, team_ids, points_series, deltas}` |
 | `POST /api/simulate-batch/<job_id>/save/` | — | **ANG-01b.** Enqueue `save_games_task` ⇒ 200 `{job_id}` |
 | `GET /api/simulate-batch/save/<save_job_id>/` | — | **ANG-01b.** Save Job status `{status, error, round_ids}` |
@@ -169,8 +169,9 @@ Seam contract: [`.claude/worktrees/ang-01b-seam-contract.md`](../../../.claude/w
   results-mode context keys (no model instances).
 - `build_missile_log(gr)` (calls `ensure_fidelity(gr, "combat")` first), `build_heatmap(gr)`
   (`ensure_fidelity(gr, "full")` first; returns the `ArenaMap` **instance** — the API flattens it),
-  `build_round_report_data(gr)` (the 15-key RV-03 `report_data`, **no** fidelity upgrade),
-  `round_report_filename(gr)`.
+  `build_round_report_data(gr)` (the 15-key RV-03 `report_data`, **no** fidelity upgrade: the
+  `report` action upgrades first), `round_report_filename(gr)`, **ANG-06d** `round_scoreboard(gr)`
+  (the Django round page context and the API `scoreboard` field).
 - The RV-01 / HX-03 / HX-04 private helpers moved here verbatim; `matches/views.py` re-exports
   `_player_row`, `_comparison_row`, `_cumulative_team_points` and `_shared_team_ids = shared_team_ids`.
   The lenient HTML parsers (`_parse_provenance`, `_parse_date`, `_H2H_PROVENANCE_VALUES`) stay in views.
@@ -209,7 +210,8 @@ rounds / teams / players to compare." (`field` null) — checked **before** the 
   byte-identical to the HTML JSON; never 4xx (unknown ⇒ `running`).
 
 **Fidelity (GEN-01).** missile-log ⇒ `combat`, heatmap ⇒ `full`, and the ANG-01a `/events/` action
-now ⇒ `full` (before, a `scores` round served an empty event list); the report does **not** upgrade.
+now ⇒ `full` (before, a `scores` round served an empty event list); since RV-05 the report also
+upgrades to `full` in the action (`build_round_report_data` itself still does not).
 
 **HTML views changed (output byte-identical for owned data).** `create_match` / `create_single_round`
 / `simulate_batch` pass `user=request.user` and delegate to the services (team choices narrow);

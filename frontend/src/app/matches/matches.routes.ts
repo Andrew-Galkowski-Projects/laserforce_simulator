@@ -32,5 +32,5 @@ export const ROUNDS_ROUTES: Routes = [
     data: { kind: 'round' satisfies SetupKind },
     title: `New Single Round - ${APP_TITLE}`,
   },
-  { path: ':id', component: RoundDetail, title: `Single Round - ${APP_TITLE}` },
+  { path: ':id', component: RoundDetail, title: `Round - ${APP_TITLE}` },
 ];

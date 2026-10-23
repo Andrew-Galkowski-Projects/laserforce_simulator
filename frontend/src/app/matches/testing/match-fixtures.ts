@@ -1,6 +1,7 @@
 // Matches spec fixtures. Imported only by *.spec.ts files.
 import { Match } from '../../api/matches.models';
 import { GameRound, GameRoundListItem } from '../../api/rounds.models';
+import { emptyScoreboard } from './scoreboard-fixtures';
 
 /** A completed friendly Match, Alpha (red) beating Bravo (blue) 7500 - 6600, 1 - 1 in rounds. */
 export function matchRow(overrides: Partial<Match> = {}): Match {
@@ -64,9 +65,14 @@ export function roundRow(overrides: Partial<GameRoundListItem> = {}): GameRoundL
   };
 }
 
-/** `roundRow` as the detail serializer sends it (with player states, empty here). */
+/** `roundRow` as the detail serializer sends it (player states and scoreboard empty here). */
 export function roundDetail(overrides: Partial<GameRound> = {}): GameRound {
-  return { ...roundRow(overrides), player_states: [], ...overrides };
+  return {
+    ...roundRow(overrides),
+    player_states: [],
+    scoreboard: emptyScoreboard(),
+    ...overrides,
+  };
 }
 
 /** The `{data, meta}` envelope of one list page. */
