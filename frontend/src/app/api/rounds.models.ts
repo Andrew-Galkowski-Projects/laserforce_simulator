@@ -251,6 +251,68 @@ export interface RoundTimeline {
 }
 
 /**
+ * One **Playback snapshot**: a player's live state from `tick` until their next
+ * snapshot. Read on the server from the logged after-event values (ADR-0044).
+ */
+export interface PlaybackSnapshot {
+  tick: number;
+  score: number;
+  lives: number;
+  shots: number;
+  /** Can read −1 while MECH-16 spends a hit missile twice. */
+  missiles: number;
+  sp: number;
+  tags: number;
+  misses: number;
+  /** The tick of the player's latest Down or received resupply; `null` before either. */
+  downed_at: number | null;
+  eliminated: boolean;
+  rapid_fire: boolean;
+  nuking: boolean;
+}
+
+/** A player's snapshots: a tick-0 opening one, then one per tick their state changed. */
+export interface PlaybackPlayer {
+  id: number;
+  snapshots: PlaybackSnapshot[];
+}
+
+/** One player's recorded route on the beta Playback map. */
+export interface PlaybackMapPlayer {
+  id: number;
+  name: string;
+  team: Side;
+  role: string;
+  /** 1 / 2 for a Side's two Scouts, else 0. */
+  scout: number;
+  /** `[row, col]`. */
+  spawn: [number, number];
+  /** `[tick, polyline]`: the cells walked that Advance, ending at the end cell. */
+  moves: [number, [number, number][]][];
+}
+
+/** The beta map payload (`build_playback_map`); `null` for a map-less Round. */
+export interface PlaybackMap {
+  zone_size: number;
+  /** Fetch the image from `maps/{id}/processed-image/`. */
+  arena_map: { id: number; name: string };
+  players: PlaybackMapPlayer[];
+}
+
+/** `GET rounds/{id}/playback/`: the Round's Playback snapshots per player, plus the map. */
+export interface RoundPlayback {
+  /** 1800. */
+  duration_ticks: number;
+  /** 8. */
+  not_targetable_ticks: number;
+  /** 16. */
+  respawn_ticks: number;
+  /** In `PlayerRoundState.id` order, as `RoundTimeline.players`. */
+  players: PlaybackPlayer[];
+  map: PlaybackMap | null;
+}
+
+/**
  * `SingleRoundSetupForm` fields. Teams must be the caller's own valid rosters;
  * `arena_map` must have a confirmed zone config (omit for the 3-zone fallback).
  */
