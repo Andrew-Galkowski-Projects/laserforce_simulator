@@ -32,6 +32,8 @@ write-up parked below.
 
 ### PERF-01 · Fix the five known N+1 read actions
 
+Spec: #313
+
 **Prio: Medium (found 2026-10-23, ANG-06f retro).** The detail-action query-count guardrail
 (`laserforce_simulator/api/tests/test_detail_action_query_counts.py`) found five `/api/`
 read actions whose query count grows with the data. Each is a strict xfail in its
@@ -49,6 +51,38 @@ Fix each with `select_related` / `prefetch_related` or one aggregate query, then
 `KNOWN_N_PLUS_ONE` entry: the strict xfail turns red (XPASS) once the fix lands, so the two go in
 one change. Behaviour must not change; the League screen tests pin the payloads. For any item
 judged acceptable as bounded, record that in the entry's reason instead of fixing it.
+
+**Grill (2026-10-23, owner):**
+
+- **Scope:** only the five `KNOWN_N_PLUS_ONE` actions. HTML views that share a fixed
+  service speed up as a side effect; any other N+1 found goes into PLAN.md as a follow-up, unfixed.
+- **No behaviour change:** payloads stay byte-identical, order included; ownership (`manager`
+  seam, cross-Account 404) and the engine / RNG / ordering are untouched. Proof: the existing
+  payload tests pass unchanged and each strict xfail goes green once its entry is deleted.
+- **No migration by default:** `select_related` / `prefetch_related`, aggregates, batched
+  helpers or an existing snapshot. A new cached column comes back to the owner first.
+- **Seam:** the guardrail case per action (delete the entry: strict xfail XPASS is the red,
+  pass is the green). A new batched helper in a services module gets its own unit tests and a
+  named signature in the spec.
+- **Tickets:** one per action, run in parallel; actions sharing a services module merge into
+  one ticket or chain with blocked-by.
+- **history:** fix, don't accept as page-bounded (`?page_size=` reaches 100, ~200 extra
+  queries). New `compute_season_award_sets(seasons) -> dict[int, AwardSet]` in
+  `league_services.py`: snapshot awards plus one Player and one Team name query; in-progress,
+  stale or missing snapshots fall back to `compute_season_award_set`. `_refresh_names` takes
+  optional name maps; `build_history_row` takes an optional `award_set`. Fix the stale docstrings.
+- **league-player:** one League-wide `build_round_dicts` tagged with `season_id`, grouped in
+  Python; the career row from the same list; the Season-id set replaces the per-Season
+  `exists()`; awards via `compute_season_award_sets`. Ordering unchanged.
+- **team-history:** one `Team.in_bulk` and one completed-Match query (`game_rounds` prefetched)
+  grouped by Season; `team_history_seasons` gains `prefetch_related("teams")`. Narrowing its
+  `Season.objects.all()` scan is a follow-up, not built here.
+- **power-rankings:** `select_related` the six slot FKs on `Team.in_bulk`.
+- **owner-evaluation:** `_ensure_team_finances` early-exits when every required
+  `(team, season)` finance row exists (starting ids, else `season.teams`; deleted Teams
+  ignored), and memoises standings per Season on the slow path (`winp`, `games_played`).
+- **Breakdown:** T1 award batch + history; T2 owner-evaluation; T3 power-rankings + team-history
+  (T1-T3 in parallel); T4 league-player, blocked by T1 and T3.
 
 ### PERF-02 · Speed up the CI Python test job
 
