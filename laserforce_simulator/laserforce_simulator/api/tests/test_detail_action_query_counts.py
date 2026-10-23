@@ -353,8 +353,8 @@ def _league_world(user) -> Ctx:
 
 def _grow_league(ctx: Ctx) -> None:
     """Two more Teams enrolled in both Seasons (one per Conference), each with
-    played rounds; an older completed Season; one more bench player, free
-    agent and watched Player."""
+    played rounds; an older completed Season; a draft Season in another
+    League; one more bench player, free agent and watched Player."""
     user = ctx["user"]
     league: League = ctx["league"]
     teams: list[Team] = ctx["teams"]
@@ -379,6 +379,13 @@ def _grow_league(ctx: Ctx) -> None:
         league, teams[:3], name=f"Season {year}", start_date=date(year, 1, 1)
     )
     add_round_states(older, teams[0], teams[1])
+
+    # One more draft Season enrolling ``current``, in another League (a League
+    # holds one non-completed Season), so cross-League walks such as
+    # ``team_history_seasons`` read one more draft Season per step (PERF-01
+    # retro: the prefetch it needed was invisible here).
+    draft_league = League.objects.create(name=f"Draft {next(_seq)}", manager=user)
+    make_open_season(draft_league, [current], name="Draft")
 
     Player.objects.create(team=current, name=f"Bench {next(_seq)}")
     Player.objects.create(team=league.free_agent_pool, name=f"FA {next(_seq)}")

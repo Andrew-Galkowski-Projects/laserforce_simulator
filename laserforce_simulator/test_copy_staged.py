@@ -3,7 +3,9 @@
 The script lives outside the Django project, so it is loaded by path.
 """
 
+import contextlib
 import importlib.util
+import io
 import subprocess
 import tempfile
 from pathlib import Path
@@ -63,3 +65,15 @@ class CopyStagedTests(TestCase):
 
     def test_nothing_staged_copies_nothing(self) -> None:
         self.assertEqual(copy_staged.copy_staged(self.src, self.dst), [])
+
+    def test_main_ends_with_the_command_that_removes_the_source(self) -> None:
+        Path(self.src, "kept.txt").write_text("new\n")
+        _git(self.src, "add", "kept.txt")
+        out = io.StringIO()
+
+        with contextlib.chdir(self.dst), contextlib.redirect_stdout(out):
+            copy_staged.main([str(self.src)])
+
+        lines = out.getvalue().splitlines()
+        self.assertEqual(lines[0], "kept.txt")
+        self.assertEqual(lines[-1], f'git worktree remove --force "{self.src}"')

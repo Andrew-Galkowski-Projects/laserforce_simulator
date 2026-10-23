@@ -48,3 +48,46 @@ class SelectTests(TestCase):
             checked_out=set(),
         )
         self.assertEqual((delete, keep), ([], []))
+
+
+class AgentWorktreeTests(TestCase):
+    """PERF-01 retro: fix-pass worktrees outlived their copy; list every one."""
+
+    _PORCELAIN = [
+        "worktree C:/repo",
+        "HEAD 1111",
+        "branch refs/heads/main",
+        "worktree C:/repo/.claude/worktrees/agent-a1",
+        "HEAD 2222",
+        "branch refs/heads/worktree-agent-a1",
+        "worktree C:/repo/.claude/worktrees/feature-x",
+        "HEAD 3333",
+        "branch refs/heads/feature-x",
+        "worktree C:/repo/.claude/worktrees/agent-b2",
+        "HEAD 4444",
+        "detached",
+    ]
+
+    def test_lists_only_agent_worktrees_with_their_head(self) -> None:
+        self.assertEqual(
+            prune_agent_branches.agent_worktrees(self._PORCELAIN),
+            [
+                ("C:/repo/.claude/worktrees/agent-a1", "2222"),
+                ("C:/repo/.claude/worktrees/agent-b2", "4444"),
+            ],
+        )
+
+    def test_no_agent_worktrees_lists_nothing(self) -> None:
+        self.assertEqual(prune_agent_branches.agent_worktrees(self._PORCELAIN[:3]), [])
+
+    def test_describes_a_merged_clean_worktree(self) -> None:
+        self.assertEqual(
+            prune_agent_branches.describe_worktree("C:/w/agent-a1", True, 0),
+            "worktree C:/w/agent-a1  head in origin/main, clean",
+        )
+
+    def test_describes_a_dirty_unmerged_worktree(self) -> None:
+        self.assertEqual(
+            prune_agent_branches.describe_worktree("C:/w/agent-b2", False, 3),
+            "worktree C:/w/agent-b2  head NOT in origin/main, 3 uncommitted change(s)",
+        )

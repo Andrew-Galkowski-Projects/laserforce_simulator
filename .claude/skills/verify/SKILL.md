@@ -38,6 +38,10 @@ The script:
    multi-word `_Avoid_:` terms and flags added lines that use them (any case,
    `_` / `-` / camelCase joins). A hit is WARN, which never fails the run:
    rename it, or say in the PR why the word is right there.
+   `scripts/check_unused_private.py` (the `dead-code` row) flags a
+   module-level `_private` def or class in a changed file that nothing in the
+   repo references; an `import` alone is not a use. WARN as well: delete it,
+   or say why it stays (reached only through `getattr`).
 3. Derives the pytest targets from the authoritative app→tests mapping in
    `changed_files.py` and runs `pytest -q` against them (full suite only if a
    change matched no mapping).

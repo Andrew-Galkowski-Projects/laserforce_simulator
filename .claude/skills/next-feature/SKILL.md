@@ -64,7 +64,10 @@ each get their own session; a pipeline orchestrator launched as an agent
 inherits its parent's worktree and cannot enter its own (RV-05 retro).
 
 Enter a worktree (`EnterWorktree`), named for the task in kebab case (e.g.
-`ang-01e-league-stats-api`), and `git merge --ff-only origin/main`. A worktree has no
+`ang-01e-league-stats-api`), and `git merge --ff-only origin/main`. A session
+already inside a worktree (a retro's, say) is refused a new `name`: run
+`git worktree add -b <task> <main checkout>/.claude/worktrees/<task> origin/main`,
+then `EnterWorktree` with that `path` (PERF-01 retro). A worktree has no
 `db.sqlite3` and no `.env`: copy `laserforce_simulator/.env` from the main
 checkout into the worktree's `laserforce_simulator/`, then run
 `migrate` before any server or management command. When the task touches
@@ -278,7 +281,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    Seed with `python laserforce_simulator/manage.py seed_browser_check` (two
    Accounts, Teams, a Match, a Single Round, an unfinished Match, and a
    full-fidelity Single Round on the configured "Browser Check Arena" map for
-   map features) and remove it
+   map features; add `--league` for League features: a career, finance-enabled
+   League with two completed Seasons and an active one) and remove it
    with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Take a
    screenshot of each changed screen at 1280px and at 768px (`resize_page`),
@@ -309,7 +313,9 @@ files and report, not commit (the auto-mode classifier refuses its commit).
 Copy them onto the integration branch with
 `python scripts/copy_staged.py <fix worktree>` (one plain command; a `cp` loop
 or `git -C` into that worktree is refused). Review the result with `git diff`,
-re-run the frontend / Python checks there, and commit them yourself.
+re-run the frontend / Python checks there, and commit them yourself. Then
+remove the fix worktree with the command `copy_staged.py` prints: its staged
+files outlive the copy and otherwise sit on disk until someone audits them.
 
 ## Step 9: PR
 
@@ -353,14 +359,17 @@ Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work
 is in `main` under a new hash (other PRs that merged meanwhile show up in an
-unscoped diff). Then, for every implementer worktree, stop its servers with
+unscoped diff). Then, for every implementer and fix-pass worktree, stop its servers with
 `scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
 tool), `git worktree remove --force <path>`, and `git branch -D` its branch
 and its `worktree-agent-*` branch. `python scripts/prune_agent_branches.py
 --delete` then clears any older agent branches already merged into
-`origin/main`. Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
-`discard_changes: true`, after stopping its servers too) and delete the remote
-branch. If the main checkout is on `main`, `git pull --ff-only` there.
+`origin/main`, and lists every `agent-*` worktree still on disk with its
+state: remove each one this pipeline left. Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
+`discard_changes: true`, after stopping its servers too). One entered by
+`path` survives `remove`: `ExitWorktree` with `keep`, then `git worktree remove
+--force <path>` and `git branch -D <task>`. GitHub deletes the remote branch on
+merge. If the main checkout is on `main`, `git pull --ff-only` there.
 Otherwise run `git fetch origin main:main` (moves the local ref without a
 checkout), leave the checkout alone, and tell the owner which branch it is on.
 
