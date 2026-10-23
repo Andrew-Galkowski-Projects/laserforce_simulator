@@ -1,8 +1,9 @@
 import { Component, computed, input, signal } from '@angular/core';
 import { MatCheckbox } from '@angular/material/checkbox';
-import { Side, TimelineEvent } from '../../../api/rounds.models';
+import { TimelineEvent } from '../../../api/rounds.models';
 import { tickClock } from '../../shared/clock';
 import { EventGroup, eventGroupOf } from '../../shared/event-groups';
+import { sideTag } from '../../shared/side-tag';
 
 /** True when the actor, the description or the target contains `term` (already lower-cased). */
 function matches(e: TimelineEvent, term: string): boolean {
@@ -59,9 +60,5 @@ export class PlaybackFeed {
 
   protected readonly group = (e: TimelineEvent): EventGroup => eventGroupOf(e.event_type);
   protected readonly clock = (ticks: number): string => tickClock(ticks, { pad: true });
-
-  /** A Side's R / B badge, kept next to its colour for colour-blind users. */
-  protected sideTag(side: Side): string {
-    return side === 'red' ? 'R' : 'B';
-  }
+  protected readonly sideTag = sideTag;
 }

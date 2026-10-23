@@ -5,7 +5,6 @@ import { environment } from '../../../../environments/environment';
 import { authInterceptor } from '../../../auth/auth.interceptor';
 import { PlaybackMap as PlaybackMapData } from '../../../api/rounds.models';
 import { playbackMap } from '../../testing/playback-fixtures';
-import { TIMELINE_PLAYERS } from '../../testing/timeline-fixtures';
 import { PlaybackMap } from './playback-map';
 
 const BASE = environment.apiBaseUrl;
@@ -45,7 +44,6 @@ describe('PlaybackMap (beta, contract only)', () => {
   async function render(map: PlaybackMapData | null, cursor = 0): Promise<void> {
     fixture = TestBed.createComponent(PlaybackMap);
     fixture.componentRef.setInput('map', map);
-    fixture.componentRef.setInput('players', TIMELINE_PLAYERS);
     fixture.componentRef.setInput('cursor', cursor);
     fixture.componentRef.setInput('snapshots', new Map());
     fixture.componentRef.setInput('respawnTicks', 16);

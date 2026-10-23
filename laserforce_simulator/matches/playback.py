@@ -8,8 +8,11 @@ rules. Pure apart from ORM reads, and it does not import the view modules.
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import dataclass, field
 from itertools import groupby
 from operator import attrgetter
+
+from django.db.models import QuerySet
 
 from .models import GameEvent, GameRound, PlayerRoundState
 from .sim_helpers.time_constants import (
@@ -59,8 +62,11 @@ def build_playback_map(game_round: GameRound) -> dict | None:
     # TRUE route persisted in metadata["route"] (newly-simulated rounds); fall
     # back to a fresh A* reconstruction for older rounds that predate it.
     moves_by_player: dict[int, list] = defaultdict(list)
-    move_events = game_round.events.filter(event_type="movement").only(
-        "actor_id", "timestamp", "metadata"
+    # (tick, event id) order; the per-player lists below keep it as-is.
+    move_events = (
+        game_round.events.filter(event_type="movement")
+        .order_by("timestamp", "id")
+        .only("actor_id", "timestamp", "metadata")
     )
     for ev in move_events:
         m = ev.metadata or {}
@@ -79,7 +85,7 @@ def build_playback_map(game_round: GameRound) -> dict | None:
             polyline = [list(c) for c in route] if route else [list(end)]
         moves_by_player[ev.actor_id].append((ev.timestamp, list(start), polyline))
 
-    states = list(game_round.player_states.select_related("player").all())
+    states = list(game_round.player_states.select_related("player").order_by("id"))
 
     # Number the two scouts per team (1/2) so the markers can be told apart.
     scout_nums: dict[int, int] = {}
@@ -93,7 +99,7 @@ def build_playback_map(game_round: GameRound) -> dict | None:
 
     players = []
     for ps in states:
-        moves = sorted(moves_by_player.get(ps.player_id, []), key=lambda x: x[0])
+        moves = moves_by_player.get(ps.player_id, [])
         if moves:
             spawn = list(moves[0][1])
         elif ps.cell_row is not None and ps.cell_col is not None:
@@ -176,6 +182,76 @@ def _set_values(state: dict, lives, shots, points, tick: int) -> None:
         state["score"] = points
 
 
+def _apply_actor(
+    actor: dict, fuses: dict[int, int], ev: GameEvent, meta: dict, tick: int
+) -> None:
+    """Fold one event into its actor's running state (and the armed-nuke
+    ``fuses``, Commander id -> ``fires_at``)."""
+    _set_values(
+        actor,
+        meta.get("actor_lives"),
+        meta.get("actor_shots"),
+        meta.get("actor_points"),
+        tick,
+    )
+    if meta.get("sp") is not None:
+        actor["sp"] = meta["sp"]
+    etype = ev.event_type
+    if etype == "tag":
+        actor["tags"] += 1
+    elif etype == "miss":
+        actor["misses"] += 1
+    elif etype == "locking":
+        actor["missiles"] -= 1
+    elif etype == "missiled" and meta.get("result") == "hit":
+        # MECH-16: the engine spends a hit missile a second time. Drop
+        # this -1 in the same change that fixes MECH-16 (ADR-0044).
+        actor["missiles"] -= 1
+    elif etype == "nuke_cancelled":
+        _end_nuke(actor, fuses, ev.actor_id)
+    elif etype == "special":
+        _apply_special(actor, fuses, ev, meta)
+
+
+def _apply_special(
+    actor: dict, fuses: dict[int, int], ev: GameEvent, meta: dict
+) -> None:
+    """A ``special`` event's effect on its actor: rapid fire on, nuke armed
+    (fuse lit) or nuke detonated (fuse out)."""
+    kind = _special_kind(ev, meta)
+    if kind == "rapid_fire":
+        actor["rapid_fire"] = True
+    elif kind == "nuke_armed":
+        actor["nuking"] = True
+        fuses[ev.actor_id] = meta.get("fires_at", TICKS_PER_ROUND + 1)
+    elif kind == "nuke_detonated":
+        _end_nuke(actor, fuses, ev.actor_id)
+
+
+def _end_nuke(actor: dict, fuses: dict[int, int], pid: int) -> None:
+    """Turn a Commander's ``nuking`` off and drop its fuse, if any."""
+    actor["nuking"] = False
+    fuses.pop(pid, None)
+
+
+def _apply_target(target: dict, ev: GameEvent, meta: dict, tick: int) -> None:
+    """Fold one event into its target's running state."""
+    _set_values(
+        target,
+        meta.get("target_lives"),
+        meta.get("target_shots"),
+        meta.get("target_points"),
+        tick,
+    )
+    if ev.event_type in _RESUPPLY_TYPES:
+        # ``attempt_resupply`` stamps ``last_downed_time``.
+        target["downed_at"] = tick
+        # ... and silently ends a Scout's rapid fire.
+        target["rapid_fire"] = False
+    elif ev.event_type == "elimination":
+        target["eliminated"] = True
+
+
 def _apply_event(
     state: dict[int, dict], fuses: dict[int, int], ev: GameEvent, tick: int
 ) -> None:
@@ -183,61 +259,17 @@ def _apply_event(
     ``fuses``, Commander id -> ``fires_at``)."""
     meta = ev.metadata or {}
     actor = state.get(ev.actor_id)
-    target = state.get(ev.target_id) if ev.target_id else None
-    etype = ev.event_type
-
     if actor is not None:
-        _set_values(
-            actor,
-            meta.get("actor_lives"),
-            meta.get("actor_shots"),
-            meta.get("actor_points"),
-            tick,
-        )
-        if meta.get("sp") is not None:
-            actor["sp"] = meta["sp"]
-        if etype == "tag":
-            actor["tags"] += 1
-        elif etype == "miss":
-            actor["misses"] += 1
-        elif etype == "locking":
-            actor["missiles"] -= 1
-        elif etype == "missiled" and meta.get("result") == "hit":
-            # MECH-16: the engine spends a hit missile a second time. Drop
-            # this -1 in the same change that fixes MECH-16 (ADR-0044).
-            actor["missiles"] -= 1
-        elif etype == "nuke_cancelled":
-            actor["nuking"] = False
-            fuses.pop(ev.actor_id, None)
-        elif etype == "special":
-            kind = _special_kind(ev, meta)
-            if kind == "rapid_fire":
-                actor["rapid_fire"] = True
-            elif kind == "nuke_armed":
-                actor["nuking"] = True
-                fuses[ev.actor_id] = meta.get("fires_at", TICKS_PER_ROUND + 1)
-            elif kind == "nuke_detonated":
-                actor["nuking"] = False
-                fuses.pop(ev.actor_id, None)
-
+        _apply_actor(actor, fuses, ev, meta, tick)
+    target = state.get(ev.target_id) if ev.target_id else None
     if target is not None:
-        _set_values(
-            target,
-            meta.get("target_lives"),
-            meta.get("target_shots"),
-            meta.get("target_points"),
-            tick,
-        )
-        if etype in _RESUPPLY_TYPES:
-            # ``attempt_resupply`` stamps ``last_downed_time``.
-            target["downed_at"] = tick
-            # ... and silently ends a Scout's rapid fire.
-            target["rapid_fire"] = False
-        elif etype == "elimination":
-            target["eliminated"] = True
+        _apply_target(target, ev, meta, tick)
+    _apply_team_targets(state, meta, tick)
 
-    # Team specials (heal / ammo) and nuke detonations carry per-player
-    # after-event values for teammates and opponents alike.
+
+def _apply_team_targets(state: dict[int, dict], meta: dict, tick: int) -> None:
+    """Team specials (heal / ammo) and nuke detonations carry per-player
+    after-event values for teammates and opponents alike."""
     for entry in meta.get("targets") or []:
         affected = state.get(entry.get("pid"))
         if affected is not None:
@@ -250,39 +282,53 @@ def _apply_event(
             )
 
 
-def round_playback(game_round: GameRound) -> dict:
-    """The ``GET /api/rounds/<id>/playback/`` payload.
+@dataclass
+class _Timeline:
+    """The running fold of one round's event log.
 
-    ``players`` is in ``PlayerRoundState.id`` order. Each player gets a tick-0
-    opening snapshot, then one snapshot per tick at which any of their fields
-    changed (same-tick events collapse into the state after the last one).
+    ``current`` is each player's state after the events folded so far,
+    ``snapshots`` the per-player snapshot lists being built, and ``fuses`` the
+    armed nukes (Commander id -> ``fires_at``).
     """
-    states = list(game_round.player_states.order_by("id"))
-    current: dict[int, dict] = {ps.player_id: _opening_snapshot(ps) for ps in states}
-    snapshots: dict[int, list[dict]] = {
-        pid: [dict(snap)] for pid, snap in current.items()
-    }
 
-    def flush(tick: int) -> None:
-        for pid, snap in current.items():
-            last = snapshots[pid][-1]
-            if any(snap[k] != last[k] for k in snap if k != "tick"):
-                snapshots[pid].append({**snap, "tick": tick})
+    current: dict[int, dict]
+    snapshots: dict[int, list[dict]]
+    fuses: dict[int, int] = field(default_factory=dict)
 
-    # Armed nukes: Commander id -> ``fires_at``. A fuse that burns out with
-    # no detonation or cancel logged turns ``nuking`` off at ``fires_at``.
-    fuses: dict[int, int] = {}
 
-    def burn_fuses(before: int) -> None:
-        """Turn off every nuke whose ``fires_at`` is before ``before``, one
-        snapshot tick per distinct ``fires_at``."""
-        for fires_at in sorted({t for t in fuses.values() if t < before}):
-            for pid in [p for p, t in fuses.items() if t == fires_at]:
-                current[pid]["nuking"] = False
-                del fuses[pid]
-            flush(fires_at)
+def _opening_timeline(states: list[PlayerRoundState]) -> _Timeline:
+    """A timeline holding only each player's tick-0 opening snapshot."""
+    current = {ps.player_id: _opening_snapshot(ps) for ps in states}
+    snapshots = {pid: [dict(snap)] for pid, snap in current.items()}
+    return _Timeline(current=current, snapshots=snapshots)
 
-    events = (
+
+def _flush(timeline: _Timeline, tick: int) -> None:
+    """Append a snapshot at ``tick`` for every player whose state changed."""
+    for pid, snap in timeline.current.items():
+        last = timeline.snapshots[pid][-1]
+        if any(snap[k] != last[k] for k in snap if k != "tick"):
+            timeline.snapshots[pid].append({**snap, "tick": tick})
+
+
+def _expire_fuses(timeline: _Timeline, fires_at: int) -> None:
+    """A fuse that burns out with no detonation or cancel logged turns
+    ``nuking`` off at its ``fires_at``."""
+    for pid in [p for p, t in timeline.fuses.items() if t == fires_at]:
+        _end_nuke(timeline.current[pid], timeline.fuses, pid)
+
+
+def _burn_fuses(timeline: _Timeline, before: int) -> None:
+    """Expire every fuse whose ``fires_at`` is before ``before``, one snapshot
+    tick per distinct ``fires_at``."""
+    for fires_at in sorted({t for t in timeline.fuses.values() if t < before}):
+        _expire_fuses(timeline, fires_at)
+        _flush(timeline, fires_at)
+
+
+def _playback_events(game_round: GameRound) -> QuerySet[GameEvent]:
+    """The round's non-movement events in (tick, event id) order."""
+    return (
         game_round.events.exclude(event_type="movement")
         .order_by("timestamp", "id")
         .only(
@@ -298,22 +344,39 @@ def round_playback(game_round: GameRound) -> dict:
             "metadata",
         )
     )
-    for tick, group in groupby(events, key=attrgetter("timestamp")):
-        burn_fuses(before=tick)
-        for pid in [p for p, t in fuses.items() if t == tick]:
-            current[pid]["nuking"] = False
-            del fuses[pid]
-        for ev in group:
-            _apply_event(current, fuses, ev, tick)
-        flush(tick)
-    burn_fuses(before=TICKS_PER_ROUND + 1)
 
+
+def _fold_events(timeline: _Timeline, game_round: GameRound) -> None:
+    """Fold the round's non-movement events into ``timeline``, one snapshot
+    tick per event tick (same-tick events collapse into the last state)."""
+    for tick, group in groupby(
+        _playback_events(game_round), key=attrgetter("timestamp")
+    ):
+        _burn_fuses(timeline, before=tick)
+        _expire_fuses(timeline, tick)
+        for ev in group:
+            _apply_event(timeline.current, timeline.fuses, ev, tick)
+        _flush(timeline, tick)
+    _burn_fuses(timeline, before=TICKS_PER_ROUND + 1)
+
+
+def round_playback(game_round: GameRound) -> dict:
+    """The ``GET /api/rounds/<id>/playback/`` payload.
+
+    ``players`` is in ``PlayerRoundState.id`` order. Each player gets a tick-0
+    opening snapshot, then one snapshot per tick at which any of their fields
+    changed (same-tick events collapse into the state after the last one).
+    """
+    states = list(game_round.player_states.order_by("id"))
+    timeline = _opening_timeline(states)
+    _fold_events(timeline, game_round)
     return {
         "duration_ticks": TICKS_PER_ROUND,
         "not_targetable_ticks": NOT_TARGETABLE_TICKS,
         "respawn_ticks": RESPAWN_TICKS,
         "players": [
-            {"id": ps.player_id, "snapshots": snapshots[ps.player_id]} for ps in states
+            {"id": ps.player_id, "snapshots": timeline.snapshots[ps.player_id]}
+            for ps in states
         ],
         "map": build_playback_map(game_round),
     }

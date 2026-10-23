@@ -1,7 +1,7 @@
 <section class="sb" [attr.data-lf-side]="side()" [attr.aria-label]="teamName() + ' scoreboard'">
   <div class="sb-head">
     <span class="sb-head__name">
-      <span class="sb-head__badge" aria-hidden="true">{{ side() === 'red' ? 'R' : 'B' }}</span>
+      <span class="sb-head__badge" aria-hidden="true">{{ sideTag(side()) }}</span>
       <span class="sb-head__team">{{ teamName() }}</span>
     </span>
     <span class="sb-head__total">{{ total() }}</span>

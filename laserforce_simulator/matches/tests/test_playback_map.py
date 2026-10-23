@@ -143,6 +143,76 @@ class TestBuildPlaybackMap(TestCase):
         self.assertEqual(poly1[-1], [2, 2])
 
 
+class TestPlaybackMapOrder(TestCase):
+    """The map payload's order is pinned, not left to the database: players in
+    ``PlayerRoundState.id`` order, each player's moves by (tick, event id)."""
+
+    def _setup(self, prefix: str):
+        arena_map, zone_size = _make_arena_map(prefix)
+        gr, red_players, blue_players = _round(arena_map, zone_size, prefix=prefix)
+        return gr, red_players, blue_players
+
+    def test_players_in_state_id_and_moves_in_tick_then_id_order(self) -> None:
+        gr, red_players, blue_players = self._setup("PbOrder")
+        commander = red_players["commander"]
+        heavy = blue_players["heavy"]
+        for player, team, role in (
+            (heavy, "blue", "heavy"),
+            (commander, "red", "commander"),
+        ):
+            PlayerRoundState.objects.create(
+                game_round=gr,
+                player=player,
+                team_color=team,
+                role=role,
+                cell_row=0,
+                cell_col=0,
+            )
+        # Two Advances in the same tick: the earlier event (lower id) first.
+        _move(gr, commander, 6, (0, 0), (0, 1), route=[[0, 1]])
+        _move(gr, commander, 6, (0, 1), (1, 1), route=[[1, 1]])
+        _move(gr, commander, 2, (0, 0), (0, 0), route=[[0, 0]])
+
+        payload = _build_playback_map(gr)
+
+        state_ids = list(
+            PlayerRoundState.objects.filter(game_round=gr)
+            .order_by("id")
+            .values_list("player_id", flat=True)
+        )
+        self.assertEqual([p["id"] for p in payload["players"]], state_ids)
+        moves = {p["id"]: p for p in payload["players"]}[commander.id]["moves"]
+        self.assertEqual(moves, [[2, [[0, 0]]], [6, [[0, 1]]], [6, [[1, 1]]]])
+
+    def test_queries_pin_their_order(self) -> None:
+        """SQL-level guard: without an explicit ORDER BY the order above is
+        whatever the backend happens to return (Postgres does not promise
+        insertion order)."""
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        gr, red_players, _b = self._setup("PbOrderSql")
+        PlayerRoundState.objects.create(
+            game_round=gr,
+            player=red_players["commander"],
+            team_color="red",
+            role="commander",
+            cell_row=0,
+            cell_col=0,
+        )
+        with CaptureQueriesContext(connection) as ctx:
+            _build_playback_map(gr)
+        sqls = [q["sql"] for q in ctx.captured_queries]
+        states_sql = next(s for s in sqls if "playerroundstate" in s.lower())
+        events_sql = next(s for s in sqls if "gameevent" in s.lower())
+        self.assertRegex(states_sql, r'ORDER BY\s+"matches_playerroundstate"\."id"')
+        self.assertRegex(
+            events_sql,
+            r'ORDER BY\s+"matches_gameevent"\."timestamp" ASC,\s*'
+            r'"matches_gameevent"\."id"',
+        )
+
+
 class TestStoredRoutePreferred(TestCase):
     def test_uses_stored_route_verbatim_over_astar(self) -> None:
         """When a movement event carries ``metadata["route"]`` (the true cells

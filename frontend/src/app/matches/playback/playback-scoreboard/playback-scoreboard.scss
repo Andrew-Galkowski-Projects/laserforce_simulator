@@ -1,7 +1,7 @@
 // One Side's live Playback scoreboard (ANG-06f T3), after LFstats's Replay tab. Contract tokens
 // and --side* only (ADR-0043), never a colour literal. Every animation sits in the
-// `prefers-reduced-motion: no-preference` block at the bottom; without it the states stay
-// visible but still (a glow, static rainbow text, a tinted rank).
+// `prefers-reduced-motion: no-preference` block at the bottom; without it the specials stay
+// visible but still (a glow, static rainbow text) and the rank-up flash does not show.
 :host {
   display: block;
   min-width: 0;
@@ -175,13 +175,13 @@ tr.is-out td {
   font-weight: 700;
 }
 
-// Rank up: the rank turns resupply green for the flash.
-tr.sb-flash .sb-rank {
-  color: var(--lf-ev-resupply);
-  font-weight: 700;
-}
-
 @media (prefers-reduced-motion: no-preference) {
+  // Rank up: the rank turns resupply green for the flash. Reduced motion shows no flash at all.
+  tr.sb-flash .sb-rank {
+    color: var(--lf-ev-resupply);
+    font-weight: 700;
+  }
+
   .sb-rapid {
     animation: sb-rapid-pulse 1s ease-in-out infinite;
   }

@@ -125,11 +125,14 @@ export class Playback {
     if (next !== undefined) this.seek(next);
   }
 
-  /** Steps to the previous event tick before the cursor (stays put before the first). */
+  /**
+   * Steps to the previous event tick before the cursor's whole tick (stays put before the
+   * first): mid-play at 10.4 the cursor is still on tick 10, so Previous skips past it.
+   */
   protected stepPrevious(): void {
-    const cursor = this.cursor();
+    const tick = Math.floor(this.cursor());
     const previous = this.eventTicks()
-      .filter((t) => t < cursor)
+      .filter((t) => t < tick)
       .at(-1);
     if (previous !== undefined) this.seek(previous);
   }

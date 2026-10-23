@@ -8,9 +8,9 @@ import {
   signal,
   untracked,
 } from '@angular/core';
-import { Role } from '../../../api/players.models';
 import { PlaybackSnapshot, Side, TimelinePlayer } from '../../../api/rounds.models';
-import { ROLE_LABELS } from '../../../teams/shared/roster';
+import { roleLabel } from '../../shared/role-label';
+import { sideTag } from '../../shared/side-tag';
 import { snapshotAt } from '../snapshot-at';
 
 /** One player's row at the cursor. */
@@ -103,6 +103,8 @@ export class PlaybackScoreboard {
   readonly notTargetableTicks = input.required<number>();
   readonly respawnTicks = input.required<number>();
 
+  protected readonly sideTag = sideTag;
+
   /** The Side's rows at the cursor, highest live score first; `rank` is the 1-based position. */
   protected readonly rows = computed<BoardRow[]>(() => {
     const cursor = this.cursor();
@@ -115,7 +117,7 @@ export class PlaybackScoreboard {
         return {
           id: p.id,
           name: p.name,
-          pos: ROLE_LABELS[p.role as Role] ?? p.role.toUpperCase(),
+          pos: roleLabel(p.role),
           rank: 0,
           snap,
           acc: accuracy(snap),

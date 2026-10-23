@@ -12,17 +12,11 @@ import {
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButton } from '@angular/material/button';
 import { MapsService } from '../../../api/maps.service';
-import { Role } from '../../../api/players.models';
-import {
-  PlaybackMap as PlaybackMapData,
-  PlaybackSnapshot,
-  Side,
-  TimelinePlayer,
-} from '../../../api/rounds.models';
-import { ROLE_LABELS } from '../../../teams/shared/roster';
+import { PlaybackMap as PlaybackMapData, PlaybackSnapshot, Side } from '../../../api/rounds.models';
+import { TICKS_PER_SECOND } from '../../shared/clock';
+import { roleLabel } from '../../shared/role-label';
 import {
   Keyframe,
-  SEC_PER_TICK,
   TRAIL_SEC,
   cellToPixel,
   deactivatedAt,
@@ -95,7 +89,7 @@ function drawMap(
       const xy = cellToPixel(r, c, zone);
       if (prev) {
         const age = (t - s) / TRAIL_SEC;
-        const dim = route.off(s / SEC_PER_TICK) ? DIM : 1;
+        const dim = route.off(s * TICKS_PER_SECOND) ? DIM : 1;
         ctx.globalAlpha = (0.8 * (1 - age) + 0.05) * dim;
         ctx.lineWidth = Math.max(1.5, zone * (0.08 + 0.12 * (1 - age)));
         ctx.beginPath();
@@ -115,7 +109,7 @@ function drawMap(
   for (const route of routes) {
     const [r, c] = positionAt(route.keyframes, t);
     const [x, y] = cellToPixel(r, c, zone);
-    ctx.globalAlpha = route.off(t / SEC_PER_TICK) ? DIM : 1;
+    ctx.globalAlpha = route.off(t * TICKS_PER_SECOND) ? DIM : 1;
     ctx.beginPath();
     ctx.arc(x, y, size * 0.6, 0, Math.PI * 2);
     ctx.fillStyle = colours.surface;
@@ -147,15 +141,15 @@ function drawMap(
  * their recorded route, and a 16 s trail. Collapsed behind a "Show map (beta)" toggle.
  *
  * Inputs:
- * - `map`: `RoundPlayback.map`, `null` for a map-less Round (show the "No map" notice).
- * - `players`: every `TimelinePlayer` of the Round (names, Sides, roles), both Sides.
+ * - `map`: `RoundPlayback.map`, `null` for a map-less Round (show the "No map" notice). Its
+ *   `players` carry each marker's Side, role and route.
  * - `cursor`: the Playback cursor in ticks (fractional while playing).
  * - `snapshots`: every player's Playback snapshots by player id, and `respawnTicks`
  *   (`RoundPlayback.respawn_ticks`): a Down or eliminated player's marker and trail are dimmed.
  *
  * The map fetches its image only when the toggle is first opened, so a closed map makes no
  * HTTP request; shell specs rely on that. The canvas is redrawn by an effect on the cursor (no
- * animation frame loop); it has the image's natural size and CSS scales it with the image.
+ * per-paint render loop); it has the image's natural size and CSS scales it with the image.
  */
 @Component({
   selector: 'app-playback-map',
@@ -165,7 +159,6 @@ function drawMap(
 })
 export class PlaybackMap {
   readonly map = input.required<PlaybackMapData | null>();
-  readonly players = input.required<readonly TimelinePlayer[]>();
   readonly cursor = input.required<number>();
   readonly snapshots = input.required<ReadonlyMap<number, readonly PlaybackSnapshot[]>>();
   readonly respawnTicks = input.required<number>();
@@ -194,7 +187,7 @@ export class PlaybackMap {
       const own = snapshots.get(p.id) ?? [];
       return {
         side: p.team,
-        label: ROLE_LABELS[p.role.toLowerCase() as Role] ?? p.role.slice(0, 3).toUpperCase(),
+        label: roleLabel(p.role),
         scout: p.scout,
         keyframes: routeKeyframes(p),
         off: (tick: number) => deactivatedAt(own, tick, respawnTicks),
@@ -204,7 +197,7 @@ export class PlaybackMap {
 
   constructor() {
     effect(() => {
-      const t = this.cursor() * SEC_PER_TICK;
+      const t = this.cursor() / TICKS_PER_SECOND;
       const zone = this.map()?.zone_size ?? 0;
       const routes = this.routes();
       const img = this.image()?.nativeElement;

@@ -111,7 +111,6 @@ describe('Playback (/rounds/:id/playback)', () => {
 
       const map = de.query(By.directive(PlaybackMap)).componentInstance as PlaybackMap;
       expect(map.map()).toBeNull();
-      expect(map.players().length).toBe(4);
       expect(map.cursor()).toBe(0);
       expect(map.snapshots().size).toBe(4);
       expect(map.respawnTicks()).toBe(16);
@@ -215,6 +214,14 @@ describe('Playback (/rounds/:id/playback)', () => {
       expect(back).toEqual([100, 40, 40]);
 
       screen().seek(55);
+      await press('Previous event');
+      expect(boardCursors()[0]).toBe(40);
+    });
+
+    it('steps back past the event tick a mid-play fractional cursor is still on', async () => {
+      await open(events());
+      // Mid-play the cursor sits between ticks: 100.4 is still on event tick 100.
+      screen().seek(100.4);
       await press('Previous event');
       expect(boardCursors()[0]).toBe(40);
     });

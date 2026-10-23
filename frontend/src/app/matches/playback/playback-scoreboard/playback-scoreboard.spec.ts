@@ -336,6 +336,11 @@ describe('PlaybackScoreboard', () => {
       }
       expect(motion.match(/@keyframes/g)?.length).toBe(3);
       expect(rest).not.toMatch(/@keyframes|animation/);
+      // Reduced motion: the 700 ms rank-up flash does not show at all (no green rank, no row
+      // tint), while the still rainbow text and rapid-fire glow stay.
+      expect(rest).not.toMatch(/\.sb-flash/);
+      expect(rest).toMatch(/\.sb-rapid[^{]*\{[^}]*text-shadow:/);
+      expect(rest).toMatch(/\.sb-rainbow[^{]*\{[^}]*background-clip:/);
     });
   });
 });

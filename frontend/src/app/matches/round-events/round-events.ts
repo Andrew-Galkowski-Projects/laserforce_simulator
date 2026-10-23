@@ -36,6 +36,7 @@ import {
 } from '../shared/event-groups';
 import { RecordNotFound } from '../shared/record-not-found';
 import { loadRouteRecord } from '../shared/route-record';
+import { sideTag } from '../shared/side-tag';
 
 /** The seven summary cards, as the Django page shows them (`missiles` is not one). */
 const CARDS: { key: keyof EventSummary; label: string }[] = [
@@ -200,10 +201,7 @@ export class RoundEvents {
       .join(' · ');
   }
 
-  /** A Side's R / B badge, kept next to its colour for colour-blind users. */
-  protected sideTag(side: Side): string {
-    return side === 'red' ? 'R' : 'B';
-  }
+  protected readonly sideTag = sideTag;
 
   protected kindLabel(h: Highlight): string {
     // Defence against the server sending a kind the client doesn't know yet: show it, don't crash.

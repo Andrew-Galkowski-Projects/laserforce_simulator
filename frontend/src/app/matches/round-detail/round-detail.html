@@ -41,7 +41,7 @@
     <section class="rd-team" [attr.data-lf-side]="side" [attr.aria-label]="teamName(r, side)">
       <div class="rd-strip">
         <div class="rd-strip__name">
-          <span class="rd-sidetag">{{ side === 'red' ? 'R' : 'B' }}</span>
+          <span class="rd-sidetag">{{ sideTag(side) }}</span>
           <h2>{{ teamName(r, side) }}</h2>
           <span class="rd-badge rd-badge--{{ outcome(r, side).toLowerCase() }}">{{
             outcome(r, side)

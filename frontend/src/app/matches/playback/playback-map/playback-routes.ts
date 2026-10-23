@@ -2,14 +2,13 @@
 // (`pbInitMap` / `pbPosAt` / `pbDrawMap` in templates/matches/game_round_events.html). Beta: the
 // owner is still changing it (MOVE-07), so it is deliberately not pinned by tests.
 import { PlaybackMapPlayer, PlaybackSnapshot } from '../../../api/rounds.models';
+import { TICKS_PER_SECOND } from '../../shared/clock';
 import { snapshotAt } from '../snapshot-at';
 
 /** Comet-tail length in seconds (32 ticks). */
 export const TRAIL_SEC = 16;
 /** Trail sample spacing in seconds, on an absolute grid. */
 export const TRAIL_DT = 0.1;
-/** One tick is half a second. */
-export const SEC_PER_TICK = 0.5;
 
 /** `[seconds, row, col]`: a cell the player stands on at that time. */
 export type Keyframe = readonly [number, number, number];
@@ -27,8 +26,8 @@ export function routeKeyframes(player: PlaybackMapPlayer): Keyframe[] {
     if (!poly.length) {
       continue;
     }
-    const t0 = ts * SEC_PER_TICK;
-    const t1 = (ts + 1) * SEC_PER_TICK;
+    const t0 = ts / TICKS_PER_SECOND;
+    const t1 = (ts + 1) / TICKS_PER_SECOND;
     if (t0 > kf[kf.length - 1][0] + 1e-6) {
       kf.push([t0, prev[0], prev[1]]);
     }
