@@ -1,6 +1,6 @@
 from celery.result import AsyncResult
 from django.contrib.auth.decorators import login_not_required
-from django.db.models import QuerySet
+from django.db.models import Prefetch, QuerySet
 from django.http import HttpResponse
 from django.utils.decorators import method_decorator
 from django_filters.utils import translate_validation
@@ -24,7 +24,7 @@ from matches.api_forms import CompareRoundsParamsForm
 from matches.api_refs import round_ref
 from matches.filters import GameEventFilterSet, GameRoundFilterSet, MatchFilterSet
 from matches.forms import MatchSetupForm, SaveBatchGamesForm, SingleRoundSetupForm
-from matches.models import GameRound, Match
+from matches.models import GameRound, Match, PlayerRoundState
 from matches.serializers import (
     GameEventSerializer,
     GameRoundListSerializer,
@@ -90,8 +90,11 @@ class MatchViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
     ordering_tiebreak = ("-id",)
 
     def get_queryset(self) -> QuerySet[Match]:
-        return Match.objects.filter(owned_match_q(self.request.user)).select_related(
-            "team_red", "team_blue", "winner"
+        # ``game_rounds`` feeds ``MatchSerializer.get_round_ids`` (no N+1).
+        return (
+            Match.objects.filter(owned_match_q(self.request.user))
+            .select_related("team_red", "team_blue", "winner")
+            .prefetch_related("game_rounds")
         )
 
     def create(self, request: Request) -> Response:
@@ -132,7 +135,13 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
             owned_game_round_q(self.request.user)
         ).select_related("match", "team_red", "team_blue", "winner")
         if self.action in ("retrieve", "create"):
-            return qs.prefetch_related("player_states")
+            # ``round_scoreboard`` reuses this prefetch (names via ``player``).
+            return qs.prefetch_related(
+                Prefetch(
+                    "player_states",
+                    queryset=PlayerRoundState.objects.select_related("player"),
+                )
+            )
         return qs
 
     def get_serializer_class(self) -> type[Serializer]:

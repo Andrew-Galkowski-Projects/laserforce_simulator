@@ -8,6 +8,7 @@ import {
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../environments/environment';
+import { Role } from '../../api/players.models';
 import { GameRound, ScoreboardRow } from '../../api/rounds.models';
 import { USER, signIn } from '../../api/testing/auth-fixtures';
 import { PROFILE, STATS } from '../../api/testing/player-fixtures';
@@ -156,19 +157,17 @@ describe('Round detail (/rounds/:id)', () => {
   });
 
   describe('page head', () => {
-    it('names both teams and reads "Round N · date · result"', async () => {
+    it('names both teams and reads "Round N · result" (the date stays in the kicker)', async () => {
       await open(round());
       expect(text(page().querySelector('h1'))).toBe('Comets vs Vipers');
-      expect(text(page().querySelector('.rd-meta'))).toBe(
-        'Round 1 · Mar 17, 2026 09:05 · Comets won',
-      );
+      expect(text(page().querySelector('.rd-meta'))).toBe('Round 1 · Comets won');
     });
 
     it('adds "elimination at m:ss" when a team was eliminated', async () => {
       // 1104 ticks = 552 s = 9:12.
       await open(round({ eliminated_at: 1104, blue_team_eliminated: true }));
       expect(text(page().querySelector('.rd-meta'))).toBe(
-        'Round 1 · Mar 17, 2026 09:05 · Comets won · elimination at 9:12',
+        'Round 1 · Comets won · elimination at 9:12',
       );
     });
 
@@ -269,13 +268,13 @@ describe('Round detail (/rounds/:id)', () => {
       expect(strip('blue')).toContain('4,880');
     });
 
-    it('shows no Eliminated badge or elim bonus for a Side with no rows', async () => {
-      // The server counts 0 survivors on an empty Side, so it reads `eliminated` there.
+    it('shows no Eliminated badge on an empty Side, and no elim bonus against it', async () => {
+      // The server never counts a Side with no rows as eliminated, so the other earns no bonus.
       await open(
         round({
           scoreboard: {
-            red: scoreboardSide([], { eliminated: true, elim_bonus: 10000 }),
-            blue: scoreboardSide([], { eliminated: true, elim_bonus: 10000 }),
+            red: scoreboardSide([scoreboardRow()]),
+            blue: scoreboardSide([], { eliminated: false, elim_bonus: 0 }),
           },
         }),
       );
@@ -331,7 +330,7 @@ describe('Round detail (/rounds/:id)', () => {
       ]);
     });
 
-    it.each([
+    it.each<[Role, string]>([
       ['heavy', 'HVY'],
       ['scout', 'SCT'],
       ['ammo', 'AMO'],
@@ -351,13 +350,13 @@ describe('Round detail (/rounds/:id)', () => {
       expect(cell('Medic Hits')).toBe('4');
     });
 
-    it('shows Msls as landed/starting for a heavy', async () => {
-      await openRow({ role: 'heavy', missiles_landed: 2, starting_missiles: 5 });
-      expect(cell('Msls')).toBe('2/5');
+    it('shows Msls as landed/starting for any row that started with missiles', async () => {
+      await openRow({ role: 'scout', missiles_landed: 1, starting_missiles: 3 });
+      expect(cell('Msls')).toBe('1/3');
     });
 
-    it('shows Msls as landed only for a role without missiles', async () => {
-      await openRow({ role: 'scout', missiles_landed: 0, starting_missiles: 0 });
+    it('shows Msls as landed only for a row that started with none, even a heavy', async () => {
+      await openRow({ role: 'heavy', missiles_landed: 0, starting_missiles: 0 });
       expect(cell('Msls')).toBe('0');
     });
 

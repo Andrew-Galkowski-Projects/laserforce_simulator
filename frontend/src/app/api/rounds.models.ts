@@ -2,6 +2,10 @@
 // matches/serializers.py and matches/forms.py send / bind them (no mapping layer).
 // Ticks: 1 tick = 0.5 s, a round is 0-1800; 1801 means "survived".
 import { ListParams } from './api-client';
+import { Role } from './players.models';
+
+/** The physical Side a team or player played (`team_color`). */
+export type Side = 'red' | 'blue';
 
 /** `GameRoundListSerializer`: a row of `GET rounds/`. Foreign keys are ids. */
 export interface GameRoundListItem {
@@ -32,7 +36,7 @@ export interface PlayerRoundState {
   id: number;
   /** The Player's id. */
   player: number;
-  team_color: 'red' | 'blue';
+  team_color: Side;
   role: string;
   starting_lives: number;
   starting_shots: number;
@@ -88,8 +92,8 @@ export interface PlayerRoundState {
 export interface ScoreboardRow {
   player_id: number;
   name: string;
-  role: string;
-  team_color: 'red' | 'blue';
+  role: Role;
+  team_color: Side;
   /** Ticks; 1801 (or 0, legacy) means survived; null on legacy rows (then `final_lives` decides). */
   was_eliminated_at: number | null;
   /** `m:ss` when eliminated, else `''`. */
@@ -132,10 +136,7 @@ export interface ScoreboardSide {
 }
 
 /** `GameRoundSerializer.scoreboard`, grouped by the Side each player played. */
-export interface RoundScoreboard {
-  red: ScoreboardSide;
-  blue: ScoreboardSide;
-}
+export type RoundScoreboard = Record<Side, ScoreboardSide>;
 
 /** `GameRoundSerializer`: `GET rounds/{id}/` and the create response. */
 export interface GameRound extends GameRoundListItem {

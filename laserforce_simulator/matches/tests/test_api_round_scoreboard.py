@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
+from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
@@ -139,6 +140,84 @@ class TestScoreboardSurvivorsAndBonus(_ScoreboardTestCase):
         board = self.scoreboard()
         self.assertEqual(board["red"]["elim_bonus"], 0)
         self.assertEqual(board["blue"]["elim_bonus"], 0)
+
+    def test_a_side_with_no_rows_is_not_eliminated(self) -> None:
+        """A Side with no player rows (e.g. a round with missing states) is not
+        a wipe, so the other Side earns no elimination bonus."""
+        self.state(self.red_players["commander"], "red", "commander", 3000, lives=2)
+        board = self.scoreboard()
+        self.assertEqual(board["blue"]["players"], [])
+        self.assertFalse(board["blue"]["eliminated"])
+        self.assertEqual(board["red"]["elim_bonus"], 0)
+
+    def test_round_page_shows_no_bonus_against_an_empty_side(self) -> None:
+        self.state(self.red_players["commander"], "red", "commander", 3000, lives=2)
+        self.client.force_login(self.user_a)
+        response = self.client.get(
+            reverse("game_round_detail", args=[self.game_round.pk])
+        )
+        self.assertEqual(response.status_code, 200)
+        html = response.content.decode()
+        self.assertNotIn("14000", html)
+        self.assertNotIn("(10000)", html)
+        self.assertNotIn("Eliminated!", html)
+
+
+class TestQueryCounts(_ScoreboardTestCase):
+    """The list / retrieve query counts do not grow with the row count."""
+
+    def _count(self, url: str) -> int:
+        from django.db import connection
+        from django.test.utils import CaptureQueriesContext
+
+        with CaptureQueriesContext(connection) as ctx:
+            response = self.api.get(url)
+        self.assertEqual(response.status_code, 200, response.content)
+        return len(ctx.captured_queries)
+
+    def _add_match(self) -> None:
+        match = Match.objects.create(
+            team_red=self.red, team_blue=self.blue, manager=self.user_a
+        )
+        for number in (1, 2):
+            GameRound.objects.create(
+                match=match,
+                round_number=number,
+                team_red=self.red,
+                team_blue=self.blue,
+                manager=self.user_a,
+            )
+
+    def test_match_list_is_constant_in_the_match_count(self) -> None:
+        self._add_match()
+        one = self._count("/api/matches/")
+        for _ in range(3):
+            self._add_match()
+        self.assertEqual(self._count("/api/matches/"), one)
+
+    def test_round_retrieve_is_constant_in_the_player_count(self) -> None:
+        url = f"/api/rounds/{self.game_round.pk}/"
+        self.state(self.red_players["commander"], "red", "commander", 3000)
+        self.state(self.blue_players["heavy"], "blue", "heavy", 1000)
+        two = self._count(url)
+        for role in ("scout", "ammo", "medic"):
+            self.state(self.red_players[role], "red", role, 500)
+            self.state(self.blue_players[role], "blue", role, 500)
+        self.assertEqual(self._count(url), two)
+        # The scoreboard reads the ``player_states`` prefetch: no per-Side
+        # queries on top of session + user + round + prefetch.
+        self.assertEqual(two, 4)
+
+    def test_prefetched_rows_keep_the_scoreboard_order(self) -> None:
+        p = self.red_players
+        self.state(p["scout_2"], "red", "scout", 1000)
+        self.state(p["scout"], "red", "scout", 1000)
+        self.state(p["ammo"], "red", "ammo", 1000)
+        self.state(p["commander"], "red", "commander", 5000)
+        names = [r["name"] for r in self.scoreboard()["red"]["players"]]
+        self.assertEqual(
+            names, ["SbRed commander", "SbRed ammo", "SbRed scout1", "SbRed scout2"]
+        )
 
 
 class TestScoreboardOwnership(_ScoreboardTestCase):

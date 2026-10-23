@@ -1,4 +1,4 @@
-import { DatePipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { MatAnchor } from '@angular/material/button';
 import { RouterLink } from '@angular/router';
@@ -28,7 +28,7 @@ interface RoundRow {
 /** `/matches/:id`: the Match Summary (parity with Django's `enhanced_match_detail.html`). */
 @Component({
   selector: 'app-match-detail',
-  imports: [DatePipe, MatAnchor, RecordNotFound, ResultChip, RouterLink],
+  imports: [DatePipe, DecimalPipe, MatAnchor, RecordNotFound, ResultChip, RouterLink],
   templateUrl: './match-detail.html',
   styleUrl: './match-detail.scss',
 })

@@ -101,8 +101,8 @@ describe('Match detail (/matches/:id)', () => {
         blue_round2_points: 3600,
       }),
     );
-    expect(cells(summaryRow('Round 1')).slice(0, 3)).toEqual(['4000', '3000', 'Alpha']);
-    expect(cells(summaryRow('Round 2')).slice(0, 3)).toEqual(['3500', '3600', 'Bravo']);
+    expect(cells(summaryRow('Round 1')).slice(0, 3)).toEqual(['4,000', '3,000', 'Alpha']);
+    expect(cells(summaryRow('Round 2')).slice(0, 3)).toEqual(['3,500', '3,600', 'Bravo']);
   });
 
   it('reads "Tie" for a Round with level points', async () => {
@@ -124,10 +124,10 @@ describe('Match detail (/matches/:id)', () => {
     );
     const round1 = summaryRow('Round 1')?.querySelectorAll('td');
     const round2 = summaryRow('Round 2')?.querySelectorAll('td');
-    expect(text(round1?.[0])).toBe('4000 + elim bonus');
-    expect(text(round1?.[1])).toBe('3000');
-    expect(text(round2?.[0])).toBe('3500');
-    expect(text(round2?.[1])).toBe('3600 + elim bonus');
+    expect(text(round1?.[0])).toBe('4,000 + elim bonus');
+    expect(text(round1?.[1])).toBe('3,000');
+    expect(text(round2?.[0])).toBe('3,500');
+    expect(text(round2?.[1])).toBe('3,600 + elim bonus');
     expect(round1?.[0].querySelector('.match-detail__bonus')?.textContent).toContain('elim bonus');
   });
 
@@ -172,7 +172,7 @@ describe('Match detail (/matches/:id)', () => {
     await open(
       matchRow({ red_total_points: 17250, blue_total_points: 9100, winner_name: 'Alpha' }),
     );
-    expect(cells(summaryRow('Total')).slice(0, 3)).toEqual(['17250', '9100', 'Alpha']);
+    expect(cells(summaryRow('Total')).slice(0, 3)).toEqual(['17,250', '9,100', 'Alpha']);
   });
 
   it('reads "Tie" in the Total row for a completed Match with no winner', async () => {
@@ -217,7 +217,7 @@ describe('Match detail (/matches/:id)', () => {
 
   it('shows the total score red - blue and the date played', async () => {
     await open(matchRow({ red_total_points: 17250, blue_total_points: 9100, date_played: PLAYED }));
-    expect(text(page())).toContain('17250 - 9100');
+    expect(text(page())).toContain('17,250 - 9,100');
     expect(text(page())).toContain('Oct 5, 2026 14:30');
   });
 

@@ -3,14 +3,14 @@ import { Component, computed, inject, signal } from '@angular/core';
 import { MatAnchor, MatButton } from '@angular/material/button';
 import { RouterLink } from '@angular/router';
 import { Role } from '../../api/players.models';
-import { GameRound, ScoreboardRow, ScoreboardSide } from '../../api/rounds.models';
+import { GameRound, ScoreboardRow, ScoreboardSide, Side } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
 import { AuthService } from '../../auth/auth.service';
+import { saveBlob } from '../../shared/save-blob';
 import { ROLE_LABELS } from '../../teams/shared/roster';
 import { RecordNotFound } from '../shared/record-not-found';
 import { loadRouteRecord } from '../shared/route-record';
 
-type Side = 'red' | 'blue';
 type SortDir = 'asc' | 'desc';
 
 interface SortState {
@@ -26,12 +26,13 @@ interface Column {
   value: (row: ScoreboardRow) => number | string;
 }
 
-/** Ticks per second (1 tick = 0.5 s); 1801 ticks means "survived". */
+/** Ticks per second (1 tick = 0.5 s). */
 const TICKS_PER_SECOND = 2;
+/**
+ * The tick past a 0-1800 round: `was_eliminated_at` / `eliminated_at` at or above it mean nobody
+ * was eliminated (the server's TIME-01 survived sentinel). Survivors sort last on Elim with it.
+ */
 const SURVIVED_TICK = 1801;
-
-/** Roles that carry missiles: their Msls column reads `landed/starting`. */
-const MISSILE_ROLES = new Set(['commander', 'heavy']);
 
 /** SP spent (specials used x cost) and earned (spent plus the special left at the end). */
 function specialSpent(row: ScoreboardRow): number {
@@ -67,8 +68,8 @@ const COLUMNS: Column[] = [
 
 const DEFAULT_SORT: SortState = { key: 'score', dir: 'desc' };
 
-function roleLabel(role: string): string {
-  return ROLE_LABELS[role as Role] ?? role.toUpperCase();
+function roleLabel(role: Role): string {
+  return ROLE_LABELS[role] ?? String(role).toUpperCase();
 }
 
 /** `m:ss` for a tick count. */
@@ -77,8 +78,11 @@ function clock(ticks: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
 }
 
+const columnFor = (key: string): Column | undefined => COLUMNS.find((c) => c.key === key);
+
 function sortRows(rows: readonly ScoreboardRow[], state: SortState): ScoreboardRow[] {
-  const col = COLUMNS.find((c) => c.key === state.key) ?? COLUMNS[2];
+  const col = columnFor(state.key) ?? columnFor(DEFAULT_SORT.key);
+  if (!col) return [...rows];
   const sign = state.dir === 'asc' ? 1 : -1;
   return [...rows].sort((a, b) => {
     const va = col.value(a);
@@ -93,16 +97,6 @@ function sortRows(rows: readonly ScoreboardRow[], state: SortState): ScoreboardR
         : String(va).localeCompare(String(vb));
     return cmp * sign;
   });
-}
-
-/** Hands `blob` to the browser as a download named `filename`, then frees the object URL. */
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }
 
 /**
@@ -170,24 +164,14 @@ export class RoundDetail {
     return round.winner === teamId ? 'Win' : 'Loss';
   }
 
-  /** A Side with no rows (a legacy Round) has no players to have been eliminated. */
-  protected eliminated(round: GameRound, side: Side): boolean {
-    const board = round.scoreboard[side];
-    return board.eliminated && board.players.length > 0;
-  }
-
-  protected elimBonus(round: GameRound, side: Side): number {
-    const other: Side = side === 'red' ? 'blue' : 'red';
-    return this.eliminated(round, other) ? round.scoreboard[side].elim_bonus : 0;
-  }
-
   protected eliminatedAt(round: GameRound): string | null {
     const ticks = round.eliminated_at;
     return ticks > 0 && ticks < SURVIVED_TICK ? clock(ticks) : null;
   }
 
+  /** Rows that started with missiles read `landed/starting` in the Msls column. */
   protected carriesMissiles(row: ScoreboardRow): boolean {
-    return MISSILE_ROLES.has(row.role);
+    return row.starting_missiles > 0;
   }
 
   protected toggleSort(side: Side, col: Column): void {

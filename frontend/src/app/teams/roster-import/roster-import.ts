@@ -4,21 +4,12 @@ import { MatError } from '@angular/material/form-field';
 import { RouterLink } from '@angular/router';
 import { RosterImportResult } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
+import { saveBlob } from '../../shared/save-blob';
 import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
 import { classifyImportErrors } from './import-errors';
 
 /** The filename the browser saves the server's template CSV under. */
 const TEMPLATE_FILENAME = 'roster_template.csv';
-
-/** Hands `blob` to the browser as a download named `filename`, then frees the object URL. */
-function saveBlob(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
-}
 
 function messageOf(error: unknown): string {
   return error instanceof Error && error.message ? error.message : GENERIC_ERROR_MESSAGE;

@@ -16,7 +16,10 @@
     <p class="match-detail__meta">
       {{ matchTypeLabels[m.match_type] }} &middot; {{ m.date_played | date: 'MMM d, y HH:mm' }}
       &middot;
-      <span class="match-detail__score">{{ m.red_total_points }} - {{ m.blue_total_points }}</span>
+      <span class="match-detail__score"
+        >{{ m.red_total_points | number: '1.0-0' }} -
+        {{ m.blue_total_points | number: '1.0-0' }}</span
+      >
       &middot; <app-result-chip [result]="result(m)" />
     </p>
   </div>
@@ -46,13 +49,13 @@
                 <td colspan="4" class="match-detail__muted">Not played yet</td>
               } @else {
                 <td class="num">
-                  {{ r.redPoints }}
+                  {{ r.redPoints | number: '1.0-0' }}
                   @if (r.redBonus) {
                     <span class="match-detail__bonus">+ elim bonus</span>
                   }
                 </td>
                 <td class="num">
-                  {{ r.bluePoints }}
+                  {{ r.bluePoints | number: '1.0-0' }}
                   @if (r.blueBonus) {
                     <span class="match-detail__bonus">+ elim bonus</span>
                   }
@@ -72,8 +75,8 @@
           }
           <tr class="summary-table__total">
             <th scope="row">Total</th>
-            <td class="num">{{ m.red_total_points }}</td>
-            <td class="num">{{ m.blue_total_points }}</td>
+            <td class="num">{{ m.red_total_points | number: '1.0-0' }}</td>
+            <td class="num">{{ m.blue_total_points | number: '1.0-0' }}</td>
             <td><app-result-chip [result]="result(m)" /></td>
             <td class="match-detail__muted">-</td>
           </tr>

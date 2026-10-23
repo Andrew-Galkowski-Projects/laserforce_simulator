@@ -11,7 +11,7 @@
       </p>
       <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
       <p class="rd-meta">
-        Round {{ r.round_number }} &middot; {{ r.date_played | date: 'MMM d, y HH:mm' }} &middot;
+        Round {{ r.round_number }} &middot;
         {{ r.winner_name === null ? 'Tie' : r.winner_name + ' won' }}
         @if (eliminatedAt(r); as at) {
           &middot; elimination at {{ at }}
@@ -44,7 +44,7 @@
           <span class="rd-badge rd-badge--{{ outcome(r, side).toLowerCase() }}">{{
             outcome(r, side)
           }}</span>
-          @if (eliminated(r, side)) {
+          @if (b.eliminated) {
             <span class="rd-badge rd-badge--elim">Eliminated</span>
           }
         </div>
@@ -54,7 +54,7 @@
         </div>
         <div class="rd-strip__score">
           <span class="rd-strip__points">{{ points(r, side) | number }}</span>
-          @if (elimBonus(r, side); as bonus) {
+          @if (b.elim_bonus; as bonus) {
             <span class="rd-strip__bonus rd-muted">(+{{ bonus | number }} elim bonus)</span>
           }
         </div>

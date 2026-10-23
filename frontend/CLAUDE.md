@@ -84,6 +84,8 @@ src/
     shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
                           over drawer below); toolbar colours via mat.toolbar-overrides
     login/                sign-in form; returnUrl honoured only when it is an in-app path
+    shared/               cross-feature helpers: save-blob.ts (saveBlob: a Blob as a named
+                          download; roster-import's template CSV, round-detail's Export PDF)
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
                           team-create, team-detail, team-edit, team-slots, player-add,
                           player-edit, team-generate, roster-import (import-errors.ts:

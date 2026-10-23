@@ -85,21 +85,30 @@ h1 {
   }
 }
 
+// The scroll wrapper is a narrow-screen fallback: from 768px the table fits its card, the
+// team-name headers wrapping and the elim bonus dropping under its points.
 .match-detail__tablewrap {
   overflow-x: auto;
 }
 
 .summary-table {
   width: 100%;
-  min-width: 40rem;
   border-collapse: collapse;
 
   th,
   td {
-    padding: 0.5rem 1rem;
+    padding: 0.5rem 0.75rem;
     border-bottom: 1px solid var(--lf-border);
     text-align: left;
+  }
+
+  td.num,
+  tbody th {
     white-space: nowrap;
+  }
+
+  @media (max-width: 767.98px) {
+    min-width: 40rem;
   }
 
   thead th {
@@ -124,6 +133,10 @@ h1 {
   tbody tr:last-child > * {
     border-bottom: none;
   }
+}
+
+.match-detail__bonus {
+  display: block;
 }
 
 .match-detail__bonus,
