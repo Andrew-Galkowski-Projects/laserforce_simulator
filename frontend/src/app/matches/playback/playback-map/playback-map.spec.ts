@@ -47,6 +47,8 @@ describe('PlaybackMap (beta, contract only)', () => {
     fixture.componentRef.setInput('map', map);
     fixture.componentRef.setInput('players', TIMELINE_PLAYERS);
     fixture.componentRef.setInput('cursor', cursor);
+    fixture.componentRef.setInput('snapshots', new Map());
+    fixture.componentRef.setInput('respawnTicks', 16);
     await fixture.whenStable();
   }
 

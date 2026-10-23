@@ -1,7 +1,8 @@
 // The beta Playback map's route maths, ported from the Django round-events overlay
 // (`pbInitMap` / `pbPosAt` / `pbDrawMap` in templates/matches/game_round_events.html). Beta: the
 // owner is still changing it (MOVE-07), so it is deliberately not pinned by tests.
-import { PlaybackMapPlayer } from '../../../api/rounds.models';
+import { PlaybackMapPlayer, PlaybackSnapshot } from '../../../api/rounds.models';
+import { snapshotAt } from '../snapshot-at';
 
 /** Comet-tail length in seconds (32 ticks). */
 export const TRAIL_SEC = 16;
@@ -92,6 +93,22 @@ export function trailTimes(t: number): number[] {
   }
   times.push(t);
   return times;
+}
+
+/**
+ * Whether the player is deactivated at `tick` (the map dims their marker and trail): eliminated,
+ * or within `respawnTicks` of their last Down.
+ */
+export function deactivatedAt(
+  snapshots: readonly PlaybackSnapshot[],
+  tick: number,
+  respawnTicks: number,
+): boolean {
+  const snap = snapshotAt(snapshots, tick);
+  if (!snap) {
+    return false;
+  }
+  return snap.eliminated || (snap.downed_at !== null && tick - snap.downed_at < respawnTicks);
 }
 
 /** A cell's centre in image pixels: `((c + 0.5) * zone, (r + 0.5) * zone)`. */

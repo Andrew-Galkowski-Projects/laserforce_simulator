@@ -13,13 +13,19 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButton } from '@angular/material/button';
 import { MapsService } from '../../../api/maps.service';
 import { Role } from '../../../api/players.models';
-import { PlaybackMap as PlaybackMapData, Side, TimelinePlayer } from '../../../api/rounds.models';
+import {
+  PlaybackMap as PlaybackMapData,
+  PlaybackSnapshot,
+  Side,
+  TimelinePlayer,
+} from '../../../api/rounds.models';
 import { ROLE_LABELS } from '../../../teams/shared/roster';
 import {
   Keyframe,
   SEC_PER_TICK,
   TRAIL_SEC,
   cellToPixel,
+  deactivatedAt,
   positionAt,
   routeKeyframes,
   trailTimes,
@@ -33,7 +39,12 @@ interface Route {
   /** 1 / 2 for a Side's two Scouts, else 0. */
   scout: number;
   keyframes: Keyframe[];
+  /** Whether the player is deactivated at a tick (dims the marker and that trail segment). */
+  off: (tick: number) => boolean;
 }
+
+/** Opacity factor for a deactivated player's marker and trail. */
+const DIM = 0.35;
 
 /** The colours, read from the tokens at draw time. */
 interface Palette {
@@ -84,7 +95,8 @@ function drawMap(
       const xy = cellToPixel(r, c, zone);
       if (prev) {
         const age = (t - s) / TRAIL_SEC;
-        ctx.globalAlpha = 0.8 * (1 - age) + 0.05;
+        const dim = route.off(s / SEC_PER_TICK) ? DIM : 1;
+        ctx.globalAlpha = (0.8 * (1 - age) + 0.05) * dim;
         ctx.lineWidth = Math.max(1.5, zone * (0.08 + 0.12 * (1 - age)));
         ctx.beginPath();
         ctx.moveTo(prev[0], prev[1]);
@@ -103,6 +115,7 @@ function drawMap(
   for (const route of routes) {
     const [r, c] = positionAt(route.keyframes, t);
     const [x, y] = cellToPixel(r, c, zone);
+    ctx.globalAlpha = route.off(t / SEC_PER_TICK) ? DIM : 1;
     ctx.beginPath();
     ctx.arc(x, y, size * 0.6, 0, Math.PI * 2);
     ctx.fillStyle = colours.surface;
@@ -126,6 +139,7 @@ function drawMap(
       ctx.fillText(String(route.scout), bx, by + 0.5);
     }
   }
+  ctx.globalAlpha = 1;
 }
 
 /**
@@ -136,6 +150,8 @@ function drawMap(
  * - `map`: `RoundPlayback.map`, `null` for a map-less Round (show the "No map" notice).
  * - `players`: every `TimelinePlayer` of the Round (names, Sides, roles), both Sides.
  * - `cursor`: the Playback cursor in ticks (fractional while playing).
+ * - `snapshots`: every player's Playback snapshots by player id, and `respawnTicks`
+ *   (`RoundPlayback.respawn_ticks`): a Down or eliminated player's marker and trail are dimmed.
  *
  * The map fetches its image only when the toggle is first opened, so a closed map makes no
  * HTTP request; shell specs rely on that. The canvas is redrawn by an effect on the cursor (no
@@ -151,6 +167,8 @@ export class PlaybackMap {
   readonly map = input.required<PlaybackMapData | null>();
   readonly players = input.required<readonly TimelinePlayer[]>();
   readonly cursor = input.required<number>();
+  readonly snapshots = input.required<ReadonlyMap<number, readonly PlaybackSnapshot[]>>();
+  readonly respawnTicks = input.required<number>();
 
   private readonly maps = inject(MapsService);
   private readonly destroyRef = inject(DestroyRef);
@@ -169,14 +187,20 @@ export class PlaybackMap {
   private readonly canvas = viewChild<ElementRef<HTMLCanvasElement>>('canvas');
 
   /** Every player's keyframed route, built once per map. */
-  private readonly routes = computed<Route[]>(() =>
-    (this.map()?.players ?? []).map((p) => ({
-      side: p.team,
-      label: ROLE_LABELS[p.role.toLowerCase() as Role] ?? p.role.slice(0, 3).toUpperCase(),
-      scout: p.scout,
-      keyframes: routeKeyframes(p),
-    })),
-  );
+  private readonly routes = computed<Route[]>(() => {
+    const snapshots = this.snapshots();
+    const respawnTicks = this.respawnTicks();
+    return (this.map()?.players ?? []).map((p) => {
+      const own = snapshots.get(p.id) ?? [];
+      return {
+        side: p.team,
+        label: ROLE_LABELS[p.role.toLowerCase() as Role] ?? p.role.slice(0, 3).toUpperCase(),
+        scout: p.scout,
+        keyframes: routeKeyframes(p),
+        off: (tick: number) => deactivatedAt(own, tick, respawnTicks),
+      };
+    });
+  });
 
   constructor() {
     effect(() => {

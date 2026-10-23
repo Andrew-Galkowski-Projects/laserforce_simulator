@@ -81,7 +81,13 @@
     }
   </div>
 
-  <app-playback-map [map]="p.map" [players]="t.players" [cursor]="cursor()" />
+  <app-playback-map
+    [map]="p.map"
+    [players]="t.players"
+    [cursor]="cursor()"
+    [snapshots]="snapshots()"
+    [respawnTicks]="p.respawn_ticks"
+  />
 
   <section class="pb-feed" aria-labelledby="pb-feed-title">
     <div class="pb-feed__head">

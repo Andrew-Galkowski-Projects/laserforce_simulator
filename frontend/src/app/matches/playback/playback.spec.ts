@@ -113,6 +113,8 @@ describe('Playback (/rounds/:id/playback)', () => {
       expect(map.map()).toBeNull();
       expect(map.players().length).toBe(4);
       expect(map.cursor()).toBe(0);
+      expect(map.snapshots().size).toBe(4);
+      expect(map.respawnTicks()).toBe(16);
 
       const feed = de.query(By.directive(PlaybackFeed)).componentInstance as PlaybackFeed;
       expect(feed.events()).toEqual(t.events);
