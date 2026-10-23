@@ -61,6 +61,81 @@ Every component uses the theme chosen in ANG-04b.
    `PLAN-completed.md`)
 5b. **Playback (ANG-06f)** — SIM-05 scrubber, play/step/speed, live Side scoreboards, current-row
    highlight, map overlay. RV-04's timeline pips and MECH-15's tick-0 frame attach here.
+   Spec: #305
+
+   **Grill (2026-10-23), settled so far.** Styled after lfstats's game Replay tab
+   (`zmaniacz/lfstats`, `apps/web/src/components/games/ReplayTab.tsx`), within ADR-0043. The
+   screen is **Playback** ("Replay" is the glossary's re-simulation term).
+   - **Route:** its own screen at `/rounds/:id/playback` (declared before `:id`), linked from Round
+     detail and the Event log. Layout: controls + scrubber, Red | Blue scoreboards side by side
+     (stacked below 1024px), map, event feed.
+   - **State source:** the server computes per-player **state snapshots** in a pure service
+     (`round_playback`) served at `GET /api/rounds/<id>/playback/`. The client only looks up each
+     player's latest snapshot at or before the cursor tick. There is no TS port of the Django JS
+     replay rules. MECH-15's tick-0 event will later seed the opening state on the server.
+   - **Map overlay: in scope, marked beta** (the owner plans pathing changes, MOVE-07). It is
+     collapsed by default behind a "Show map (beta)" toggle and carries a Beta chip when open. The
+     endpoint's `map` key is `_build_playback_map`'s output unchanged, drawn on a canvas with
+     Catmull-Rom and 16 s trails. Tests pin only the contract: `map` present or `null`, the toggle
+     shows the panel, and the map-less notice renders. Canvas pixels, interpolation and trails are
+     not pinned.
+   - **Scoreboard** (lfstats columns): `# | Player | respawn dot | Pos | Score | Acc | Lives | Shots |
+     Msl | SP`, rows re-sorted by score live. Down: name dimmed plus a conic-gradient respawn dot.
+     Eliminated: row dimmed plus an OUT badge. Heavy: SP is "—". Positions stay text. Colours only
+     via `data-lf-side` / `--lf-*`. Sides keep Red vs Blue and stay fixed (Red left, no
+     leader-left swap).
+   - **Animations:** rapid-fire pulse, nuke-arming rainbow, rank-up flash; all off under
+     `prefers-reduced-motion`. No lead-change bounce.
+   - **Controls:** start, prev event, play/pause, next event, end; speeds 1x / 2x / 4x / 8x;
+     `mm:ss / mm:ss` via `tickClock`; tick-step scrubber; dragging pauses. No keyboard shortcuts.
+   - **Event feed:** events up to the cursor, newest first. The newest row is the current row
+     (`is-current`, as in ANG-06e). Search box, plus Misses and Movement toggles (both off by
+     default), `EVENT_GROUPS` colours, and a "Full event log" link.
+   - **Hooks only:** a `seek(tick)` plus an overlay slot on the scrubber for RV-04's pips. RV-04
+     and MECH-15 are not built here.
+   - **Ownership / fidelity:** the `manager` seam (cross-Account 404, `assert_owner_only`), plus
+     `ensure_fidelity("full")` like the Django view. Read-only, no engine or RNG change, so no
+     determinism test.
+   - **Out:** removing the Django page (ANG-08), the One Week Live engine copy
+     (`play_week_live.html`), charts (ANG-06g), keyboard shortcuts.
+   - **Probe finding (2026-10-23):** the Django page's client replay (`pbApply`) drifts from the
+     final scoreboard. Across 60 seeded player-rows it matched score 45, lives 34, shots 12 and
+     missiles 47. The causes:
+     - it reads `target_*_resupplied` where events carry `amount`;
+     - it has no −100 for being missiled;
+     - it ignores special `targets[]` deltas;
+     - it charges Ammo shots.
+
+     **Don't trust that page's numbers.** It is left as is; ANG-08 removes it.
+   - **Snapshots from logged values (Q14):** `round_playback` reads the post-event values every
+     event already carries in `meta`: `actor_*`, `target_*`, `sp` and `special.targets[]`. It
+     derives only missiles (−1 per `locking`, −1 more per `missiled` hit, mirroring the engine,
+     see MECH-16) and elimination (`elimination` events). A probe of this method matched 60/60.
+   - **Final-state invariant (Q15):** a pytest over several seeded rounds asserts each player's
+     last snapshot equals their Round scoreboard row: score, lives, shots, missiles, SP,
+     eliminated, and tags / misses against `tags_made` / `shots_missed`. Seed **before** creating
+     players, or rounds don't reproduce.
+   - **Seam (Q19):** pure `matches/playback.py::round_playback(game_round) -> dict` (its own
+     module, not `services.py`), served by a `playback` action on the rounds viewset at
+     `GET /api/rounds/<id>/playback/`. Frontend: `RoundsService.playback(id)` plus a
+     `RoundPlayback` type in `rounds.models.ts`.
+   - **Shape (Q18),** inside the ADR-0039 envelope:
+     `{duration_ticks, not_targetable_ticks: 8, respawn_ticks: 16, players: [{id, snapshots:
+     [{tick, score, lives, shots, missiles, sp, tags, misses, downed_at: tick|null, eliminated,
+     rapid_fire, nuking}]}], map: _build_playback_map(...) | null}`.
+     - One tick-0 opening snapshot per player, then one per tick at which that player changes.
+     - Names, Sides, roles and events come from the existing `/timeline/` (`forkJoin`).
+     - Acc = `tags / (tags + misses)`. The respawn dot comes from `downed_at` and the cursor tick.
+     - `nuking` runs from "activates nuke" to its detonation or `nuke_cancelled`.
+     - `rapid_fire` runs from activation to the next resupply that player receives (the engine
+       cancels it silently).
+   - **Map image (Q20):** `map` also carries `arena_map: {id, name}`. The screen fetches
+     `/api/maps/<id>/processed-image/` as a blob through `ApiClient`, which carries auth, and shows
+     it from an object URL that is revoked on destroy. A failed fetch shows the map-less notice.
+   - **Unplayed round (Q21):** behaves like `/timeline/`. The screen shows tick-0 snapshots and
+     "No events yet."
+   - **ADR (Q22):** [ADR-0044](docs/adr/0044-playback-state-from-logged-after-event-values.md).
+     Grill complete, 2026-10-23.
 5c. **Event charts (ANG-06g)** — choose the charting library, then build the four Shots / Lives / Points
    / SP charts with filters and overlays. RES-05 attaches here.
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
@@ -274,7 +349,7 @@ Mechanics items can run in parallel with Phase 8, because they don't touch the f
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, CAL-01, then MECH-07
+- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
@@ -531,6 +606,17 @@ round-playback and the LG-01i live-watch an authoritative opening state instead 
 reconstructing it. **Locked (grilled 2026-06-25):** persisted event, **not** a
 playback-only derivation. Pairs with the replay system but is logged for *all* rounds.
 
+### MECH-16 · Missile spent twice on a hit (bug)
+
+**Prio: Medium (found 2026-10-23, ANG-06f probe).** A missile is spent at lock
+(`combat.start_missile_lock`) and spent **again** when it hits (`_complete_missile`:
+`attacker.final_missiles -= 1`, `entrypoints.py` ~L1838). Some players end a round with
+`final_missiles == -1`. Spend it once, at lock. Add a regression test that `final_missiles` never goes
+below 0 and equals starting missiles minus locks. **Changes seeded outcomes**, because a missile
+holder may lock again sooner, so it folds into the `CAL-01` re-baseline. ANG-06f's `round_playback`
+mirrors the double spend so its final-state invariant holds. When this lands, drop the extra −1 per
+`missiled` hit there too.
+
 ### MOVE-05 · Enforce cell occupancy (no two players end a tick on the same cell)
 
 **Prio: Medium (found 2026-06-25).** Players sometimes **end a tick on the same cell
@@ -554,6 +640,29 @@ perturb the chosen goal within a small radius. Reactive overrides (MECH-04
 nuke-reaction, critical-resource, `seek_medic`) stay deterministic; only the
 steady-state positioning layer gains jitter. **Consumes RNG** → shifts seeded
 outcomes; folds into the `CAL-01` re-baseline (no separate obligation).
+
+### MOVE-07 · Varied pathing + action-choice sweep
+
+**Prio: Medium (found 2026-10-23, ANG-06f grill).** Watching the playback map overlay, the
+routes look too standard: every player walks the textbook A* shortest path, so movement is
+predictable and samey. Two parts:
+
+- **Pathing variation.** Give routes human-looking variety instead of always the single shortest
+  A* route (`sim_helpers/pathfinding.py`, `astar_advance_cached`, **Path commitment**). Candidates:
+  pick among near-shortest routes, add per-player cost noise or role/stat-driven preferences
+  (cover-hugging, flanking, high ground), and vary the pace along a route. This differs from
+  `MOVE-06`, which spreads the *goal* cells; MOVE-07 varies the *route* to a goal.
+- **Full sweep of the action-choice logic.** Review the weighted **Action** selection end to end
+  (weights, role scripts, carry-over of hide / hold, how memory and comms feed in) for flat or
+  unrealistic behaviour, and fix what the sweep finds. This overlaps `MECH-07`'s action-selection
+  half and `MECH-14`; settle in this task's grill whether MOVE-07 absorbs them or stays a sweep
+  that feeds them.
+
+**Open for its own grill:** how much variation, and from which inputs (RNG noise vs player
+Stats); whether Path commitment still holds a route once it has been picked; how to judge
+"varied enough" (the playback map overlay plus the movement heatmap). **Consumes RNG** and
+shifts seeded outcomes, so it folds into the `CAL-01` re-baseline. The ANG-06f map overlay ships
+as **beta** partly so this work can change what it shows.
 
 ### CAL-01 · Score Calibration re-baseline
 

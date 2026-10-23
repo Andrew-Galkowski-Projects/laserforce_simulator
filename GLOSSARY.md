@@ -343,6 +343,14 @@ The deterministic sequence of per-round **RNG seeds** produced from a **Master s
 **Replay**:
 Re-running a single persisted **Round** from its stored **RNG seed** to reproduce its exact event log. Faithful only while that round's rosters, map, and **Orientation** are unchanged; the seed captures randomness only, not world state.
 
+**Playback**:
+Watching a persisted **Round** unfold over time: a cursor moves through its **Ticks** while each **Side**'s scoreboard, the event feed and the map show the state at that tick. Reads the stored event log only; it never re-runs the **Simulator**.
+_Avoid_: calling Playback a **Replay** (a Replay re-simulates from the **RNG seed**), even though LFstats names its equivalent tab "Replay".
+
+**Playback snapshot**:
+One player's state at one **Tick** of a **Playback**: score, **Lives**, **Shots**, missiles, **SP**, tags and misses, and whether they are **Down**, eliminated, in rapid fire or arming a **Nuke**. Taken from the after-event values the event log already records, never re-derived from combat rules. A player's last snapshot equals their **Round scoreboard** row.
+_Avoid_: frame (a **Tick** is the time unit; a snapshot is the state at one).
+
 **Batch run**:
 Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied. Applies **Side alternation** so per-team aggregates are not biased by map-side advantage; aggregate keys are **team-position keyed** (`red_*` = the team passed as the `team_red` argument, whichever **Side** it played), with a separate side-advantage breakdown for the raw red/blue-side signal.
 
