@@ -204,7 +204,11 @@ Add these constraints to every implementer prompt:
 - Every Implementation Decision gets a test you have seen go **red**: write it
   first, or mutate the code back, before reporting done. Name each pairing in
   your report. Config-only tickets need this most, because their tests pass
-  the moment the setting lands.
+  the moment the setting lands. A cross-Account read uses
+  `assert_owner_only` (`laserforce_simulator/testing.py`): written before the
+  action exists, it is red, and its owner-gets-200 half keeps it from passing
+  on a 404 for everyone. This is the ownership red, since a guard mutation
+  is refused (Step 7).
 - Run only your own test files, with pytest run from the nested Django dir
   (`laserforce_simulator/`). The full suite is the orchestrator's job.
 - Write files with Write and Edit, never a heredoc. Glob before creating a
@@ -273,7 +277,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    Assert on `innerText` or the API response body, not a status code. Take a
    screenshot of each changed screen at 1280px and at 768px (`resize_page`),
    read it, and fix anything clipped or wrapped mid-word before review: specs
-   assert text, so only the picture shows layout (ANG-06c's winner chips). Check
+   assert text, so only the picture shows layout (ANG-06c's winner chips).
+   Fix by reflowing (a second line, a stacked cell) so every field the spec's
+   user stories show stays on screen (ANG-06e first hid the names). Check
    from a second Account when ownership changed. An API-only task checks the
    endpoints in the browsable API or with the test client instead, and says
    which. A test-client script runs through `manage.py shell -c
@@ -287,7 +293,9 @@ Call `mattpocock-skills:code-review` with fixed point `origin/main`. The Spec ax
 reads the spec issue and its tickets; the Standards axis reads
 `CODING_STANDARDS.md` plus Fowler's smells. Give both reviewers the main
 checkout's `.venv\Scripts\python.exe` for any Python or pip call, so they can
-verify installs and runtime claims. Show both reports. Fix the
+verify installs and runtime claims. Tell the Spec reviewer to search for
+parameterised tests (`it.each`, `@pytest.mark.parametrize`, `subTest`)
+before reporting a test missing (ANG-06e's false P1). Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
 tests, and review again only if a fix changed behaviour. The fix pass is
 the orchestrator's own work, not a ticket: tell its agent to **stage** its

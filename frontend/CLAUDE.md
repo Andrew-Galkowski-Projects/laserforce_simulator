@@ -150,8 +150,9 @@ colours in light mode, all-mono JetBrains Mono.
 - `theme.spec.ts` compiles the real `styles.scss` into jsdom and reads the computed tokens and
   Material roles on the document root (and `--side*` on `[data-lf-side]` elements) in light and
   dark (it emulates `prefers-color-scheme` by rewriting the media condition, since jsdom matches no
-  media feature). It also checks the dark block declares every colour token itself and scans
-  every `.scss` under `src/` for colour literals.
+  media feature). It also checks the dark block declares every colour token itself, scans
+  every `.scss` under `src/` for colour literals, and holds every text colour token (`--lf-text`,
+  `*-text`, `--lf-ev-*`) to 4.5:1 on `--lf-bg` and `--lf-surface` in both modes.
 
 ## API and auth
 
