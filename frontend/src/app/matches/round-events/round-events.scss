@@ -1,0 +1,291 @@
+// Event log, ADR-0043 layout B: contract tokens and --side* only, never a colour literal.
+:host {
+  display: block;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1 {
+  margin: 0;
+  font: 700 1.5rem/1.2 var(--lf-font-heading);
+}
+
+.re-error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.re-pagehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.re-kicker {
+  margin: 0.25rem 0;
+  color: var(--lf-text-muted);
+  font-size: 0.8rem;
+}
+
+// The R / B Side badge (as Round detail's team strip), kept next to Side colour for colour-blind
+// users. It reads `--side*` from the nearest `[data-lf-side]` element.
+.re-sidetag {
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--side);
+  border-radius: var(--lf-radius);
+  color: var(--side-text);
+  font-size: 0.65rem;
+  font-weight: 700;
+}
+
+.re-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.re-muted {
+  color: var(--lf-text-muted);
+  font-weight: 400;
+}
+
+.re-empty {
+  margin: 0;
+  padding: 0.9rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text-muted);
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font: 700 1rem var(--lf-font-heading);
+}
+
+// ---- Summary cards --------------------------------------------------------------------------
+.re-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
+  gap: 0.5rem;
+  margin: 0 0 1.25rem;
+  padding: 0;
+  list-style: none;
+}
+
+.re-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.6rem 0.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  &__value {
+    font: 700 1.25rem var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__label {
+    color: var(--lf-text-muted);
+    font-size: 0.75rem;
+  }
+}
+
+// ---- Highlights -----------------------------------------------------------------------------
+.re-highlights {
+  margin-bottom: 1.25rem;
+
+  ul {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+}
+
+.re-highlight {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.25rem 0.75rem;
+  width: 100%;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-left: 4px solid var(--side, var(--lf-border));
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    background: var(--lf-surface-alt);
+  }
+
+  &__kind {
+    min-width: 8rem;
+    color: var(--side-text, var(--lf-text));
+    font-weight: 700;
+  }
+
+  &__time {
+    color: var(--lf-text-muted);
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+// ---- Filters + timeline ---------------------------------------------------------------------
+.re-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+
+  &--wide {
+    display: grid;
+    grid-template-columns: 15rem minmax(0, 1fr);
+    align-items: start;
+  }
+}
+
+.re-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  &__set {
+    display: flex;
+    flex-direction: column;
+    margin: 0;
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+
+    legend {
+      padding: 0 0.25rem;
+      color: var(--lf-text-muted);
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    mat-checkbox {
+      border-left: 3px solid var(--re-ev, transparent);
+    }
+  }
+
+  &__players legend {
+    color: var(--side-text);
+  }
+}
+
+.re-count {
+  margin: 0 0 0.4rem;
+  font-size: 0.8rem;
+}
+
+.re-viewport {
+  height: 32rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+// One row per event: a fixed height (the virtual scroll's item size) and its grid rows, both bound
+// from the component's line heights; the group's colour on the left border and the chip, the
+// names in their Side's text colour.
+.re-row {
+  display: grid;
+  grid-template-columns: 3.25rem 6.5rem minmax(10rem, 1fr) minmax(0, max-content) auto;
+  align-items: center;
+  gap: 0 0.6rem;
+  box-sizing: border-box;
+  padding: 0 0.6rem;
+  border-bottom: 1px solid var(--lf-border);
+  border-left: 4px solid var(--re-ev);
+  font-size: 0.82rem;
+
+  // Below the wide breakpoint (the component's `WIDE`) the names take a second line under the
+  // description, so neither is clipped.
+  &--narrow {
+    grid-template-columns: 3.25rem 6.5rem minmax(0, 1fr) auto;
+
+    .re-row__who {
+      grid-row: 2;
+      grid-column: 3 / -1;
+    }
+  }
+
+  &.is-current {
+    background: color-mix(in srgb, var(--lf-accent) 14%, var(--lf-surface));
+    box-shadow: inset 0 0 0 1px var(--lf-accent);
+  }
+
+  &__time {
+    color: var(--lf-text-muted);
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__chip {
+    overflow: hidden;
+    padding: 0.05rem 0.4rem;
+    border: 1px solid var(--re-ev);
+    border-radius: var(--lf-radius);
+    background: color-mix(in srgb, var(--re-ev) 14%, transparent);
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__desc,
+  &__meta {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__who {
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    overflow: hidden;
+    white-space: nowrap;
+  }
+
+  &__actor,
+  &__target {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    color: var(--side-text);
+    font-weight: 600;
+  }
+
+  &__points {
+    font-family: var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+
+  // Always the last grid row (the second wide, the third narrow).
+  &__meta {
+    grid-row: -2;
+    grid-column: 3 / -1;
+    font-size: 0.72rem;
+  }
+}

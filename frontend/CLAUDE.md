@@ -104,11 +104,14 @@ src/
                           tables, each row's teams-cell <a> stretched over the row), /matches/new +
                           /rounds/new (setup-form, route data kind 'match' | 'round'; also uses
                           teams/shared/form-errors), /matches/:id + /rounds/:id (match-detail,
-                          round-detail: ANG-06d, layout B, from the Round API's `scoreboard`);
-                          shared/: result.ts (matchResult / roundResult: winner, "Tie", muted
+                          round-detail: ANG-06d, layout B, from the Round API's `scoreboard`),
+                          /rounds/:id/events (round-events: the Event log, ANG-06e, from
+                          `rounds/:id/timeline/`; CDK virtual scroll, client-side filters);
+                          shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
+                          event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
                           "In progress"), result-chip, route-record.ts (loadRouteRecord),
                           record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
-                          scoreboard-fixtures)
+                          scoreboard-fixtures, timeline-fixtures)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures

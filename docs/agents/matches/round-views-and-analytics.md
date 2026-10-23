@@ -197,3 +197,30 @@ Two consumers, so the shape cannot drift:
 The PDF export (`export_round_report`) still builds its own 14-key subset from `_player_row`.
 Tests: `matches/tests/test_api_round_scoreboard.py` (shape, grouping, ordering, bonus, empty Side,
 query counts, the Django page's empty-Side bonus).
+
+## ANG-06e Event log timeline
+
+`matches/services.py::round_timeline(game_round) -> dict` builds the whole **Event log** for
+`GET /api/rounds/<id>/timeline/` (see `api.md`): `{"events", "players", "highlights", "summary"}`.
+
+- `events` remaps the `round_playback_payload` rows one by one (`_timeline_event`), so the Django
+  Event log page, One Week (Live), RV-05's `round_series` and the API all read the same rows.
+  `round_playback_payload` is unchanged (`views_tests.py` pins its 13-key row), so a timeline event
+  has no `id`: the Angular screen tracks rows by index.
+- Each event: `tick, event_type, points, description, actor_id, actor_name, actor_side, target_id,
+  target_name, target_side, metadata`. Sides come from `PlayerRoundState.team_color` (the payload's
+  `at` / `tt` are Team ids). With no target, the three `target_*` keys are `null`, never the
+  payload's `-1` / `""`.
+- `players` are `{id, name, side, role}`; `highlights` is `highlights_json or []`; `summary` is
+  `GameRound.get_event_summary()`.
+- The action upgrades the round to `full` fidelity first. Its query count does not grow with the
+  number of events.
+
+The Angular screen is `/rounds/:id/events` (`frontend/src/app/matches/round-events/`). The browser
+filters the timeline by **Event group** (`matches/shared/event-groups.ts`, the nine groups and their
+`--lf-ev-*` tokens) and by player (actor or target), as the Django page did. The kill feed was
+dropped. SIM-05 playback and the four charts are ANG-06f / ANG-06g; the Django page stays until
+ANG-08.
+
+Tests: `matches/tests/test_api_round_timeline.py` (shape, order, null targets, Sides, ownership,
+405, the drift guard against `round_playback_payload`, query count).

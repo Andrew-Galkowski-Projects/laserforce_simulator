@@ -5,8 +5,15 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { authInterceptor } from '../auth/auth.interceptor';
 import { ApiError } from './api-client';
-import { GameEvent, GameRound, GameRoundListItem, PlayerRoundState } from './rounds.models';
+import {
+  GameEvent,
+  GameRound,
+  GameRoundListItem,
+  PlayerRoundState,
+  TimelineEventType,
+} from './rounds.models';
 import { RoundsService } from './rounds.service';
+import { highlight, timeline, timelineEvent } from '../matches/testing/timeline-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -225,5 +232,65 @@ describe('RoundsService', () => {
     const err = (await result) as ApiError;
     expect(err.status).toBe(400);
     expect(err.errors[0].field).toBe('event_type');
+  });
+
+  it("gets a Round's whole timeline in one unpaged call and unwraps data", async () => {
+    const body = timeline({
+      events: [
+        timelineEvent(),
+        timelineEvent({
+          tick: 3,
+          event_type: 'movement',
+          points: 0,
+          target_id: null,
+          target_name: null,
+          target_side: null,
+        }),
+      ],
+      highlights: [highlight()],
+    });
+    const result = firstValueFrom(rounds.timeline(21));
+    const req = http.expectOne(`${BASE}/rounds/21/timeline/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.keys()).toEqual([]);
+    req.flush({ data: body, meta: {} });
+    const got = await result;
+    expect(got).toEqual(body);
+    expect(got.events[1].target_side).toBeNull();
+  });
+
+  it('types every one of the 15 emitted event types as a TimelineEventType', () => {
+    // A Record over the union fails to compile if a type is missing or extra.
+    const all: Record<TimelineEventType, true> = {
+      tag: true,
+      locking: true,
+      missiled: true,
+      special: true,
+      miss: true,
+      resupply_ammo: true,
+      resupply_lives: true,
+      elimination: true,
+      team_elimination: true,
+      nuke_cancelled: true,
+      medic_reset: true,
+      movement: true,
+      base_capture: true,
+      combo_resupply: true,
+      missile_dodge: true,
+    };
+    expect(Object.keys(all)).toHaveLength(15);
+  });
+
+  it('surfaces a cross-Account timeline as ApiError 404', async () => {
+    const result = firstValueFrom(rounds.timeline(99)).catch((e: unknown) => e);
+    http
+      .expectOne(`${BASE}/rounds/99/timeline/`)
+      .flush(
+        { errors: [{ code: 'not_found', message: 'Not found.', field: null }], meta: {} },
+        { status: 404, statusText: 'Not Found' },
+      );
+    const err = (await result) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
   });
 });

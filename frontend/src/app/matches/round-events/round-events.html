@@ -1,0 +1,151 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Round" />
+} @else if (load.loadError(); as message) {
+  <p class="re-error" role="alert">{{ message }}</p>
+} @else if (load.record(); as rec) {
+  @let r = rec.round;
+  <div class="re-pagehead">
+    <div>
+      <p class="re-kicker">Event Log</p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+    </div>
+    <div class="re-actions">
+      <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+    </div>
+  </div>
+
+  @let t = rec.timeline;
+  <ul class="re-summary" aria-label="Event summary">
+    @for (card of cards; track card.key) {
+      <li class="re-card">
+        <span class="re-card__value">{{ t.summary[card.key] | number }}</span>
+        <span class="re-card__label">{{ card.label }}</span>
+      </li>
+    }
+  </ul>
+
+  <section class="re-highlights" aria-labelledby="re-highlights-title">
+    <h2 id="re-highlights-title">Highlights</h2>
+    @if (t.highlights.length === 0) {
+      <p class="re-empty">No highlights for this round</p>
+    } @else {
+      <ul>
+        @for (h of t.highlights; track $index) {
+          <li>
+            <button
+              type="button"
+              class="re-highlight"
+              [attr.data-lf-side]="h.team"
+              (click)="jumpTo(h)"
+            >
+              @if (h.team !== null) {
+                <span class="re-sidetag">{{ sideTag(h.team) }}</span>
+              }
+              <span class="re-highlight__kind">{{ kindLabel(h) }}</span>
+              <span class="re-highlight__time">{{ h.tick === null ? '' : clock(h.tick) }}</span>
+              <span class="re-highlight__label">{{ h.label }}</span>
+            </button>
+          </li>
+        }
+      </ul>
+    }
+  </section>
+
+  <ng-template #filters>
+    <fieldset class="re-filters__set">
+      <legend>Event groups</legend>
+      @for (g of groups; track g.key) {
+        <mat-checkbox
+          [style.--re-ev]="'var(' + g.token + ')'"
+          [checked]="groupChecked(g.key)"
+          (change)="toggleGroup(g.key, $event.checked)"
+          >{{ g.label }}</mat-checkbox
+        >
+      }
+    </fieldset>
+    @for (side of sides; track side) {
+      <fieldset class="re-filters__set re-filters__players" [attr.data-lf-side]="side">
+        <legend>{{ side === 'red' ? 'Red' : 'Blue' }}</legend>
+        @for (p of playersOn(t.players, side); track p.id) {
+          <mat-checkbox
+            [checked]="playerChecked(p.id)"
+            (change)="togglePlayer(p.id, $event.checked)"
+            >{{ p.name }}</mat-checkbox
+          >
+        }
+      </fieldset>
+    }
+    <mat-slide-toggle [checked]="showMetadata()" (change)="showMetadata.set($event.checked)"
+      >Show metadata</mat-slide-toggle
+    >
+  </ng-template>
+
+  <div class="re-body" [class.re-body--wide]="wide()">
+    @if (wide()) {
+      <aside class="re-filters" aria-label="Filters">
+        <ng-container *ngTemplateOutlet="filters" />
+      </aside>
+    } @else {
+      <mat-expansion-panel class="re-filters-panel">
+        <mat-expansion-panel-header>
+          <mat-panel-title>Filters</mat-panel-title>
+        </mat-expansion-panel-header>
+        <div class="re-filters">
+          <ng-container *ngTemplateOutlet="filters" />
+        </div>
+      </mat-expansion-panel>
+    }
+
+    <section class="re-timeline" aria-label="Timeline">
+      <p class="re-count re-muted">
+        Showing {{ visibleEvents().length | number }} of {{ t.events.length | number }} events
+      </p>
+      @if (visibleEvents().length === 0) {
+        <p class="re-empty">No events match these filters</p>
+      } @else {
+        <cdk-virtual-scroll-viewport
+          class="re-viewport"
+          [itemSize]="rowHeight()"
+          minBufferPx="400"
+          maxBufferPx="800"
+        >
+          <div
+            *cdkVirtualFor="let e of visibleEvents(); trackBy: trackByIndex"
+            class="re-row"
+            [class.re-row--narrow]="!wide()"
+            [class.is-current]="e === currentEvent()"
+            [style.--re-ev]="'var(' + group(e).token + ')'"
+            [style.height.px]="rowHeight()"
+            [style.grid-template-rows]="rowTracks()"
+          >
+            <span class="re-row__time">{{ clock(e.tick) }}</span>
+            <span class="re-row__chip">{{ group(e).label }}</span>
+            <span class="re-row__desc">{{ e.description }}</span>
+            <span class="re-row__who">
+              <span class="re-row__actor" [attr.data-lf-side]="e.actor_side">
+                <span class="re-sidetag">{{ sideTag(e.actor_side) }}</span>
+                {{ e.actor_name }}
+              </span>
+              @if (e.target_name !== null) {
+                <span class="re-muted">&rarr;</span>
+                <span class="re-row__target" [attr.data-lf-side]="e.target_side">
+                  @if (e.target_side !== null) {
+                    <span class="re-sidetag">{{ sideTag(e.target_side) }}</span>
+                  }
+                  {{ e.target_name }}
+                </span>
+              }
+            </span>
+            @if (e.points !== 0) {
+              <span class="re-row__points re-muted">+{{ e.points }}</span>
+            }
+            @if (showMetadata()) {
+              @let meta = metadataText(e);
+              <span class="re-row__meta re-muted" [title]="meta">{{ meta }}</span>
+            }
+          </div>
+        </cdk-virtual-scroll-viewport>
+      }
+    </section>
+  </div>
+}

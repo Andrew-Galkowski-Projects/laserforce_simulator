@@ -1026,6 +1026,51 @@ def round_playback_payload(
     return events_data, _round_players_data(game_round)
 
 
+def _timeline_event(row: dict, side_of: dict[int, str]) -> dict:
+    """ANG-06e: one ``round_playback_payload`` event row as a timeline event.
+
+    ``side_of`` maps a player id to its Side. A target-less row (``tid`` is
+    ``-1``) gets ``null`` target fields rather than the payload's sentinels.
+    """
+    has_target = row["tid"] != -1
+    return {
+        "tick": row["ts"],
+        "event_type": row["type"],
+        "points": row["pts"],
+        "description": row["desc"],
+        "actor_id": row["aid"],
+        "actor_name": row["an"],
+        "actor_side": side_of.get(row["aid"]),
+        "target_id": row["tid"] if has_target else None,
+        "target_name": row["tn"] if has_target else None,
+        "target_side": side_of.get(row["tid"]) if has_target else None,
+        "metadata": row["meta"],
+    }
+
+
+def round_timeline(game_round: GameRound) -> dict:
+    """ANG-06e: the ``GET /api/rounds/<id>/timeline/`` payload.
+
+    ``events`` remaps the ``round_playback_payload`` rows (the drift guard: the
+    API and the Django Event log page serialize the same rows), movement
+    included, in ``(timestamp, id)`` order. Sides come from each player's
+    ``PlayerRoundState.team_color`` (the payload's ``at`` / ``tt`` are Team
+    ids), and a target-less event carries ``null`` rather than the payload's
+    ``-1`` / ``""`` sentinels.
+    """
+    events_data, players_data = round_playback_payload(game_round)
+    side_of = {p["id"]: p["team"] for p in players_data}
+    return {
+        "events": [_timeline_event(row, side_of) for row in events_data],
+        "players": [
+            {"id": p["id"], "name": p["name"], "side": p["team"], "role": p["role"]}
+            for p in players_data
+        ],
+        "highlights": game_round.highlights_json or [],
+        "summary": game_round.get_event_summary(),
+    }
+
+
 def build_round_report_data(game_round: GameRound) -> dict:
     """RV-03: the ``report_data`` dict ``build_round_report`` consumes (the 15
     RV-03 keys plus RV-05's ``chart_series``).

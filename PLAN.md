@@ -57,7 +57,12 @@ Every component uses the theme chosen in ANG-04b.
 3. **[DONE] Match list & create** — team picker, match creation, results list (ANG-06c, in
    `PLAN-completed.md`)
 4. **[DONE] Round detail** — per-player stat table, MVP scores (ANG-06d, in `PLAN-completed.md`)
-5. **Event timeline** — filtered event log, color-coded by type (SIM-05 replay controls slot in here)
+5. **[DONE] Event timeline** — filtered event log, color-coded by type (ANG-06e, in
+   `PLAN-completed.md`)
+5b. **Playback (ANG-06f)** — SIM-05 scrubber, play/step/speed, live Side scoreboards, current-row
+   highlight, map overlay. RV-04's timeline pips and MECH-15's tick-0 frame attach here.
+5c. **Event charts (ANG-06g)** — choose the charting library, then build the four Shots / Lives / Points
+   / SP charts with filters and overlays. RES-05 attaches here.
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
 
 **Note (ANG-04b, 2026-10-21):** ANG-06 builds to
@@ -255,7 +260,7 @@ top of this file. Phase 8 is the critical path. Everything else is an unschedule
 so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
 
 ```
-ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail [done] -> Event timeline -> Map editor)   <- NEXT
+ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail, Event timeline [done] -> Playback -> Event charts -> Map editor)   <- NEXT
         + still to scope: League / Season, League screens,
           Tournaments, Accounts
     -> ANG-07  Serve Angular from an nginx sidecar

@@ -6232,6 +6232,73 @@ Grill settled (owner, 2026-10-22):
 - **Ownership / data / simulation:** unchanged. Existing viewsets 404 cross-Account; no
   migration; no engine or RNG change (`get_mvp` is read-only).
 
+#### ANG-06e · [DONE] Event timeline (the Event log)
+
+Spec: #300 (tickets #301, #302)
+
+**[DONE] Shipped (2026-10-22).** Angular `/rounds/:id/events`, reached from an "Event log" link on
+Round detail. It has the seven summary cards, the Highlights (click one to scroll to it), and a
+virtual-scroll timeline colour-coded by **Event group**, filtered in the browser by group and by
+player (actor or target), with a "Show metadata" toggle. Server: `GET /api/rounds/<id>/timeline/`
+from `round_timeline`, which remaps the `round_playback_payload` rows. What the work found:
+- `views_tests.py` pins `round_playback_payload` at 13 keys, so the grill's `id` key was dropped:
+  timeline events have no `id`, and the screen tracks rows by index.
+- The browser check at 768px showed the description cut to a few characters. Below the 1024px
+  breakpoint, rows are now two lines, with the names on the second.
+- Review:
+  - Every Side colour now has an R / B badge.
+  - The h1 is the teams title, with "Event Log" above it.
+  - The tick clock is shared with Round detail (`matches/shared/clock.ts`).
+  - The group keys are an `EventGroupKey` union.
+  - Light `--lf-ev-base` and `--lf-ev-movement` were darkened to reach 4.5:1 on `--lf-bg` (ADR-0043).
+- The screen fetches the Round as well as the timeline, for the team names in its title.
+- The row a Highlight jumps to is outlined (`is-current`). It is the only sign of where the click
+  landed; ANG-06f's playback current row builds on it.
+- Left for later: dark `--lf-ev-movement` is about 3.6:1 on the dark background (ADR-0043 sets no
+  dark bar). The 404 / 401 tests on the new action were never seen red, because the guard mutation
+  was refused; the same `get_object()` path is covered for the other Round actions.
+
+Grill settled (owner, 2026-10-22):
+
+- **Scope:** the summary cards, the Highlights list and the filtered, colour-coded timeline. SIM-05
+  playback and the charts split out as ANG-06 items 5b (ANG-06f) and 5c (ANG-06g).
+- **Data:** one new read action `GET /api/rounds/<id>/timeline/`, unpaginated, in the ADR-0039
+  envelope, with `events` / `players` / `highlights` / `summary`. Event keys are readable (`tick,
+  event_type, points, description, actor_id, actor_name, actor_side, target_id, target_name,
+  target_side, metadata`), times in ticks, movement included. The rows come through a shared service
+  built on `round_playback_payload` / `get_event_summary`, so the Django page and the API can't
+  drift. Ownership goes through `get_object()` (cross-Account 404), then `ensure_fidelity("full")`.
+  `/events/` is unchanged. No migration, no engine change.
+- **Filtering** happens in the browser, as in Django. Every emitted type goes in an explicit group:
+  Tag (`tag`), Elimination (`elimination`, `team_elimination`), Miss (`miss`), Special (`special`,
+  `nuke_cancelled`), Missile (`missiled`, `missile_dodge`), Locking (`locking`), Resupply
+  (`resupply_ammo`, `resupply_lives`, `combo_resupply`, `medic_reset`), Base capture
+  (`base_capture`), Movement (`movement`). All groups start checked except Movement.
+- **Player filter:** checkboxes grouped by Side. An event shows when its actor *or* its target is
+  checked.
+- **Colour:** a left border and type chip per group from `--lf-ev-*` tokens, adding
+  `--lf-ev-locking`, `--lf-ev-base` and `--lf-ev-movement`. Names take their Side colour through
+  `data-lf-side`. Points show as a muted `+N`.
+- **List:** CDK virtual scroll, chronological, with a "Showing N of M events" count. This replaces
+  the 250-row pager.
+- **Highlights and summary cards:** the seven cards, and Highlights showing the kind label, mm:ss
+  and a Side border. Clicking a Highlight scrolls the timeline to the first event at its tick. A
+  "Show metadata" toggle (off by default) shows `key: value` text.
+- **Layout:** at 1280px, the summary cards and Highlights sit on top, and below them a filter side
+  panel beside the timeline. At 768px, the filters fold into a collapsed expansion panel above the
+  list.
+- **Empty states:** "No highlights for this round" (rounds from before RV-02) and "No events match
+  these filters".
+- **Glossary:** **Event log** and **Event group** were added.
+- **Route:** `/rounds/:id/events`, reached from an "Event log" link on the Round detail page, with a
+  back link to the round.
+- **Out of scope:**
+  - The kill feed is dropped: it is a subset of the timeline, "kill" is a glossary avoid-word, and
+    its missile filter is dead.
+  - The missile-log and heatmap links.
+  - The Django page is left as is, including its dead `missile` / `nuke_detonated` code; ANG-08
+    deletes it.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

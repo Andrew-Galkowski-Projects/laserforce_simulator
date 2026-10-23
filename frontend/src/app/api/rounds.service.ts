@@ -8,9 +8,13 @@ import {
   GameRoundListItem,
   RoundInput,
   RoundListParams,
+  RoundTimeline,
 } from './rounds.models';
 
-/** `/api/rounds/`: list, detail, create, the report PDF and the event log. No edit or delete. */
+/**
+ * `/api/rounds/`: list, detail, create, the report PDF, the paged event list and the
+ * whole timeline. No edit or delete.
+ */
 @Injectable({ providedIn: 'root' })
 export class RoundsService {
   private readonly api = inject(ApiClient);
@@ -36,5 +40,10 @@ export class RoundsService {
   /** The Round's event log in `(timestamp, id)` order, filtered and paged. */
   events(roundId: number, params?: GameEventListParams): Observable<Page<GameEvent>> {
     return this.api.list<GameEvent>(`rounds/${roundId}/events/`, params);
+  }
+
+  /** The Round's whole **Event log** (movement included), unpaged; full fidelity server-side. */
+  timeline(roundId: number): Observable<RoundTimeline> {
+    return this.api.get<RoundTimeline>(`rounds/${roundId}/timeline/`);
   }
 }

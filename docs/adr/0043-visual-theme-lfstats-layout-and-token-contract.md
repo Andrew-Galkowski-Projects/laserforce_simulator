@@ -55,6 +55,12 @@ Ported with three fixes (WCAG 2 contrast ratios, computed from the token values)
 - light `--lf-ev-missile`, `-miss`, `-resupply` and `-tag` were darkened to reach 4.5:1 on
   `--lf-bg` (they were 4.16 to 4.61).
 
+ANG-06e added `--lf-ev-locking`, `--lf-ev-base` and `--lf-ev-movement` for the **Event groups**
+with no event-type token of their own (Locking, Base capture, Movement on the Event log). They meet
+the same 4.5:1 on `--lf-bg` (light: locking `#b4235a` 5.43, base `#467010` 5.04, movement
+`#706a62` 4.60). Light base was `#4d7c0f` (4.30) and movement `#8a94a6` (2.63), so both were
+darkened; movement is a warm grey so it stays apart from the cool-grey `--lf-ev-miss`.
+
 **The token contract.** `frontend/src/styles/_tokens.scss` defines, and `LF_TOKENS` in
 `frontend/src/app/theme/theme-tokens.ts` lists, exactly these custom properties. Components read
 colour, fonts, radius and glow from nothing else; no component holds a colour literal.
@@ -64,7 +70,8 @@ colour, fonts, radius and glow from nothing else; no component holds a colour li
 - Sides: `--lf-side-red`, `--lf-side-red-text`, `--lf-side-red-bg`, `--lf-side-red-dim`,
   `--lf-side-blue`, `--lf-side-blue-text`, `--lf-side-blue-bg`, `--lf-side-blue-dim`;
 - event types: `--lf-ev-elimination`, `--lf-ev-missile`, `--lf-ev-special`, `--lf-ev-nuke`,
-  `--lf-ev-miss`, `--lf-ev-resupply`, `--lf-ev-tag`;
+  `--lf-ev-miss`, `--lf-ev-resupply`, `--lf-ev-tag`, and for the Event groups with no
+  event-type token (ANG-06e) `--lf-ev-locking`, `--lf-ev-base`, `--lf-ev-movement`;
 - fonts and shape (shared by both modes): `--lf-font-body`, `--lf-font-heading`,
   `--lf-font-numeric`, `--lf-radius`, `--lf-glow` (a shadow geometry used with a colour token).
 

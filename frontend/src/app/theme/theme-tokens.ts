@@ -8,7 +8,8 @@
  *   nothing inside picks red or blue itself.
  * - Glow: `--lf-glow` is a shadow geometry. Use it with a colour token:
  *   `box-shadow: var(--lf-glow) var(--side);`.
- * - Event types: `--lf-ev-<type>`, one per event type of the round log.
+ * - Event types: `--lf-ev-<type>`, one per event type of the round log, and one per **Event
+ *   group** of the Event log (`matches/shared/event-groups.ts`).
  * - Derived tints are fine: `color-mix(in srgb, var(--side) 20%, transparent)`.
  */
 export const LF_COLOUR_TOKENS = [
@@ -34,6 +35,9 @@ export const LF_COLOUR_TOKENS = [
   '--lf-ev-miss',
   '--lf-ev-resupply',
   '--lf-ev-tag',
+  '--lf-ev-locking',
+  '--lf-ev-base',
+  '--lf-ev-movement',
 ] as const;
 
 /** Fonts and shape: the same in light and dark, so they are declared once on `:root`. */

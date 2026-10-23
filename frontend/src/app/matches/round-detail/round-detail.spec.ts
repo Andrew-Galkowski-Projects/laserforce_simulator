@@ -185,6 +185,12 @@ describe('Round detail (/rounds/:id)', () => {
       );
     });
 
+    it("links to the Round's Event log", async () => {
+      await open(round());
+      const events = [...page().querySelectorAll('a')].find((a) => text(a) === 'Event log');
+      expect(events?.getAttribute('href')).toBe('/rounds/9/events');
+    });
+
     it('subtitles a Match round "Match Round N – date", back to its Match', async () => {
       await open(round({ match: 7, round_number: 2 }));
       expect(text(page().querySelector('.rd-kicker'))).toBe('Match Round 2 – Mar 17, 2026 09:05');
