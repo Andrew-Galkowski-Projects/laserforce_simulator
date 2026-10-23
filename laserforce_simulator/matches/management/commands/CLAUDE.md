@@ -51,3 +51,18 @@ python manage.py game_analysis --round-id <game_round_pk>
 ```
 
 Useful for verifying that uptime numbers from persisted DB rounds reconcile against the `BatchSimulator` in-memory accumulators; before SIM-09, the persisted rounds came from `ResourceBasedSimulator`'s event log — post-SIM-09 every persisted round is written by `BatchSimulator._flush_to_db` and this command reads the same `GameEvent` rows regardless. **TIME-01:** `GameEvent.timestamp` and `was_eliminated_at` read here are in ticks; like `score_averages`, this command divides by 2 at the display boundary only (dead-time = `1800 - was_eliminated_at`).
+
+---
+
+## seed_browser_check.py
+
+Throwaway data for a browser check in a worktree's disposable database (ADR-0004).
+
+```bash
+python manage.py seed_browser_check          # Accounts browser-a / browser-b@example.com, password browser-check-pass
+python manage.py seed_browser_check --clean  # delete both Accounts and every row they own
+```
+
+Account A gets four valid Teams, a simulated sandbox Match, a Single Round and an unfinished Match
+(round 1 only, `is_completed=False`, no winner: what a League Match looks like mid-Season).
+Account B owns nothing, for cross-Account checks. A second seed without `--clean` is refused.

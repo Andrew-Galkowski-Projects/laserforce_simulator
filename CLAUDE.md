@@ -47,9 +47,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Do not push large content through a shell heredoc.** Past roughly a few tens
   of KB the call fails with `ENAMETOOLONG: name too long, uv_spawn`, because the
   whole command arrives as one process argument. This bites when adding a long
-  CLAUDE.md / PLAN.md section. Write the block to a file with the Write tool,
-  then splice it in: `head -N target > tmp && cat block >> tmp && tail -n +M
-  target >> tmp && cp tmp target`. Line endings need no care: `core.autocrlf`
+  CLAUDE.md / PLAN.md section. Insert the block with the Edit tool instead,
+  anchored on the heading that follows it (old = that heading, new = the block
+  plus the heading): Edit has no size limit, and a worktree session's guard
+  refuses the shell splice anyway. Line endings need no care: `core.autocrlf`
   is on and the index stores LF, so a CRLF/LF flip never reaches a commit.
 
 ## Browser Sessions (Chrome DevTools MCP)

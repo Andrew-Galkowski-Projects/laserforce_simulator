@@ -124,6 +124,9 @@ exists (a model field, a service method) before publishing: ANG-06a's spec said
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
 exact key-set asserts) and name each hit in the spec as a test to update:
 ANG-06b's full suite found one that pinned `overall_rating` absent.
+Check each frontend decision against `CODING_STANDARDS.md`'s Angular section
+and cite the rule it follows or the reason it departs: ANG-06c's grill left
+the team pickers without `required`, and review sent them back.
 
 When tickets will run in parallel, give each parallel ticket its own
 module(s) at the seam (e.g. a package with one file per ticket) so
@@ -237,7 +240,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    `docker info` succeeds, on Postgres as the `CLAUDE.md` *Database* bullet
    "Test suite on Postgres" says, plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
-   **Python-free diff:** when
+   Run the suites one after another: a Postgres run beside `test:ci` starves
+   Vitest into false timeouts (ANG-06c). **Python-free diff:** when
    `python .claude/skills/verify/scripts/changed_files.py --base origin/main --mode branch`
    reports empty `python`, `templates` and `migrations` buckets, skip both suite
    runs and `makemigrations` (CI runs them) and report
@@ -258,13 +262,19 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    existing tab, close what you open, close the browser when done). Server on 8001;
    for the Angular SPA, `npm --prefix frontend run start:worktree` (4201, API on
    8001) with Django started as `frontend/CLAUDE.md` **API and auth** says.
-   Assert on `innerText` or the API response body, not a status code. Check
+   Seed with `python laserforce_simulator/manage.py seed_browser_check` (two
+   Accounts, Teams, a Match, a Single Round, an unfinished Match) and remove it
+   with `--clean` when done.
+   Assert on `innerText` or the API response body, not a status code. Take a
+   screenshot of each changed screen at 1280px and at 768px (`resize_page`),
+   read it, and fix anything clipped or wrapped mid-word before review: specs
+   assert text, so only the picture shows layout (ANG-06c's winner chips). Check
    from a second Account when ownership changed. An API-only task checks the
    endpoints in the browsable API or with the test client instead, and says
    which. A test-client script runs through `manage.py shell -c
    "exec(open(r'<path>').read())"` with `APIClient(SERVER_NAME="localhost")`:
    outside pytest the default host `testserver` is not in `ALLOWED_HOSTS`.
-   Clean up the test data the pass created.
+   Clean up any other test data the pass created.
 
 ## Step 8: Review
 
@@ -325,8 +335,10 @@ Then stop again: the owner reviews and says when to merge. PRs are
 is in `main` under a new hash (other PRs that merged meanwhile show up in an
 unscoped diff). Then, for every implementer worktree, stop its servers with
 `scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
-tool), `git worktree remove --force <path>`, and `git branch -D` its branch.
-Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
+tool), `git worktree remove --force <path>`, and `git branch -D` its branch
+and its `worktree-agent-*` branch. `python scripts/prune_agent_branches.py
+--delete` then clears any older agent branches already merged into
+`origin/main`. Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
 `discard_changes: true`, after stopping its servers too) and delete the remote
 branch. If the main checkout is on `main`, `git pull --ff-only` there.
 Otherwise run `git fetch origin main:main` (moves the local ref without a
