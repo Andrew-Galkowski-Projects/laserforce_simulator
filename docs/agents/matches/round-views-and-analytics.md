@@ -292,7 +292,9 @@ after LFstats's Replay tab, within ADR-0043.
   as it is, and ANG-08 deletes it.
 
 Tests:
-- `matches/tests/test_playback.py`: the invariant over seeds 1 / 7 / 42, unit cases on hand-built
+- `matches/tests/test_playback.py`: the invariant over three fresh rounds (a Single Round seeds
+  itself from OS entropy, so `random.seed` cannot pin it; a failure names the `rng_seed` for a
+  **Replay**), unit cases on hand-built
   events, and the special-kind check.
 - `test_api_round_playback.py`: shape, map, ownership, fidelity and query count.
 - `test_playback_map.py`: the map and its order.

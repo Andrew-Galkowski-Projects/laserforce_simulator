@@ -6376,7 +6376,9 @@ screen is **Playback** ("Replay" is the glossary's re-simulation term).
 - **Final-state invariant (Q15):** a pytest over several seeded rounds asserts each player's
   last snapshot equals their Round scoreboard row: score, lives, shots, missiles, SP,
   eliminated, and tags / misses against `tags_made` / `shots_missed`. Seed **before** creating
-  players, or rounds don't reproduce.
+  players, or rounds don't reproduce. *(Corrected in the ANG-06f retro: no `random.seed` call
+  reproduces a Single Round, which draws its seed from OS entropy. The test runs three fresh
+  rounds and names each `rng_seed`.)*
 - **Seam (Q19):** pure `matches/playback.py::round_playback(game_round) -> dict` (its own
   module, not `services.py`), served by a `playback` action on the rounds viewset at
   `GET /api/rounds/<id>/playback/`. Frontend: `RoundsService.playback(id)` plus a

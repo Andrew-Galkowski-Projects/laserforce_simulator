@@ -7,8 +7,6 @@ over seeded, fully simulated Rounds.
 
 from __future__ import annotations
 
-import random
-
 from django.test import TestCase
 
 from matches.models import GameEvent, GameRound, PlayerRoundState
@@ -92,15 +90,16 @@ class TestFinalStateInvariant(TestCase):
     row. An engine change that alters state without logging it fails here."""
 
     def test_last_snapshot_equals_player_round_state(self) -> None:
-        for seed in (1, 7, 42):
-            with self.subTest(seed=seed):
-                # Seed BEFORE creating players, or the Round doesn't reproduce.
-                random.seed(seed)
-                red, _ = make_team_with_slots(f"InvR{seed}")
-                blue, _ = make_team_with_slots(f"InvB{seed}")
-                game_round = BatchSimulator().simulate_single_round_detailed(
-                    red, blue, fidelity="full"
-                )
+        # Three fresh games per run. A Single Round draws its own seed from OS
+        # entropy (``random.Random().getrandbits``), so ``random.seed`` cannot
+        # pin it; a failure names the round's ``rng_seed`` for a Replay.
+        for n in range(3):
+            red, _ = make_team_with_slots(f"InvR{n}")
+            blue, _ = make_team_with_slots(f"InvB{n}")
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="full"
+            )
+            with self.subTest(rng_seed=game_round.rng_seed):
                 last = {
                     p["id"]: p["snapshots"][-1]
                     for p in round_playback(game_round)["players"]
@@ -121,7 +120,7 @@ class TestFinalStateInvariant(TestCase):
                             "tags": ps.tags_made,
                             "misses": ps.shots_missed,
                         },
-                        f"seed {seed}, {ps.role} {ps.player_id}",
+                        f"rng_seed {game_round.rng_seed}, {ps.role} {ps.player_id}",
                     )
 
 
@@ -135,10 +134,9 @@ class TestSpecialKindMatchesEngine(TestCase):
         from matches.playback import _special_kind
 
         checked = 0
-        for seed in (1, 7, 42):
-            random.seed(seed)
-            red, _ = make_team_with_slots(f"SkR{seed}")
-            blue, _ = make_team_with_slots(f"SkB{seed}")
+        for n in range(3):
+            red, _ = make_team_with_slots(f"SkR{n}")
+            blue, _ = make_team_with_slots(f"SkB{n}")
             game_round = BatchSimulator().simulate_single_round_detailed(
                 red, blue, fidelity="full"
             )
@@ -152,7 +150,9 @@ class TestSpecialKindMatchesEngine(TestCase):
                         event_type="special", actor_id=ps.player_id
                     )
                 )
-                with self.subTest(seed=seed, role=ps.role, player=ps.player_id):
+                with self.subTest(
+                    rng_seed=game_round.rng_seed, role=ps.role, player=ps.player_id
+                ):
                     self.assertEqual(recognised, ps.specials_used)
                 checked += ps.specials_used
         self.assertGreater(checked, 0, "no Scout / Commander special in the seeds")

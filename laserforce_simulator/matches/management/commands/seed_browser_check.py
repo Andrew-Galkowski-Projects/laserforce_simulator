@@ -1,19 +1,33 @@
 """Seed throwaway data for a browser check, and remove it again.
 
-Two Accounts: A owns four valid Teams, a simulated sandbox Match, a Single
-Round and an unfinished Match (round 1 only, like a League Match mid-Season);
-B owns nothing, for cross-Account checks. ``--clean`` deletes both Accounts and
-every row they own. For a worktree's disposable database (ADR-0004).
+Two Accounts: A owns four valid Teams, a simulated sandbox Match, a map-less
+Single Round, a full-fidelity Single Round on a generated, fully configured
+``ArenaMap`` ("Browser Check Arena") and an unfinished Match (round 1 only,
+like a League Match mid-Season); B owns nothing, for cross-Account checks.
+``--clean`` deletes both Accounts, every row they own, the map and its media
+files. For a worktree's disposable database (ADR-0004).
 """
 
+import io
 from typing import Any
 
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
+from PIL import Image as PILImage
+from PIL import ImageDraw
 
+from core.models import ArenaMap, BaseSightLineConfig
+from core.services import (
+    compute_and_store_sight_lines,
+    delete_map,
+    save_zone_config,
+    upload_map,
+)
 from matches.models import GameRound, Match
 from matches.services import create_sandbox_match, create_sandbox_round
+from matches.simulation import BatchSimulator
 from teams.forms import GenerateLeagueForm
 from teams.models import Player, Team
 from teams.services import run_player_generation
@@ -21,6 +35,103 @@ from teams.services import run_player_generation
 EMAIL_A = "browser-a@example.com"
 EMAIL_B = "browser-b@example.com"
 PASSWORD = "browser-check-pass"
+
+MAP_NAME = "Browser Check Arena"
+ZONE_SIZE = 20
+MAP_ROWS = 20
+MAP_COLS = 30
+# Interior wall blocks as (row0, col0, row1, col1), inclusive cell ranges.
+WALL_BLOCKS = [
+    (4, 8, 7, 9),
+    (12, 8, 15, 9),
+    (8, 14, 11, 15),
+    (4, 20, 7, 21),
+    (12, 20, 15, 21),
+]
+RED_BASE_CELL = (10, 3)
+BLUE_BASE_CELL = (9, 26)
+BASE_SIGHT_RADIUS = 3
+
+
+def _zone_grid() -> list[list[int]]:
+    """``MAP_ROWS`` x ``MAP_COLS`` cells: 1 = floor, 0 = high wall (border + blocks)."""
+    grid = [
+        [
+            0 if r in (0, MAP_ROWS - 1) or c in (0, MAP_COLS - 1) else 1
+            for c in range(MAP_COLS)
+        ]
+        for r in range(MAP_ROWS)
+    ]
+    for r0, c0, r1, c1 in WALL_BLOCKS:
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                grid[r][c] = 0
+    return grid
+
+
+def _map_png(grid: list[list[int]]) -> bytes:
+    """A PNG of ``grid``: white floor, black walls, one ``ZONE_SIZE`` square per cell."""
+    img = PILImage.new("RGB", (MAP_COLS * ZONE_SIZE, MAP_ROWS * ZONE_SIZE), "white")
+    draw = ImageDraw.Draw(img)
+    for r, row in enumerate(grid):
+        for c, cell in enumerate(row):
+            if cell == 0:
+                x, y = c * ZONE_SIZE, r * ZONE_SIZE
+                draw.rectangle(
+                    [x, y, x + ZONE_SIZE - 1, y + ZONE_SIZE - 1], fill="black"
+                )
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _base_px(cell: tuple[int, int]) -> tuple[int, int]:
+    """``(x_px, y_px)`` of a cell's centre."""
+    r, c = cell
+    return c * ZONE_SIZE + ZONE_SIZE // 2, r * ZONE_SIZE + ZONE_SIZE // 2
+
+
+def _cells_near(grid: list[list[int]], cell: tuple[int, int]) -> list[list[int]]:
+    """Floor cells within ``BASE_SIGHT_RADIUS`` (Manhattan) of ``cell``."""
+    br, bc = cell
+    return [
+        [r, c]
+        for r, row in enumerate(grid)
+        for c, value in enumerate(row)
+        if value == 1 and abs(r - br) + abs(c - bc) <= BASE_SIGHT_RADIUS
+    ]
+
+
+def create_browser_check_map() -> ArenaMap:
+    """Upload the generated PNG and configure zones, bases and sight lines."""
+    grid = _zone_grid()
+    upload = SimpleUploadedFile(
+        "browser_check_arena.png", _map_png(grid), content_type="image/png"
+    )
+    arena_map = upload_map(MAP_NAME, upload)
+    bases = []
+    for base_type, cell in (("red", RED_BASE_CELL), ("blue", BLUE_BASE_CELL)):
+        x_px, y_px = _base_px(cell)
+        bases.append({"type": base_type, "x_px": x_px, "y_px": y_px})
+    save_zone_config(
+        arena_map,
+        zone_size=ZONE_SIZE,
+        zones=grid,
+        wall_meta={},
+        elevation=None,
+        red_spawn=None,
+        blue_spawn=None,
+        bases=bases,
+    )
+    compute_and_store_sight_lines(arena_map, ZONE_SIZE)
+    for base_type, cell in (("red", RED_BASE_CELL), ("blue", BLUE_BASE_CELL)):
+        BaseSightLineConfig.objects.update_or_create(
+            arena_map=arena_map,
+            base_type=base_type,
+            zone_size=ZONE_SIZE,
+            defaults={"visible_cells": _cells_near(grid, cell)},
+        )
+    return arena_map
 
 
 class Command(BaseCommand):
@@ -39,7 +150,10 @@ class Command(BaseCommand):
 
     def _seed(self) -> None:
         user_model = get_user_model()
-        if user_model.objects.filter(email__in=[EMAIL_A, EMAIL_B]).exists():
+        if (
+            user_model.objects.filter(email__in=[EMAIL_A, EMAIL_B]).exists()
+            or ArenaMap.objects.filter(name=MAP_NAME).exists()
+        ):
             raise CommandError("Already seeded: run seed_browser_check --clean first.")
 
         a = user_model.objects.create_user(email=EMAIL_A, password=PASSWORD)
@@ -55,6 +169,12 @@ class Command(BaseCommand):
 
         match = create_sandbox_match(red, blue, "friendly", arena_map=None, user=a)
         game_round = create_sandbox_round(third, fourth, arena_map=None, user=a)
+        arena_map = create_browser_check_map()
+        # A sandbox Round persists at "scores"; the GEN-01 lazy upgrade replays
+        # it off its seed to "full" (movement events) for Playback / heatmap.
+        mapped_round = BatchSimulator().ensure_fidelity(
+            create_sandbox_round(third, fourth, arena_map=arena_map, user=a), "full"
+        )
         unfinished = Match.objects.create(
             team_red=red,
             team_blue=fourth,
@@ -72,6 +192,9 @@ class Command(BaseCommand):
             f"Match {match.pk}, Single Round {game_round.pk}, "
             f"unfinished Match {unfinished.pk}"
         )
+        self.stdout.write(
+            f"Map {arena_map.pk} ({MAP_NAME}), mapped Single Round {mapped_round.pk}"
+        )
 
     @transaction.atomic
     def _clean(self) -> None:
@@ -83,6 +206,11 @@ class Command(BaseCommand):
             "Teams": Team.objects.filter(manager__in=users).delete()[0],
             "Accounts": users.delete()[0],
         }
+        # delete_map removes the image and processed cache once this commits.
+        maps = list(ArenaMap.objects.filter(name=MAP_NAME))
+        for arena_map in maps:
+            delete_map(arena_map)
+        counts["Maps"] = len(maps)
         self.stdout.write(
             "removed " + ", ".join(f"{name}: {n}" for name, n in counts.items())
         )
