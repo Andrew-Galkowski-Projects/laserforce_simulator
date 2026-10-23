@@ -4,8 +4,12 @@ Two Accounts: A owns four valid Teams, a simulated sandbox Match, a map-less
 Single Round, a full-fidelity Single Round on a generated, fully configured
 ``ArenaMap`` ("Browser Check Arena") and an unfinished Match (round 1 only,
 like a League Match mid-Season); B owns nothing, for cross-Account checks.
-``--clean`` deletes both Accounts, every row they own, the map and its media
-files. For a worktree's disposable database (ADR-0004).
+``--league`` also gives A "Browser Check League" (career mode, finance on):
+two completed Seasons and one active Season, every played Round with player
+stats, hand-built by ``_browser_check_league`` (no simulator).
+``--clean`` deletes both Accounts, every row they own, the League and its
+Matches, the map and its media files. For a worktree's disposable database
+(ADR-0004).
 """
 
 import io
@@ -15,6 +19,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
+from django.db.models import Q
 from PIL import Image as PILImage
 from PIL import ImageDraw
 
@@ -25,7 +30,11 @@ from core.services import (
     save_zone_config,
     upload_map,
 )
-from matches.models import GameRound, Match
+from matches.management.commands._browser_check_league import (
+    LEAGUE_NAME,
+    seed_browser_check_league,
+)
+from matches.models import GameRound, League, Match
 from matches.services import create_sandbox_match, create_sandbox_round
 from matches.simulation import BatchSimulator
 from teams.forms import GenerateLeagueForm
@@ -141,18 +150,24 @@ class Command(BaseCommand):
         parser.add_argument(
             "--clean", action="store_true", help="delete the seeded data instead"
         )
+        parser.add_argument(
+            "--league",
+            action="store_true",
+            help="also seed Account A a League (2 completed Seasons, 1 active)",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         if options["clean"]:
             self._clean()
         else:
-            self._seed()
+            self._seed(league=options["league"])
 
-    def _seed(self) -> None:
+    def _seed(self, *, league: bool = False) -> None:
         user_model = get_user_model()
         if (
             user_model.objects.filter(email__in=[EMAIL_A, EMAIL_B]).exists()
             or ArenaMap.objects.filter(name=MAP_NAME).exists()
+            or (league and League.objects.filter(name=LEAGUE_NAME).exists())
         ):
             raise CommandError("Already seeded: run seed_browser_check --clean first.")
 
@@ -195,11 +210,32 @@ class Command(BaseCommand):
         self.stdout.write(
             f"Map {arena_map.pk} ({MAP_NAME}), mapped Single Round {mapped_round.pk}"
         )
+        if league:
+            seeded, seasons = seed_browser_check_league(a, [red, blue, third, fourth])
+            self.stdout.write(
+                f"League {seeded.pk} ({LEAGUE_NAME}), Seasons "
+                + ", ".join(str(s.pk) for s in seasons)
+                + " (completed, completed, active)"
+            )
 
     @transaction.atomic
     def _clean(self) -> None:
         users = get_user_model().objects.filter(email__in=[EMAIL_A, EMAIL_B])
-        counts = {
+        # League.manager and Match.season are SET_NULL, so deleting the Account
+        # would orphan the League and its Matches: delete them explicitly (the
+        # League cascades its Seasons). An Unmanaged League of the seed's name
+        # (its Account deleted by hand) goes too. Not teardown_league: its
+        # orphan-Team sweep would delete A's Teams and skew the counts below.
+        leagues = League.objects.filter(
+            Q(manager__in=users) | Q(name=LEAGUE_NAME, manager__isnull=True)
+        )
+        league_count = leagues.count()
+        Match.objects.filter(season__league__in=leagues).delete()
+        leagues.delete()
+        # Reported only when there was one, so a League-less clean prints the
+        # same line as before --league existed.
+        counts = {"Leagues": league_count} if league_count else {}
+        counts |= {
             "Single Rounds": GameRound.objects.filter(manager__in=users).delete()[0],
             "Matches": Match.objects.filter(manager__in=users).delete()[0],
             "Players": Player.objects.filter(team__manager__in=users).delete()[0],

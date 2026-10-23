@@ -7,7 +7,8 @@ shell loop over ``cp`` (or ``git -C`` into the other worktree) is refused by
 the worktree isolation guard, so this does it in one plain command: every
 path staged in ``<source worktree>`` is copied to the same path here, and a
 staged deletion deletes it here. Nothing is staged or committed: review the
-result with ``git status`` / ``git diff`` and stage each path yourself.
+result with ``git status`` / ``git diff`` and stage each path yourself. The
+last line printed is the ``git worktree remove`` command for the source.
 
 Usage::
 
@@ -57,6 +58,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     for path in copy_staged(args.source, Path.cwd()):
         print(path)
+    # The fix worktree's job ends here; its staged files would otherwise
+    # linger on disk until someone audits them (PERF-01 retro).
+    print(f'git worktree remove --force "{args.source}"')
 
 
 if __name__ == "__main__":

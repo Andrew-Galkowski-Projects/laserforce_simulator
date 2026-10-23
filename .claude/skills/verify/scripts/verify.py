@@ -54,6 +54,7 @@ STEPS: tuple[str, ...] = (
     "ruff",
     "encoding",
     "glossary",
+    "dead-code",
     "mypy",
     "pytest",
     "ng-lint",
@@ -173,6 +174,20 @@ def main() -> int:
             results["glossary"] = ("WARN", " | ".join(hits[:5]))
         else:
             results["glossary"] = ("PASS", "")
+
+    # --- dead-code (unreferenced private defs in changed files; WARN only) ---
+    if py_files:
+        script = os.path.join(repo_root, "scripts", "check_unused_private.py")
+        code, out = _run([sys.executable, script, *py_files], cwd=repo_root)
+        hits = [line for line in out.splitlines() if "has no references" in line]
+        if code != 0:
+            results["dead-code"] = ("FAIL", _tail(out))
+        elif hits:
+            results["dead-code"] = ("WARN", " | ".join(hits[:5]))
+        else:
+            results["dead-code"] = ("PASS", "")
+    else:
+        results["dead-code"] = ("SKIP", "no changed .py files")
 
     # --- mypy (changed files only; errors on changed lines only) ---
     if py_files:

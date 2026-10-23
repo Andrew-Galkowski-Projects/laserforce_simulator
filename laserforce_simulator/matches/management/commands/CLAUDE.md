@@ -60,7 +60,8 @@ Throwaway data for a browser check in a worktree's disposable database (ADR-0004
 
 ```bash
 python manage.py seed_browser_check          # Accounts browser-a / browser-b@example.com, password browser-check-pass
-python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, and the map
+python manage.py seed_browser_check --league # also seed Account A "Browser Check League"
+python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, the League and the map
 ```
 
 Account A gets four valid Teams, a simulated sandbox Match, a map-less Single Round, a **mapped
@@ -73,3 +74,21 @@ and base sight lines, so `load_map_context` resolves. The Round is upgraded to `
 id and the mapped Round id. `--clean` removes the map through `delete_map` (image and processed
 cache go on commit). Account B owns nothing, for cross-Account checks. A second seed without
 `--clean` is refused.
+
+**`--league`** (for League-screen checks: History, player page, Team history, Power Rankings,
+standings, awards, owner evaluation, finances) also gives Account A "Browser Check League"
+(`manager` = A, `mode="league"` so `is_career_league` holds, `finance_enabled=True`,
+`current_team` = A's first Team) over A's four Teams: two completed single-round-robin Seasons
+(every pair plays a 2-0 Match, a different champion each Season) and one active Season with one
+played Match. Every GameRound carries 12 hand-built `PlayerRoundState` rows, so standings, awards
+and player stats are non-empty; no simulator runs. The rows are built by
+`_browser_check_league.py` (a copy of the `league_api_fixtures.py` shapes: production code never
+imports test modules; the leading underscore keeps it out of the command list). The summary gains
+`League <id> (Browser Check League), Seasons <id>, <id>, <id> (completed, completed, active)`.
+`--clean` deletes the League's Matches and then the League, which cascades its Seasons (deleting
+the Account alone would not: `League.manager` and `Match.season` are `SET_NULL`), plus any
+Unmanaged League of that name, and reports `Leagues: N` first; with no League the `removed` line is
+unchanged. It does not call `league_services.teardown_league`: that one's orphan-Team sweep would
+delete A's Teams (and their Single Rounds) before they are counted.
+A `--league` seed is refused while a League of that name exists. Without `--league` the seed is
+unchanged.
