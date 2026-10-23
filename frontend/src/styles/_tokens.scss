@@ -39,6 +39,10 @@
   --lf-ev-miss: #5f6673;
   --lf-ev-resupply: #12733a;
   --lf-ev-tag: #0b6a84;
+  // Event groups with no event-type token of their own (the Event log, ANG-06e).
+  --lf-ev-locking: #b4235a;
+  --lf-ev-base: #4d7c0f;
+  --lf-ev-movement: #8a94a6;
 
   // Fonts and shape (shared by both modes). JetBrains Mono is self-hosted (`@fontsource`).
   --lf-font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
@@ -78,5 +82,9 @@
     --lf-ev-miss: oklch(0.704 0.04 256.788);
     --lf-ev-resupply: oklch(0.765 0.177 163.223);
     --lf-ev-tag: oklch(0.746 0.16 232.661);
+    // Event groups with no event-type token of their own (the Event log, ANG-06e).
+    --lf-ev-locking: oklch(0.72 0.19 0);
+    --lf-ev-base: oklch(0.8 0.18 128);
+    --lf-ev-movement: oklch(0.58 0.03 256);
   }
 }

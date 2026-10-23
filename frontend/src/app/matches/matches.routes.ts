@@ -3,6 +3,7 @@ import { APP_TITLE } from '../app-title';
 import { MatchDetail } from './match-detail/match-detail';
 import { MatchList } from './match-list/match-list';
 import { RoundDetail } from './round-detail/round-detail';
+import { RoundEvents } from './round-events/round-events';
 import { SetupForm } from './setup-form/setup-form';
 import { SetupKind } from './shared/setup-kind';
 
@@ -23,7 +24,8 @@ export const MATCHES_ROUTES: Routes = [
 
 /**
  * Single Rounds, lazily loaded under `/rounds` from this same module (one chunk for the area).
- * There is no `/rounds` list: Single Rounds are a section of Match History.
+ * There is no `/rounds` list: Single Rounds are a section of Match History. `:id/events` (the
+ * Event log) comes before `:id`.
  */
 export const ROUNDS_ROUTES: Routes = [
   {
@@ -32,5 +34,6 @@ export const ROUNDS_ROUTES: Routes = [
     data: { kind: 'round' satisfies SetupKind },
     title: `New Single Round - ${APP_TITLE}`,
   },
+  { path: ':id/events', component: RoundEvents, title: `Event Log - ${APP_TITLE}` },
   { path: ':id', component: RoundDetail, title: `Round - ${APP_TITLE}` },
 ];
