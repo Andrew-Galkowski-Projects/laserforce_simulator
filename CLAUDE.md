@@ -216,6 +216,11 @@ by `/next-feature`: grill, spec, tickets, implement, review, PR, retro.
 Specs and tickets are GitHub Issues (`gh`); `PLAN.md` stays the roadmap and
 links each task to its spec issue. See `docs/agents/issue-tracker.md`.
 
+**`PLAN.md` holds open work only.** When a task ships (marked `[DONE]`), move its
+whole section, with its implementation notes, out of `PLAN.md` into `PLAN-completed.md`
+under the same `##` phase heading (add the heading if it's missing). Leave at most a
+one-line pointer behind, and drop any done IDs from `PLAN.md`'s **Sequencing Summary**.
+
 ### Triage labels
 
 The five default roles (`needs-triage`, `needs-info`, `ready-for-agent`,
