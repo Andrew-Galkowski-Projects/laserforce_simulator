@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import replace
 from datetime import date, timedelta
 from math import ceil
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
 from django.db import transaction
 from django.db.models import Count, Q
@@ -65,6 +65,7 @@ from .season_snapshot import (
     award_set_from_json,
     award_set_to_json,
     completed_season_cached,
+    completed_seasons_cached,
     leader_boards_from_json,
     leader_boards_to_json,
 )
@@ -1564,7 +1565,8 @@ def compute_season_award_set(season: Season) -> AwardSet:
     """Build a Season's full :class:`AwardSet` (regular-season + finals MVP).
 
     The single shared path used by ``season_awards`` (the view),
-    ``build_history_row`` (League History), and the player-page awards badge.
+    ``build_history_row`` (League History, through
+    :func:`compute_season_award_sets`), and the player-page awards badge.
     UXP-09: a completed Season's set is stored in its summary snapshot
     (``matches.season_snapshot``) after the first computation.
     """
@@ -1574,6 +1576,20 @@ def compute_season_award_set(season: Season) -> AwardSet:
         lambda: _compute_season_award_set(season),
         dump=award_set_to_json,
         load=award_set_from_json,
+    )
+
+
+def compute_season_award_sets(seasons: Sequence[Season]) -> dict[int, AwardSet]:
+    """PERF-01 -- :func:`compute_season_award_set` for many Seasons at once,
+    keyed by Season id.
+
+    Every completed Season with a fresh ``awards`` snapshot is loaded with one
+    Player and one Team name query across all of them; an in-progress Season,
+    or one with a missing or stale snapshot, falls back to
+    :func:`compute_season_award_set` on its own.
+    """
+    return completed_seasons_cached(
+        seasons, "awards", compute_season_award_set, load=award_set_from_json
     )
 
 
@@ -1636,6 +1652,7 @@ def build_history_row(
     teams_by_id: dict[int, Team],
     *,
     is_in_progress: bool,
+    award_set: AwardSet | None = None,
 ) -> dict:
     """LG-01f / LG-03 — build one row of the League History table.
 
@@ -1643,9 +1660,9 @@ def build_history_row(
     ``season_mvp`` / ``finals_mvp``). ``None`` values render as ``"—"``
     in the template. The standings columns consume the pre-fetched
     ``season.matches.all()`` cache and the ``teams_by_id`` lookup with
-    zero queries; the LG-03 award cells issue **one** per-Season
-    ``PlayerRoundState`` query via ``compute_season_award_set`` —
-    acceptable on the paginated (10-row) History page.
+    zero queries. The LG-03 award cells read ``award_set`` (PERF-01: the
+    History callers batch their page through ``compute_season_award_sets``);
+    without it the row reads its own via ``compute_season_award_set``.
     """
     matches_list_in: list[dict] = []
     for match in season.matches.all():
@@ -1708,9 +1725,9 @@ def build_history_row(
     else:
         runner_up = None
 
-    # LG-03 — Season MVP + Finals MVP via the shared award path (one per-season
-    # PlayerRoundState query — acceptable on the paginated 10-row History page).
-    award_set = compute_season_award_set(season)
+    # LG-03 — Season MVP + Finals MVP via the shared award path.
+    if award_set is None:
+        award_set = compute_season_award_set(season)
 
     return {
         "season_id": season.id,

@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import copy
 from dataclasses import asdict
-from typing import Any, Callable, Iterator, Optional, TypeVar
+from typing import Any, Callable, Iterable, Iterator, Optional, Sequence, TypeVar
 
 from django.db import transaction
 
@@ -58,19 +58,61 @@ def completed_season_cached(
     if season.pk is None or season.state != "completed":
         return compute()
 
+    payload = _stored_payload(season, key)
+    if payload is not None and _refresh_names(payload):
+        return load(payload)
+
+    value = compute()
+    _store(season, key, dump(value))
+    return value
+
+
+def completed_seasons_cached(
+    seasons: Sequence[Season],
+    key: str,
+    compute_one: Callable[[Season], T],
+    *,
+    load: Callable[[Any], T],
+) -> dict[int, T]:
+    """PERF-01 -- the stored ``key`` value of many Seasons, keyed by Season id.
+
+    Every fresh stored payload is loaded with one Player and one Team name
+    query across all the Seasons. A Season that is in progress, has no stored
+    ``key``, or whose snapshot is stale falls back to ``compute_one(season)``,
+    which must be the single-Season :func:`completed_season_cached` path (so
+    the write-on-first-read and recompute rules stay in one place).
+    """
+    payloads: dict[int, Any] = {}
+    for season in seasons:
+        if season.pk is not None and season.state == "completed":
+            payload = _stored_payload(season, key)
+            if payload is not None:
+                payloads[season.pk] = payload
+    player_names, team_names = _fetch_names(payloads.values())
+
+    result: dict[int, T] = {}
+    for season in seasons:
+        payload = payloads.get(season.pk)
+        if payload is not None and _refresh_names(
+            payload, player_names=player_names, team_names=team_names
+        ):
+            result[season.id] = load(payload)
+        else:
+            result[season.id] = compute_one(season)
+    return result
+
+
+def _stored_payload(season: Season, key: str) -> Any:
+    """A deep copy of ``key``'s stored payload, or ``None`` when the snapshot
+    is missing, has another version, or lacks ``key``."""
     snapshot = season.summary_snapshot_json
     if (
         isinstance(snapshot, dict)
         and snapshot.get("v") == SNAPSHOT_VERSION
         and key in snapshot
     ):
-        payload = copy.deepcopy(snapshot[key])
-        if _refresh_names(payload):
-            return load(payload)
-
-    value = compute()
-    _store(season, key, dump(value))
-    return value
+        return copy.deepcopy(snapshot[key])
+    return None
 
 
 def _store(season: Season, key: str, payload: Any) -> None:
@@ -107,16 +149,12 @@ def _named_rows(node: Any) -> Iterator[dict]:
             yield from _named_rows(value)
 
 
-def _refresh_names(payload: Any) -> bool:
-    """Overwrite the stored names with the live ones, in place.
-
-    Returns ``False`` when a referenced Player or Team no longer exists (the
-    stored value is stale and must be recomputed). Team id ``0`` is the
-    builders' "no Team" sentinel and keeps its empty name.
-    """
-    rows = list(_named_rows(payload))
+def _fetch_names(payloads: Iterable[Any]) -> tuple[dict[int, str], dict[int, str]]:
+    """The live ``(player_names, team_names)`` of every row in ``payloads``:
+    at most one Player and one Team id lookup, none when nothing is named."""
+    rows = [row for payload in payloads for row in _named_rows(payload)]
     if not rows:
-        return True
+        return {}, {}
     player_names = dict(
         Player.objects.filter(id__in={row["player_id"] for row in rows}).values_list(
             "id", "name"
@@ -128,6 +166,27 @@ def _refresh_names(payload: Any) -> bool:
         if team_ids
         else {}
     )
+    return player_names, team_names
+
+
+def _refresh_names(
+    payload: Any,
+    *,
+    player_names: Optional[dict[int, str]] = None,
+    team_names: Optional[dict[int, str]] = None,
+) -> bool:
+    """Overwrite the stored names with the live ones, in place.
+
+    Returns ``False`` when a referenced Player or Team no longer exists (the
+    stored value is stale and must be recomputed). Team id ``0`` is the
+    builders' "no Team" sentinel and keeps its empty name. PERF-01: pass both
+    pre-fetched name maps (from :func:`_fetch_names`) to skip the queries.
+    """
+    rows = list(_named_rows(payload))
+    if not rows:
+        return True
+    if player_names is None or team_names is None:
+        player_names, team_names = _fetch_names([payload])
     for row in rows:
         if row["player_id"] not in player_names:
             return False
