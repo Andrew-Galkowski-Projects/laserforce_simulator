@@ -16,7 +16,8 @@ simulation-mechanics bugs from the same review (start-of-game state, cell-occupa
 goal-balling) were distributed into the **Phase 3 — Simulation Mechanics Backlog**
 (see `MECH-15` / `MOVE-05` / `MOVE-06`), and the score-rebase ask into `CAL-01`
 there. GEN-01, NAV-01, PLAY-01, DEL-01, CRE-01, CRE-02 and CI-01 are shipped (see
-[`PLAN-completed.md`](PLAN-completed.md)); only the deferred GEN-02 stub remains here.
+[`PLAN-completed.md`](PLAN-completed.md)); the deferred GEN-02 stub remains here, plus
+PERF-01 (found by the ANG-06f retro's query-count guardrail) and PERF-02 (CI test time).
 
 ### GEN-02 · [DEFERRED to bottom — see "Parked — deferred compute-tier work" (2026-06-26)]
 
@@ -28,6 +29,58 @@ Standings-shift, the ADR-0029 hazard) or leave an incoherent scoreboard-vs-repla
 (2) the `scores`-compute statistical model is blocked on baseline `score_averages` data
 that doesn't exist yet (entangled with the still-pending CAL-01 re-baseline). Full
 write-up parked below.
+
+### PERF-01 · Fix the five known N+1 read actions
+
+**Prio: Medium (found 2026-10-23, ANG-06f retro).** The detail-action query-count guardrail
+(`laserforce_simulator/api/tests/test_detail_action_query_counts.py`) found five `/api/`
+read actions whose query count grows with the data. Each is a strict xfail in its
+`KNOWN_N_PLUS_ONE` map:
+
+- `leagues/history`: award queries per Season (its docstring calls this bounded by page size).
+- `leagues/league-player`: `build_player_detail` runs several queries per Season.
+- `leagues/team-history`: `_team_season_rows` runs 3 queries per Season.
+- `leagues/power-rankings`: `_team_mean_rating` reads `team.active_players`, about 6 queries per
+  Team.
+- `seasons/owner-evaluation`: `_ensure_team_finances` re-reads each Team's finance rows on every
+  GET.
+
+Fix each with `select_related` / `prefetch_related` or one aggregate query, then delete its
+`KNOWN_N_PLUS_ONE` entry: the strict xfail turns red (XPASS) once the fix lands, so the two go in
+one change. Behaviour must not change; the League screen tests pin the payloads. For any item
+judged acceptable as bounded, record that in the entry's reason instead of fixing it.
+
+### PERF-02 · Speed up the CI Python test job
+
+**Prio: Medium (found 2026-10-23, owner).** The CI `test` job takes about 15 minutes, and the
+`Run tests with coverage` step alone takes 13m21s (run 40011033113, main). Locally the same
+suite (8446 tests, `-n auto --dist worksteal` from `pytest.ini`) runs in about 2 minutes on SQLite
+and 3 minutes on Postgres, without coverage. The likely costs:
+
+- **Coverage on Python 3.11.** `pytest --cov` traces every line through `sys.settrace`. Python
+  3.12+ lets coverage use `sys.monitoring` (`COVERAGE_CORE=sysmon`), which is much cheaper.
+  Moving CI (and the Docker image, to match) to 3.12 is the biggest single lever to measure.
+- **Few cores.** `ubuntu-latest` gives 4 vCPUs, so `-n auto` runs 4 workers. Sharding the suite
+  across a job matrix (e.g. `pytest-split` with stored durations), or a larger runner, cuts wall
+  time linearly. Coverage files then merge in one step before the Codecov upload.
+- **Per-worker test-DB build.** Each xdist worker migrates its own test database, about 7.5 s
+  locally (the slow `setup` rows in `--durations`). Squashing old migrations, or a template
+  database, cuts that per worker. `--no-migrations` is not an option: data migrations matter.
+- **The slowest tests** (`--durations=30`, local):
+  - the serial-vs-parallel determinism and calibration tests in `test_batch_sim.py` and
+    `test_simulation_incremental.py` (24 s, 14 s, 12 s, 9.5 s, 8 s, 7 s);
+  - `test_seed_browser_check.py` (7-12 s each: each test seeds again, including the map's
+    sight-line compute).
+
+  Options: share expensive setup (`setUpTestData`); shrink rounds or maps where the test doesn't
+  need full size; move statistical calibration tests behind a `calibration` marker in a
+  non-blocking job (already proposed for `test_strong_team_winpct_not_diluted_by_alternation`
+  under CAL-01).
+
+**Start by measuring:** add `--durations=25` to the CI pytest step, and time one CI run per lever,
+before changing anything. **Open for its own grill:** which levers to take; whether
+coverage must run on every PR or only on `main`; and the target time (e.g. under 5 minutes).
+Every lever keeps the suite's coverage and its serial-vs-parallel determinism tests.
 
 ---
 
@@ -260,7 +313,7 @@ top of this file. Phase 8 is the critical path. Everything else is an unschedule
 so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
 
 ```
-ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail, Event timeline [done] -> Playback -> Event charts -> Map editor)   <- NEXT
+ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail, Event timeline, Playback [done] -> Event charts -> Map editor)   <- NEXT
         + still to scope: League / Season, League screens,
           Tournaments, Accounts
     -> ANG-07  Serve Angular from an nginx sidecar
@@ -274,10 +327,10 @@ Mechanics items can run in parallel with Phase 8, because they don't touch the f
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-15, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
+- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** PERF-01, PERF-02, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
