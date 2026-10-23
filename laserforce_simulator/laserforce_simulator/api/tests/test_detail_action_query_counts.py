@@ -710,11 +710,6 @@ KNOWN_N_PLUS_ONE: dict[tuple[str, ...], str] = {
         "N+1: _team_mean_rating reads team.active_players (six slot FK loads) "
         "per enrolled Team -- six teams_player SELECTs per Team"
     ),
-    ("seasons", "owner-evaluation"): (
-        "N+1: ensure_owner_evaluation -> _ensure_team_finances re-reads every "
-        "enrolled Team's TeamSeasonFinance / Matches / phases on each GET, "
-        "even when the rows exist -- SELECTs per Team"
-    ),
 }
 
 
