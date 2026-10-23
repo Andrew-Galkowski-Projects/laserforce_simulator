@@ -140,6 +140,7 @@ from .league_services import (  # noqa: F401 - re-exports
     build_season_standings,
     build_team_schedule,
     compute_season_award_set,
+    compute_season_award_sets,
     create_league_and_season,
     eligible_new_teams,
     ensure_owner_evaluation,
@@ -1051,13 +1052,25 @@ def league_history(request: HttpRequest, league_id: int) -> HttpResponse:
     paginator = Paginator(completed_seasons, per_page)
     page_obj = paginator.get_page(_coerce_page(request.GET.get("page"), default=1))
 
+    # PERF-01 — one batched award read for every row on the page.
+    award_sets = compute_season_award_sets(
+        ([in_progress_season] if in_progress_season is not None else [])
+        + list(page_obj.object_list)
+    )
     in_progress_row = (
-        _build_history_row(in_progress_season, teams_by_id, is_in_progress=True)
+        _build_history_row(
+            in_progress_season,
+            teams_by_id,
+            is_in_progress=True,
+            award_set=award_sets[in_progress_season.id],
+        )
         if in_progress_season is not None
         else None
     )
     completed_rows = [
-        _build_history_row(s, teams_by_id, is_in_progress=False)
+        _build_history_row(
+            s, teams_by_id, is_in_progress=False, award_set=award_sets[s.id]
+        )
         for s in page_obj.object_list
     ]
 

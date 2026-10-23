@@ -255,12 +255,12 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
-| ANG01e-D1 | 🟡 | League player page | The awards section recomputes the full Season award set for every Season the Player appeared in |
-| ANG01e-D2 | 🟡 | Team History | The Team History builders scan every Season of every League to find the Team's enrolments |
+| ~~ANG01e-D1~~ | 🟡 | League player page | ~~The awards section recomputes the full Season award set for every Season the Player appeared in~~ _(fixed by PERF-01)_ |
+| ANG01e-D2 | 🟡 | Team History | The Team History builders scan every Season of every League to find the Team's enrolments (tracked as PERF-03) |
 | ANG01e-D3 | ℹ️ | Screen builders | `build_team_stats`, `build_power_rankings` and `build_playoffs` mix querying with row assembly |
 | ANG01f-D3 | ℹ️ | Tournament detail builders | `build_detail_context` and `build_tournament_detail` mix several jobs in one function |
 
-### 🟡 ANG01e-D1 — League player page recomputes whole-Season awards per Season (perf)
+### ~~🟡 ANG01e-D1 — League player page recomputes whole-Season awards per Season (perf)~~ _(fixed by PERF-01: completed Seasons read the stored award snapshot, batched through `compute_season_award_sets`)_
 `matches/league_screen_services.py::build_player_detail` calls `compute_season_award_set(season)` for
 every Season the Player has a Round in, then keeps only that Player's labels. Each call aggregates the
 whole Season's `PlayerRoundState` corpus, so a long-career Player's page (HTML and
@@ -275,6 +275,8 @@ in Python to find the Team's Seasons. Cost grows with every Season in the
 database, not with the Team's own history, on both the HTML Team History tabs and
 `GET /api/leagues/<id>/teams/<team_id>/history/` (+ `/players/`). Fix idea: filter in the database (the
 `teams` M2M for drafts plus a JSON-contains lookup on `starting_team_ids_json`), or store enrolment rows.
+PERF-01 made the scan's query count constant (`prefetch_related("teams")`); the database-level filter
+is PERF-03 in `PLAN.md`.
 
 ### ℹ️ ANG01e-D3 — Long screen builders mix querying with row assembly (refactor)
 `build_team_stats`, `build_power_rankings` and `build_playoffs` in

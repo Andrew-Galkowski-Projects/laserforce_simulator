@@ -20,7 +20,7 @@ from collections import defaultdict
 from dataclasses import replace
 from datetime import date, timedelta
 from math import ceil
-from typing import TYPE_CHECKING, Iterable, Optional
+from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
 from django.db import transaction
 from django.db.models import Count, Q
@@ -65,6 +65,7 @@ from .season_snapshot import (
     award_set_from_json,
     award_set_to_json,
     completed_season_cached,
+    completed_seasons_cached,
     leader_boards_from_json,
     leader_boards_to_json,
 )
@@ -1564,7 +1565,9 @@ def compute_season_award_set(season: Season) -> AwardSet:
     """Build a Season's full :class:`AwardSet` (regular-season + finals MVP).
 
     The single shared path used by ``season_awards`` (the view),
-    ``build_history_row`` (League History), and the player-page awards badge.
+    ``build_history_row`` (League History, through
+    :func:`compute_season_award_sets`), and the player-page awards badge (also
+    through :func:`compute_season_award_sets`).
     UXP-09: a completed Season's set is stored in its summary snapshot
     (``matches.season_snapshot``) after the first computation.
     """
@@ -1574,6 +1577,20 @@ def compute_season_award_set(season: Season) -> AwardSet:
         lambda: _compute_season_award_set(season),
         dump=award_set_to_json,
         load=award_set_from_json,
+    )
+
+
+def compute_season_award_sets(seasons: Sequence[Season]) -> dict[int, AwardSet]:
+    """PERF-01 -- :func:`compute_season_award_set` for many Seasons at once,
+    keyed by Season id.
+
+    Every completed Season with a fresh ``awards`` snapshot is loaded with one
+    Player and one Team name query across all of them; an in-progress Season,
+    or one with a missing or stale snapshot, falls back to
+    :func:`compute_season_award_set` on its own.
+    """
+    return completed_seasons_cached(
+        seasons, "awards", compute_season_award_set, load=award_set_from_json
     )
 
 
@@ -1636,6 +1653,7 @@ def build_history_row(
     teams_by_id: dict[int, Team],
     *,
     is_in_progress: bool,
+    award_set: AwardSet | None = None,
 ) -> dict:
     """LG-01f / LG-03 — build one row of the League History table.
 
@@ -1643,9 +1661,9 @@ def build_history_row(
     ``season_mvp`` / ``finals_mvp``). ``None`` values render as ``"—"``
     in the template. The standings columns consume the pre-fetched
     ``season.matches.all()`` cache and the ``teams_by_id`` lookup with
-    zero queries; the LG-03 award cells issue **one** per-Season
-    ``PlayerRoundState`` query via ``compute_season_award_set`` —
-    acceptable on the paginated (10-row) History page.
+    zero queries. The LG-03 award cells read ``award_set`` (PERF-01: the
+    History callers batch their page through ``compute_season_award_sets``);
+    without it the row reads its own via ``compute_season_award_set``.
     """
     matches_list_in: list[dict] = []
     for match in season.matches.all():
@@ -1708,9 +1726,9 @@ def build_history_row(
     else:
         runner_up = None
 
-    # LG-03 — Season MVP + Finals MVP via the shared award path (one per-season
-    # PlayerRoundState query — acceptable on the paginated 10-row History page).
-    award_set = compute_season_award_set(season)
+    # LG-03 — Season MVP + Finals MVP via the shared award path.
+    if award_set is None:
+        award_set = compute_season_award_set(season)
 
     return {
         "season_id": season.id,
@@ -2097,17 +2115,46 @@ def teardown_league(league: League) -> None:
             _delete_team_if_orphaned(team_id)
 
 
-def _team_winp_for_season(season: Season, team_id: int) -> float:
+def _team_winp_for_season(
+    season: Season,
+    team_id: int,
+    wins_games: tuple[int, int] | None = None,
+) -> float:
     """Win fraction (wins / matches_played) for ``team_id`` in ``season``.
 
     Reads the regular-season ``StandingsRow`` via ``_team_wins_games_for_season``
-    (the same ``compute_standings`` assembly). 0 games ⇒ a neutral 0.5 (no
-    div-by-zero), matching the ZenGM new-team 0.500 default.
+    (the same ``compute_standings`` assembly), unless the caller passes the
+    already-read ``wins_games`` (PERF-01: the finance writer's per-Season memo).
+    0 games ⇒ a neutral 0.5 (no div-by-zero), matching the ZenGM new-team 0.500
+    default.
     """
-    won, games = _team_wins_games_for_season(season, team_id)
+    if wins_games is None:
+        wins_games = _team_wins_games_for_season(season, team_id)
+    won, games = wins_games
     if games == 0:
         return 0.5
     return won / games
+
+
+def _enrolled_team_ids_by_season(seasons: list[Season]) -> dict[int, list[int]]:
+    """Enrolled Team ids of each completed Season, keyed by Season id.
+
+    The frozen ``starting_team_ids_json`` snapshot the standings use, with a
+    defensive fallback to the live M2M for a Season whose snapshot is empty --
+    read in one query for all such Seasons.
+    """
+    team_ids_by_season: dict[int, list[int]] = {
+        season.id: list(season.starting_team_ids_json or []) for season in seasons
+    }
+    fallback_ids = [sid for sid, ids in team_ids_by_season.items() if not ids]
+    if fallback_ids:
+        for season_id, team_id in (
+            Season.teams.through.objects.filter(season_id__in=fallback_ids)
+            .order_by("season_id", "team_id")
+            .values_list("season_id", "team_id")
+        ):
+            team_ids_by_season[season_id].append(team_id)
+    return team_ids_by_season
 
 
 def _ensure_team_finances(league: League, up_to_season: Season) -> None:
@@ -2130,6 +2177,11 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
     First-season hype seeding: when no prior ``TeamSeasonFinance`` snapshot
     exists for that Team, ``prev_hype = 0.0`` and ``winp_old = 0.5`` (the ZenGM
     new-team default — neutral 0.500 baseline).
+
+    PERF-01: one query loads the present ``(team, season)`` pairs. When every
+    listed pair exists it returns before any other read; a deleted Team's
+    missing pair costs one Team read and nothing more. Standings are computed
+    at most once per Season, and only for Seasons a missing row needs.
     """
     if not is_career_league(league) or not league.finance_enabled:
         return
@@ -2137,31 +2189,61 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
     seasons = list(
         league.seasons.filter(state="completed", id__lte=up_to_season.id).order_by("id")
     )
+    if not seasons:
+        return
 
-    # Per-Team carried state across Seasons (hype + prior win fraction).
+    # PERF-01 — one query for every present row's (team, season) pair + hype:
+    # it decides the early exit and preloads the carried hype.
+    hype_by_pair: dict[tuple[int, int], float] = {
+        (team_id, season_id): hype
+        for team_id, season_id, hype in TeamSeasonFinance.objects.filter(
+            season__in=seasons, team__isnull=False
+        ).values_list("team_id", "season_id", "hype")
+    }
+
+    team_ids_by_season = _enrolled_team_ids_by_season(seasons)
+
+    missing_team_ids = {
+        team_id
+        for season_id, team_ids in team_ids_by_season.items()
+        for team_id in team_ids
+        if (team_id, season_id) not in hype_by_pair
+    }
+    if not missing_team_ids:
+        return
+    all_team_ids = {tid for ids in team_ids_by_season.values() for tid in ids}
+    # A deleted Team's id is absent here, so the loop below skips it, and with
+    # standings read lazily its missing pair costs no further read.
+    teams_by_id = Team.objects.in_bulk(all_team_ids)
+
+    # Regular-season {team_id: (wins, games)}, computed at most once per Season.
+    standings_by_season: dict[int, dict[int, tuple[int, int]]] = {}
+
+    def _wins_games(season: Season, team_id: int) -> tuple[int, int]:
+        if season.id not in standings_by_season:
+            standings_by_season[season.id] = _team_wins_games_by_team(season)
+        return standings_by_season[season.id].get(team_id, (0, 0))
+
+    def _winp(season: Season, team_id: int) -> float:
+        return _team_winp_for_season(season, team_id, _wins_games(season, team_id))
+
+    # Per-Team carried state across Seasons: the prior hype, and the Season
+    # whose win fraction is the next Season's ``winp_old`` (read lazily, as it
+    # is consumed only when a later row is missing).
     prev_hype_by_team: dict[int, float] = {}
-    prev_winp_by_team: dict[int, float] = {}
+    prev_winp_season_by_team: dict[int, Season] = {}
 
     for season in seasons:
-        # Enrolled Teams of the completed Season: the frozen snapshot the
-        # standings use (defensive fallback to the live M2M).
-        team_ids = list(season.starting_team_ids_json or [])
-        if not team_ids:
-            team_ids = list(season.teams.values_list("id", flat=True))
-        teams_by_id = {t.id: t for t in Team.objects.filter(id__in=team_ids)}
-
-        for team_id in team_ids:
+        for team_id in team_ids_by_season[season.id]:
             team = teams_by_id.get(team_id)
             if team is None:
                 continue
 
-            existing = TeamSeasonFinance.objects.filter(
-                team=team, season=season
-            ).first()
-            if existing is not None:
+            existing_hype = hype_by_pair.get((team_id, season.id))
+            if existing_hype is not None:
                 # Idempotent — re-read the carried state from the present row.
-                prev_hype_by_team[team_id] = existing.hype
-                prev_winp_by_team[team_id] = _team_winp_for_season(season, team_id)
+                prev_hype_by_team[team_id] = existing_hype
+                prev_winp_season_by_team[team_id] = season
                 continue
 
             # Active-roster salaries in effect for the completed Season —
@@ -2173,9 +2255,12 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
                 Player.objects.bulk_update(active, ["salary"])
             payroll = sum(p.salary or 0.0 for p in active)
 
-            winp = _team_winp_for_season(season, team_id)
+            winp = _winp(season, team_id)
             prev_hype = prev_hype_by_team.get(team_id, 0.0)
-            winp_old = prev_winp_by_team.get(team_id, 0.5)
+            prev_winp_season = prev_winp_season_by_team.get(team_id)
+            winp_old = (
+                0.5 if prev_winp_season is None else _winp(prev_winp_season, team_id)
+            )
 
             result = finance.compute_team_finance(
                 payroll=payroll,
@@ -2212,7 +2297,7 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
                     "budget_scouting": team.budget_scouting,
                     "budget_coaching": team.budget_coaching,
                     "budget_facilities": team.budget_facilities,
-                    "games_played": _team_wins_games_for_season(season, team_id)[1],
+                    "games_played": _wins_games(season, team_id)[1],
                 },
             )
 
@@ -2221,7 +2306,9 @@ def _ensure_team_finances(league: League, up_to_season: Season) -> None:
             team.save(update_fields=["cash"])
 
             prev_hype_by_team[team_id] = result.hype
-            prev_winp_by_team[team_id] = winp
+            prev_winp_season_by_team[team_id] = season
+            # A repeated id in the same Season now finds the row present.
+            hype_by_pair[(team_id, season.id)] = result.hype
 
 
 def _ensure_owner_evaluations(league: League, up_to_season: Season) -> None:
@@ -2384,11 +2471,19 @@ def _team_wins_games_for_season(season: Season, team_id: int) -> tuple[int, int]
     assembly the playoff seeding uses) and reads the ``StandingsRow`` for
     ``team_id``. Returns ``(0, 0)`` when the team has no row.
     """
+    return _team_wins_games_by_team(season).get(team_id, (0, 0))
+
+
+def _team_wins_games_by_team(season: Season) -> dict[int, tuple[int, int]]:
+    """Regular-season ``{team_id: (W, games)}`` for every Team with a
+    ``StandingsRow`` in ``season`` -- one standings assembly for all of them.
+    The first row wins when a Team appears twice (the per-Team scan's rule).
+    """
     rows = season._final_standings_for_phase(season.ordered_phases()[-1])
+    by_team: dict[int, tuple[int, int]] = {}
     for row in rows:
-        if row.team_id == team_id:
-            return (row.wins, row.matches_played)
-    return (0, 0)
+        by_team.setdefault(row.team_id, (row.wins, row.matches_played))
+    return by_team
 
 
 def run_season_rollover(league: League, latest_completed: Season) -> Season:

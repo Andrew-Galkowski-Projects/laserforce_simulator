@@ -4724,6 +4724,71 @@ failed**. Nothing else Postgres-only hides behind them.
    moves after UPDATEs. Fix in CI-01: `.order_by("id")` on all three (SQLite already returns id order,
    so no re-baseline), with a regression test that fails on Postgres.
 
+### PERF-01 · [DONE] Fix the five known N+1 read actions
+
+Spec: #313 (tickets #314-#317).
+
+**[DONE] Shipped (2026-10-23).** All five actions now run a constant number of queries, and
+`KNOWN_N_PLUS_ONE` in `test_detail_action_query_counts.py` is empty. The map stays in the file,
+with its comment, for future known cases. Payloads are unchanged: every existing payload test
+passes unedited. The HTML views that share these services (History, player page, Team history,
+Power Rankings, owner evaluation) get the same fix. Detail is in
+`docs/agents/matches/league-foundation.md` § PERF-01.
+
+- **history (T1):** new `compute_season_award_sets(seasons) -> dict[int, AwardSet]` over the
+  generic `season_snapshot.completed_seasons_cached`. One Player and one Team name query cover
+  every fresh snapshot. `_refresh_names` takes optional name maps, and `build_history_row` takes
+  an optional `award_set`.
+- **owner-evaluation (T2):** `_ensure_team_finances` exits early after one
+  `(team, season, hype)` query when every required row exists. On the slow path it memoises
+  standings per Season (`_team_wins_games_by_team`) and computes them lazily, only for Seasons a
+  missing row needs. New helper: `_enrolled_team_ids_by_season`.
+- **power-rankings / team-history (T3):** `select_related` on the six slots, one batched Team-name
+  read and one Match read per call, and `team_history_seasons` prefetches `teams`.
+- **league-player (T4):** one League-wide `build_round_dicts` call tagged with `_season_id`,
+  grouped in Python. Awards come through `compute_season_award_sets`.
+
+**Found:**
+- **Repeated ids:** the first finance-writer rewrite credited a Team's profit twice when its id
+  appeared twice in `starting_team_ids_json`. A guard and a test now cover it.
+- **Unordered queries:** the old `_team_season_rows` Match and Team queries had no `order_by`.
+  The new ones order by `id`, the de facto SQLite order, and now stable on Postgres too.
+- **Draft-Season scan:** the guardrail cannot see `team_history_seasons`' draft-Season scan,
+  because `_grow_league` adds no draft Seasons. `test_team_history_query_counts.py` covers it.
+- **Follow-up:** narrowing that scan at the database level is PERF-03 in `PLAN.md`.
+
+**Grill (2026-10-23, owner):**
+
+- **Scope:** only the five `KNOWN_N_PLUS_ONE` actions. HTML views that share a fixed
+  service speed up as a side effect; any other N+1 found goes into PLAN.md as a follow-up, unfixed.
+- **No behaviour change:** payloads stay byte-identical, order included; ownership (`manager`
+  seam, cross-Account 404) and the engine / RNG / ordering are untouched. Proof: the existing
+  payload tests pass unchanged and each strict xfail goes green once its entry is deleted.
+- **No migration by default:** `select_related` / `prefetch_related`, aggregates, batched
+  helpers or an existing snapshot. A new cached column comes back to the owner first.
+- **Seam:** the guardrail case per action (delete the entry: strict xfail XPASS is the red,
+  pass is the green). A new batched helper in a services module gets its own unit tests and a
+  named signature in the spec.
+- **Tickets:** one per action, run in parallel; actions sharing a services module merge into
+  one ticket or chain with blocked-by.
+- **history:** fix, don't accept as page-bounded (`?page_size=` reaches 100, ~200 extra
+  queries). New `compute_season_award_sets(seasons) -> dict[int, AwardSet]` in
+  `league_services.py`: snapshot awards plus one Player and one Team name query; in-progress,
+  stale or missing snapshots fall back to `compute_season_award_set`. `_refresh_names` takes
+  optional name maps; `build_history_row` takes an optional `award_set`. Fix the stale docstrings.
+- **league-player:** one League-wide `build_round_dicts` tagged with `season_id`, grouped in
+  Python; the career row from the same list; the Season-id set replaces the per-Season
+  `exists()`; awards via `compute_season_award_sets`. Ordering unchanged.
+- **team-history:** one `Team.in_bulk` and one completed-Match query (`game_rounds` prefetched)
+  grouped by Season; `team_history_seasons` gains `prefetch_related("teams")`. Narrowing its
+  `Season.objects.all()` scan is a follow-up, not built here.
+- **power-rankings:** `select_related` the six slot FKs on `Team.in_bulk`.
+- **owner-evaluation:** `_ensure_team_finances` early-exits when every required
+  `(team, season)` finance row exists (starting ids, else `season.teams`; deleted Teams
+  ignored), and memoises standings per Season on the slow path (`winp`, `games_played`).
+- **Breakdown:** T1 award batch + history; T2 owner-evaluation; T3 power-rankings + team-history
+  (T1-T3 in parallel); T4 league-player, blocked by T1 and T3.
+
 
 ---
 

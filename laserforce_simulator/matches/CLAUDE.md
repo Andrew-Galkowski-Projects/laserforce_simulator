@@ -82,7 +82,7 @@ Paths below are relative to the repo root.
 - URL table (`/matches/`, `/api/`) — `docs/agents/matches/urls.md`
 - Celery, batch jobs, Job status, polling JSON (API-03), task connection cleanup + close-in-transaction test guard (CI-01) — `docs/agents/matches/async-celery.md`
 - Round pages, Round scoreboard builder (`round_scoreboard`), Event log timeline API (`round_timeline`, ANG-06e), Playback snapshots + API (`matches/playback.py`, ANG-06f), event log windowing, playback map, heatmap, round compare, highlights, PDF report + charts (RV-03, RV-05), head-to-head — `docs/agents/matches/round-views-and-analytics.md`
-- League / Season models, schedule, standings, create League, dashboards, play season, next season, League history, CAR-01 — `docs/agents/matches/league-foundation.md`
+- League / Season models, schedule, standings, create League, dashboards, play season, next season, League history, CAR-01, constant-query League reads + batched award sets (PERF-01) — `docs/agents/matches/league-foundation.md`
 - Topnav modes, `Play` dropdown, live stats + Stop, One Week (Live) — `docs/agents/matches/nav-and-play.md`
 - Season map modes, map pool, rotate_by_matchday (LG-01j, SUB-01) — `docs/agents/matches/map-modes.md`
 - League sidebar screens, watch list, watch flag, standings form, League player page (LG-01z, LG-06f..h) — `docs/agents/matches/league-screens.md`

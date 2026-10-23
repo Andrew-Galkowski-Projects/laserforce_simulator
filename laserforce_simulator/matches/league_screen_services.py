@@ -26,7 +26,7 @@ from matches.league_leaders_logic import compute_leaderboards
 from matches.league_services import (
     _player_award_labels,
     _team_wins_games_for_season,
-    compute_season_award_set,
+    compute_season_award_sets,
     pick_displayed_season,
 )
 from matches.models import (
@@ -669,41 +669,41 @@ def build_player_detail(league: League, player: Player) -> PlayerDetail:
     Lenient: a Player with no Rounds in this League gets empty ``rs_rows`` /
     ``player_awards`` and ``career_row=None`` -- never an error.
     """
-    seasons = list(league.seasons.order_by("-id"))
+    # PERF-01: one League-wide PRS read, tagged with each row's Season id and
+    # grouped per Season here (rows stay id-ascending within each group, so
+    # aggregate_player_stats' "last row wins" identity is unchanged). The
+    # ``_season_id`` tag is read only here; aggregate_player_stats ignores
+    # unknown keys, so it never reaches the payload.
+    career_dicts = build_round_dicts(
+        {"game_round__match__season__league": league, "player_id": player.id},
+        extra_fields=lambda prs: {"_season_id": prs.game_round.match.season_id},
+    )
+    dicts_by_season: dict[int, list[dict]] = defaultdict(list)
+    for row in career_dicts:
+        dicts_by_season[row["_season_id"]].append(row)
 
-    # Per-Season rows -- one aggregation pass per Season the Player has
-    # Rounds in (newest first).
+    # Only the Seasons the Player has Rounds in, newest first.
+    seasons = [s for s in league.seasons.order_by("-id") if s.id in dicts_by_season]
+
     rs_rows: list[dict] = []
     for season in seasons:
-        round_dicts = build_round_dicts(
-            {"game_round__match__season": season, "player_id": player.id}
-        )
-        if not round_dicts:
-            continue
-        agg = aggregate_player_stats(round_dicts)
+        agg = aggregate_player_stats(dicts_by_season[season.id])
         if agg:
             rs_rows.append(_row_from_stat_row(agg[0], season.name, season.id))
 
-    # Career-in-League row -- one League-wide aggregation pass.
+    # Career-in-League row -- aggregated from the same League-wide list.
     career_row: dict | None = None
-    career_dicts = build_round_dicts(
-        {"game_round__match__season__league": league, "player_id": player.id}
-    )
     if career_dicts:
         career_agg = aggregate_player_stats(career_dicts)
         if career_agg:
             career_row = _row_from_stat_row(career_agg[0], "Career", None)
 
-    # LG-03 -- per-Season awards (newest first). Seasons the Player never
-    # appeared in are pruned by a cheap existence check before the
-    # O(PlayerRoundState) award computation.
+    # LG-03 -- per-Season awards (newest first), batched over only the
+    # Seasons the Player appeared in.
+    award_sets = compute_season_award_sets(seasons)
     player_awards: list[dict] = []
     for season in seasons:
-        if not PlayerRoundState.objects.filter(
-            game_round__match__season=season, player_id=player.id
-        ).exists():
-            continue
-        labels = _player_award_labels(compute_season_award_set(season), player.id)
+        labels = _player_award_labels(award_sets[season.id], player.id)
         if labels:
             player_awards.append(
                 {
@@ -1170,9 +1170,10 @@ def team_history_seasons(team: Team) -> dict[int, Season]:
 
     Walks every Season across every League the team is enrolled in. Used
     to scope the Overall tab's round corpus and the Seasons tab's rows.
+    ``teams`` is prefetched, so a draft Season's live M2M costs no query each.
     """
     out: dict[int, Season] = {}
-    for season in Season.objects.select_related("league").all():
+    for season in Season.objects.select_related("league").prefetch_related("teams"):
         if team.id in enrolled_team_ids(season):
             out[season.id] = season
     return out
@@ -1239,22 +1240,38 @@ def _team_season_rows(team: Team, seasons_by_id: dict[int, Season]) -> list[Seas
     """The Seasons tab -- one row per enrolled Season (newest id first)."""
     seasons = sorted(seasons_by_id.values(), key=lambda s: s.id, reverse=True)
 
+    # PERF-01 -- every Season's enrolled names in one ``in_bulk`` and every
+    # Season's Matches in one query, grouped per Season below (id order kept).
+    team_ids_by_season = {season.id: enrolled_team_ids(season) for season in seasons}
+    all_team_ids = {tid for ids in team_ids_by_season.values() for tid in ids}
+    names_by_id: dict[int, str] = dict(
+        Team.objects.filter(id__in=all_team_ids).values_list("id", "name")
+    )
+
+    # Completed Matches -> standings dicts for rank, and the team's own
+    # per-Round record for the W-L-T columns.
+    # LG-07a -- exclude social member-night Matches from the Seasons-tab rank.
+    matches_by_season: dict[int, list[Match]] = defaultdict(list)
+    for match in (
+        Match.objects.filter(season_id__in=list(team_ids_by_season), is_completed=True)
+        .exclude(season_phase__phase_type="member_night")
+        .prefetch_related("game_rounds")
+        .order_by("id")
+    ):
+        matches_by_season[match.season_id].append(match)
+
     season_dicts: list[dict] = []
     for season in seasons:
-        team_ids = enrolled_team_ids(season)
-        enrolled = list(Team.objects.filter(id__in=team_ids).values_list("id", "name"))
-
-        # Per-Season completed Matches -> standings dicts for rank, and the
-        # team's own per-Round record for the W-L-T columns.
-        # LG-07a -- exclude social member-night Matches from the Seasons-tab rank.
-        completed = list(
-            season.matches.filter(is_completed=True)
-            .exclude(season_phase__phase_type="member_night")
-            .prefetch_related("game_rounds")
-        )
+        # Id order, ids whose Team is gone skipped -- as the old per-Season
+        # ``filter(id__in=...)`` read.
+        enrolled = [
+            (tid, names_by_id[tid])
+            for tid in sorted(set(team_ids_by_season[season.id]))
+            if tid in names_by_id
+        ]
         match_dicts: list[dict] = []
         wins = losses = ties = 0
-        for match in completed:
+        for match in matches_by_season[season.id]:
             match_dicts.append(
                 {
                     "match_id": match.id,
@@ -1524,6 +1541,16 @@ def build_team_stats(
 
 # Power Rankings -- moved from ``league_screens/power_rankings.py`` (LG-01z-b).
 
+# The six roster-slot FKs ``Team.active_players`` reads.
+_ACTIVE_SLOT_FIELDS: tuple[str, ...] = (
+    "slot_commander",
+    "slot_heavy",
+    "slot_scout_1",
+    "slot_scout_2",
+    "slot_medic",
+    "slot_ammo",
+)
+
 
 def _team_mean_rating(team: Team) -> float:
     """Mean ``overall_rating`` over a team's active-roster players.
@@ -1555,7 +1582,11 @@ def build_power_rankings(
     if round_filter is None:
         return []
     team_ids = enrolled_team_ids(displayed_season) if displayed_season else []
-    teams_by_id: dict[int, Team] = Team.objects.in_bulk(team_ids)
+    # PERF-01 -- join the six active slots so ``_team_mean_rating`` reads no
+    # Player per Team.
+    teams_by_id: dict[int, Team] = Team.objects.select_related(
+        *_ACTIVE_SLOT_FIELDS
+    ).in_bulk(team_ids)
 
     # Re-point the scope onto the two join shapes: Match filters directly
     # (strip the leading ``match__``); GameRound joins via ``match__season...``.
