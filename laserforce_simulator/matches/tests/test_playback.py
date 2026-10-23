@@ -125,6 +125,39 @@ class TestFinalStateInvariant(TestCase):
                     )
 
 
+class TestSpecialKindMatchesEngine(TestCase):
+    """Rapid fire and nuke arming are recognised only by the description text
+    ``_use_special`` writes. Pin that matching against the engine's own
+    ``specials_used`` counter, so a wording change fails here instead of
+    silently dropping the Playback flags (which the invariant doesn't cover)."""
+
+    def test_every_scout_and_commander_special_is_recognised(self) -> None:
+        from matches.playback import _special_kind
+
+        checked = 0
+        for seed in (1, 7, 42):
+            random.seed(seed)
+            red, _ = make_team_with_slots(f"SkR{seed}")
+            blue, _ = make_team_with_slots(f"SkB{seed}")
+            game_round = BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="full"
+            )
+            expected = {"scout": "rapid_fire", "commander": "nuke_armed"}
+            for ps in PlayerRoundState.objects.filter(
+                game_round=game_round, role__in=expected
+            ):
+                recognised = sum(
+                    _special_kind(ev, ev.metadata or {}) == expected[ps.role]
+                    for ev in game_round.events.filter(
+                        event_type="special", actor_id=ps.player_id
+                    )
+                )
+                with self.subTest(seed=seed, role=ps.role, player=ps.player_id):
+                    self.assertEqual(recognised, ps.specials_used)
+                checked += ps.specials_used
+        self.assertGreater(checked, 0, "no Scout / Commander special in the seeds")
+
+
 _INVARIANT_FIELDS = (
     "score",
     "lives",
@@ -390,6 +423,13 @@ class TestSpecialFlags(_PlaybackCase):
         self.assertEqual(
             self.nuking(), [(0, False), (200, True), (212, False), (300, False)]
         )
+
+    def test_nuking_off_at_fires_at_on_a_tick_with_events(self) -> None:
+        """The fuse burns out on a tick that also has an event: one snapshot
+        at that tick, with ``nuking`` already off."""
+        self.arm(200, fires_at=212)
+        self.event(212, "miss", self.cmd, metadata=_actor(15, 29, 0, 0))
+        self.assertEqual(self.nuking(), [(0, False), (200, True), (212, False)])
 
     def test_nuking_off_at_fires_at_with_no_later_events(self) -> None:
         self.arm(200, fires_at=212)

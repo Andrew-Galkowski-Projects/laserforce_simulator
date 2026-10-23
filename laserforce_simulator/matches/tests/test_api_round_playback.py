@@ -6,13 +6,15 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
+from django.db import connection
 from django.test import TestCase
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
 from laserforce_simulator.testing import assert_owner_only
-from matches.models import GameRound, PlayerRoundState
+from matches.models import GameEvent, GameRound, PlayerRoundState
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
 from matches.tests.test_playback_map import _make_arena_map
@@ -131,6 +133,34 @@ class TestPlaybackShape(_PlaybackApiCase):
             sorted(p["id"] for p in payload["players"]),
             sorted([self.red_players["commander"].pk, self.blue_players["scout"].pk]),
         )
+
+
+class TestPlaybackQueryCount(_PlaybackApiCase):
+    def test_query_count_does_not_grow_with_events(self) -> None:
+        """No per-event queries (as ``/timeline/``, ANG-06d retro check)."""
+        game_round = self.make_round()
+        cmd = self.red_players["commander"]
+        scout = self.blue_players["scout"]
+        url = f"/api/rounds/{game_round.pk}/playback/"
+
+        def log(tick: int, event_type: str) -> None:
+            GameEvent.objects.create(
+                game_round=game_round,
+                timestamp=tick,
+                event_type=event_type,
+                actor=cmd,
+                target=scout,
+                metadata={"actor_shots": 30 - tick, "target_lives": 15},
+            )
+
+        log(1, "tag")
+        with CaptureQueriesContext(connection) as few:
+            self.assertEqual(self.api.get(url).status_code, 200)
+        for tick in range(2, 32):
+            log(tick, "tag")
+            log(tick, "miss")
+        with self.assertNumQueries(len(few.captured_queries)):
+            self.assertEqual(self.api.get(url).status_code, 200)
 
 
 class TestPlaybackAccess(_PlaybackApiCase):

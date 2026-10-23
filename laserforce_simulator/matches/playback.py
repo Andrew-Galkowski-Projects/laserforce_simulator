@@ -286,6 +286,9 @@ def round_playback(game_round: GameRound) -> dict:
         game_round.events.exclude(event_type="movement")
         .order_by("timestamp", "id")
         .only(
+            # GameEvent reads game_round_id on load; deferring it costs one
+            # query per event.
+            "game_round_id",
             "timestamp",
             "event_type",
             "actor_id",
