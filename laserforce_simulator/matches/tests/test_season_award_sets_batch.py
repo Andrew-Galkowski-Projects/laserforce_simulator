@@ -100,6 +100,20 @@ class TestComputeSeasonAwardSets(TestCase):
         recomputed = result[seasons[0].id].season_mvp
         self.assertNotEqual(recomputed.player_id if recomputed else None, mvp.player_id)
 
+    def test_unknown_snapshot_version_falls_back_to_recompute(self) -> None:
+        stale, warm = [_build_season()[0] for _ in range(2)]
+        compute_season_award_set(_fresh(warm))
+        Season.objects.filter(pk=stale.pk).update(
+            summary_snapshot_json={"v": -1, "awards": {"bogus": True}}
+        )
+
+        result = compute_season_award_sets([_fresh(stale), _fresh(warm)])
+
+        self.assertEqual(result[stale.id], _uncached(stale))
+        self.assertEqual(result[warm.id], _uncached(warm))
+        # The single-Season fallback rewrote the snapshot at today's version.
+        self.assertNotEqual(_fresh(stale).summary_snapshot_json["v"], -1)
+
 
 class TestRefreshNamesWithMaps(TestCase):
     """The snapshot name refresh reads pre-fetched maps instead of querying."""
