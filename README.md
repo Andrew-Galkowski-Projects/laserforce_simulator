@@ -144,7 +144,7 @@ header with Sign out and a Teams / Matches sidebar that becomes a drawer on smal
 screens: list, detail (with Remove player), Create, Edit and Assign Slots, plus Add Player and Edit
 Player (the 19 Stats with a live Overall rating), and the Matches screens: Match History (your Matches
 and Single Rounds, paged), New Match and New Single Round (simulate and open the result), and the Match and Round pages: a Match Summary per Round, and
-each Round's per-player scoreboard (sortable, with MVP scores and a PDF export). They sit on the typed API services and
+each Round's per-player scoreboard (sortable, with MVP scores and a PDF export) and its Event log (every event, colour-coded and filterable by type and player, with the round's Highlights). They sit on the typed API services and
 the JWT sign-in / silent-refresh flow. The Django pages stay live until ANG-08. Styling comes from the app theme in
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md). The theme follows the
 OS light / dark setting and uses JetBrains Mono, self-hosted. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is

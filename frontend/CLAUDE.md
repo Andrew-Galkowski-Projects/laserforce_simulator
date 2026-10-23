@@ -107,7 +107,8 @@ src/
                           round-detail: ANG-06d, layout B, from the Round API's `scoreboard`),
                           /rounds/:id/events (round-events: the Event log, ANG-06e, from
                           `rounds/:id/timeline/`; CDK virtual scroll, client-side filters);
-                          shared/: event-groups.ts (EVENT_GROUPS, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
+                          shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
+                          event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
                           "In progress"), result-chip, route-record.ts (loadRouteRecord),
                           record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
                           scoreboard-fixtures, timeline-fixtures)

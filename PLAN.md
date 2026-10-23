@@ -57,46 +57,8 @@ Every component uses the theme chosen in ANG-04b.
 3. **[DONE] Match list & create** — team picker, match creation, results list (ANG-06c, in
    `PLAN-completed.md`)
 4. **[DONE] Round detail** — per-player stat table, MVP scores (ANG-06d, in `PLAN-completed.md`)
-5. **Event timeline (ANG-06e)** — filtered event log, color-coded by type. Spec: #300. Grill
-   settled (owner, 2026-10-22):
-   - **Scope:** the summary cards, the Highlights list and the filtered, colour-coded timeline. SIM-05
-     playback and the charts split out as items 5b (ANG-06f) and 5c (ANG-06g).
-   - **Data:** one new read action `GET /api/rounds/<id>/timeline/`, unpaginated, in the ADR-0039
-     envelope, with `events` / `players` / `highlights` / `summary`. Event keys are readable (`id,
-     tick, event_type, points, description, actor_id, actor_name, actor_side, target_id, target_name,
-     target_side, metadata`), times in ticks, movement included. The rows come through a shared service
-     built on `round_playback_payload` / `get_event_summary`, so the Django page and the API can't
-     drift. Ownership goes through `get_object()` (cross-Account 404), then
-     `ensure_fidelity("full")`. `/events/` is unchanged. No migration, no engine change.
-   - **Filtering** happens in the browser, as in Django. Every emitted type goes in an explicit
-     group: Tag (`tag`), Elimination (`elimination`, `team_elimination`), Miss (`miss`), Special
-     (`special`, `nuke_cancelled`), Missile (`missiled`, `missile_dodge`), Locking (`locking`),
-     Resupply (`resupply_ammo`, `resupply_lives`, `combo_resupply`, `medic_reset`), Base capture
-     (`base_capture`), Movement (`movement`). All groups start checked except Movement.
-   - **Player filter:** checkboxes grouped by Side. An event shows when its actor *or* its target is
-     checked.
-   - **Colour:** a left border and type chip per group from `--lf-ev-*` tokens, adding
-     `--lf-ev-locking`, `--lf-ev-base` and `--lf-ev-movement`. Names take their Side colour through
-     `data-lf-side`. Points show as a muted `+N`.
-   - **List:** CDK virtual scroll, chronological, with a "Showing N of M events" count. This replaces
-     the 250-row pager.
-   - **Highlights and summary cards:** the seven cards, and Highlights showing the kind label, mm:ss and
-     a Side border. Clicking a Highlight scrolls the timeline to the first event at its tick. A "Show
-     metadata" toggle (off by default) shows `key: value` text.
-   - **Layout:** at 1280px, the summary cards and Highlights sit on top, and below them a filter side
-     panel beside the timeline. At 768px, the filters fold into a collapsed expansion panel above the
-     list.
-   - **Empty states:** "No highlights for this round" (rounds from before RV-02) and "No events match
-     these filters".
-   - **Glossary:** **Event log** and **Event group** were added.
-   - **Route:** `/rounds/:id/events`, reached from an "Event log" link on the Round detail page, with a
-     back link to the round.
-   - **Out of scope:**
-     - The kill feed is dropped: it is a subset of the timeline, "kill" is a glossary avoid-word, and
-       its missile filter is dead.
-     - The missile-log and heatmap links.
-     - The Django page is left as is, including its dead `missile` / `nuke_detonated` code; ANG-08
-       deletes it.
+5. **[DONE] Event timeline** — filtered event log, color-coded by type (ANG-06e, in
+   `PLAN-completed.md`)
 5b. **Playback (ANG-06f)** — SIM-05 scrubber, play/step/speed, live Side scoreboards, current-row
    highlight, map overlay. RV-04's timeline pips and MECH-15's tick-0 frame attach here.
 5c. **Event charts (ANG-06g)** — choose the charting library, then build the four Shots / Lives / Points
@@ -298,7 +260,7 @@ top of this file. Phase 8 is the critical path. Everything else is an unschedule
 so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
 
 ```
-ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail [done] -> Event timeline -> Map editor)   <- NEXT
+ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail, Event timeline [done] -> Playback -> Event charts -> Map editor)   <- NEXT
         + still to scope: League / Season, League screens,
           Tournaments, Accounts
     -> ANG-07  Serve Angular from an nginx sidecar
