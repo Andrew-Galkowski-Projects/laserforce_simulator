@@ -1,0 +1,65 @@
+<section class="sb" [attr.data-lf-side]="side()" [attr.aria-label]="teamName() + ' scoreboard'">
+  <div class="sb-head">
+    <span class="sb-head__name">
+      <span class="sb-head__badge" aria-hidden="true">{{ side() === 'red' ? 'R' : 'B' }}</span>
+      <span class="sb-head__team">{{ teamName() }}</span>
+    </span>
+    <span class="sb-head__total">{{ total() }}</span>
+  </div>
+  <div class="sb-tablewrap">
+    <table class="sb-table">
+      <thead>
+        <tr>
+          <th scope="col" class="num">#</th>
+          <th scope="col">Player</th>
+          <th scope="col" class="sb-dotcol" aria-label="Respawn"></th>
+          <th scope="col">Pos</th>
+          <th scope="col" class="num">Score</th>
+          <th scope="col" class="num">Acc</th>
+          <th scope="col" class="num">Lives</th>
+          <th scope="col" class="num">Shots</th>
+          <th scope="col" class="num">Msl</th>
+          <th scope="col" class="num">SP</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of rows(); track row.id) {
+          <tr [class.is-out]="row.snap.eliminated" [class.sb-flash]="flashing().has(row.id)">
+            <td class="num sb-rank">{{ row.rank }}</td>
+            <td class="sb-name" [class.is-down]="row.respawn">
+              <span
+                class="sb-name__text"
+                [class.sb-rapid]="row.snap.rapid_fire"
+                [class.sb-rainbow]="row.snap.nuking"
+                >{{ row.name }}</span
+              >
+              @if (row.snap.eliminated) {
+                <span class="sb-out">OUT</span>
+              }
+            </td>
+            <td class="sb-dotcol">
+              @if (row.respawn; as r) {
+                <span
+                  class="sb-dot"
+                  [class]="'is-' + r.phase"
+                  [style.--sb-dot-fill]="r.fill"
+                  role="img"
+                  [attr.aria-label]="
+                    r.phase === 'not-targetable' ? 'Down, not targetable' : 'Down, resetting'
+                  "
+                ></span>
+              }
+            </td>
+            <td>{{ row.pos }}</td>
+            <td class="num">{{ row.snap.score }}</td>
+            <td class="num">{{ row.acc }}</td>
+            <td class="num">{{ row.snap.lives }}</td>
+            <td class="num">{{ row.snap.shots }}</td>
+            <td class="num">{{ row.snap.missiles }}</td>
+            <td class="num">{{ row.sp }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>
