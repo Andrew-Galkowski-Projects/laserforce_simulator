@@ -26,7 +26,7 @@ from matches.league_leaders_logic import compute_leaderboards
 from matches.league_services import (
     _player_award_labels,
     _team_wins_games_for_season,
-    compute_season_award_set,
+    compute_season_award_sets,
     pick_displayed_season,
 )
 from matches.models import (
@@ -669,41 +669,41 @@ def build_player_detail(league: League, player: Player) -> PlayerDetail:
     Lenient: a Player with no Rounds in this League gets empty ``rs_rows`` /
     ``player_awards`` and ``career_row=None`` -- never an error.
     """
-    seasons = list(league.seasons.order_by("-id"))
+    # PERF-01: one League-wide PRS read, tagged with each row's Season id and
+    # grouped per Season here (rows stay id-ascending within each group, so
+    # aggregate_player_stats' "last row wins" identity is unchanged). The
+    # ``_season_id`` tag is read only here; aggregate_player_stats ignores
+    # unknown keys, so it never reaches the payload.
+    career_dicts = build_round_dicts(
+        {"game_round__match__season__league": league, "player_id": player.id},
+        extra_fields=lambda prs: {"_season_id": prs.game_round.match.season_id},
+    )
+    dicts_by_season: dict[int, list[dict]] = defaultdict(list)
+    for row in career_dicts:
+        dicts_by_season[row["_season_id"]].append(row)
 
-    # Per-Season rows -- one aggregation pass per Season the Player has
-    # Rounds in (newest first).
+    # Only the Seasons the Player has Rounds in, newest first.
+    seasons = [s for s in league.seasons.order_by("-id") if s.id in dicts_by_season]
+
     rs_rows: list[dict] = []
     for season in seasons:
-        round_dicts = build_round_dicts(
-            {"game_round__match__season": season, "player_id": player.id}
-        )
-        if not round_dicts:
-            continue
-        agg = aggregate_player_stats(round_dicts)
+        agg = aggregate_player_stats(dicts_by_season[season.id])
         if agg:
             rs_rows.append(_row_from_stat_row(agg[0], season.name, season.id))
 
-    # Career-in-League row -- one League-wide aggregation pass.
+    # Career-in-League row -- aggregated from the same League-wide list.
     career_row: dict | None = None
-    career_dicts = build_round_dicts(
-        {"game_round__match__season__league": league, "player_id": player.id}
-    )
     if career_dicts:
         career_agg = aggregate_player_stats(career_dicts)
         if career_agg:
             career_row = _row_from_stat_row(career_agg[0], "Career", None)
 
-    # LG-03 -- per-Season awards (newest first). Seasons the Player never
-    # appeared in are pruned by a cheap existence check before the
-    # O(PlayerRoundState) award computation.
+    # LG-03 -- per-Season awards (newest first), batched over only the
+    # Seasons the Player appeared in.
+    award_sets = compute_season_award_sets(seasons)
     player_awards: list[dict] = []
     for season in seasons:
-        if not PlayerRoundState.objects.filter(
-            game_round__match__season=season, player_id=player.id
-        ).exists():
-            continue
-        labels = _player_award_labels(compute_season_award_set(season), player.id)
+        labels = _player_award_labels(award_sets[season.id], player.id)
         if labels:
             player_awards.append(
                 {
