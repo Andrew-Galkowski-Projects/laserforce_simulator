@@ -41,6 +41,7 @@ from matches.services import (
     create_sandbox_round,
     resolve_batch_teams,
     round_report_filename,
+    round_timeline,
     shared_team_ids,
 )
 from matches.sim_helpers.pdf_report import build_round_report
@@ -189,6 +190,15 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
             return self.get_paginated_response(serializer.data)
         serializer = GameEventSerializer(qs, many=True)
         return Response(serializer.data)
+
+    @action(detail=True, methods=["get"], url_path="timeline", url_name="timeline")
+    def timeline(self, request: Request, pk: str | None = None) -> Response:
+        """ANG-06e: the whole Event log (every event, movement included) in
+        one unpaginated call; upgrades the round to ``full`` as ``events``
+        does. Cross-Account and missing ids are 404 via ``get_object``."""
+        game_round = self.get_object()
+        BatchSimulator().ensure_fidelity(game_round, "full")
+        return Response(round_timeline(game_round))
 
     @action(
         detail=True, methods=["get"], url_path="missile-log", url_name="missile-log"

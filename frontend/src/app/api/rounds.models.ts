@@ -174,6 +174,83 @@ export interface GameEvent {
 }
 
 /**
+ * Every `event_type` the engine emits: the 11 `GameEvent.EVENT_TYPES` keys
+ * plus the four emitted but unlisted ones. The `timeline/` vocabulary.
+ */
+export type TimelineEventType =
+  GameEventType | 'movement' | 'base_capture' | 'combo_resupply' | 'missile_dodge';
+
+/** One **Event log** row of `GET rounds/{id}/timeline/` (`matches/services.py` `round_timeline`). */
+export interface TimelineEvent {
+  /** Ticks into the round (1 tick = 0.5 s). */
+  tick: number;
+  event_type: TimelineEventType;
+  points: number;
+  description: string;
+  actor_id: number;
+  actor_name: string;
+  actor_side: Side;
+  /** The three `target_*` fields are all null when the event has no target. */
+  target_id: number | null;
+  target_name: string | null;
+  target_side: Side | null;
+  /** `{}` when the event stored none. */
+  metadata: Record<string, unknown>;
+}
+
+/** A player of the Round, in `PlayerRoundState.id` order. */
+export interface TimelinePlayer {
+  id: number;
+  name: string;
+  side: Side;
+  role: string;
+}
+
+/** The six RV-02 **Highlight** kinds (`sim_helpers/highlights.py` `KINDS`). */
+export type HighlightKind =
+  | 'nuke_detonation'
+  | 'nuke_cancelled'
+  | 'medic_reset'
+  | 'first_elimination'
+  | 'team_elimination'
+  | 'scoring_burst';
+
+/** A **Highlight** record (`GameRound.highlights_json`), passed through unchanged. */
+export interface Highlight {
+  kind: HighlightKind;
+  /** Ticks into the round. */
+  tick: number | null;
+  team: Side | null;
+  /** Player names, not ids. */
+  actor: string | null;
+  target: string | null;
+  points: number | null;
+  label: string;
+}
+
+/** `GameRound.get_event_summary()`. */
+export interface EventSummary {
+  total_events: number;
+  tags: number;
+  moves: number;
+  missiles: number;
+  misses: number;
+  eliminations: number;
+  resupplies: number;
+  specials: number;
+}
+
+/** `GET rounds/{id}/timeline/`: the whole Event log, unpaginated. */
+export interface RoundTimeline {
+  /** Every event, movement included, in `(timestamp, id)` order. */
+  events: TimelineEvent[];
+  players: TimelinePlayer[];
+  /** `[]` on a round from before RV-02. */
+  highlights: Highlight[];
+  summary: EventSummary;
+}
+
+/**
  * `SingleRoundSetupForm` fields. Teams must be the caller's own valid rosters;
  * `arena_map` must have a confirmed zone config (omit for the 3-zone fallback).
  */
