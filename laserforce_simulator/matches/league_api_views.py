@@ -61,6 +61,7 @@ from matches.league_services import (
     build_season_schedule,
     build_season_standings,
     build_team_schedule,
+    compute_season_award_sets,
     create_league_and_season,
     eligible_new_teams,
     ensure_owner_evaluation,
@@ -475,9 +476,15 @@ class LeagueViewSet(
         seasons = ([in_progress] if in_progress is not None else []) + completed
         page = self.paginate_queryset(seasons)
         items = page if page is not None else seasons
+        award_sets = compute_season_award_sets(items)
         data = [
             _history_item(
-                build_history_row(s, teams_by_id, is_in_progress=(s is in_progress))
+                build_history_row(
+                    s,
+                    teams_by_id,
+                    is_in_progress=(s is in_progress),
+                    award_set=award_sets[s.id],
+                )
             )
             for s in items
         ]

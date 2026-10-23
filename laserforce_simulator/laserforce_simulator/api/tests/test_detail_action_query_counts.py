@@ -693,11 +693,6 @@ EXEMPT: dict[tuple[str, str], str] = {
 # Actions with a known N+1 today: key -> reason. The case is a strict xfail,
 # so fixing the N+1 turns it red until the entry is removed.
 KNOWN_N_PLUS_ONE: dict[tuple[str, ...], str] = {
-    ("leagues", "history"): (
-        "N+1 (documented, page-bounded): build_history_row calls "
-        "compute_season_award_set per Season row -- Player + Team name SELECTs "
-        "per Season on the page"
-    ),
     ("leagues", "league-player"): (
         "N+1: build_player_detail loops league.seasons -- build_round_dicts, an "
         "exists() and compute_season_award_set per Season"
