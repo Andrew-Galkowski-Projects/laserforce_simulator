@@ -53,6 +53,7 @@ STEPS: tuple[str, ...] = (
     "black",
     "ruff",
     "encoding",
+    "glossary",
     "mypy",
     "pytest",
     "ng-lint",
@@ -157,6 +158,21 @@ def main() -> int:
         results["encoding"] = ("PASS", "") if code == 0 else ("FAIL", _tail(out))
     else:
         results["encoding"] = ("SKIP", "no changed text files")
+
+    # --- glossary (GLOSSARY.md avoid-words in added lines; WARN never fails) ---
+    if data["nothing_changed"]:
+        results["glossary"] = ("SKIP", "nothing changed")
+    else:
+        script = os.path.join(repo_root, "scripts", "check_glossary_avoid.py")
+        ref = "HEAD" if mode == "working" else "main...HEAD"
+        code, out = _run([sys.executable, script, "--ref", ref], cwd=repo_root)
+        hits = [line for line in out.splitlines() if ': avoid-word "' in line]
+        if code != 0:
+            results["glossary"] = ("FAIL", _tail(out))
+        elif hits:
+            results["glossary"] = ("WARN", " | ".join(hits[:5]))
+        else:
+            results["glossary"] = ("PASS", "")
 
     # --- mypy (changed files only; errors on changed lines only) ---
     if py_files:
