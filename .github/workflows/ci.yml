@@ -126,9 +126,13 @@ jobs:
       - name: Run tests with coverage (shard ${{ matrix.group }} of 4)
         working-directory: ./laserforce_simulator
         # --durations lists the slowest tests in every log, so a slowdown is
-        # easy to find. --splits must match the matrix size.
+        # easy to find. --splits must match the matrix size. PERF-04: after
+        # the split has read the committed .test_durations, --store-durations
+        # --clean-durations overwrites this runner's copy with only this
+        # shard's CI-measured timings, kept below for
+        # scripts/refresh_test_durations.py.
         run: |
-          pytest --splits 4 --group ${{ matrix.group }} --durations-path .test_durations --cov=. --cov-report= --durations=25
+          pytest --splits 4 --group ${{ matrix.group }} --durations-path .test_durations --store-durations --clean-durations --cov=. --cov-report= --durations=25
           mv .coverage .coverage.shard${{ matrix.group }}
 
       - name: Keep this shard's coverage data
@@ -139,6 +143,17 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+      - name: Keep this shard's test durations
+        # Only on success (the default): a red run never feeds the file.
+        # 30 days, so a refresh can pick runs from weeks ago.
+        uses: actions/upload-artifact@v4
+        with:
+          name: durations-shard-${{ matrix.group }}
+          path: laserforce_simulator/.test_durations
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 30
 
   coverage:
     # Combines the shards' coverage data and uploads one report to Codecov.
