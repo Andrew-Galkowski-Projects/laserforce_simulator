@@ -165,7 +165,15 @@ ADRs) on the integration branch first, each path named.
 ## Step 6: Implement
 
 The worktree's branch is the **integration branch**. Follow `implement-spec`
-against the spec issue. Implementers run in their own worktrees branched from
+against the spec issue.
+
+**A one-ticket breakdown is yours to implement:** write it test-first in the
+integration worktree, under the implementer constraints below (the red pairing
+for every Implementation Decision included), and comment the commit on the
+ticket. Step 8's review still gives it fresh eyes. PERF-03's implementer agent
+spent 63k tokens on a 10-line change.
+
+For more tickets, implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
 another agent is still committing can branch from a stale tip, so confirm
 each one's base before starting the next. Before starting tickets that run in

@@ -74,6 +74,24 @@ class SeedBrowserCheckTests(TempMediaMixin, TestCase):
         self.assertEqual(list(Team.objects.all()), [kept])
         self.assertIn("removed", output)
 
+    def test_clean_counts_each_labelled_model_not_its_cascade(self) -> None:
+        # A GameRound delete also cascades its GameEvents and PlayerRoundStates;
+        # the summary counts only the rows its label names.
+        _seed()
+        users = get_user_model().objects.filter(email__in=[_A, _B])
+        rounds = GameRound.objects.filter(manager__in=users).count()
+        matches = Match.objects.filter(manager__in=users).count()
+        players = Player.objects.filter(team__manager__in=users).count()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            output = _seed("--clean")
+
+        self.assertIn(
+            f"removed Single Rounds: {rounds}, Matches: {matches}, "
+            f"Players: {players}, Teams: 4, Accounts: 2, Maps: 1",
+            output,
+        )
+
 
 class SeedBrowserCheckMapTests(TempMediaMixin, TestCase):
     """The configured map and the full-fidelity Single Round played on it."""

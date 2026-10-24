@@ -1,7 +1,8 @@
 """Deterministic verify pipeline over the changed files.
 
 Steps, in order: black --check, ruff (the narrow F401/F811 set from
-pyproject.toml), the mojibake / UTF-8 encoding check, mypy, pytest on the
+pyproject.toml), the mojibake / UTF-8 encoding check, the SQLite JSON-lookup
+check, mypy, pytest on the
 derived targets, and -- when anything under frontend/ changed -- the Angular
 lint, Prettier check and Vitest run (CI's `frontend` job minus the build). It
 mirrors the CI lint step plus a scoped test run.
@@ -53,6 +54,7 @@ STEPS: tuple[str, ...] = (
     "black",
     "ruff",
     "encoding",
+    "sqlite",
     "glossary",
     "dead-code",
     "mypy",
@@ -159,6 +161,14 @@ def main() -> int:
         results["encoding"] = ("PASS", "") if code == 0 else ("FAIL", _tail(out))
     else:
         results["encoding"] = ("SKIP", "no changed text files")
+
+    # --- sqlite (JSONField __contains / __contained_by: unsupported on SQLite) ---
+    if py_files:
+        script = os.path.join(repo_root, "scripts", "check_sqlite_json_lookups.py")
+        code, out = _run([sys.executable, script, *py_files], cwd=repo_root)
+        results["sqlite"] = ("PASS", "") if code == 0 else ("FAIL", _tail(out))
+    else:
+        results["sqlite"] = ("SKIP", "no changed .py files")
 
     # --- glossary (GLOSSARY.md avoid-words in added lines; WARN never fails) ---
     if data["nothing_changed"]:

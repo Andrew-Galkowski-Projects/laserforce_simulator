@@ -42,6 +42,10 @@ The script:
    module-level `_private` def or class in a changed file that nothing in the
    repo references; an `import` alone is not a use. WARN as well: delete it,
    or say why it stays (reached only through `getattr`).
+   `scripts/check_sqlite_json_lookups.py` (the `sqlite` row, also in CI's
+   lint step) FAILs on a JSONField `__contains` / `__contained_by` lookup:
+   SQLite, the dev database, raises `NotSupportedError` for both. Filter on a
+   relation or check the JSON in Python.
 3. Derives the pytest targets from the authoritative app→tests mapping in
    `changed_files.py` and runs `pytest -q` against them (full suite only if a
    change matched no mapping).
