@@ -19,7 +19,7 @@ from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
-from django.db.models import Q
+from django.db.models import Q, QuerySet
 from PIL import Image as PILImage
 from PIL import ImageDraw
 
@@ -143,6 +143,15 @@ def create_browser_check_map() -> ArenaMap:
     return arena_map
 
 
+def _deleted(queryset: QuerySet) -> int:
+    """Delete ``queryset`` and return how many of its own model's rows went.
+
+    ``delete()[0]`` is the total across every cascaded model (a GameRound
+    takes its GameEvents and PlayerRoundStates along), not the labelled one.
+    """
+    return queryset.delete()[1].get(queryset.model._meta.label, 0)
+
+
 class Command(BaseCommand):
     help = "Seed (or --clean) two throwaway Accounts and Account A's Teams and Matches."
 
@@ -236,11 +245,11 @@ class Command(BaseCommand):
         # same line as before --league existed.
         counts = {"Leagues": league_count} if league_count else {}
         counts |= {
-            "Single Rounds": GameRound.objects.filter(manager__in=users).delete()[0],
-            "Matches": Match.objects.filter(manager__in=users).delete()[0],
-            "Players": Player.objects.filter(team__manager__in=users).delete()[0],
-            "Teams": Team.objects.filter(manager__in=users).delete()[0],
-            "Accounts": users.delete()[0],
+            "Single Rounds": _deleted(GameRound.objects.filter(manager__in=users)),
+            "Matches": _deleted(Match.objects.filter(manager__in=users)),
+            "Players": _deleted(Player.objects.filter(team__manager__in=users)),
+            "Teams": _deleted(Team.objects.filter(manager__in=users)),
+            "Accounts": _deleted(users),
         }
         # delete_map removes the image and processed cache once this commits.
         maps = list(ArenaMap.objects.filter(name=MAP_NAME))
