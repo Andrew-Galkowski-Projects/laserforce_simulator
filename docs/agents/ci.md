@@ -37,6 +37,13 @@ DATABASE_URL=postgres://laserforce:laserforce@localhost:5433/laserforce_test pyt
 To change the shard count, edit the matrix and `--splits` together: a mismatch
 silently skips or repeats groups.
 
+## Measuring a run
+
+`python scripts/ci_timings.py <run-id>` prints every job's time, each shard's
+pytest summary, the combined coverage total, and the time from run start to
+`test-result`. Run times vary by about 30 s or more, so judge a change on the
+slowest of at least two runs.
+
 ## Why sharding
 
 The 4-vCPU runner limits the suite, not coverage. Moving to Python 3.12 + sysmon

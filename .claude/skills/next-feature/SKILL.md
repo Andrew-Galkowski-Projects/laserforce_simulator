@@ -89,7 +89,11 @@ worded so "yes" accepts it. `AskUserQuestion` takes at most four questions, so
 a bigger round goes as numbered text in chat and the owner answers there.
 Facts come from subagents reading the code; decisions come from the owner.
 When the task is a bug or a red check, reproduce it before round 1: the
-probe's result is a settled fact in that round, not a question.
+probe's result is a settled fact in that round, not a question. A performance
+task gets the same probe: time the suspected cost locally, with and without it,
+scaled to the target's core count (CI runners have 4 vCPUs). PERF-02 built a
+ticket on coverage being the cost, and one local timing would have shown the
+suite was CPU-bound.
 Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
 become ADRs in `docs/adr/` (next free number).
 
@@ -313,7 +317,9 @@ reads the spec issue and its tickets; the Standards axis reads
 checkout's `.venv\Scripts\python.exe` for any Python or pip call, so they can
 verify installs and runtime claims. Tell the Spec reviewer to search for
 parameterised tests (`it.each`, `@pytest.mark.parametrize`, `subTest`)
-before reporting a test missing (ANG-06e's false P1). Show both reports. Fix the
+before reporting a test missing (ANG-06e's false P1), and both reviewers to
+quote the grep or line behind any finding about what a file contains or lacks
+(PERF-02's false "durations file predates the split"). Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
 tests, and review again only if a fix changed behaviour. The fix pass is
 the orchestrator's own work, not a ticket: tell its agent to **stage** its
@@ -363,6 +369,10 @@ Every job must have **started**: a timeout, a
 run with no jobs, or one GitHub reports as "a workflow file issue", is a
 broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
 red job as in Step 7 and report it to the owner with the PR link.
+A task that changes CI time reads each run with
+`<main checkout>/.venv/Scripts/python.exe scripts/ci_timings.py <run-id>` (every job,
+each shard's pytest line, coverage total, run start to `test-result`) and
+claims the **slowest of at least two runs** (PERF-02: 4m57s, then 6m08s).
 Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work
