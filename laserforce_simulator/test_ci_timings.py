@@ -5,6 +5,7 @@ pure parsing functions are tested; the ``gh`` calls are thin wrappers.
 """
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import ModuleType
 from unittest import TestCase
@@ -28,6 +29,17 @@ def _log(*messages: str, step: str = "Run tests") -> str:
     return "\n".join(
         f"test (1)\t{step}\t2026-10-24T16:33:13.8555422Z {m}" for m in messages
     )
+
+
+class RunTests(TestCase):
+    def test_output_is_utf8_whatever_the_console_codepage(self) -> None:
+        # CI logs carry UTF-8 (and stray non-UTF-8) bytes; the Windows default
+        # cp1252 decode crashed on byte 0x81 in run 40120433549.
+        child = "import sys; sys.stdout.buffer.write(b'\\xe2\\x9c\\x93 ok \\x81')"
+
+        out = ci_timings._run([sys.executable, "-c", child])
+
+        self.assertTrue(out.startswith("✓ ok "))
 
 
 class ElapsedTests(TestCase):
