@@ -4838,8 +4838,9 @@ Spec: #324
 
 **[DONE] Shipped (2026-10-24), PR #327.** The CI `test` job (about 12 minutes) is now a
 `lint` job beside a 4-shard `pytest-split` matrix, a `coverage` combine-and-upload job and
-an aggregate `test-result` check: 4m39s from run start to `test-result`. Layout and the
-durations file: `docs/agents/ci.md`.
+an aggregate `test-result` check: 4m39s and 5m16s from run start to `test-result` over two
+runs, so it sits at the 5-minute target rather than reliably under it (PERF-04 rebalances the
+shards). Layout and the durations file: `docs/agents/ci.md`.
 
 **Found:**
 - **Coverage was not the cost.** Python 3.12 + `COVERAGE_CORE=sysmon` saved only about 45 s

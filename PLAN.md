@@ -36,6 +36,16 @@ PERF-03 (narrow the Team history Season scan) is **[DONE]**; see `PLAN-completed
 
 PERF-02 (speed up the CI Python test job) is **[DONE]**; see `PLAN-completed.md`.
 
+### PERF-04 · Rebalance the CI test shards on CI timings
+
+**Prio: Low (found 2026-10-24, PERF-02).** The 4-shard `test` matrix reaches `test-result` in
+4m39s to 5m16s, at the 5-minute target rather than reliably under it. The shards are uneven
+(1m25s to 3m08s of pytest in run 40111748380) because `laserforce_simulator/.test_durations`
+was recorded locally with 16 workers, and its proportions don't match the 4-vCPU runners.
+Record durations on CI instead (e.g. a manual `workflow_dispatch` job running
+`--store-durations` and uploading the file), commit it, and measure. **Open for its own grill:**
+how often to refresh the file, and whether a 5th shard is still needed after rebalancing.
+
 ---
 
 ## Phase 8 — Angular Frontend Migration
@@ -284,7 +294,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** PERF-04, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
