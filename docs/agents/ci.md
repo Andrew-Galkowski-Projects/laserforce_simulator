@@ -17,7 +17,8 @@ frontend -------------------------------------------------^
 - **`test`**: a 4-runner matrix. Each runner runs `pytest --splits 4 --group <n>`
   (`pytest-split`) with the usual `-n auto --dist worksteal`, coverage through
   `sys.monitoring` (`COVERAGE_CORE=sysmon`), and `--durations=25`. It keeps its
-  `.coverage` data as the `coverage-shard-<n>` artifact.
+  `.coverage` data as the `coverage-shard-<n>` artifact, and its tests' timings
+  (`--store-durations --clean-durations`) as `durations-shard-<n>`.
 - **`coverage`**: downloads the shards' data files, runs `coverage combine`, writes
   `coverage.xml` and uploads to Codecov **once**.
 - **`test-result`**: `if: always()`. It is green only when `lint`, every shard and
@@ -26,13 +27,30 @@ frontend -------------------------------------------------^
 
 ## The durations file
 
-`laserforce_simulator/.test_durations` balances the shards. A test missing from it
+`laserforce_simulator/.test_durations` balances the shards (pytest-split's default
+`duration_based_chunks`, which keeps a test class in one shard). A test missing from it
 still runs, at the average duration, so a stale file only unbalances the shards.
-Regenerate it when one shard's log runs much longer than the others (Postgres, as CI):
+
+Every green shard keeps its own tests' CI timings as the `durations-shard-<n>`
+artifact for 30 days (PERF-04). **Refresh** when `ci_timings.py` shows the slowest
+shard's pytest more than about 40% over the mean of the shards, on two runs in a row:
 
 ```
-DATABASE_URL=postgres://laserforce:laserforce@localhost:5433/laserforce_test python -m pytest laserforce_simulator --store-durations --durations-path laserforce_simulator/.test_durations
+python scripts/refresh_test_durations.py <run-id> [<run-id> ...]
 ```
+
+Pass two or three green runs: each test gets its median across them, because one
+runner's timings swing by a minute. The script refuses a run that is missing any
+shard's artifact. To get more runs of one commit, close and reopen the PR: each
+reopen is a new run ID. Never `gh run rerun` a run you want timings from: the
+re-run keeps the ID and drops the earlier attempt's artifacts (PERF-04). Commit the
+file in a normal PR. Don't record it locally: a 16-worker machine's proportions don't
+match the 4-vCPU runners.
+
+**Limit:** a refresh balances the recorded durations, not the CPU load. Batch-sim tests
+start a process pool sized to every CPU on top of the 4 xdist workers, which slows the
+whole shard that holds them, so one shard still runs about 2x the others after a
+refresh (PERF-04 measured 203 s against 94 s). PERF-06 tracks the fix.
 
 To change the shard count, edit the matrix and `--splits` together: a mismatch
 silently skips or repeats groups.

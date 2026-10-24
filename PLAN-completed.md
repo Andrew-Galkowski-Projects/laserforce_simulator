@@ -4924,6 +4924,33 @@ Every lever keeps the suite's coverage and its serial-vs-parallel determinism te
 - **No ADR.** A PLAN note and the PR are enough; the sharding layout, if built, gets a note
   in `docs/agents/`.
 
+### PERF-04 · [DONE] Rebalance the CI test shards on CI timings
+
+Spec: #330
+
+**[DONE] Shipped (2026-10-24), PR #332.** Every CI `test` shard now keeps its own tests'
+durations as the `durations-shard-<n>` artifact (30 days, green shards only), and
+`scripts/refresh_test_durations.py <run-id>...` writes `.test_durations` from the per-test
+median. The file was refreshed from runs 40133384034, 40133420453 and 40133425367 (8526 tests).
+Refresh rule and procedure: `docs/agents/ci.md`.
+
+**Found:**
+- **The refresh fixed the data, not the time.** Before (3 runs on the old file): slowest
+  shard 207-213 s of pytest, 5m12s / 5m23s / 7m23s to `test-result`. After (runs 40134227072,
+  40134234669): 203 s / 206 s, **4m55s / 5m19s**. The slow shard moved from 1 to 2. Under the
+  CI medians the old split gave shard 1 771 s of test time against 366-484 s for the others
+  (the old file rated all four about 860 s); the new file predicts 513-524 s each, but the
+  measured shard 2 took 732 s.
+- **Cause: batch-sim process pools oversubscribe the runner.** They size to every CPU on top
+  of 4 xdist workers, so per-test durations depend on which shard holds them. Logged as
+  PERF-06, not a 5th shard.
+- **`gh run rerun` drops the earlier attempt's artifacts** and keeps the run ID; more runs of
+  one commit come from closing and reopening the PR.
+- **Grill decisions:** record on every shard (no `workflow_dispatch`); local script, no bot;
+  per-test median; the shard count comes from the run's `test (n)` jobs; keep
+  `duration_based_chunks`; no refresh schedule (slowest shard over ~40% above the mean on two
+  runs in a row); stay at 4 shards. Out: the test password hasher (PERF-05).
+
 ---
 
 ## Phase 6 — Users and Multiplayer
