@@ -41,7 +41,9 @@ python scripts/refresh_test_durations.py <run-id> [<run-id> ...]
 
 Pass two or three green runs: each test gets its median across them, because one
 runner's timings swing by a minute. The script refuses a run that is missing any
-shard's artifact. Commit the file in a normal PR. Don't record it locally: a
+shard's artifact. To get more runs of one commit, close and reopen the PR: each
+reopen is a new run ID. Never `gh run rerun` a run you want timings from: the
+re-run keeps the ID and drops the earlier attempt's artifacts (PERF-04). Commit the file in a normal PR. Don't record it locally: a
 16-worker machine's proportions don't match the 4-vCPU runners.
 
 To change the shard count, edit the matrix and `--splits` together: a mismatch
