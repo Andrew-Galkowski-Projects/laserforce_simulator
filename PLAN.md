@@ -17,7 +17,7 @@ goal-balling) were distributed into the **Phase 3 — Simulation Mechanics Backl
 (see `MECH-15` / `MOVE-05` / `MOVE-06`), and the score-rebase ask into `CAL-01`
 there. GEN-01, NAV-01, PLAY-01, DEL-01, CRE-01, CRE-02 and CI-01 are shipped (see
 [`PLAN-completed.md`](PLAN-completed.md)); the deferred GEN-02 stub remains here, plus
-PERF-02 (CI test time) and PERF-03 (a PERF-01 follow-up). PERF-01 is shipped.
+PERF-02 (CI test time). PERF-01 and PERF-03 are shipped.
 
 ### GEN-02 · [DEFERRED to bottom — see "Parked — deferred compute-tier work" (2026-06-26)]
 
@@ -32,15 +32,7 @@ write-up parked below.
 
 PERF-01 (the five known N+1 read actions) is **[DONE]**; see `PLAN-completed.md`.
 
-### PERF-03 · Narrow the Team history Season scan
-
-**Prio: Low (found 2026-10-23, PERF-01).** `team_history_seasons(team)` (League screen services)
-scans `Season.objects.all()`, across every Account and League, to find the Seasons a Team enrolled
-in. PERF-01 made it run a constant number of queries (`prefetch_related("teams")`), but it still
-loads every Season in the database on each Team history read. The fix is to filter in the database
-instead: the Season's `teams` M2M, or `starting_team_ids_json` containing the Team id. A JSON
-`contains` lookup behaves differently on SQLite and Postgres, so it needs a test on both backends.
-Behaviour must not change: the walk still spans every League the Team enrolled in.
+PERF-03 (narrow the Team history Season scan) is **[DONE]**; see `PLAN-completed.md`.
 
 ### PERF-02 · Speed up the CI Python test job
 
@@ -322,7 +314,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** PERF-02, PERF-03, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** PERF-02, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02

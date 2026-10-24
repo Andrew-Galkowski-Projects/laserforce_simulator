@@ -10,14 +10,17 @@ M2M instead, which this file covers.
 from __future__ import annotations
 
 from datetime import date
+from unittest import mock
 
+from django.contrib.auth import get_user_model
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
 
-from matches.league_screen_services import team_history_seasons
+from matches.league_screen_services import enrolled_team_ids, team_history_seasons
 from matches.models import League, Season
 from matches.tests.conftest import make_team_with_slots
+from teams.models import Team
 
 
 class TestTeamHistorySeasonsDraftScan(TestCase):
@@ -66,3 +69,50 @@ class TestTeamHistorySeasonsDraftScan(TestCase):
             {found[s.id].league_id for s in mine},
             {league.id for league in self.leagues},
         )
+
+
+class TestTeamHistorySeasonsNarrowedScan(TestCase):
+    """PERF-03 -- the scan reads only Seasons the Team has an M2M link to."""
+
+    def setUp(self) -> None:
+        self.team, _ = make_team_with_slots("Narrow")
+        self.other, _ = make_team_with_slots("NarrowOther")
+        self.third, _ = make_team_with_slots("NarrowThird")
+        self.league = League.objects.create(name="Narrow League")
+
+    def _active_season(self, league: League, name: str, *teams: Team) -> Season:
+        season = Season.objects.create(
+            league=league, name=name, start_date=date(2026, 1, 1)
+        )
+        season.teams.add(*teams)
+        season.start_season()
+        return season
+
+    def test_never_rechecks_a_season_the_team_has_no_link_to(self) -> None:
+        stranger = get_user_model().objects.create_user(
+            email="perf03-stranger@example.com", password="Str0ng-Passphrase-9"
+        )
+        foreign_league = League.objects.create(name="Foreign", manager=stranger)
+        foreign = self._active_season(foreign_league, "Foreign", self.other, self.third)
+        mine = self._active_season(self.league, "Mine", self.team, self.other)
+        with mock.patch(
+            "matches.league_screen_services.enrolled_team_ids",
+            side_effect=enrolled_team_ids,
+        ) as spy:
+            found = team_history_seasons(self.team)
+        checked = {call.args[0].id for call in spy.call_args_list}
+        self.assertNotIn(foreign.id, checked)
+        self.assertEqual(list(found), [mine.id])
+
+    def test_finds_active_season_whose_snapshot_lists_the_team(self) -> None:
+        season = self._active_season(self.league, "Snap", self.team, self.other)
+        self.assertIn(self.team.id, season.starting_team_ids_json)
+        found = team_history_seasons(self.team)
+        self.assertEqual(list(found), [season.id])
+        self.assertEqual(found[season.id].league_id, self.league.id)
+
+    def test_excludes_team_added_to_m2m_after_the_start(self) -> None:
+        season = self._active_season(self.league, "Late", self.other, self.third)
+        season.teams.add(self.team)
+        self.assertNotIn(self.team.id, season.starting_team_ids_json)
+        self.assertEqual(team_history_seasons(self.team), {})
