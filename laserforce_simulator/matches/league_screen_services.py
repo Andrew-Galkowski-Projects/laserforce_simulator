@@ -1171,9 +1171,20 @@ def team_history_seasons(team: Team) -> dict[int, Season]:
     Walks every Season across every League the team is enrolled in. Used
     to scope the Overall tab's round corpus and the Seasons tab's rows.
     ``teams`` is prefetched, so a draft Season's live M2M costs no query each.
+
+    PERF-03: the rows are narrowed to ``teams=team``. ``start_season``
+    snapshots ``starting_team_ids_json`` from the live ``teams`` M2M and
+    production code never removes ``Season.teams`` rows, so snapshot is a
+    subset of the M2M and the filter is a superset of the enrolled Seasons.
+    The re-check drops a Team added to the M2M after the start.
     """
     out: dict[int, Season] = {}
-    for season in Season.objects.select_related("league").prefetch_related("teams"):
+    seasons = (
+        Season.objects.filter(teams=team)
+        .select_related("league")
+        .prefetch_related("teams")
+    )
+    for season in seasons:
         if team.id in enrolled_team_ids(season):
             out[season.id] = season
     return out
