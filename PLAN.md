@@ -46,6 +46,28 @@ Record durations on CI instead (e.g. a manual `workflow_dispatch` job running
 `--store-durations` and uploading the file), commit it, and measure. **Open for its own grill:**
 how often to refresh the file, and whether a 5th shard is still needed after rebalancing.
 
+### TEST-01 · Keep every test's media writes out of the real `MEDIA_ROOT`
+
+**Prio: Low (found 2026-10-24, PERF-02 retro).** Older `core` tests (`del.png`, `parity.png`,
+the default-map seeding in `_seed_defaults` / `_restore_default_images`) write into the real
+`laserforce_simulator/media/` because they use neither `TempMediaMixin` nor
+`ClassTempMediaMixin`. PERF-02 deleted the strays from its worktree by hand three times. Likely
+fix: an autouse session fixture in the root `conftest.py` that points `MEDIA_ROOT` at a temp
+dir, so no test can leak whichever mixin it uses, plus a test that a full run leaves `media/`
+untouched. **Open for its own grill:** whether the per-test mixins stay (they also give each
+test a clean dir) and how the default-map tests that copy from `Screenshots_and_video_examples/`
+behave under it.
+
+### TOOL-01 · Script the PLAN.md to PLAN-completed.md move
+
+**Prio: Low (found 2026-10-24, PERF-02 retro).** `/update-docs` Step 3 moves a shipped task's
+section by hand every time (PERF-01, PERF-03, PERF-02), and PERF-02's one-off script dropped
+the `---` rule before the next phase heading. A `scripts/move_done_task.py <ID> <shipped-note>`
+would mark the heading `[DONE]`, insert the shipped note, move the section under the same `##`
+heading in `PLAN-completed.md` (adding it if missing), leave a one-line `[DONE]` pointer, drop
+the ID from the **Sequencing Summary**, and keep every separator. Tests at the pure
+text-transform seam, like `test_watch_pr_ci.py`. `/update-docs` Step 3 then calls it.
+
 ---
 
 ## Phase 8 — Angular Frontend Migration
@@ -294,7 +316,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** PERF-04, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** PERF-04, TEST-01, TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
