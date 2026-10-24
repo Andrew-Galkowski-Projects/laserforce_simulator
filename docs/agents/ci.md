@@ -43,8 +43,14 @@ Pass two or three green runs: each test gets its median across them, because one
 runner's timings swing by a minute. The script refuses a run that is missing any
 shard's artifact. To get more runs of one commit, close and reopen the PR: each
 reopen is a new run ID. Never `gh run rerun` a run you want timings from: the
-re-run keeps the ID and drops the earlier attempt's artifacts (PERF-04). Commit the file in a normal PR. Don't record it locally: a
-16-worker machine's proportions don't match the 4-vCPU runners.
+re-run keeps the ID and drops the earlier attempt's artifacts (PERF-04). Commit the
+file in a normal PR. Don't record it locally: a 16-worker machine's proportions don't
+match the 4-vCPU runners.
+
+**Limit:** a refresh balances the recorded durations, not the CPU load. Batch-sim tests
+start a process pool sized to every CPU on top of the 4 xdist workers, which slows the
+whole shard that holds them, so one shard still runs about 2x the others after a
+refresh (PERF-04 measured 203 s against 94 s). PERF-06 tracks the fix.
 
 To change the shard count, edit the matrix and `--splits` together: a mismatch
 silently skips or repeats groups.
