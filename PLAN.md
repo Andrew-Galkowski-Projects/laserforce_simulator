@@ -16,8 +16,8 @@ simulation-mechanics bugs from the same review (start-of-game state, cell-occupa
 goal-balling) were distributed into the **Phase 3 — Simulation Mechanics Backlog**
 (see `MECH-15` / `MOVE-05` / `MOVE-06`), and the score-rebase ask into `CAL-01`
 there. GEN-01, NAV-01, PLAY-01, DEL-01, CRE-01, CRE-02 and CI-01 are shipped (see
-[`PLAN-completed.md`](PLAN-completed.md)); the deferred GEN-02 stub remains here, plus
-PERF-02 (CI test time). PERF-01 and PERF-03 are shipped.
+[`PLAN-completed.md`](PLAN-completed.md)); the deferred GEN-02 stub remains here.
+PERF-01, PERF-02 and PERF-03 are shipped.
 
 ### GEN-02 · [DEFERRED to bottom — see "Parked — deferred compute-tier work" (2026-06-26)]
 
@@ -34,75 +34,7 @@ PERF-01 (the five known N+1 read actions) is **[DONE]**; see `PLAN-completed.md`
 
 PERF-03 (narrow the Team history Season scan) is **[DONE]**; see `PLAN-completed.md`.
 
-### PERF-02 · Speed up the CI Python test job
-
-Spec: #324
-
-**Prio: Medium (found 2026-10-23, owner).** The CI `test` job takes about 15 minutes, and the
-`Run tests with coverage` step alone takes 13m21s (run 40011033113, main). Locally the same
-suite (8446 tests, `-n auto --dist worksteal` from `pytest.ini`) runs in about 2 minutes on SQLite
-and 3 minutes on Postgres, without coverage. The likely costs:
-
-- **Coverage on Python 3.11.** `pytest --cov` traces every line through `sys.settrace`. Python
-  3.12+ lets coverage use `sys.monitoring` (`COVERAGE_CORE=sysmon`), which is much cheaper.
-  Moving CI (and the Docker image, to match) to 3.12 is the biggest single lever to measure.
-- **Few cores.** `ubuntu-latest` gives 4 vCPUs, so `-n auto` runs 4 workers. Sharding the suite
-  across a job matrix (e.g. `pytest-split` with stored durations), or a larger runner, cuts wall
-  time linearly. Coverage files then merge in one step before the Codecov upload.
-- **Per-worker test-DB build.** Each xdist worker migrates its own test database, about 7.5 s
-  locally (the slow `setup` rows in `--durations`). Squashing old migrations, or a template
-  database, cuts that per worker. `--no-migrations` is not an option: data migrations matter.
-- **The slowest tests** (`--durations=30`, local):
-  - the serial-vs-parallel determinism and calibration tests in `test_batch_sim.py` and
-    `test_simulation_incremental.py` (24 s, 14 s, 12 s, 9.5 s, 8 s, 7 s);
-  - `test_seed_browser_check.py` (7-12 s each: each test seeds again, including the map's
-    sight-line compute).
-
-  Options: share expensive setup (`setUpTestData`); shrink rounds or maps where the test doesn't
-  need full size; move statistical calibration tests behind a `calibration` marker in a
-  non-blocking job (already proposed for `test_strong_team_winpct_not_diluted_by_alternation`
-  under CAL-01).
-
-**Start by measuring:** add `--durations=25` to the CI pytest step, and time one CI run per lever,
-before changing anything. **Open for its own grill:** which levers to take; whether
-coverage must run on every PR or only on `main`; and the target time (e.g. under 5 minutes).
-Every lever keeps the suite's coverage and its serial-vs-parallel determinism tests.
-
-**Grill (2026-10-23, owner), settled:**
-
-- **Facts.** The repo is public, so standard 4-vCPU runners are free and unmetered; larger
-  runners are paid. PR run 40068219905: `test` job 12m23s, of which `Run tests with coverage`
-  is 11m06s; everything else in the job is about 75 s.
-- **Target:** the `test` job finishes in under 5 minutes of wall time on a PR, with full
-  coverage and every test.
-- **Coverage** still runs on every PR and every push to `main` (Codecov PR comments need it).
-- **Python 3.12 everywhere at once:** CI `setup-python`, the Dockerfile (`python:3.12-slim`, and
-  its `site-packages` copy path), mypy `python_version`, and the docs' "Python 3.11" lines. CI
-  sets `COVERAGE_CORE=sysmon` (line coverage only, so no branch-coverage loss). The owner
-  rebuilds the local `.venv` on 3.12 outside the PR.
-- **Measure first:** ticket 1 adds `--durations=25` to the CI pytest step, makes the 3.12 +
-  sysmon move, adds `cache: pip`, and seeds `test_seed_browser_check.py` once per class.
-  Its PR CI run is the measurement. Sharding is built only if that run is still over 5 minutes.
-- **Sharding, if needed:** `pytest-split` across a 3-shard matrix, each shard `-n auto` on
-  its own runner, from a committed `.test_durations`; a final job combines the shard
-  `.coverage` files and uploads to Codecov once; branch protection requires one aggregate
-  job (e.g. `test-result`), so the shard count can change without touching settings.
-- **Slow statistical tests stay blocking and unmarked.** No non-blocking `calibration` job;
-  shrinking their rounds or maps belongs to CAL-01.
-- **`test_seed_browser_check.py`:** only the read-only tests (what was seeded, the API reads,
-  "refuses to seed twice") share a class-level seed (`setUpTestData`, the seed's output kept
-  on the class). The `--clean` tests (their on-commit hook deletes map files, which a rollback
-  does not restore) and the tests that need an unseeded database move to their own classes
-  and keep seeding per test. The map's temp media root must live for the whole class.
-- **Measurement run:** once ticket 1 is merged on the integration branch, push it and open a
-  draft PR (on the owner's go); its CI time decides on sharding, and the same PR becomes the
-  final one.
-- **Sharding is ticket 2, blocked by ticket 1.** If ticket 1's run is under 5 minutes, ticket 2
-  is closed as not needed, with the measured times in a comment and in this note.
-- **`--durations=25` stays** in the CI pytest step permanently.
-- **Out of scope:** squashing migrations, template databases, larger runners.
-- **No ADR.** A PLAN note and the PR are enough; the sharding layout, if built, gets a note
-  in `docs/agents/`.
+PERF-02 (speed up the CI Python test job) is **[DONE]**; see `PLAN-completed.md`.
 
 ---
 
@@ -352,7 +284,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** PERF-02, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02

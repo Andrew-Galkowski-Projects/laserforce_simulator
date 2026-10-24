@@ -4832,6 +4832,99 @@ post-start addition excluded).
 
 ---
 
+### PERF-02 · [DONE] Speed up the CI Python test job
+
+Spec: #324
+
+**[DONE] Shipped (2026-10-24), PR #327.** The CI `test` job (about 12 minutes) is now a
+`lint` job beside a 4-shard `pytest-split` matrix, a `coverage` combine-and-upload job and
+an aggregate `test-result` check: 4m39s from run start to `test-result`. Layout and the
+durations file: `docs/agents/ci.md`.
+
+**Found:**
+- **Coverage was not the cost.** Python 3.12 + `COVERAGE_CORE=sysmon` saved only about 45 s
+  of the 11-minute test step. Locally (16 workers) settrace coverage adds 57% (190 s to
+  299 s); CI has 4 vCPUs, so the suite is bound by its core count. Measurements on #324.
+- **3 shards was not enough.** Two 3-shard runs took 4m57s and 6m08s to `test-result`, so the
+  owner moved to 4 (the grill had settled 3).
+- **Shards are uneven** (1m25s to 3m08s of pytest): `.test_durations` was recorded locally
+  with 16 workers, and those proportions don't carry over to CI exactly. Regenerating it
+  from CI timings would even them out.
+- `test_seed_browser_check.py` read-only tests share one seed per class through the new
+  `ClassTempMediaMixin`; `test_without_the_flag_no_league_is_seeded` joined the shared
+  default-seed class (it only reads that seed).
+- **Pre-existing, not fixed:** older `core` tests (`del.png`, `parity.png`, default-map
+  seeding) write into the real `MEDIA_ROOT` instead of a temp dir.
+- `main` has no branch protection; require `test-result` if it is ever added.
+
+**Prio: Medium (found 2026-10-23, owner).** The CI `test` job takes about 15 minutes, and the
+`Run tests with coverage` step alone takes 13m21s (run 40011033113, main). Locally the same
+suite (8446 tests, `-n auto --dist worksteal` from `pytest.ini`) runs in about 2 minutes on SQLite
+and 3 minutes on Postgres, without coverage. The likely costs:
+
+- **Coverage on Python 3.11.** `pytest --cov` traces every line through `sys.settrace`. Python
+  3.12+ lets coverage use `sys.monitoring` (`COVERAGE_CORE=sysmon`), which is much cheaper.
+  Moving CI (and the Docker image, to match) to 3.12 is the biggest single lever to measure.
+- **Few cores.** `ubuntu-latest` gives 4 vCPUs, so `-n auto` runs 4 workers. Sharding the suite
+  across a job matrix (e.g. `pytest-split` with stored durations), or a larger runner, cuts wall
+  time linearly. Coverage files then merge in one step before the Codecov upload.
+- **Per-worker test-DB build.** Each xdist worker migrates its own test database, about 7.5 s
+  locally (the slow `setup` rows in `--durations`). Squashing old migrations, or a template
+  database, cuts that per worker. `--no-migrations` is not an option: data migrations matter.
+- **The slowest tests** (`--durations=30`, local):
+  - the serial-vs-parallel determinism and calibration tests in `test_batch_sim.py` and
+    `test_simulation_incremental.py` (24 s, 14 s, 12 s, 9.5 s, 8 s, 7 s);
+  - `test_seed_browser_check.py` (7-12 s each: each test seeds again, including the map's
+    sight-line compute).
+
+  Options: share expensive setup (`setUpTestData`); shrink rounds or maps where the test doesn't
+  need full size; move statistical calibration tests behind a `calibration` marker in a
+  non-blocking job (already proposed for `test_strong_team_winpct_not_diluted_by_alternation`
+  under CAL-01).
+
+**Start by measuring:** add `--durations=25` to the CI pytest step, and time one CI run per lever,
+before changing anything. **Open for its own grill:** which levers to take; whether
+coverage must run on every PR or only on `main`; and the target time (e.g. under 5 minutes).
+Every lever keeps the suite's coverage and its serial-vs-parallel determinism tests.
+
+**Grill (2026-10-23, owner), settled:**
+
+- **Facts.** The repo is public, so standard 4-vCPU runners are free and unmetered; larger
+  runners are paid. PR run 40068219905: `test` job 12m23s, of which `Run tests with coverage`
+  is 11m06s; everything else in the job is about 75 s.
+- **Target:** the `test` job finishes in under 5 minutes of wall time on a PR, with full
+  coverage and every test.
+- **Coverage** still runs on every PR and every push to `main` (Codecov PR comments need it).
+- **Python 3.12 everywhere at once:** CI `setup-python`, the Dockerfile (`python:3.12-slim`, and
+  its `site-packages` copy path), mypy `python_version`, and the docs' "Python 3.11" lines. CI
+  sets `COVERAGE_CORE=sysmon` (line coverage only, so no branch-coverage loss). The owner
+  rebuilds the local `.venv` on 3.12 outside the PR.
+- **Measure first:** ticket 1 adds `--durations=25` to the CI pytest step, makes the 3.12 +
+  sysmon move, adds `cache: pip`, and seeds `test_seed_browser_check.py` once per class.
+  Its PR CI run is the measurement. Sharding is built only if that run is still over 5 minutes.
+- **Sharding, if needed:** `pytest-split` across a 3-shard matrix, each shard `-n auto` on
+  its own runner, from a committed `.test_durations`; a final job combines the shard
+  `.coverage` files and uploads to Codecov once; branch protection requires one aggregate
+  job (e.g. `test-result`), so the shard count can change without touching settings.
+- **Slow statistical tests stay blocking and unmarked.** No non-blocking `calibration` job;
+  shrinking their rounds or maps belongs to CAL-01.
+- **`test_seed_browser_check.py`:** only the read-only tests (what was seeded, the API reads,
+  "refuses to seed twice") share a class-level seed (`setUpTestData`, the seed's output kept
+  on the class). The `--clean` tests (their on-commit hook deletes map files, which a rollback
+  does not restore) and the tests that need an unseeded database move to their own classes
+  and keep seeding per test. The map's temp media root must live for the whole class.
+- **Measurement run:** once ticket 1 is merged on the integration branch, push it and open a
+  draft PR (on the owner's go); its CI time decides on sharding, and the same PR becomes the
+  final one.
+- **Sharding is ticket 2, blocked by ticket 1.** If ticket 1's run is under 5 minutes, ticket 2
+  is closed as not needed, with the measured times in a comment and in this note.
+- **`--durations=25` stays** in the CI pytest step permanently.
+- **Out of scope:** squashing migrations, template databases, larger runners.
+- **No ADR.** A PLAN note and the PR are enough; the sharding layout, if built, gets a note
+  in `docs/agents/`.
+
+---
+
 ## Phase 6 — Users and Multiplayer
 
 ### UX-01 · [DONE] User accounts and team ownership

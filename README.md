@@ -42,7 +42,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `djangorestframework-simplejwt` for JWT sign-in on `/api/`: a short-lived access token in the response body and a rotating refresh token in an httpOnly cookie (ADR-0041)
 - `reportlab` + `matplotlib` for the round report PDF and its charts (rendered server-side, Agg, no `pyplot`)
 - `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
-- pytest + pytest-django for testing, with Codecov coverage reporting
+- pytest + pytest-django for testing, with Codecov coverage reporting; CI splits the suite across 4 runners with `pytest-split`
 - Docker (multi-stage `python:3.12-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
 
 ## Getting Started
