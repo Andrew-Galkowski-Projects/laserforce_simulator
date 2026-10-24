@@ -28,13 +28,18 @@ jobs:
       SECRET_KEY: ${{ secrets.DJANGO_CI_SECRET_KEY || 'django-insecure-ci-only-not-a-real-secret' }}
       DEBUG: "True"
       DATABASE_URL: postgres://laserforce:laserforce@localhost:5432/laserforce_test
+      # PERF-02: coverage measures through sys.monitoring (Python 3.12+), far
+      # cheaper than the sys.settrace default. Line coverage only, as before.
+      COVERAGE_CORE: sysmon
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: laserforce_simulator/requirements.txt
 
       - name: Lint (ruff, black, encoding, SQLite JSON lookups, actionlint)
         # Narrow guardrail configured in pyproject.toml: ruff F401/F811 (dead
@@ -72,8 +77,10 @@ jobs:
 
       - name: Run tests with coverage
         working-directory: ./laserforce_simulator
+        # --durations lists the slowest tests in every log, so a slowdown is
+        # easy to find (PERF-02).
         run: |
-          pytest --cov=. --cov-report=xml:coverage.xml
+          pytest --cov=. --cov-report=xml:coverage.xml --durations=25
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

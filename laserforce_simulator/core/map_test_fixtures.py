@@ -88,19 +88,8 @@ def corrupt_upload(filename: str = "bad.png") -> SimpleUploadedFile:
     return SimpleUploadedFile(filename, b"not an image", content_type="image/png")
 
 
-class TempMediaMixin:
-    """Point ``MEDIA_ROOT`` at a fresh temp dir (a ``Path``, as the code does
-    ``MEDIA_ROOT / "maps"``) for the duration of one test."""
-
+class _MediaRootPaths:
     media_root: Path
-
-    def setUp(self) -> None:
-        super().setUp()  # type: ignore[misc]
-        self.media_root = Path(tempfile.mkdtemp(prefix="ang01c-media-"))
-        override = override_settings(MEDIA_ROOT=self.media_root)
-        override.enable()
-        self.addCleanup(shutil.rmtree, self.media_root, True)  # type: ignore[attr-defined]
-        self.addCleanup(override.disable)  # type: ignore[attr-defined]
 
     def processed_cache_path(self, arena_map: ArenaMap) -> Path:
         return self.media_root / "maps" / f"processed_{arena_map.pk}.png"
@@ -110,6 +99,34 @@ class TempMediaMixin:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(png_bytes(size=10, border=1))
         return path
+
+
+class TempMediaMixin(_MediaRootPaths):
+    """Point ``MEDIA_ROOT`` at a fresh temp dir (a ``Path``, as the code does
+    ``MEDIA_ROOT / "maps"``) for the duration of one test."""
+
+    def setUp(self) -> None:
+        super().setUp()  # type: ignore[misc]
+        self.media_root = Path(tempfile.mkdtemp(prefix="ang01c-media-"))
+        override = override_settings(MEDIA_ROOT=self.media_root)
+        override.enable()
+        self.addCleanup(shutil.rmtree, self.media_root, True)  # type: ignore[attr-defined]
+        self.addCleanup(override.disable)  # type: ignore[attr-defined]
+
+
+class ClassTempMediaMixin(_MediaRootPaths):
+    """``TempMediaMixin`` for a whole test class (PERF-02): the temp
+    ``MEDIA_ROOT`` is set before ``setUpTestData`` runs and lasts until the
+    class ends, so files a class-level fixture writes survive for every test."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.media_root = Path(tempfile.mkdtemp(prefix="perf02-media-"))
+        override = override_settings(MEDIA_ROOT=cls.media_root)
+        override.enable()
+        cls.addClassCleanup(shutil.rmtree, cls.media_root, True)  # type: ignore[attr-defined]
+        cls.addClassCleanup(override.disable)  # type: ignore[attr-defined]
+        super().setUpClass()  # type: ignore[misc]
 
 
 def make_image_map(name: str = "Probe Arena") -> ArenaMap:

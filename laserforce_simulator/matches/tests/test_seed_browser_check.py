@@ -1,4 +1,11 @@
-"""``seed_browser_check``: throwaway data for a browser check, and its cleanup."""
+"""``seed_browser_check``: throwaway data for a browser check, and its cleanup.
+
+Seeding costs seconds (the map's sight-line compute, the League's Seasons), so
+the read-only tests share one seed per class (``setUpTestData``, with a
+class-scoped ``MEDIA_ROOT``; PERF-02). Tests that run ``--clean`` (its on-commit
+hook deletes map files, which a rollback does not restore) or need an unseeded
+database live in the ``*CleanTests`` classes and seed per test.
+"""
 
 from io import StringIO
 
@@ -7,7 +14,7 @@ from django.core.management import CommandError, call_command
 from django.test import TestCase
 from rest_framework.test import APIClient
 
-from core.map_test_fixtures import TempMediaMixin
+from core.map_test_fixtures import ClassTempMediaMixin, TempMediaMixin
 from core.models import ArenaMap
 from matches.models import GameRound, League, Match, PlayerRoundState, Season
 from matches.sim_helpers.map_loader import load_map_context
@@ -25,10 +32,16 @@ def _seed(*args: str) -> str:
     return out.getvalue()
 
 
-class SeedBrowserCheckTests(TempMediaMixin, TestCase):
-    def test_seeds_two_accounts_and_account_a_data(self) -> None:
-        output = _seed()
+class SeedBrowserCheckTests(ClassTempMediaMixin, TestCase):
+    """The default seed (no ``--league``), made once for the class."""
 
+    output: str
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.output = _seed()
+
+    def test_seeds_two_accounts_and_account_a_data(self) -> None:
         user_model = get_user_model()
         a = user_model.objects.get(email=_A)
         b = user_model.objects.get(email=_B)
@@ -49,14 +62,20 @@ class SeedBrowserCheckTests(TempMediaMixin, TestCase):
             ).count(),
             1,
         )
-        self.assertIn(_A, output)
-        self.assertIn("browser-check-pass", output)
+        self.assertIn(_A, self.output)
+        self.assertIn("browser-check-pass", self.output)
 
     def test_refuses_to_seed_twice(self) -> None:
-        _seed()
         with self.assertRaisesMessage(CommandError, "--clean"):
             _seed()
 
+    def test_without_the_flag_no_league_is_seeded(self) -> None:
+        self.assertFalse(League.objects.exists())
+        self.assertFalse(Season.objects.exists())
+        self.assertNotIn("League", self.output)
+
+
+class SeedBrowserCheckCleanTests(TempMediaMixin, TestCase):
     def test_clean_removes_only_the_seeded_accounts_rows(self) -> None:
         other = get_user_model().objects.create_user(
             email="owner@example.com", password="x"
@@ -93,8 +112,14 @@ class SeedBrowserCheckTests(TempMediaMixin, TestCase):
         )
 
 
-class SeedBrowserCheckMapTests(TempMediaMixin, TestCase):
+class SeedBrowserCheckMapTests(ClassTempMediaMixin, TestCase):
     """The configured map and the full-fidelity Single Round played on it."""
+
+    output: str
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.output = _seed()
 
     def _mapped_round(self) -> GameRound:
         a = get_user_model().objects.get(email=_A)
@@ -102,26 +127,26 @@ class SeedBrowserCheckMapTests(TempMediaMixin, TestCase):
             manager=a, match__isnull=True, arena_map__name=_MAP_NAME
         )
 
-    def test_seeded_map_resolves_via_load_map_context(self) -> None:
-        output = _seed()
+    def test_seeded_map_image_is_under_the_class_media_root(self) -> None:
+        arena_map = ArenaMap.objects.get(name=_MAP_NAME)
 
+        self.assertTrue(self.media_root.joinpath(arena_map.image.name).exists())
+
+    def test_seeded_map_resolves_via_load_map_context(self) -> None:
         arena_map = ArenaMap.objects.get(name=_MAP_NAME)
         movement_ctx, zone_size = load_map_context(arena_map)
         self.assertIsNotNone(movement_ctx)
         self.assertEqual(zone_size, 20)
-        self.assertIn(f"Map {arena_map.pk}", output)
+        self.assertIn(f"Map {arena_map.pk}", self.output)
 
     def test_mapped_round_is_full_fidelity_with_movement_events(self) -> None:
-        output = _seed()
-
         game_round = self._mapped_round()
         self.assertIsNotNone(game_round.arena_map_id)
         self.assertEqual(game_round.fidelity, "full")
         self.assertTrue(game_round.events.filter(event_type="movement").exists())
-        self.assertIn(f"mapped Single Round {game_round.pk}", output)
+        self.assertIn(f"mapped Single Round {game_round.pk}", self.output)
 
     def test_playback_api_returns_a_map_for_the_mapped_round(self) -> None:
-        _seed()
         game_round = self._mapped_round()
         api = APIClient()
         api.force_login(game_round.manager)
@@ -131,6 +156,8 @@ class SeedBrowserCheckMapTests(TempMediaMixin, TestCase):
         self.assertEqual(response.status_code, 200, response.content)
         self.assertIsNotNone(response.json()["data"]["map"])
 
+
+class SeedBrowserCheckMapCleanTests(TempMediaMixin, TestCase):
     def test_clean_removes_the_map_and_its_files(self) -> None:
         _seed()
         arena_map = ArenaMap.objects.get(name=_MAP_NAME)
@@ -152,19 +179,24 @@ class SeedBrowserCheckMapTests(TempMediaMixin, TestCase):
         self.assertIn("removed", output)
 
 
-class SeedBrowserCheckLeagueTests(TempMediaMixin, TestCase):
+def _api_for_a() -> APIClient:
+    api = APIClient()
+    api.force_login(get_user_model().objects.get(email=_A))
+    return api
+
+
+class SeedBrowserCheckLeagueTests(ClassTempMediaMixin, TestCase):
     """``--league``: one League with two completed Seasons and an active one."""
 
-    def _api(self) -> APIClient:
-        api = APIClient()
-        api.force_login(get_user_model().objects.get(email=_A))
-        return api
+    output: str
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.output = _seed("--league")
 
     def test_league_flag_seeds_a_league_with_completed_and_active_seasons(
         self,
     ) -> None:
-        output = _seed("--league")
-
         a = get_user_model().objects.get(email=_A)
         league = League.objects.get(name=_LEAGUE_NAME)
         self.assertEqual(league.manager, a)
@@ -179,7 +211,7 @@ class SeedBrowserCheckLeagueTests(TempMediaMixin, TestCase):
                     game_round__match__season=season
                 ).exists()
             )
-        api = self._api()
+        api = _api_for_a()
         for season in seasons[:2]:
             standings = api.get(f"/api/seasons/{season.pk}/standings/").json()
             self.assertTrue(standings["data"]["groups"][0]["rows"])
@@ -187,8 +219,32 @@ class SeedBrowserCheckLeagueTests(TempMediaMixin, TestCase):
             self.assertTrue(awards["has_rounds"])
             self.assertIsNotNone(awards["most_points"])
         season_ids = ", ".join(str(s.pk) for s in seasons)
-        self.assertIn(f"League {league.pk} ({_LEAGUE_NAME})", output)
-        self.assertIn(f"Seasons {season_ids}", output)
+        self.assertIn(f"League {league.pk} ({_LEAGUE_NAME})", self.output)
+        self.assertIn(f"Seasons {season_ids}", self.output)
+
+    def test_league_history_and_player_apis_return_data_for_account_a(
+        self,
+    ) -> None:
+        league = League.objects.get(name=_LEAGUE_NAME)
+        player = league.current_team.slot_commander
+        api = _api_for_a()
+
+        history = api.get(f"/api/leagues/{league.pk}/history/")
+        player_page = api.get(f"/api/leagues/{league.pk}/players/{player.pk}/")
+        owner_eval = api.get(
+            f"/api/seasons/{league.seasons.order_by('id')[0].pk}/owner-evaluation/"
+        )
+
+        for response in (history, player_page, owner_eval):
+            self.assertEqual(response.status_code, 200, response.content)
+            self.assertTrue(response.json()["data"])
+        self.assertEqual(len(history.json()["data"]), 3)
+        self.assertEqual(len(player_page.json()["data"]["seasons"]), 3)
+        self.assertIsNotNone(player_page.json()["data"]["career"])
+
+
+class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
+    """``--league`` reruns and ``--clean``, each from its own seed or none."""
 
     def test_clean_removes_the_league_and_everything_under_it(self) -> None:
         _seed("--league")
@@ -232,31 +288,3 @@ class SeedBrowserCheckLeagueTests(TempMediaMixin, TestCase):
             _seed("--clean")
 
         self.assertFalse(League.objects.filter(name=_LEAGUE_NAME).exists())
-
-    def test_league_history_and_player_apis_return_data_for_account_a(
-        self,
-    ) -> None:
-        _seed("--league")
-        league = League.objects.get(name=_LEAGUE_NAME)
-        player = league.current_team.slot_commander
-        api = self._api()
-
-        history = api.get(f"/api/leagues/{league.pk}/history/")
-        player_page = api.get(f"/api/leagues/{league.pk}/players/{player.pk}/")
-        owner_eval = api.get(
-            f"/api/seasons/{league.seasons.order_by('id')[0].pk}/owner-evaluation/"
-        )
-
-        for response in (history, player_page, owner_eval):
-            self.assertEqual(response.status_code, 200, response.content)
-            self.assertTrue(response.json()["data"])
-        self.assertEqual(len(history.json()["data"]), 3)
-        self.assertEqual(len(player_page.json()["data"]["seasons"]), 3)
-        self.assertIsNotNone(player_page.json()["data"]["career"])
-
-    def test_without_the_flag_no_league_is_seeded(self) -> None:
-        output = _seed()
-
-        self.assertFalse(League.objects.exists())
-        self.assertFalse(Season.objects.exists())
-        self.assertNotIn("League", output)
