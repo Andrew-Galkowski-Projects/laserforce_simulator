@@ -118,7 +118,7 @@ python manage.py changepassword <email>
 
 Frontend commands: [`frontend/CLAUDE.md`](frontend/CLAUDE.md).
 
-CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.12; CI measures coverage through `sys.monitoring` (`COVERAGE_CORE=sysmon`).
+CI runs `pytest` with coverage and uploads to Codecov (see `.github/workflows/ci.yml`). Python version is 3.12; CI measures coverage through `sys.monitoring` (`COVERAGE_CORE=sysmon`) and splits the suite across 3 runners with `pytest-split`, balanced on `laserforce_simulator/.test_durations`. Job layout and regenerating that file: [`docs/agents/ci.md`](docs/agents/ci.md).
 
 ## Database
 
