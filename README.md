@@ -31,7 +31,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 
 ## Tech Stack
 
-- Python 3.11 / Django 5.2
+- Python 3.12 / Django 5.2
 - SQLite (default); PostgreSQL in production via `dj-database-url`
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
@@ -42,8 +42,8 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `djangorestframework-simplejwt` for JWT sign-in on `/api/`: a short-lived access token in the response body and a rotating refresh token in an httpOnly cookie (ADR-0041)
 - `reportlab` + `matplotlib` for the round report PDF and its charts (rendered server-side, Agg, no `pyplot`)
 - `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
-- pytest + pytest-django for testing, with Codecov coverage reporting
-- Docker (multi-stage `python:3.11-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
+- pytest + pytest-django for testing, with Codecov coverage reporting; CI splits the suite across 4 runners with `pytest-split`
+- Docker (multi-stage `python:3.12-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
 
 ## Getting Started
 
