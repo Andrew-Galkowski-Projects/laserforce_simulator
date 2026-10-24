@@ -8,6 +8,7 @@ on:
 jobs:
   lint:
     # PERF-02: lint and the migration checks run once, beside the test shards.
+    # Its services, env and setup steps are kept in step with `test`.
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -74,15 +75,16 @@ jobs:
           python manage.py migrate --noinput
 
   test:
-    # PERF-02: the suite is split across 3 runners by pytest-split, balanced
+    # PERF-02: the suite is split across 4 runners by pytest-split, balanced
     # on the committed laserforce_simulator/.test_durations (a test missing
     # from it still runs, at the average duration). Each shard keeps its
-    # coverage data for the `coverage` job to combine.
+    # coverage data for the `coverage` job to combine. The services, env and
+    # setup steps are kept in step with `lint`.
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
-        group: [1, 2, 3]
+        group: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:16
@@ -121,12 +123,12 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r ./laserforce_simulator/requirements.txt
 
-      - name: Run tests with coverage (shard ${{ matrix.group }} of 3)
+      - name: Run tests with coverage (shard ${{ matrix.group }} of 4)
         working-directory: ./laserforce_simulator
         # --durations lists the slowest tests in every log, so a slowdown is
-        # easy to find.
+        # easy to find. --splits must match the matrix size.
         run: |
-          pytest --splits 3 --group ${{ matrix.group }} --durations-path .test_durations --cov=. --cov-report= --durations=25
+          pytest --splits 4 --group ${{ matrix.group }} --durations-path .test_durations --cov=. --cov-report= --durations=25
           mv .coverage .coverage.shard${{ matrix.group }}
 
       - name: Keep this shard's coverage data
@@ -153,7 +155,9 @@ jobs:
           python-version: "3.12"
 
       - name: Install coverage
-        run: python -m pip install coverage==7.11.0
+        # The version pinned in requirements.txt, so the combiner always
+        # matches the version that wrote the shards' data.
+        run: python -m pip install "$(grep -E '^coverage==' laserforce_simulator/requirements.txt)"
 
       - name: Download the shards' coverage data
         uses: actions/download-artifact@v4

@@ -88,7 +88,7 @@ def corrupt_upload(filename: str = "bad.png") -> SimpleUploadedFile:
     return SimpleUploadedFile(filename, b"not an image", content_type="image/png")
 
 
-class _MediaRootPaths:
+class _MediaRootHelpers:
     media_root: Path
 
     def processed_cache_path(self, arena_map: ArenaMap) -> Path:
@@ -101,7 +101,7 @@ class _MediaRootPaths:
         return path
 
 
-class TempMediaMixin(_MediaRootPaths):
+class TempMediaMixin(_MediaRootHelpers):
     """Point ``MEDIA_ROOT`` at a fresh temp dir (a ``Path``, as the code does
     ``MEDIA_ROOT / "maps"``) for the duration of one test."""
 
@@ -114,7 +114,7 @@ class TempMediaMixin(_MediaRootPaths):
         self.addCleanup(override.disable)  # type: ignore[attr-defined]
 
 
-class ClassTempMediaMixin(_MediaRootPaths):
+class ClassTempMediaMixin(_MediaRootHelpers):
     """``TempMediaMixin`` for a whole test class (PERF-02): the temp
     ``MEDIA_ROOT`` is set before ``setUpTestData`` runs and lasts until the
     class ends, so files a class-level fixture writes survive for every test."""
