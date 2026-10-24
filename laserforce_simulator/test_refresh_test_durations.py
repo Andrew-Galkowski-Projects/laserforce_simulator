@@ -25,7 +25,10 @@ def _load_script() -> ModuleType:
 refresh = _load_script()
 
 
-def _run(run_id: str, shards: dict[int, dict[str, float]], jobs=None):
+def _run(
+    run_id: str, shards: dict[int, dict[str, float]], jobs: list[int] | None = None
+) -> tuple[str, list[int], dict[int, dict[str, float]]]:
+    # A ``refresh.RunDurations``; mypy can't see into a module loaded by path.
     shard_jobs = sorted(shards) if jobs is None else jobs
     return refresh.RunDurations(run_id=run_id, shard_jobs=shard_jobs, shards=shards)
 
@@ -61,11 +64,11 @@ class MergeRunsTests(TestCase):
         )
 
 
-class MissingShardTests(TestCase):
+class ShardMismatchTests(TestCase):
     def test_a_run_missing_a_shard_artifact_names_the_run_and_shard(self) -> None:
         run = _run("777", {1: {"a.py::t1": 1.0}, 2: {"b.py::t2": 2.0}}, [1, 2, 3])
 
-        with self.assertRaises(refresh.MissingShardError) as caught:
+        with self.assertRaises(refresh.ShardMismatchError) as caught:
             refresh.merge_runs([run])
 
         self.assertIn("777", str(caught.exception))
@@ -73,7 +76,7 @@ class MissingShardTests(TestCase):
 
     def test_a_run_without_test_shards_is_refused(self) -> None:
         # e.g. a run of another workflow: merging it would write an empty file.
-        with self.assertRaises(refresh.MissingShardError) as caught:
+        with self.assertRaises(refresh.ShardMismatchError) as caught:
             refresh.merge_runs([_run("888", {}, [])])
 
         self.assertIn("888", str(caught.exception))
@@ -84,5 +87,5 @@ class MissingShardTests(TestCase):
             _run("2", {n: {"a.py::t1": 1.0} for n in (1, 2, 3)}),
         ]
 
-        with self.assertRaises(refresh.MissingShardError):
+        with self.assertRaises(refresh.ShardMismatchError):
             refresh.merge_runs(runs)

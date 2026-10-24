@@ -36,7 +36,7 @@ class RunDurations(NamedTuple):
     shards: dict[int, dict[str, float]]
 
 
-class MissingShardError(ValueError):
+class ShardMismatchError(ValueError):
     """A run lacks a shard's durations, or the runs split the suite differently."""
 
 
@@ -46,15 +46,17 @@ def _check_shards(runs: list[RunDurations]) -> None:
     # complete run with one shard fewer.
     for run in runs:
         if not run.shard_jobs:
-            raise MissingShardError(f"run {run.run_id} has no test (n) shard jobs")
+            raise ShardMismatchError(f"run {run.run_id} has no test (n) shard jobs")
         missing = sorted(set(run.shard_jobs) - set(run.shards))
         if missing:
-            raise MissingShardError(
+            raise ShardMismatchError(
                 f"run {run.run_id} has no durations for shard(s) {missing}"
             )
     shard_sets = {tuple(sorted(run.shard_jobs)) for run in runs}
     if len(shard_sets) > 1:
-        raise MissingShardError(f"runs have different shard jobs: {sorted(shard_sets)}")
+        raise ShardMismatchError(
+            f"runs have different shard jobs: {sorted(shard_sets)}"
+        )
 
 
 def merge_runs(runs: list[RunDurations]) -> dict[str, float]:
@@ -68,9 +70,19 @@ def merge_runs(runs: list[RunDurations]) -> dict[str, float]:
     return {test: median(values) for test, values in seen.items()}
 
 
-def _gh(*args: str) -> str:
-    """``gh``'s stdout, decoded as UTF-8 (the Windows default codepage is not)."""
+class GhError(RuntimeError):
+    """A ``gh`` call failed (bad run ID, not logged in, no network)."""
+
+
+def _gh(*args: str, check: bool = True) -> str:
+    """``gh``'s stdout, decoded as UTF-8 (the Windows default codepage is not).
+
+    Raises ``GhError`` with ``gh``'s stderr on a non-zero exit when ``check``.
+    """
     result = subprocess.run(["gh", *args], capture_output=True)
+    if check and result.returncode != 0:
+        stderr = result.stderr.decode("utf-8", errors="replace").strip()
+        raise GhError(f"gh {' '.join(args)} failed: {stderr}")
     return result.stdout.decode("utf-8", errors="replace")
 
 
@@ -85,9 +97,20 @@ def _shard_jobs(run_id: str) -> list[int]:
 
 def _download_shards(run_id: str) -> dict[int, dict[str, float]]:
     """Each ``durations-shard-<n>`` artifact of the run that exists; a shard
-    that failed uploaded none, which ``merge_runs`` reports."""
+    that failed uploaded none, which ``merge_runs`` reports. Not checked: ``gh``
+    exits non-zero when no artifact matches, and ``_shard_jobs`` has already
+    proved the run ID and the login."""
     with tempfile.TemporaryDirectory() as tmp:
-        _gh("run", "download", run_id, "--pattern", "durations-shard-*", "--dir", tmp)
+        _gh(
+            "run",
+            "download",
+            run_id,
+            "--pattern",
+            "durations-shard-*",
+            "--dir",
+            tmp,
+            check=False,
+        )
         shards = {}
         for folder in Path(tmp).iterdir():
             match = _ARTIFACT_RE.match(folder.name)
@@ -97,18 +120,18 @@ def _download_shards(run_id: str) -> dict[int, dict[str, float]]:
         return shards
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run_ids", nargs="+", metavar="run_id")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    runs = [
-        RunDurations(run_id, _shard_jobs(run_id), _download_shards(run_id))
-        for run_id in args.run_ids
-    ]
     try:
+        runs = [
+            RunDurations(run_id, _shard_jobs(run_id), _download_shards(run_id))
+            for run_id in args.run_ids
+        ]
         merged = merge_runs(runs)
-    except MissingShardError as error:
+    except (GhError, ShardMismatchError) as error:
         print(f"error: {error}", file=sys.stderr)
         return 1
     # pytest-split's own format, so a refresh diff stays reviewable.

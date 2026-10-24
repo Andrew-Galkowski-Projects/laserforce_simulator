@@ -59,7 +59,8 @@ Settled:
   `laserforce_simulator/.test_durations`; a person commits it in a normal PR, no bot. The merge is
   a pure function tested like `test_watch_pr_ci.py`: each test gets its median across the runs
   that saw it; the output holds only tests seen; a run missing any shard's artifact is an error
-  naming the run; the shard count comes from the artifacts, and must be the same in every run.
+  naming the run; the shard count comes from the run's `test (n)` jobs (not its artifacts),
+  and must be the same in every run.
 - Keep `duration_based_chunks` (`least_duration` splits a class's setup across shards).
 - No refresh schedule: refresh when the slowest shard's pytest is over ~40% above the mean on
   two runs in a row (`ci_timings.py`). `docs/agents/ci.md` swaps the local recipe for this.
