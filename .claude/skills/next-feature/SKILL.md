@@ -93,7 +93,9 @@ probe's result is a settled fact in that round, not a question. A performance
 task gets the same probe: time the suspected cost locally, with and without it,
 scaled to the target's core count (CI runners have 4 vCPUs). PERF-02 built a
 ticket on coverage being the cost, and one local timing would have shown the
-suite was CPU-bound.
+suite was CPU-bound. A probe for a split or a schedule also checks that each
+unit's cost holds wherever it lands: PERF-04 rebalanced on test durations that
+doubled in the shard holding the CPU-wide batch-sim pools.
 Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
 become ADRs in `docs/adr/` (next free number).
 
@@ -373,6 +375,8 @@ A task that changes CI time reads each run with
 `<main checkout>/.venv/Scripts/python.exe scripts/ci_timings.py <run-id>` (every job,
 each shard's pytest line, coverage total, run start to `test-result`) and
 claims the **slowest of at least two runs** (PERF-02: 4m57s, then 6m08s).
+More runs of one commit come from closing and reopening the PR
+(`docs/agents/ci.md`).
 Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work
