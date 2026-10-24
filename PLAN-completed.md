@@ -4790,6 +4790,46 @@ Power Rankings, owner evaluation) get the same fix. Detail is in
   (T1-T3 in parallel); T4 league-player, blocked by T1 and T3.
 
 
+### PERF-03 · [DONE] Narrow the Team history Season scan
+
+[DONE] Shipped (2026-10-23).
+
+Spec: #320
+
+**Prio: Low (found 2026-10-23, PERF-01).** `team_history_seasons(team)` (League screen services)
+scans `Season.objects.all()`, across every Account and League, to find the Seasons a Team enrolled
+in. PERF-01 made it run a constant number of queries (`prefetch_related("teams")`), but it still
+loads every Season in the database on each Team history read. The fix is to filter in the database
+instead: the Season's `teams` M2M, or `starting_team_ids_json` containing the Team id. A JSON
+`contains` lookup behaves differently on SQLite and Postgres, so it needs a test on both backends.
+Behaviour must not change: the walk still spans every League the Team enrolled in.
+
+**Grill (2026-10-23, settled):**
+1. Filter on the M2M, not the JSON: `Season.objects.filter(teams=team)` (plus the existing
+   `select_related("league").prefetch_related("teams")`), keeping the Python `enrolled_team_ids`
+   re-check. It is a superset because `start_season` snapshots from the M2M and production code
+   never removes `Season.teams` rows (snapshot ⊆ M2M); the docstring names that invariant. JSON
+   `__contains` raises `NotSupportedError` on SQLite (probed), so it was rejected.
+2. Edge tests: an active Season whose snapshot lists the Team is found; a Team added to an active
+   Season's M2M after the start is not.
+3. The red test is a call-through spy on `enrolled_team_ids`: it is never called for a Season the
+   Team has no link to (e.g. another Account's League).
+4. No backend-specific tests: no JSON lookup, so the usual Postgres suite run plus CI suffices.
+5. Out of scope: API / HTML, migrations, a new index, `.distinct()` (the M2M's unique pair already
+   rules out duplicates). The cross-League walk is unchanged. One ticket; no glossary terms, no ADR.
+
+**Shipped:** `team_history_seasons` now reads `Season.objects.filter(teams=team)` (`league`
+selected, `teams` prefetched) and keeps the `enrolled_team_ids` re-check; the signature and every
+caller are unchanged. Tests: `TestTeamHistorySeasonsNarrowedScan` in
+`test_team_history_query_counts.py` (call-through spy red test, snapshot-enrolled Season found,
+post-start addition excluded).
+
+**Found:**
+- **Django admin breaks the invariant:** `SeasonAdmin` (`filter_horizontal = ("teams", ...)`) can
+  remove a Team from a started Season. That Season then drops out of the Team's history, where the
+  old full scan still found it via the snapshot. Accepted as admin-only under ADR-0004; the
+  docstring and a comment on #320 name it.
+
 ---
 
 ## Phase 6 — Users and Multiplayer

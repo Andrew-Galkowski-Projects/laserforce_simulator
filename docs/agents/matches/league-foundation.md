@@ -249,9 +249,9 @@ shared by the API action and the HTML view.
   - `_team_season_rows` reads every enrolled Team name in one query, and every completed,
     non-member-night Match in one query (`game_rounds` prefetched, `order_by("id")`), grouped
     by Season.
-  - `team_history_seasons` prefetches `teams`. It still scans every Season (PERF-03 in
-    `PLAN.md` narrows that). `test_team_history_query_counts.py` covers its draft-Season cost,
-    which the guardrail cannot see.
+  - `team_history_seasons` prefetches `teams`, and PERF-03 narrows it to the Team's own
+    Seasons (below). `test_team_history_query_counts.py` covers its draft-Season cost, which
+    the guardrail cannot see.
 - **Power Rankings.** `build_power_rankings` uses `select_related` on the six active slots
   (`_ACTIVE_SLOT_FIELDS`).
 - **Owner evaluation / finance writer.** `_ensure_team_finances` is used by the
@@ -264,3 +264,19 @@ shared by the API action and the HTML view.
     them lazily, only for Seasons a missing row needs. A repeated id in `starting_team_ids_json`
     credits profit once.
   - Rows are never updated after they are written.
+
+## PERF-03 narrowed Team history Season scan
+
+`league_screen_services.team_history_seasons(team) -> dict[int, Season]` reads only the Seasons
+the Team has a `teams` M2M link to (`Season.objects.filter(teams=team)`, `league` selected,
+`teams` prefetched), not every Season in the database (spec #320). It keeps the
+`enrolled_team_ids` re-check, so "enrolled" keeps its one definition.
+
+- **Why the M2M filter is enough:** `start_season` snapshots `starting_team_ids_json` from the
+  M2M, and app code never removes `Season.teams` rows, so snapshot ⊆ M2M. The re-check drops a
+  Team added to the M2M after the start.
+- **Exception:** Django admin (`SeasonAdmin`) can remove a Team from a started Season; that
+  Season then drops out of the Team's history. Accepted under ADR-0004.
+- **Rejected:** a JSON `__contains` lookup on the snapshot raises `NotSupportedError` on SQLite.
+- **Tests:** `TestTeamHistorySeasonsNarrowedScan` in `matches/tests/test_team_history_query_counts.py`,
+  including a call-through spy on `enrolled_team_ids` that must never see an unlinked Season.

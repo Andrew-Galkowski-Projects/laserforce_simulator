@@ -256,7 +256,7 @@ Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
 | ID | Sev | Area | One-liner |
 |----|-----|------|-----------|
 | ~~ANG01e-D1~~ | 🟡 | League player page | ~~The awards section recomputes the full Season award set for every Season the Player appeared in~~ _(fixed by PERF-01)_ |
-| ANG01e-D2 | 🟡 | Team History | The Team History builders scan every Season of every League to find the Team's enrolments (tracked as PERF-03) |
+| ~~ANG01e-D2~~ | 🟡 | Team History | ~~The Team History builders scan every Season of every League to find the Team's enrolments~~ _(fixed by PERF-03)_ |
 | ANG01e-D3 | ℹ️ | Screen builders | `build_team_stats`, `build_power_rankings` and `build_playoffs` mix querying with row assembly |
 | ANG01f-D3 | ℹ️ | Tournament detail builders | `build_detail_context` and `build_tournament_detail` mix several jobs in one function |
 
@@ -268,7 +268,7 @@ whole Season's `PlayerRoundState` corpus, so a long-career Player's page (HTML a
 cache / persist the per-Season award set once the Season is completed, or compute only the awards the
 Player can win.
 
-### 🟡 ANG01e-D2 — Team History scans Seasons across every League (perf)
+### ~~🟡 ANG01e-D2 — Team History scans Seasons across every League (perf)~~ _(fixed by PERF-03: `team_history_seasons` filters on the `teams` M2M and keeps the snapshot re-check)_
 `matches/league_screen_services.py::team_history_seasons` (used by `build_team_history` and
 `build_team_history_players`) walks `Season.objects.all()` and reads each Season's enrolment snapshot
 in Python to find the Team's Seasons. Cost grows with every Season in the

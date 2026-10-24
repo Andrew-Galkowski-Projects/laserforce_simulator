@@ -1176,7 +1176,9 @@ def team_history_seasons(team: Team) -> dict[int, Season]:
     snapshots ``starting_team_ids_json`` from the live ``teams`` M2M and
     production code never removes ``Season.teams`` rows, so snapshot is a
     subset of the M2M and the filter is a superset of the enrolled Seasons.
-    The re-check drops a Team added to the M2M after the start.
+    The re-check drops a Team added to the M2M after the start. Only Django
+    admin (``SeasonAdmin``) can remove a Team from a started Season; that
+    Season then drops out of the Team's history (ADR-0004: disposable data).
     """
     out: dict[int, Season] = {}
     seasons = (
