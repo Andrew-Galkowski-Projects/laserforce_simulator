@@ -63,8 +63,15 @@ def coverage_total(log: str) -> str | None:
     return None
 
 
+def _run(command: list[str]) -> str:
+    """A command's stdout, decoded as UTF-8 (CI logs are; the Windows default
+    codepage is not), with any stray byte replaced."""
+    result = subprocess.run(command, capture_output=True)
+    return result.stdout.decode("utf-8", errors="replace")
+
+
 def _gh(*args: str) -> str:
-    return subprocess.run(["gh", *args], capture_output=True, text=True).stdout
+    return _run(["gh", *args])
 
 
 def _job_log(run_id: str, job: dict[str, object]) -> str:
