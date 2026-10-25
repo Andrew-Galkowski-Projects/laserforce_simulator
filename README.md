@@ -35,7 +35,8 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - SQLite (default); PostgreSQL in production via `dj-database-url`
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
-- `whitenoise` for production static file serving directly from Django (no separate nginx required)
+- `whitenoise` for production static file serving directly from Django
+- nginx (`frontend/Dockerfile`) as the Docker stacks' front door: it serves the built Angular SPA at `/app/` and proxies every other path to Django (ADR-0046). Fly.io stays Django-only for now
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
 - `djangorestframework` + `django-filter` for the JSON API at `/api/`
 - `django-cors-headers` so the Angular dev server (`http://localhost:4200`) can call `/api/` cross-origin. Set `CORS_ALLOWED_ORIGINS` (comma-separated) to change the allowed origins; the default is the dev server under `DEBUG` and none otherwise.
@@ -122,17 +123,19 @@ Then open http://127.0.0.1:8000/ in your browser.
 cp laserforce_simulator/.env.example laserforce_simulator/.env
 # Edit .env and set a real SECRET_KEY
 
-# Start app + PostgreSQL
+# Start nginx + app + PostgreSQL
 docker compose up
 
 # (first run) migrations are applied automatically by entrypoint.sh
 ```
 
-Then open http://localhost:8000/ in your browser.
+Then open http://localhost:8080/ in your browser: the Django pages, with the Angular SPA at
+http://localhost:8080/app/ on the same origin. Django is also reachable directly at
+http://localhost:8000/.
 
 ### Option C — self-host on a home PC (public HTTPS URL)
 
-`docker-compose.selfhost.yml` runs the app, a Celery worker, Postgres and Redis, and publishes them
+`docker-compose.selfhost.yml` runs nginx (the SPA at `/app/`), the app, a Celery worker, Postgres and Redis, and publishes them
 at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
 [docs/self-hosting.md](docs/self-hosting.md).
 
@@ -145,7 +148,8 @@ screens: list, detail (with Remove player), Create, Edit and Assign Slots, plus 
 Player (the 19 Stats with a live Overall rating), and the Matches screens: Match History (your Matches
 and Single Rounds, paged), New Match and New Single Round (simulate and open the result), and the Match and Round pages: a Match Summary per Round, and
 each Round's per-player scoreboard (sortable, with MVP scores and a PDF export) and its Event log (every event, colour-coded and filterable by type and player, with the round's Highlights), and its Playback (watch the round unfold: play / step / 1-8x speed, live per-Side scoreboards, a newest-first event feed and a beta map), and its Charts (Shots, Lives, Points and SP over time per player, with Side totals and Elimination / Special / Nuke overlays, built with Chart.js), and the Maps screens: the Arena map list (upload, delete, configured badge) and the map editor (Zones & Bases, Sight Lines and the multi-round Heatmap, asking before it discards unsaved edits). They sit on the typed API services and
-the JWT sign-in / silent-refresh flow. The Django pages stay live until ANG-08. Styling comes from the app theme in
+the JWT sign-in / silent-refresh flow. The Django pages stay live until ANG-08; until then the Docker stacks serve the
+built SPA at `/app/` beside them (Option B and C above). Styling comes from the app theme in
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md). The theme follows the
 OS light / dark setting and uses JetBrains Mono, self-hosted. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is
 a project dependency, so no global install is needed.

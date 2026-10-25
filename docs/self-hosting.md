@@ -5,12 +5,18 @@ stack runs on one machine under Docker, and Tailscale Funnel publishes it at a f
 HTTPS URL. You need no domain, no router port-forwarding, and your home IP stays hidden.
 
 ```
-browser --HTTPS--> Tailscale Funnel --tunnel--> tailscale container --HTTP--> app (gunicorn :8000)
+browser --HTTPS--> Tailscale Funnel --tunnel--> tailscale container --HTTP--> nginx (:80)
+                                                                              /app/ -> the Angular SPA
+                                                                              else  -> app (gunicorn :8000)
                                                                               worker (Celery)
                                                                               db (Postgres 16), redis
 ```
 
-Files: `docker-compose.selfhost.yml`, `deploy/tailscale/serve.json`, `.env.selfhost.example`.
+nginx is the front door (ADR-0046): the Angular SPA is at `https://<name>.<tailnet>.ts.net/app/`,
+and every other path (the Django pages, `/api/`, `/admin/`) is proxied to the app.
+
+Files: `docker-compose.selfhost.yml`, `deploy/tailscale/serve.json`, `.env.selfhost.example`,
+`frontend/Dockerfile` (the nginx image) and `frontend/nginx/default.conf.template`.
 
 ## The URL
 
@@ -59,7 +65,8 @@ docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml exec app 
 ```
 
 The app container runs `migrate` on every start (`entrypoint.sh`); the worker skips it. The site
-is also reachable at <http://localhost:8000> on the PC itself, bound to loopback only.
+is also reachable at <http://localhost:8000> on the PC itself, bound to loopback only (Django
+directly, without nginx or the SPA).
 
 Then, once the node appears under *Machines* in the admin console:
 
@@ -86,7 +93,7 @@ is always single-use.
 | Task | Command |
 |---|---|
 | Update to the latest `main` | `git pull` then `dc up -d --build` |
-| Logs | `dc logs -f app worker` |
+| Logs | `dc logs -f app worker nginx` |
 | Funnel status / URL | `dc exec tailscale tailscale funnel status` |
 | Back up the DB | `dc exec -T db pg_dump -U laserforce laserforce > backup.sql` |
 | Restore a backup | `dc exec -T db psql -U laserforce laserforce < backup.sql` |

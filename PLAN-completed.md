@@ -6879,6 +6879,60 @@ Most complex: canvas overlay, zone painting, sight-line drag-select
 - **Out:** Django template removal (ANG-08), the single-cell LOS endpoint, async compute,
   undo/redo, the deferred ANG-01c validations, `is_public`, any new editor tools.
 
+### ANG-07 · [DONE] Serve Angular from Docker (nginx sidecar)
+
+Spec: #363
+
+**[DONE] Shipped (2026-10-25).** An nginx front door serves the built SPA at /app/ in both compose
+stacks and proxies every other path to Django (ADR-0046): frontend/Dockerfile (node:24-alpine build
+with --base-href /app/, then nginx:1.27-alpine), frontend/nginx/default.conf.template, an nginx
+service in docker-compose.yml (8080:80) and docker-compose.selfhost.yml, and the Tailscale handler
+now proxies to nginx. Proved by scripts/smoke_nginx.sh in the CI docker job: 9 numbered checks (15
+assertions), every one seen red by mutation. Differences from the grill: the smoke grew checks 7-9
+(Host keeps the port for CSRF, the upstream X-Forwarded-Proto is kept, the upstream is resolved per
+request through resolver ${NGINX_LOCAL_RESOLVERS} so a recreated app container doesn't 502), and
+check 5 asserts Django's csrfmiddlewaretoken because anonymous / lands on the sign-in page, not a
+'Laserforce Team Manager' title. Fly.io stays Django-only (Deferred Items).
+
+Once Angular is built (`ng build --configuration production`), serve it via an nginx sidecar service.
+nginx serves the Angular static files on port 80 and proxies `/api/` requests to the Django container
+on port 8000. Add `nginx.conf` and update `docker-compose.yml` with the `nginx` service.
+
+**Grill (owner, 2026-10-25), [ADR-0046](docs/adr/0046-spa-at-app-prefix-behind-nginx-front-door.md):**
+- **The SPA lives at `/app/` until ANG-08.** nginx is the single front door: `/app/` serves the
+  SPA (`--base-href /app/`, deep links fall back to `/app/index.html`), and every other path
+  (`/api/`, `/admin/`, `/static/`, `/media/`, the template pages, `/`) is proxied to Django. The
+  Django templates own `/teams/`, `/matches/`, `/maps/` and `/accounts/`, so the SPA at `/` would
+  collide; ANG-08 moves it to `/`. `/` stays Django's landing page (no redirect yet).
+- **Targets:** dev `docker-compose.yml` gains an `nginx` service on host `8080:80` (`app` keeps
+  `8000:8000`). `docker-compose.selfhost.yml` gains it too, and the Tailscale handler `/` points at
+  `http://nginx:80`. **Fly.io is out of scope** (one image per machine): it stays Django-only, a
+  follow-up.
+- **Build:** `frontend/Dockerfile`, multi-stage (`node:24-alpine` runs `npm ci` + the prod build
+  with `--base-href /app/`, then `nginx:1.27-alpine`), `frontend/.dockerignore` (`node_modules`,
+  `dist`, `.angular`), `frontend/nginx/default.conf.template` through the official image's envsubst,
+  upstream `${DJANGO_UPSTREAM}` (default `app:8000`). Compose builds it with `build: ./frontend`.
+  The root `.dockerignore` keeps excluding `frontend/`; the Django image is unchanged.
+- **nginx:** `/app/` `try_files $uri $uri/ /app/index.html`; `index.html` `Cache-Control: no-cache`;
+  hashed `js` / `css` / fonts `max-age=31536000, immutable`; gzip on text types. The proxy passes
+  `Host $http_host` (keeps the port, for Django's CSRF Origin check), `X-Forwarded-For`, and
+  `X-Forwarded-Proto` from the incoming header when set (Tailscale) else `$scheme`.
+  `client_max_body_size 20m` (nginx's 1 MB default would 413 map uploads; Django sets no file
+  limit).
+- **No Django or Angular source change.** Same-origin needs no CORS; the base href is a Docker
+  build flag only, so `angular.json`, `environment.prod.ts` and the CI `frontend` job are untouched.
+  The returnUrl / login redirect go through the Router and are proved base-href-safe in the smoke.
+- **Test:** `scripts/smoke_nginx.sh`, run by the CI `docker` job after the Django smoke. It builds
+  the frontend image and runs it on `--network host` with `DJANGO_UPSTREAM=127.0.0.1:8000`, then
+  asserts bodies: `/app/` has `<app-root` and `<base href="/app/">`; `/app/teams/123` returns the
+  same `index.html`; a hashed JS asset is `immutable` and `index.html` is `no-cache`;
+  `/api/accounts/me/` is 401 with the `{"errors"` envelope; `/` is Django's landing page; a 2 MB
+  POST to `/api/maps/` is not a 413.
+- **No glossary change** (no domain terms).
+- **Out of scope:** Fly.io serving the SPA, TLS in nginx, security headers / CSP, moving the SPA to
+  `/` or redirecting `/` to `/app/` (ANG-08), new SPA screens (ANG-06 League / Tournament /
+  Accounts items), HTTP/2, `ng serve` behind nginx in dev (dev stays direct CORS, ADR-0042).
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

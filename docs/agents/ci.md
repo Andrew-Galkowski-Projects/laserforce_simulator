@@ -25,6 +25,14 @@ frontend -------------------------------------------------^
 - **`test-result`**: `if: always()`. It is green only when `lint`, every shard and
   `coverage` succeeded. `docker` needs it. If branch protection is ever added,
   require `test-result`, never a shard, so the shard count can change freely.
+- **`docker`**: needs `test-result` and `frontend`. It builds the Django image and smoke-tests it
+  on Postgres (`curl` on `:8000`), then, in the same step while that container is up, runs
+  `bash scripts/smoke_nginx.sh` (ANG-07). That builds `frontend/Dockerfile`, runs nginx on
+  `--network host` (`:8080`, upstream `127.0.0.1:8000`) and asserts response bodies: the SPA at
+  `/app/` with its cache headers, the deep-link fallback, `/api/` and the Django pages proxied, a
+  2 MB upload, the forwarded `Host` / `X-Forwarded-Proto`, and the per-request upstream DNS. Run
+  it locally against a `runserver 0.0.0.0:8001` with `NETWORK=bridge
+  DJANGO_UPSTREAM=host.docker.internal:8001`. On `main` the job then deploys to Fly.io.
 
 ## The durations file
 
