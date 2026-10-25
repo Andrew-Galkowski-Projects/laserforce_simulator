@@ -13,6 +13,9 @@ import { MatchList } from './matches/match-list/match-list';
 import { RoundDetail } from './matches/round-detail/round-detail';
 import { SetupForm } from './matches/setup-form/setup-form';
 import { releaseMatchesLoads } from './matches/testing/matches-loads';
+import { MapEditor } from './maps/map-editor/map-editor';
+import { MapList } from './maps/map-list/map-list';
+import { releaseMapsLoads } from './maps/testing/maps-loads';
 import { RosterImport } from './teams/roster-import/roster-import';
 import { TeamCreate } from './teams/team-create/team-create';
 import { TeamDetail } from './teams/team-detail/team-detail';
@@ -38,6 +41,7 @@ describe('app routes', () => {
   afterEach(() => {
     releaseTeamsLoads();
     releaseMatchesLoads();
+    releaseMapsLoads();
     http.verify();
   });
 
@@ -162,6 +166,37 @@ describe('app routes', () => {
         expect(TestBed.inject(Title).getTitle()).toBe(title);
       },
     );
+  });
+
+  describe('signed in, Maps area', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    it.each([
+      ['/maps', MapList, 'Arena Maps - Laserforce Simulator'],
+      ['/maps/4/editor', MapEditor, 'Map Editor - Laserforce Simulator'],
+    ])('resolves %s to its screen and page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
+
+    it('does not route /maps/4/editor to the list', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/maps/4/editor');
+      expect(harness.fixture.debugElement.query(By.directive(MapList))).toBeNull();
+    });
+  });
+
+  describe('signed out, Maps area', () => {
+    it.each(['/maps', '/maps/4/editor'])('sends %s to /login with a returnUrl', async (url) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(`/login?returnUrl=${encodeURIComponent(url)}`);
+    });
   });
 
   describe('signed out, Matches area', () => {

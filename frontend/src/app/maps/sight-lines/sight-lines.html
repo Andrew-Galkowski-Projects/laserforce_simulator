@@ -1,0 +1,71 @@
+<div class="sl-controls">
+  <label class="sl-view">
+    <span>Viewing</span>
+    <select id="sight-view" (change)="pickView($event)">
+      @for (v of views; track v.value) {
+        <option [value]="v.value" [selected]="v.value === view()">{{ v.label }}</option>
+      }
+    </select>
+  </label>
+  <button
+    mat-stroked-button
+    type="button"
+    [disabled]="
+      computing() || saving() || view() === 'heavy_spots' || store.sightStatus() !== 'ready'
+    "
+    (click)="compute()"
+  >
+    Compute Sight Lines
+  </button>
+  @if (computing()) {
+    <mat-progress-spinner mode="indeterminate" diameter="18" aria-label="Computing sight lines" />
+  }
+  @if (view() === 'heavy_spots') {
+    <button
+      mat-flat-button
+      type="button"
+      [disabled]="saving() || store.sightStatus() !== 'ready'"
+      (click)="saveStrongSpots()"
+    >
+      Save Heavy Strong Spots
+    </button>
+  } @else {
+    <button
+      mat-flat-button
+      type="button"
+      [disabled]="saving() || store.sightStatus() !== 'ready'"
+      (click)="saveSightLines()"
+    >
+      Save Sight Lines
+    </button>
+  }
+  <button
+    mat-stroked-button
+    type="button"
+    [class.sl-on]="bulk()"
+    [attr.aria-pressed]="bulk()"
+    (click)="toggleBulk()"
+  >
+    Bulk Edit: {{ bulk() ? 'On' : 'Off' }}
+  </button>
+  <small class="sl-hint">{{ hint() }}</small>
+</div>
+
+@switch (store.sightStatus()) {
+  @case ('loading') {
+    <p class="sl-muted">Loading sight lines…</p>
+  }
+  @case ('error') {
+    <p class="sl-alert sl-error" role="alert">Could not load the sight lines.</p>
+  }
+}
+
+@if (alert(); as a) {
+  <p
+    class="sl-alert"
+    [class]="'sl-' + a.tone"
+    [attr.role]="a.tone === 'error' ? 'alert' : 'status'"
+  >
+    {{ a.text }}
+  </p>
+}

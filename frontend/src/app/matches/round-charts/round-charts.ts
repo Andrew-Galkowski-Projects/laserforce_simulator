@@ -18,7 +18,8 @@ import { RecordNotFound } from '../shared/record-not-found';
 import { roleLabel } from '../shared/role-label';
 import { loadRouteRecord } from '../shared/route-record';
 import { sideTag } from '../shared/side-tag';
-import { playerColors, readToken, resolveColor } from './chart-colors';
+import { readToken } from '../../shared/read-token';
+import { playerColors, resolveColor } from './chart-colors';
 import {
   CHART_KEYS,
   CHART_ROLES,

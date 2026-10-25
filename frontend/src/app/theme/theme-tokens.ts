@@ -12,6 +12,44 @@
  *   group** of the Event log (`matches/shared/event-groups.ts`).
  * - Derived tints are fine: `color-mix(in srgb, var(--side) 20%, transparent)`.
  */
+/**
+ * The map editor's canvas colours (ANG-06h): the Django editor's rgba literals as semantic
+ * tokens. They carry their own alpha, since the canvas paints them over the processed image.
+ * Bases use the Side tokens (`--lf-side-red` / `--lf-side-blue`) and `--lf-map-base-neutral`.
+ */
+export const LF_MAP_TOKENS = [
+  // Cell types and the grid.
+  '--lf-map-floor',
+  '--lf-map-wall-high',
+  '--lf-map-wall-low',
+  '--lf-map-wall-windowed',
+  /** A windowed wall's N / S / E / W letter. */
+  '--lf-map-wall-label',
+  '--lf-map-grid',
+  // Elevation: the Cell fill and its value.
+  '--lf-map-elevation',
+  '--lf-map-elevation-label',
+  // Spawn cells, Bases, the ramp tool's first Cell.
+  '--lf-map-spawn-red',
+  '--lf-map-spawn-blue',
+  '--lf-map-base-neutral',
+  '--lf-map-base-outline',
+  '--lf-map-ramp-anchor',
+  // Sight Lines: the selected Cell, what it sees / does not see, the drag rectangle.
+  '--lf-map-los-selected',
+  '--lf-map-los-visible',
+  '--lf-map-los-blocked',
+  '--lf-map-los-drag',
+  '--lf-map-base-sight',
+  /** The high-LOS ranking, from the top-ranked Cell to the last. */
+  '--lf-map-high-los',
+  '--lf-map-high-los-low',
+  '--lf-map-strong-spot',
+  /** The Movement heatmap ramp, opaque (the mode sets the alpha): cold to hot. */
+  '--lf-map-heat-low',
+  '--lf-map-heat-high',
+] as const;
+
 export const LF_COLOUR_TOKENS = [
   '--lf-bg',
   '--lf-surface',
@@ -38,6 +76,7 @@ export const LF_COLOUR_TOKENS = [
   '--lf-ev-locking',
   '--lf-ev-base',
   '--lf-ev-movement',
+  ...LF_MAP_TOKENS,
 ] as const;
 
 /** Fonts and shape: the same in light and dark, so they are declared once on `:root`. */

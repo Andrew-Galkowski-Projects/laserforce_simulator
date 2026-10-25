@@ -54,11 +54,13 @@ _MAP_FIELDS = {
     "img_height",
     "created_at",
     "has_confirmed_config",
+    "confirmed_zone_size",
 }
 
 # url_name -> url_path for the ten detail actions (contract section 6 table).
 _ACTIONS = {
     "processed-image": "processed-image",
+    "image": "image",
     "zones": "zones",
     "zone-config": "zone-config",
     "sight-lines": "sight-lines",

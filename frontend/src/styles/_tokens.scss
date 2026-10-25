@@ -44,6 +44,32 @@
   --lf-ev-base: #467010;
   --lf-ev-movement: #706a62;
 
+  // The map editor's canvas (ANG-06h): the Django editor's colours, alpha included, since they
+  // paint over the processed (black-and-white) map image.
+  --lf-map-floor: rgb(255 255 255 / 0.08);
+  --lf-map-wall-high: rgb(40 40 40 / 0.72);
+  --lf-map-wall-low: rgb(120 80 20 / 0.8);
+  --lf-map-wall-windowed: rgb(0 180 180 / 0.75);
+  --lf-map-wall-label: rgb(0 0 0 / 0.85);
+  --lf-map-grid: rgb(0 0 0 / 0.55);
+  --lf-map-elevation: rgb(255 200 0 / 0.7);
+  --lf-map-elevation-label: rgb(80 50 0 / 0.9);
+  --lf-map-spawn-red: rgb(220 53 69 / 0.45);
+  --lf-map-spawn-blue: rgb(13 110 253 / 0.45);
+  --lf-map-base-neutral: rgb(255 193 7 / 0.8);
+  --lf-map-base-outline: rgb(255 255 255 / 0.9);
+  --lf-map-ramp-anchor: rgb(255 140 0 / 0.95);
+  --lf-map-los-selected: rgb(255 220 0 / 0.9);
+  --lf-map-los-visible: rgb(0 200 80 / 0.7);
+  --lf-map-los-blocked: rgb(180 0 0 / 0.18);
+  --lf-map-los-drag: rgb(200 0 200 / 0.6);
+  --lf-map-base-sight: rgb(0 170 200 / 0.65);
+  --lf-map-high-los: rgb(220 120 0 / 0.8);
+  --lf-map-high-los-low: rgb(0 160 180 / 0.8);
+  --lf-map-strong-spot: rgb(255 140 0 / 0.82);
+  --lf-map-heat-low: rgb(249 249 6);
+  --lf-map-heat-high: rgb(249 6 6);
+
   // Fonts and shape (shared by both modes). JetBrains Mono is self-hosted (`@fontsource`).
   --lf-font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
   --lf-font-heading: var(--lf-font-body);
@@ -86,5 +112,30 @@
     --lf-ev-locking: oklch(0.72 0.19 0);
     --lf-ev-base: oklch(0.8 0.18 128);
     --lf-ev-movement: oklch(0.66 0.03 60);
+
+    // The map editor's canvas: the image stays black-and-white, so these only shift a little.
+    --lf-map-floor: rgb(200 205 215 / 0.12);
+    --lf-map-wall-high: rgb(30 34 48 / 0.78);
+    --lf-map-wall-low: rgb(150 100 30 / 0.8);
+    --lf-map-wall-windowed: rgb(0 200 200 / 0.75);
+    --lf-map-wall-label: rgb(10 12 20 / 0.9);
+    --lf-map-grid: rgb(15 20 35 / 0.6);
+    --lf-map-elevation: rgb(255 210 40 / 0.7);
+    --lf-map-elevation-label: rgb(60 40 0 / 0.92);
+    --lf-map-spawn-red: rgb(235 80 90 / 0.5);
+    --lf-map-spawn-blue: rgb(60 140 255 / 0.5);
+    --lf-map-base-neutral: rgb(255 200 40 / 0.8);
+    --lf-map-base-outline: rgb(240 244 250 / 0.9);
+    --lf-map-ramp-anchor: rgb(255 160 40 / 0.95);
+    --lf-map-los-selected: rgb(255 225 50 / 0.9);
+    --lf-map-los-visible: rgb(40 210 110 / 0.7);
+    --lf-map-los-blocked: rgb(200 30 30 / 0.22);
+    --lf-map-los-drag: rgb(215 60 215 / 0.6);
+    --lf-map-base-sight: rgb(30 190 220 / 0.65);
+    --lf-map-high-los: rgb(235 140 20 / 0.8);
+    --lf-map-high-los-low: rgb(20 180 200 / 0.8);
+    --lf-map-strong-spot: rgb(255 155 30 / 0.82);
+    --lf-map-heat-low: rgb(250 235 40);
+    --lf-map-heat-high: rgb(245 40 40);
   }
 }

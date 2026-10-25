@@ -33,6 +33,10 @@ export const routes: Routes = [
         path: 'rounds',
         loadChildren: () => import('./matches/matches.routes').then((m) => m.ROUNDS_ROUTES),
       },
+      {
+        path: 'maps',
+        loadChildren: () => import('./maps/maps.routes').then((m) => m.MAPS_ROUTES),
+      },
     ],
   },
   { path: '**', redirectTo: '' },

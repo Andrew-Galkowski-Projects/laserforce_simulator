@@ -122,7 +122,7 @@ LG-00 generation and LG-00b import over the ANG-01a endpoints above; **no server
   "Row N: message", or "File: message" for row 0; everything else goes in the alert line; the form
   stays filled. Result in place: "Imported N players across M rows.", "Created teams" and
   "Appended to existing teams" link lists when non-empty, "Import another" / "Back to Teams".
-- **Shared:** `teams/shared/form-errors.ts` exports `GENERIC_ERROR_MESSAGE` ("Something went
+- **Shared:** `shared/form-errors.ts` (app-wide) exports `GENERIC_ERROR_MESSAGE` ("Something went
   wrong. Please try again."), used by `applyApiErrors`, `classifyImportErrors` and the Import
   screen's template-download failure.
 - **Known non-parity:** Import is disabled without a file, so the server's `csv_file: required`

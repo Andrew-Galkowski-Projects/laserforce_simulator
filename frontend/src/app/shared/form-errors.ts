@@ -1,6 +1,6 @@
-// Shows an API failure on a reactive form (shared by Create Team, Edit Team and Assign Slots).
+// Shows an API failure on a reactive form (shared by the team, match-setup and map forms).
 import { FormGroup } from '@angular/forms';
-import { ApiError } from '../../api/api-client';
+import { ApiError } from '../api/api-client';
 
 /** The alert-line message for a failure that is not an `ApiError` (network, timeout, a bug). */
 export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';

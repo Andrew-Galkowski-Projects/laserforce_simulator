@@ -39,9 +39,14 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 
 ## Map Editor UI (`templates/maps/map_editor.html`)
 
+**ANG-06h:** the Angular SPA has the same list and editor at `/maps` and `/maps/:id/editor`
+(`frontend/src/app/maps/`, see [`frontend/CLAUDE.md`](../../frontend/CLAUDE.md) Layout), over the
+`/api/maps/` endpoints below. The Django template stays until ANG-08 and is the behavioural
+reference the SPA ports.
+
 Three modes toggled in the top bar:
 
-**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid; all wall brush buttons support bulk drag-select (click-drag draws a rectangle, releasing applies the wall type to all non-base cells in the region). When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. When High Wall is selected, a height input (default 1.0) sets the `height` value stored in `wall_meta[r,c]["height"]` for each painted cell. Spawn brush buttons (None, Red Spawn, Blue Spawn, Erase Spawn) overlay semi-transparent colored squares on spawn cells; activating a spawn brush dearms the wall and base brushes. Spawn cells auto-load from the server on zone-size selection and are included in the Save payload only when the user has manually edited them (`spawnEdited` flag). Elevation tools: the **Elevation Brush** lets the user enter a numeric elevation value and paint it onto individual cells (click or drag-select); the **Ramp Tool** lets the user click two cells to linearly interpolate elevation across all cells between them (both use the existing bulk drag-select pattern). "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, (when non-empty) `wall_meta` including any `height` entries, and (when non-empty) the `elevation` 2D float array; additionally sends `red_spawn`/`blue_spawn` arrays when user-edited. On zone-size change, `wallMeta`, `elevation`, and spawn cell sets are all reset with a console warning if unsaved placements are discarded.
+**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid; all wall brush buttons support bulk drag-select (click-drag draws a rectangle, releasing applies the wall type to all non-base cells in the region). When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. There is **no** wall-height input: a wall's `height` is set in `wall_meta` via JSON, and painting a cell replaces its `wall_meta` entry (windowed ⇒ `{facing}`, any other type ⇒ removed). Drags paint freehand; with the Zones **Bulk Edit** toggle on, a drag draws a rectangle applied on release (Sight Lines has its own Bulk Edit toggle). Spawn brush buttons (None, Red Spawn, Blue Spawn, Erase Spawn) overlay semi-transparent colored squares on spawn cells; activating a spawn brush dearms the wall and base brushes. Spawn cells auto-load from the server on zone-size selection and are included in the Save payload only when the user has manually edited them (`spawnEdited` flag). Elevation tools: the **Elevation Brush** lets the user enter a numeric elevation value and paint it onto individual cells (click or drag-select); the **Ramp Tool** lets the user click two cells to linearly interpolate elevation across all cells between them (both use the existing bulk drag-select pattern). "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, (when non-empty) `wall_meta` including any `height` entries, and (when non-empty) the `elevation` 2D float array; additionally sends `red_spawn`/`blue_spawn` arrays when user-edited. On zone-size change, `wallMeta`, `elevation`, and spawn cell sets are all reset with a console warning if unsaved placements are discarded.
 
 **Sight Lines mode**:
 - *Zone view*: click a cell (highlights yellow) to see its visible cells (green) and blocked cells (faint red). Click any cell to toggle its LOS link with the selected cell.
@@ -73,6 +78,7 @@ Three modes toggled in the top bar:
 /api/maps/                                  → GET list (ANG-01a) / POST multipart upload, 201 (ANG-01c)   route "arenamap-list"
 /api/maps/<id>/                             → GET detail (ANG-01a) / DELETE 204, 409 map_in_use (ANG-01c) route "arenamap-detail"
 /api/maps/<id>/processed-image/             → GET raw image/png, not enveloped                           route "arenamap-processed-image"
+/api/maps/<id>/image/                       → GET original image, raw, not enveloped (ANG-06h)            route "arenamap-image"
 /api/maps/<id>/zones/                       → GET zone detection + confirmed overlay (?zone_size=)        route "arenamap-zones"
 /api/maps/<id>/zone-config/                 → GET confirmed config + bases / PUT full replace            route "arenamap-zone-config"
 /api/maps/<id>/sight-lines/                 → GET (?zone_size=) / PUT replace / PATCH merge               route "arenamap-sight-lines"
@@ -105,7 +111,10 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
   GenericViewSet)`** — `@method_decorator(login_not_required, name="dispatch")` + settings-level
   `IsAuthenticated` (anonymous ⇒ 401 `not_authenticated`, ADR-0041). `get_queryset()` annotates
   `has_confirmed_config = Exists(MapZoneConfig.objects.filter(arena_map=OuterRef("pk"), confirmed=True))`
-  — true iff `latest_confirmed_config() is not None`. Ordering `name` (default), `created_at`, `id`;
+  — true iff `latest_confirmed_config() is not None` — and (ANG-06h) `confirmed_zone_size`, a
+  `Subquery` of the newest confirmed config's `zone_size` (`-created_at`, `-pk` tiebreak), null
+  without one. `list()` first calls `services.ensure_default_maps()`, so a fresh database lists the
+  default maps through the API as it does through HTML `map_list`. Ordering `name` (default), `created_at`, `id`;
   tiebreak `id`. Class-level `parser_classes = [MultiPartParser, FormParser]` (for `create`); every
   JSON action sets `parser_classes=[JSONParser]` on its GET decorator, which also covers its
   `.mapping.put` / `.mapping.patch` methods (DRF builds the route's initkwargs from the original
@@ -116,7 +125,8 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
   ADR-0038) carries over unchanged. No `manager` column.
 - **`ArenaMapSerializer`** fields, exactly: `id`, `name`, `image` (absolute URL when the request is in
   serializer context, else `null`), `is_default`, `img_width`, `img_height`, `created_at`,
-  `has_confirmed_config` (both `image` and `has_confirmed_config` read-only).
+  `has_confirmed_config`, `confirmed_zone_size` (ANG-06h; nullable int) (`image`,
+  `has_confirmed_config` and `confirmed_zone_size` read-only).
 - **`ArenaMapFilterSet`**: `is_default` and `has_confirmed_config` (booleans — `true/false/1/0`;
   junk values are ignored, not 400).
 
@@ -125,9 +135,10 @@ endpoints return the **saved state** (the matching GET's `data`), never `{"statu
 
 | Method + path | Handler | Binds | `data` |
 |---|---|---|---|
-| `POST /api/maps/` | `create` | `MapUploadForm` (multipart) | 201, the 8 serializer fields (`has_confirmed_config` false) |
+| `POST /api/maps/` | `create` | `MapUploadForm` (multipart) | 201, the 9 serializer fields (`has_confirmed_config` false, `confirmed_zone_size` null) |
 | `DELETE /api/maps/<id>/` | `destroy` → `perform_destroy` | — | 204, empty; in use ⇒ **409 `map_in_use`** |
 | `GET …/processed-image/` | `processed_image` | — | raw `FileResponse` `image/png`, **not enveloped** (send `Accept: */*`; `image/png` ⇒ 406) |
+| `GET …/image/` (ANG-06h) | `image` | — | raw `FileResponse` of the original upload, content type from `mimetypes.guess_type`, **not enveloped**; no image file ⇒ 404 `not_found` (the SPA can't pass the session-gated `/media/`) |
 | `GET …/zones/` | `zones` | `ZoneSizeParamsForm` | `rows, cols, cell_size, img_width, img_height, zones, blocked_edges, blocked_edges_grid` [+ `wall_meta`, `elevation`] |
 | `GET …/zone-config/` | `zone_config` | — | `zone_size, zones, wall_meta, elevation, red_spawn, blue_spawn, spawn_user_edited, bases` |
 | `PUT …/zone-config/` | `replace_zone_config` | `ZoneConfigForm` | as the GET |
@@ -226,7 +237,11 @@ because the names collide with view names) and imports `matches.models` / `accou
 - **Heatmap** — `aggregate_map_heatmap(arena_map, zone_size, team_color, user)` (below).
 - **Moved helpers** — `_get_image_local_path` and `_clear_processed_cache` now live here and are
   **re-exported from `core/views.py`** (`core/tests.py` imports `_get_image_local_path` from `.views`).
-  `_seed_defaults` / `_DEFAULT_MAPS` stay in views.
+  **ANG-06h** moved `_DEFAULT_MAPS`, `_seed_defaults` and `_restore_default_images` here too, behind
+  `ensure_default_maps() -> None` (seed when no map exists, then restore missing default images),
+  which both HTML `map_list` and `ArenaMapViewSet.list` call; `views` re-exports `_DEFAULT_MAPS` /
+  `_seed_defaults` for `core/tests.py`. `original_image_path(arena_map) -> Path | None` backs the
+  API `image` action.
 
 ### Delete guard — `map_in_use` (ANG-01c)
 
@@ -271,7 +286,7 @@ an image.`).
 
 **`_seed_defaults()`** — skips seeding entirely when the active storage backend is not `FileSystemStorage` (i.e., R2 is configured). Default map images cannot be seeded from the local `Screenshots_and_video_examples/` directory in production.
 
-**`serve_media` view (UXP-02)** — `re_path(r"^media/(?P<path>.*)$")` in the project URLconf, replacing the DEBUG-only `static()` helper. Under `DEBUG` (dev) or when `settings.SERVE_MEDIA` (env `SERVE_MEDIA`, default False; the self-host compose file sets it) is on it delegates to `django.views.static.serve` with `MEDIA_ROOT`, else 404. Read at request time, so `override_settings` works in tests (CI runs with `DEBUG=True`). Behind the global login gate. **`_restore_default_images()`** — called by `map_list` on every request: copies back a default map's image from `Screenshots_and_video_examples/` when its row exists but the file is gone (fresh media volume / rebuilt container); never creates rows.
+**`serve_media` view (UXP-02)** — `re_path(r"^media/(?P<path>.*)$")` in the project URLconf, replacing the DEBUG-only `static()` helper. Under `DEBUG` (dev) or when `settings.SERVE_MEDIA` (env `SERVE_MEDIA`, default False; the self-host compose file sets it) is on it delegates to `django.views.static.serve` with `MEDIA_ROOT`, else 404. Read at request time, so `override_settings` works in tests (CI runs with `DEBUG=True`). Behind the global login gate. **`_restore_default_images()`** — called through `ensure_default_maps` by `map_list` and the API list on every request: copies back a default map's image from `Screenshots_and_video_examples/` when its row exists but the file is gone (fresh media volume / rebuilt container); never creates rows.
 
 **`upload_map` view** — binds `MapUploadForm` and delegates to `services.upload_map`, which reads image dimensions via `image_field.open("rb")` (works for both local and remote storage) instead of `image_field.path`. Handles corrupt/non-image uploads gracefully: deletes the partial record and redirects back to the map list rather than returning a 500.
 
@@ -289,7 +304,7 @@ an image.`).
 - `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
 - `DeleteMapViewTests` — `delete_map` POST removes map + redirects to list, related configs cascade, GET → 405, missing map → 404, list page renders the Delete control
 
-`core/test_maps_api.py` (ANG-01a; a sibling of `core/tests.py` since `core` has no `tests/` package) — `/api/maps/` list / detail envelope, exact serializer fields, absolute `image` URL, `has_confirmed_config` true / false, `is_default` / `has_confirmed_config` filters, same maps visible to two different Accounts, anonymous 401, PUT / PATCH on the detail 405 (POST / DELETE coverage moved to `test_maps_api_writes.py` by ANG-01c).
+`core/test_maps_api.py` (ANG-01a; a sibling of `core/tests.py` since `core` has no `tests/` package) — `/api/maps/` list / detail envelope, exact serializer fields, absolute `image` URL, `has_confirmed_config` true / false, `is_default` / `has_confirmed_config` filters, same maps visible to two different Accounts, anonymous 401, PUT / PATCH on the detail 405 (POST / DELETE coverage moved to `test_maps_api_writes.py` by ANG-01c). ANG-06h adds `confirmed_zone_size` (null / latest confirmed), the API list seeding the defaults on an empty DB, and `TestMapsOriginalImage` (raw PNG / guessed JPEG type, 404 unknown map / no image, 401); `test_map_services.py` gains `TestEnsureDefaultMaps`.
 
 ANG-01c siblings (image fixtures are a tiny in-memory PIL PNG uploaded under `override_settings(MEDIA_ROOT=Path(tempfile.mkdtemp()))` — a `Path`, not a `str` — with OpenCV run for real):
 - `core/test_map_forms.py` (SimpleTestCase) — every `core/forms.py` field rule and pinned message (spawn `[]` vs absent, `zones: []` ⇒ `None`, ragged / out-of-set / bool values, `wall_meta` key / facing / height / extra key, elevation messages, duplicate / unknown base type, `sight_data` / `base_sights` shapes, `cells` message + `required`), `zone_size` bounds, `ParsedJSONField` not decoding strings, `MapUploadForm` `invalid_image`, and the `core/api_forms.py` param Forms

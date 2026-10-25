@@ -17,7 +17,7 @@ import { MatchesService } from '../../api/matches.service';
 import { RoundsService } from '../../api/rounds.service';
 import { TeamListItem } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { applyApiErrors } from '../../teams/shared/form-errors';
+import { applyApiErrors } from '../../shared/form-errors';
 import { SetupKind } from '../shared/setup-kind';
 
 /** `Match.MATCH_TYPE_CHOICES`, as Django's `MatchForm` offers them. */

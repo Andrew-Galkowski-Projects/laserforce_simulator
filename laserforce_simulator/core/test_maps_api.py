@@ -14,12 +14,18 @@ ownership-filtered.
 
 from __future__ import annotations
 
+import io
+
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http.response import HttpResponseBase
 from django.test import TestCase
 from django.urls import reverse
+from PIL import Image as PILImage
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
+from core.map_test_fixtures import TempMediaMixin, make_bare_map, make_image_map
 from core.models import ArenaMap, MapZoneConfig
 
 User = get_user_model()
@@ -33,6 +39,7 @@ _MAP_FIELDS = {
     "img_height",
     "created_at",
     "has_confirmed_config",
+    "confirmed_zone_size",
 }
 
 
@@ -127,6 +134,34 @@ class TestMapsDetail(_MapsTestCase):
             ]
         )
 
+    def test_confirmed_zone_size_null_without_confirmed_config(self) -> None:
+        # bravo has only an UNconfirmed config, charlie has none.
+        for arena_map in (self.bravo, self.charlie):
+            with self.subTest(name=arena_map.name):
+                data = self.api.get(f"/api/maps/{arena_map.pk}/").json()["data"]
+                self.assertIsNone(data["confirmed_zone_size"])
+
+    def test_confirmed_zone_size_is_latest_confirmed(self) -> None:
+        data = self.api.get(f"/api/maps/{self.alpha.pk}/").json()["data"]
+        self.assertEqual(data["confirmed_zone_size"], 20)
+        MapZoneConfig.objects.create(
+            arena_map=self.alpha, zone_size=40, zone_data={}, confirmed=True
+        )
+        # A later UNconfirmed config does not count.
+        MapZoneConfig.objects.create(
+            arena_map=self.alpha, zone_size=80, zone_data={}, confirmed=False
+        )
+        data = self.api.get(f"/api/maps/{self.alpha.pk}/").json()["data"]
+        self.assertEqual(data["confirmed_zone_size"], 40)
+
+    def test_confirmed_zone_size_on_list_rows(self) -> None:
+        rows = {
+            row["name"]: row["confirmed_zone_size"]
+            for row in self.api.get("/api/maps/").json()["data"]
+        }
+        self.assertEqual(rows["Alpha Arena"], 20)
+        self.assertIsNone(rows["Bravo Arena"])
+
     def test_missing_map_is_404_envelope(self) -> None:
         response = self.api.get("/api/maps/999999/")
         self.assertEqual(response.status_code, 404)
@@ -193,3 +228,91 @@ class TestMapsSharedAndAuth(_MapsTestCase):
                     response.json()["errors"][0]["code"], "method_not_allowed"
                 )
         self.assertTrue(ArenaMap.objects.filter(pk=self.alpha.pk).exists())
+
+
+class TestMapsOriginalImage(TempMediaMixin, TestCase):
+    """ANG-06h -- ``GET /api/maps/<id>/image/``: the original uploaded image,
+    raw and un-enveloped (the JWT SPA cannot pass the ``/media/`` login gate)."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.api = APIClient()
+        self.api.force_login(get_shared_manager())
+
+    def get_image(self, pk: int, api: APIClient | None = None) -> HttpResponseBase:
+        return (api or self.api).get(
+            reverse("arenamap-image", args=[pk]), HTTP_ACCEPT="*/*"
+        )
+
+    def test_route_name(self) -> None:
+        self.assertEqual(reverse("arenamap-image", args=[7]), "/api/maps/7/image/")
+
+    def test_png_is_returned_raw(self) -> None:
+        arena_map = make_image_map()
+        response = self.get_image(arena_map.pk)
+        # Read to exhaustion: the test client then closes the file (CI-01).
+        body = b"".join(response.streaming_content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/png")
+        self.assertEqual(body, (self.media_root / arena_map.image.name).read_bytes())
+
+    def test_jpeg_content_type_is_guessed(self) -> None:
+        buf = io.BytesIO()
+        PILImage.new("RGB", (30, 20), color=(10, 20, 30)).save(buf, format="JPEG")
+        arena_map = ArenaMap.objects.create(
+            name="Jpeg Arena",
+            image=SimpleUploadedFile("arena.jpg", buf.getvalue()),
+            img_width=30,
+            img_height=20,
+        )
+        response = self.get_image(arena_map.pk)
+        body = b"".join(response.streaming_content)
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response["Content-Type"], "image/jpeg")
+        self.assertEqual(body, buf.getvalue())
+
+    def test_unknown_map_is_404(self) -> None:
+        response = self.get_image(999_999)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["errors"][0]["code"], "not_found")
+
+    def test_map_without_image_field_is_404(self) -> None:
+        response = self.get_image(make_bare_map().pk)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["errors"][0]["code"], "not_found")
+
+    def test_map_whose_image_file_is_gone_is_404(self) -> None:
+        arena_map = ArenaMap.objects.create(name="Ghost", image="maps/ghost.png")
+        response = self.get_image(arena_map.pk)
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.json()["errors"][0]["code"], "not_found")
+
+    def test_anonymous_is_401(self) -> None:
+        response = self.get_image(make_image_map().pk, api=APIClient())
+        self.assertEqual(response.status_code, 401)
+
+
+class TestMapsListSeedsDefaults(TempMediaMixin, TestCase):
+    """ANG-06h -- a fresh database lists the default maps through the API,
+    without first visiting the HTML ``/maps/`` list."""
+
+    def test_empty_db_list_returns_the_defaults(self) -> None:
+        api = APIClient()
+        api.force_login(get_shared_manager())
+        body = api.get("/api/maps/").json()
+        self.assertEqual(
+            {row["name"] for row in body["data"]},
+            {"Syracuse Laser Tag", "San Marcos Laser Tag"},
+        )
+        self.assertTrue(all(row["is_default"] for row in body["data"]))
+        self.assertEqual(body["meta"]["count"], 2)
+
+    def test_html_list_on_empty_db_still_seeds(self) -> None:
+        self.client.force_login(get_shared_manager())
+        self.client.get("/maps/")
+        self.assertEqual(ArenaMap.objects.filter(is_default=True).count(), 2)
+
+    def test_anonymous_list_seeds_nothing(self) -> None:
+        response = APIClient().get("/api/maps/")
+        self.assertEqual(response.status_code, 401)
+        self.assertFalse(ArenaMap.objects.exists())

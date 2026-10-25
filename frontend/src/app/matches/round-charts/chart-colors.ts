@@ -6,11 +6,6 @@ import { ChartPlayer } from './event-charts';
 /** The lightest share of the Side colour a player's shade keeps (the last player on a Side). */
 const MIN_SHARE = 55;
 
-/** A token's current value on the document root, trimmed (`''` when it is unset). */
-export function readToken(name: string, root: Element = document.documentElement): string {
-  return getComputedStyle(root).getPropertyValue(name).trim();
-}
-
 /**
  * The `index`-th of `count` shades of `base`: the first is `base` itself, the rest mix in more
  * of `mix` (the text colour, so a shade darkens in light mode and lightens in dark mode).

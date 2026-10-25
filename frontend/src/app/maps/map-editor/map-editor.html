@@ -1,0 +1,103 @@
+@switch (store.status()) {
+  @case ('loading') {
+    <p class="me-muted">Loading map…</p>
+  }
+  @case ('not-found') {
+    <h1>Map Editor</h1>
+    <p>Map not found.</p>
+    <a mat-stroked-button routerLink="/maps">Back to Maps</a>
+  }
+  @case ('error') {
+    <h1>Map Editor</h1>
+    <p class="me-error" role="alert">{{ store.loadError() }}</p>
+    <a mat-stroked-button routerLink="/maps">Back to Maps</a>
+  }
+  @default {
+    <header class="me-head">
+      <h1>{{ store.map()?.name }}</h1>
+      <a mat-stroked-button routerLink="/maps">Back to Maps</a>
+    </header>
+
+    <div class="me-toolbar">
+      <label class="me-zone-size">
+        <span>Zone size</span>
+        <select id="zone-size" (change)="pickZoneSize($event)">
+          @for (size of zoneSizes; track size) {
+            <option [value]="size" [selected]="size === store.zoneSize()">{{ size }}px</option>
+          }
+        </select>
+      </label>
+      <div class="me-modes" role="group" aria-label="Editor mode">
+        @for (m of modes; track m.mode) {
+          <button
+            mat-stroked-button
+            type="button"
+            [class.me-active]="store.mode() === m.mode"
+            [attr.aria-pressed]="store.mode() === m.mode"
+            (click)="store.setMode(m.mode)"
+          >
+            {{ m.label }}
+          </button>
+        }
+      </div>
+    </div>
+
+    <section class="me-mode" aria-label="Mode controls">
+      @switch (store.mode()) {
+        @case ('zones') {
+          <app-zones-bases-mode />
+        }
+        @case ('sight-lines') {
+          <app-sight-lines-mode />
+        }
+        @case ('heatmap') {
+          <app-heatmap-mode />
+        }
+      }
+    </section>
+
+    @if (store.gridStatus() === 'error') {
+      <p class="me-error" role="alert">Could not load the Cell grid.</p>
+    }
+    @if (processedError()) {
+      <p class="me-error" role="alert">Could not load the map image.</p>
+    }
+
+    <div class="me-panels">
+      <section class="me-panel" aria-labelledby="me-zone-title">
+        <h2 id="me-zone-title">
+          Zone map <span class="me-muted">(black-and-white, labels removed)</span>
+        </h2>
+        @if (store.gridStatus() === 'loading') {
+          <p class="me-muted">Loading the Cell grid…</p>
+        }
+        @if (processedUrl(); as src) {
+          <app-map-stage
+            [imageUrl]="src"
+            [alt]="(store.map()?.name ?? '') + ' (processed)'"
+            (imageError)="processedError.set(true)"
+          />
+        }
+        <ul class="me-legend" aria-label="Legend">
+          @for (item of legend; track item.label) {
+            <li>
+              <span class="me-swatch" [style.background]="'var(' + item.token + ')'"></span
+              >{{ item.label }}
+            </li>
+          }
+        </ul>
+      </section>
+
+      <section class="me-panel" aria-labelledby="me-original-title">
+        <h2 id="me-original-title">Original</h2>
+        @if (originalUrl(); as src) {
+          <img class="me-original" [src]="src" [alt]="(store.map()?.name ?? '') + ' (original)'" />
+        } @else if (!store.map()?.image) {
+          <p class="me-muted">No original image.</p>
+        } @else if (originalError()) {
+          <p class="me-error" role="alert">Could not load the original image.</p>
+        }
+      </section>
+    </div>
+  }
+}

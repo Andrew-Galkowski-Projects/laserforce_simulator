@@ -13,6 +13,9 @@ class ArenaMapSerializer(serializers.ModelSerializer):
     # Absolute URL when the request is in the serializer context, else null.
     image = serializers.ImageField(read_only=True, use_url=True)
     has_confirmed_config = serializers.BooleanField(read_only=True)
+    # ANG-06h — the viewset's `Subquery` annotation: the latest confirmed
+    # config's `zone_size`, null exactly when `has_confirmed_config` is false.
+    confirmed_zone_size = serializers.IntegerField(read_only=True, allow_null=True)
 
     class Meta:
         model = ArenaMap
@@ -25,4 +28,5 @@ class ArenaMapSerializer(serializers.ModelSerializer):
             "img_height",
             "created_at",
             "has_confirmed_config",
+            "confirmed_zone_size",
         ]

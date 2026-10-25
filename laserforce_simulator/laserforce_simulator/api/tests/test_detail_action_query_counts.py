@@ -691,6 +691,7 @@ EXEMPT: dict[tuple[str, str], str] = {
     # Raw files, never enveloped: the body is bytes from disk / a renderer.
     ("rounds", "report"): "raw PDF HttpResponse (RV-03), not a JSON read",
     ("maps", "processed-image"): "raw image/png FileResponse from disk",
+    ("maps", "image"): "raw original-image FileResponse from disk",
     # Capability-token job status: read from the Celery result backend, no DB
     # rows hang off the Season / Tournament to grow.
     ("seasons", "play-job"): "Celery AsyncResult status; no per-row DB data",

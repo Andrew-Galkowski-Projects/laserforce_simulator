@@ -1,8 +1,9 @@
+import mimetypes
 from typing import Literal
 
 from django.contrib.auth.decorators import login_not_required
-from django.db.models import Exists, OuterRef, QuerySet
-from django.http import FileResponse
+from django.db.models import Exists, OuterRef, QuerySet, Subquery
+from django.http import FileResponse, Http404
 from django.utils.decorators import method_decorator
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -77,11 +78,22 @@ class ArenaMapViewSet(
     parser_classes = [MultiPartParser, FormParser]
 
     def get_queryset(self) -> QuerySet[ArenaMap]:
-        return ArenaMap.objects.annotate(
-            has_confirmed_config=Exists(
-                MapZoneConfig.objects.filter(arena_map=OuterRef("pk"), confirmed=True)
-            )
+        confirmed = MapZoneConfig.objects.filter(
+            arena_map=OuterRef("pk"), confirmed=True
         )
+        # ANG-06h — `confirmed_zone_size` is `latest_confirmed_config().zone_size`
+        # (newest confirmed row; pk breaks a created_at tie), null without one.
+        return ArenaMap.objects.annotate(
+            has_confirmed_config=Exists(confirmed),
+            confirmed_zone_size=Subquery(
+                confirmed.order_by("-created_at", "-pk").values("zone_size")[:1]
+            ),
+        )
+
+    def list(self, request: Request, *args: object, **kwargs: object) -> Response:
+        """ANG-06h — seed the default maps first, exactly as the HTML list does."""
+        services.ensure_default_maps()
+        return super().list(request, *args, **kwargs)
 
     def create(self, request: Request) -> Response:
         """Upload a map image (multipart ``name`` + ``image``); 201 with the map."""
@@ -131,6 +143,18 @@ class ArenaMapViewSet(
             open(services.processed_image_path(arena_map), "rb"),
             content_type="image/png",
         )
+
+    @action(detail=True, methods=["get"], url_path="image", url_name="image")
+    def image(self, request: Request, pk: str | None = None) -> FileResponse:
+        """ANG-06h — the original uploaded image, raw (never enveloped), its
+        content type guessed from the file; 404 when the map has no image file.
+        The SPA cannot pass the ``/media/`` session login gate."""
+        arena_map = self.get_object()
+        path = services.original_image_path(arena_map)
+        if path is None:
+            raise Http404("This map has no image file.")
+        content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+        return FileResponse(open(path, "rb"), content_type=content_type)
 
     @action(detail=True, methods=["get"], url_path="zones", url_name="zones")
     def zones(self, request: Request, pk: str | None = None) -> Response:

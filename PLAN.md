@@ -80,7 +80,7 @@ Every component uses the theme chosen in ANG-04b.
    (ANG-06f, in `PLAN-completed.md`). RV-04's timeline pips and MECH-15's tick-0 frame attach here.
 5c. **[DONE] Event charts** — four Shots / Lives / Points / SP charts with filters and Chart
    overlays (ANG-06g, in `PLAN-completed.md`). RES-05 and RV-04's chart toggle attach here.
-6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
+6. **[DONE] Map editor** (ANG-06h, in `PLAN-completed.md`).
 
 **Note (ANG-04b, 2026-10-21):** ANG-06 builds to
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md): layout B (lfstats-like)

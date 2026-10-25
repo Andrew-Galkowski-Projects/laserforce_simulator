@@ -9,7 +9,7 @@ import { RouterLink } from '@angular/router';
 import { distinctUntilChanged, map, skip, startWith } from 'rxjs';
 import { GenerationResult } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { applyApiErrors } from '../shared/form-errors';
+import { applyApiErrors } from '../../shared/form-errors';
 
 interface Choice {
   value: string;

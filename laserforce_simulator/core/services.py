@@ -18,6 +18,7 @@ functions (the core -> matches import cycle).
 from __future__ import annotations
 
 import io
+import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
@@ -81,6 +82,76 @@ def _get_image_local_path(image_field: FieldFile) -> str:
             with image_field.open("rb") as remote_f:
                 local_path.write_bytes(remote_f.read())
         return str(local_path)
+
+
+# ---------------------------------------------------------------------------
+# Default maps (moved from core/views.py; re-exported there)
+# ---------------------------------------------------------------------------
+
+_DEFAULT_MAPS = [
+    ("Syracuse Laser Tag", "Syracuse_Laser_Tag_Map_cropped.png"),
+    ("San Marcos Laser Tag", "San_Marcos_Laser_Tag_Map.jpg"),
+]
+
+
+def _seed_defaults() -> None:
+    from django.core.files.storage import FileSystemStorage, default_storage
+
+    if not isinstance(default_storage, FileSystemStorage):
+        return
+
+    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
+    maps_dir = settings.MEDIA_ROOT / "maps"
+    maps_dir.mkdir(parents=True, exist_ok=True)
+
+    for name, filename in _DEFAULT_MAPS:
+        src = screenshots_dir / filename
+        if not src.exists():
+            continue
+        dst = maps_dir / filename
+        if not dst.exists():
+            shutil.copy2(src, dst)
+        relative_path = f"maps/{filename}"
+        if not ArenaMap.objects.filter(image=relative_path).exists():
+            with PILImage.open(dst) as img:
+                w, h = img.size
+            ArenaMap.objects.create(
+                name=name,
+                image=relative_path,
+                is_default=True,
+                img_width=w,
+                img_height=h,
+            )
+
+
+def _restore_default_images() -> None:
+    """UXP-02 — copy back the image of any existing default map whose file is
+    missing (a fresh media volume or a rebuilt container). Never adds rows."""
+    from django.core.files.storage import FileSystemStorage, default_storage
+
+    if not isinstance(default_storage, FileSystemStorage):
+        return
+
+    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
+    maps_dir = settings.MEDIA_ROOT / "maps"
+    for _name, filename in _DEFAULT_MAPS:
+        src = screenshots_dir / filename
+        dst = maps_dir / filename
+        if dst.exists() or not src.exists():
+            continue
+        if ArenaMap.objects.filter(image=f"maps/{filename}").exists():
+            maps_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+
+
+def ensure_default_maps() -> None:
+    """ANG-06h — seed the default maps when no map exists, then restore any
+    missing default image. Run by both the HTML ``map_list`` and the API list,
+    so a fresh database lists the defaults through either. A no-op for a
+    non-``FileSystemStorage`` backend."""
+    if not ArenaMap.objects.exists():
+        _seed_defaults()
+    _restore_default_images()
 
 
 def _clear_processed_cache(map_id: int) -> None:
@@ -192,6 +263,19 @@ def processed_image_path(arena_map: ArenaMap) -> Path:
         img.save(str(processed_path))
 
     return processed_path
+
+
+def original_image_path(arena_map: ArenaMap) -> Path | None:
+    """ANG-06h — a local path to the map's original uploaded image (through the
+    storage-agnostic ``_get_image_local_path``), ``None`` when the map has no
+    image or its file is gone."""
+    if not arena_map.image:
+        return None
+    try:
+        path = Path(_get_image_local_path(arena_map.image))
+    except (FileNotFoundError, OSError):
+        return None
+    return path if path.is_file() else None
 
 
 def _resolve_zone_data(arena_map: ArenaMap, zone_size: int) -> dict:
