@@ -152,14 +152,9 @@ describe('Round charts (/rounds/:id/charts)', () => {
       ).toEqual(titles);
     });
 
-    it('fixes only the SP chart at 0 to 99 with the cap line', async () => {
+    it('fixes only the SP chart at 0 to 99 (its cap line)', async () => {
       await open();
-      expect(charts().map((c) => [c.yMax(), c.capLine()])).toEqual([
-        [undefined, false],
-        [undefined, false],
-        [undefined, false],
-        [99, true],
-      ]);
+      expect(charts().map((c) => c.yMax())).toEqual([undefined, undefined, undefined, 99]);
     });
 
     it('runs every chart to the end of the Round, in seconds', async () => {
@@ -335,6 +330,12 @@ describe('Round charts (/rounds/:id/charts)', () => {
   });
 
   describe('theme colours', () => {
+    it('draws the chart text in the body font token', async () => {
+      document.documentElement.style.setProperty('--lf-font-body', 'Test Mono');
+      await open();
+      expect(charts().map((c) => c.theme().font)).toEqual(Array(4).fill('Test Mono'));
+    });
+
     it('shades each player from their Side token', async () => {
       document.documentElement.style.setProperty('--lf-side-red', 'rgb(10, 0, 0)');
       await open();

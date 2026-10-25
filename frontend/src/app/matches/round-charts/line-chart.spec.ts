@@ -3,7 +3,12 @@ import { Chart, TooltipItem } from 'chart.js';
 import { stubCanvasContext } from '../testing/fake-canvas';
 import { ChartTheme, DrawnOverlay, LineChart, LineSeries } from './line-chart';
 
-const THEME: ChartTheme = { text: 'rgb(1, 2, 3)', grid: 'rgb(4, 5, 6)', cap: 'rgb(7, 8, 9)' };
+const THEME: ChartTheme = {
+  text: 'rgb(1, 2, 3)',
+  grid: 'rgb(4, 5, 6)',
+  cap: 'rgb(7, 8, 9)',
+  font: 'Test Mono',
+};
 
 const ACE: LineSeries = {
   label: 'Ace',
@@ -104,14 +109,14 @@ describe('LineChart', () => {
     expect(title([{ parsed: { x: 125, y: 0 } } as TooltipItem<'line'>])).toBe('02:05');
   });
 
-  it('caps the y-axis at yMax and draws the cap line only when asked', async () => {
+  it('caps the y-axis at yMax and draws the cap line only then', async () => {
     const plain = await render();
     expect(plain.config().options?.scales?.['y']?.max).toBeUndefined();
     expect(plain.config().plugins?.map((p) => p.id)).not.toContain('lfCapLine');
     expect(plain.config().plugins?.map((p) => p.id)).toContain('lfOverlays');
     fixture.destroy();
 
-    const sp = await render({ yMax: 99, capLine: true });
+    const sp = await render({ yMax: 99 });
     const y = sp.config().options?.scales?.['y'];
     expect(y?.min).toBe(0);
     expect(y?.max).toBe(99);
@@ -163,6 +168,10 @@ describe('LineChart', () => {
       expect(calls).toContain('fillText(Ace,0,0)');
     });
 
+    it('labels the overlays in the theme font', async () => {
+      expect(draw(await render({ overlays: OVERLAYS }))).toContain('font=10px Test Mono');
+    });
+
     it('draws nothing with no overlays', async () => {
       expect(draw(await render())).toEqual([]);
     });
@@ -178,8 +187,20 @@ describe('LineChart', () => {
   });
 
   it('passes its plugins inline and never registers them globally', async () => {
-    await render({ yMax: 99, capLine: true });
+    await render({ yMax: 99 });
     expect(Chart.registry.plugins.get('lfCapLine')).toBeUndefined();
+  });
+
+  it('sets the theme font on the ticks, axis title, legend and tooltip', async () => {
+    const options = (await render()).config().options;
+    const x = options?.scales?.['x'] as { ticks?: { font?: unknown }; title?: { font?: unknown } };
+    const family = { family: 'Test Mono' };
+    expect(x.ticks?.font).toEqual(family);
+    expect(x.title?.font).toEqual(family);
+    expect(options?.scales?.['y']?.ticks?.font).toEqual(family);
+    expect(options?.plugins?.legend?.labels?.font).toEqual(family);
+    expect(options?.plugins?.tooltip?.titleFont).toEqual(family);
+    expect(options?.plugins?.tooltip?.bodyFont).toEqual(family);
   });
 
   it('colours the axes and grid from the theme', async () => {

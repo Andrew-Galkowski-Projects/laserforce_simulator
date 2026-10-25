@@ -27,6 +27,8 @@ import {
   ChartPlayer,
   OVERLAY_KINDS,
   OverlayKind,
+  SIDES,
+  TotalMode,
   buildEventCharts,
   defaultFilters,
   sideTotals,
@@ -35,14 +37,11 @@ import {
 import { ChartTheme, DrawnOverlay, LineChart, LineSeries } from './line-chart';
 
 /** Each card's heading and y-axis; SP's Side totals are averages, the others sums. */
-const CHART_META: Record<
-  ChartKey,
-  { title: string; total: 'sum' | 'avg'; yMax?: number; capLine?: boolean }
-> = {
+const CHART_META: Record<ChartKey, { title: string; total: TotalMode; yMax?: number }> = {
   shots: { title: 'Shots over time', total: 'sum' },
   lives: { title: 'Lives over time', total: 'sum' },
   points: { title: 'Points over time', total: 'sum' },
-  sp: { title: 'SP over time', total: 'avg', yMax: 99, capLine: true },
+  sp: { title: 'SP over time', total: 'avg', yMax: 99 },
 };
 
 const SIDE_NAMES: Record<Side, string> = { red: 'Red', blue: 'Blue' };
@@ -52,7 +51,6 @@ interface ChartCard {
   key: ChartKey;
   title: string;
   yMax?: number;
-  capLine: boolean;
   datasets: LineSeries[];
 }
 
@@ -81,7 +79,7 @@ export class RoundCharts {
       playback: this.rounds.playback(id),
     }),
   );
-  protected readonly sides: Side[] = ['red', 'blue'];
+  protected readonly sides = SIDES;
   protected readonly roles = CHART_ROLES;
   protected readonly overlayKinds = OVERLAY_KINDS;
   protected readonly roleLabel = roleLabel;
@@ -90,15 +88,6 @@ export class RoundCharts {
 
   /** Bumped when the OS colour scheme flips, so the colours are read again. */
   private readonly scheme = signal(0);
-
-  constructor() {
-    const query = window.matchMedia?.('(prefers-color-scheme: dark)');
-    if (query) {
-      const onChange = (): void => this.scheme.update((n) => n + 1);
-      query.addEventListener('change', onChange);
-      inject(DestroyRef).onDestroy(() => query.removeEventListener('change', onChange));
-    }
-  }
 
   private readonly charts = computed(() => {
     const rec = this.load.record();
@@ -109,6 +98,95 @@ export class RoundCharts {
   protected readonly filters = linkedSignal<ChartFilters>(() =>
     defaultFilters(this.charts()?.players ?? []),
   );
+
+  /** The Round's length in seconds. */
+  protected readonly maxSec = computed(
+    () => (this.load.record()?.playback.duration_ticks ?? 0) / TICKS_PER_SECOND,
+  );
+
+  /** Every token the canvas draws with, read again when the colour scheme flips. */
+  private readonly palette = computed(() => {
+    this.scheme();
+    const side = { red: readToken('--lf-side-red'), blue: readToken('--lf-side-blue') };
+    const muted = this.color(readToken('--lf-text-muted'));
+    const theme: ChartTheme = {
+      text: muted,
+      grid: this.color(readToken('--lf-border')),
+      cap: muted,
+      font: readToken('--lf-font-body'),
+    };
+    const sides: Record<Side, string> = { red: this.color(side.red), blue: this.color(side.blue) };
+    return {
+      theme,
+      /** The raw tokens the player shades are mixed from. */
+      shadeBase: { ...side, mix: readToken('--lf-text') },
+      /** Each Side's own colour, for its total line. */
+      sides,
+      /** Each overlay kind's colour, from its event token. */
+      overlays: new Map<OverlayKind, string>(
+        OVERLAY_KINDS.map((k) => [k.kind, this.color(readToken(k.token))]),
+      ),
+    };
+  });
+
+  /** The chart chrome's colours and font. */
+  protected readonly theme = computed(() => this.palette().theme);
+
+  /** Every player's colour by id, the same on all four charts. */
+  protected readonly colors = computed(() => {
+    const shades = playerColors(this.charts()?.players ?? [], this.palette().shadeBase);
+    return new Map([...shades].map(([id, css]) => [id, this.color(css)]));
+  });
+
+  /** The ticked kinds' Chart overlays, drawn on every chart. */
+  protected readonly overlays = computed<DrawnOverlay[]>(() => {
+    const ticked = this.filters().overlays;
+    const colors = this.palette().overlays;
+    return (this.charts()?.overlays ?? [])
+      .filter((o) => ticked.has(o.kind))
+      .map((o) => ({ sec: o.sec, label: o.label, color: colors.get(o.kind) ?? '' }));
+  });
+
+  protected readonly cards = computed<ChartCard[]>(() => {
+    const charts = this.charts();
+    if (!charts) return [];
+    const filters = this.filters();
+    const visible = visiblePlayers(charts.players, filters);
+    const colors = this.colors();
+    const sideColors = this.palette().sides;
+    return CHART_KEYS.map((key) => {
+      const meta = CHART_META[key];
+      const datasets: LineSeries[] = charts.players
+        .filter((p) => visible.has(p.id))
+        .map((p) => ({
+          label: p.name,
+          color: colors.get(p.id) ?? '',
+          points: charts.series[key].get(p.id) ?? [],
+        }));
+      if (filters.sideTotals) {
+        const totals = sideTotals(charts.players, charts.series[key], visible, meta.total);
+        for (const side of SIDES) {
+          if (totals[side].length === 0) continue;
+          datasets.push({
+            label: `${SIDE_NAMES[side]} ${meta.total === 'avg' ? 'avg' : 'total'}`,
+            color: sideColors[side],
+            points: totals[side],
+            dashed: true,
+          });
+        }
+      }
+      return { key, title: meta.title, yMax: meta.yMax, datasets };
+    });
+  });
+
+  constructor() {
+    const query = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (query) {
+      const onChange = (): void => this.scheme.update((n) => n + 1);
+      query.addEventListener('change', onChange);
+      inject(DestroyRef).onDestroy(() => query.removeEventListener('change', onChange));
+    }
+  }
 
   /** Ticks or unticks `value` in one of the filter sets. */
   protected toggle<K extends SetFilter>(
@@ -138,94 +216,6 @@ export class RoundCharts {
   protected playersOn(side: Side): ChartPlayer[] {
     return (this.charts()?.players ?? []).filter((p) => p.side === side);
   }
-
-  /** The Round's length in seconds. */
-  protected readonly maxSec = computed(
-    () => (this.load.record()?.playback.duration_ticks ?? 0) / TICKS_PER_SECOND,
-  );
-
-  /** The chart chrome's colours, resolved from the tokens. */
-  protected readonly theme = computed<ChartTheme>(() => {
-    this.scheme();
-    const muted = this.color(readToken('--lf-text-muted'));
-    return { text: muted, grid: this.color(readToken('--lf-border')), cap: muted };
-  });
-
-  /** Every player's colour by id, the same on all four charts. */
-  protected readonly colors = computed(() => {
-    this.scheme();
-    const players = this.charts()?.players ?? [];
-    const shades = playerColors(players, {
-      red: readToken('--lf-side-red'),
-      blue: readToken('--lf-side-blue'),
-      mix: readToken('--lf-text'),
-    });
-    return new Map([...shades].map(([id, css]) => [id, this.color(css)]));
-  });
-
-  /** Each Side's own colour, for its total line. */
-  private readonly sideColors = computed<Record<Side, string>>(() => {
-    this.scheme();
-    return {
-      red: this.color(readToken('--lf-side-red')),
-      blue: this.color(readToken('--lf-side-blue')),
-    };
-  });
-
-  /** Each overlay kind's colour, from its event token. */
-  private readonly overlayColors = computed(() => {
-    this.scheme();
-    return new Map<OverlayKind, string>(
-      OVERLAY_KINDS.map((k) => [k.kind, this.color(readToken(k.token))]),
-    );
-  });
-
-  /** The ticked kinds' Chart overlays, drawn on every chart. */
-  protected readonly overlays = computed<DrawnOverlay[]>(() => {
-    const ticked = this.filters().overlays;
-    const colors = this.overlayColors();
-    return (this.charts()?.overlays ?? [])
-      .filter((o) => ticked.has(o.kind))
-      .map((o) => ({ sec: o.sec, label: o.label, color: colors.get(o.kind) ?? '' }));
-  });
-
-  protected readonly cards = computed<ChartCard[]>(() => {
-    const charts = this.charts();
-    if (!charts) return [];
-    const filters = this.filters();
-    const visible = visiblePlayers(charts.players, filters);
-    const colors = this.colors();
-    const sideColors = this.sideColors();
-    return CHART_KEYS.map((key) => {
-      const meta = CHART_META[key];
-      const datasets: LineSeries[] = charts.players
-        .filter((p) => visible.has(p.id))
-        .map((p) => ({
-          label: p.name,
-          color: colors.get(p.id) ?? '',
-          points: charts.series[key].get(p.id) ?? [],
-        }));
-      if (filters.sideTotals) {
-        const totals = sideTotals(charts.players, charts.series[key], visible, meta.total);
-        for (const side of this.sides) {
-          if (totals[side].length === 0) continue;
-          datasets.push({
-            label: `${SIDE_NAMES[side]} ${meta.total === 'avg' ? 'avg' : 'total'}`,
-            color: sideColors[side],
-            points: totals[side],
-            dashed: true,
-          });
-        }
-      }
-      return {
-        key,
-        title: meta.title,
-        yMax: meta.yMax,
-        capLine: meta.capLine ?? false,
-        datasets,
-      };
-    });
-  });
 
   private color(css: string): string {
     return resolveColor(css, this.host);

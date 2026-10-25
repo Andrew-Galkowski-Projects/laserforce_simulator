@@ -21,7 +21,7 @@ port one for one, so parity can be checked line by line while both pages are liv
 
 ## Consequences
 
-Chart colours cannot come from CSS, because canvas ignores it. The wrapper reads the `--lf-*`
-tokens with `getComputedStyle`, re-reads them when `prefers-color-scheme` flips, and no hex goes
-into a component (ADR-0043). jsdom has no canvas, so specs check the chart config and the data
-built for it, not pixels. The browser check covers the drawing.
+Chart colours and the font cannot come from CSS, because canvas ignores it. The charts page reads
+the `--lf-*` tokens with `getComputedStyle`, re-reads them when `prefers-color-scheme` flips, and
+hands the wrapper concrete values; no hex goes into a component (ADR-0043).
+jsdom has no canvas, so specs check the chart config and the data built for it, not pixels. The browser check covers the drawing.

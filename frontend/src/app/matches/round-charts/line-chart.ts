@@ -52,6 +52,8 @@ export interface ChartTheme {
   grid: string;
   /** The SP cap line. */
   cap: string;
+  /** The font family of every label (`--lf-font-body`). */
+  font: string;
 }
 
 /** The second as `mm:ss`. */
@@ -90,10 +92,8 @@ export class LineChart {
   /** The Round's length in seconds: the x-axis's end. */
   readonly maxSec = input.required<number>();
   readonly theme = input.required<ChartTheme>();
-  /** Fixes the y-axis at 0 to `yMax` (SP: 99). */
+  /** Fixes the y-axis at 0 to `yMax` (SP: 99) and draws a dashed cap line there. */
   readonly yMax = input<number | undefined>(undefined);
-  /** Draws a dashed line at `yMax` (the SP cap). */
-  readonly capLine = input(false);
   /** The Chart overlays to draw (already filtered by kind). */
   readonly overlays = input<readonly DrawnOverlay[]>([]);
 
@@ -140,7 +140,7 @@ export class LineChart {
         ctx.stroke();
         ctx.globalAlpha = 1;
         ctx.fillStyle = overlay.color;
-        ctx.font = '10px sans-serif';
+        ctx.font = `10px ${this.theme().font}`;
         ctx.textAlign = 'right';
         ctx.translate(x - 2, chartArea.top + 2);
         ctx.rotate(-Math.PI / 2);
@@ -155,7 +155,8 @@ export class LineChart {
     const theme = this.theme();
     const maxSec = this.maxSec();
     const yMax = this.yMax();
-    const axis = { ticks: { color: theme.text }, grid: { color: theme.grid } };
+    const font = { family: theme.font };
+    const axis = { ticks: { color: theme.text, font }, grid: { color: theme.grid } };
     return {
       type: 'line',
       data: {
@@ -179,20 +180,22 @@ export class LineChart {
             type: 'linear',
             min: 0,
             max: maxSec,
-            title: { display: true, text: 'Time (s)', color: theme.text },
+            title: { display: true, text: 'Time (s)', color: theme.text, font },
             ...axis,
             ticks: { ...axis.ticks, stepSize: 60, callback: (value) => clock(Number(value)) },
           },
           y: yMax === undefined ? { beginAtZero: true, ...axis } : { min: 0, max: yMax, ...axis },
         },
         plugins: {
-          legend: { position: 'top', labels: { color: theme.text } },
+          legend: { position: 'top', labels: { color: theme.text, font } },
           tooltip: {
+            titleFont: font,
+            bodyFont: font,
             callbacks: { title: (items: TooltipItem<'line'>[]) => clock(items[0]?.parsed.x ?? 0) },
           },
         },
       },
-      plugins: this.capLine() ? [this.overlayPlugin, this.capPlugin] : [this.overlayPlugin],
+      plugins: yMax === undefined ? [this.overlayPlugin] : [this.overlayPlugin, this.capPlugin],
     };
   });
 

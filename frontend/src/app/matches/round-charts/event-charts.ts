@@ -20,7 +20,7 @@ export interface ChartPlayer {
   id: number;
   name: string;
   side: Side;
-  role: string;
+  role: Role;
 }
 
 /** A **Chart overlay** kind. */
@@ -74,7 +74,12 @@ const SNAPSHOT_FIELD: Record<ChartKey, keyof PlaybackSnapshot> = {
  * an empty series. The overlays come from the timeline (see `overlaysOf`).
  */
 export function buildEventCharts(timeline: RoundTimeline, playback: RoundPlayback): EventCharts {
-  const players = timeline.players.map(({ id, name, side, role }) => ({ id, name, side, role }));
+  const players = timeline.players.map(({ id, name, side, role }) => ({
+    id,
+    name,
+    side,
+    role: role.toLowerCase() as Role,
+  }));
   const snapshots = new Map(playback.players.map((p) => [p.id, p.snapshots]));
   const series = Object.fromEntries(
     CHART_KEYS.map((key) => [
@@ -117,13 +122,15 @@ function overlaysOf(timeline: RoundTimeline): ChartOverlay[] {
 /** What the filter bar has ticked. */
 export interface ChartFilters {
   sides: ReadonlySet<Side>;
-  /** Lower-case role names. */
-  roles: ReadonlySet<string>;
+  roles: ReadonlySet<Role>;
   players: ReadonlySet<number>;
   overlays: ReadonlySet<OverlayKind>;
   /** Draws the dashed Red / Blue totals. */
   sideTotals: boolean;
 }
+
+/** The Sides in filter order. */
+export const SIDES: readonly Side[] = ['red', 'blue'];
 
 /** The roles in filter order (ADR-0043: CMD / HVY / SCT / AMO / MED). */
 export const CHART_ROLES: readonly Role[] = ['commander', 'heavy', 'scout', 'ammo', 'medic'];
@@ -131,7 +138,7 @@ export const CHART_ROLES: readonly Role[] = ['commander', 'heavy', 'scout', 'amm
 /** Everything ticked but Side totals (the Django page's defaults). */
 export function defaultFilters(players: readonly ChartPlayer[]): ChartFilters {
   return {
-    sides: new Set<Side>(['red', 'blue']),
+    sides: new Set(SIDES),
     roles: new Set(CHART_ROLES),
     players: new Set(players.map((p) => p.id)),
     overlays: new Set(OVERLAY_KINDS.map((k) => k.kind)),
@@ -147,14 +154,14 @@ export function visiblePlayers(
   return new Set(
     players
       .filter(
-        (p) =>
-          filters.sides.has(p.side) &&
-          filters.roles.has(p.role.toLowerCase()) &&
-          filters.players.has(p.id),
+        (p) => filters.sides.has(p.side) && filters.roles.has(p.role) && filters.players.has(p.id),
       )
       .map((p) => p.id),
   );
 }
+
+/** How a Side total combines its players: summed, or averaged (SP). */
+export type TotalMode = 'sum' | 'avg';
 
 /**
  * Each Side's total line over its visible players: at every time any of them changes, the sum
@@ -165,7 +172,7 @@ export function sideTotals(
   players: readonly ChartPlayer[],
   series: ReadonlyMap<number, readonly ChartPoint[]>,
   visible: ReadonlySet<number>,
-  mode: 'sum' | 'avg',
+  mode: TotalMode,
 ): Record<Side, ChartPoint[]> {
   const total = (side: Side): ChartPoint[] => {
     const lines = players

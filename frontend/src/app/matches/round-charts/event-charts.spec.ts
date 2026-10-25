@@ -43,6 +43,13 @@ describe('buildEventCharts', () => {
     ]);
   });
 
+  it('lower-cases each role', () => {
+    const tl = timeline();
+    const players = tl.players.map((p) => (p.id === 102 ? { ...p, role: 'Medic' } : p));
+    const charts = buildEventCharts({ ...tl, players }, roundPlayback());
+    expect(charts.players.find((p) => p.id === 102)?.role).toBe('medic');
+  });
+
   it('orders the charts Shots, Lives, Points, SP', () => {
     expect(CHART_KEYS).toEqual(['shots', 'lives', 'points', 'sp']);
   });
@@ -191,7 +198,7 @@ describe('buildEventCharts', () => {
 const PLAYERS: ChartPlayer[] = [
   { id: 101, name: 'Ace', side: 'red', role: 'commander' },
   { id: 201, name: 'Bolt', side: 'blue', role: 'heavy' },
-  { id: 102, name: 'Cleo', side: 'red', role: 'Medic' },
+  { id: 102, name: 'Cleo', side: 'red', role: 'medic' },
   { id: 202, name: 'Dax', side: 'blue', role: 'ammo' },
 ];
 
@@ -223,11 +230,6 @@ describe('visiblePlayers', () => {
     expect([
       ...visiblePlayers(PLAYERS, { ...f, sides: new Set(['red']), players: new Set([101, 201]) }),
     ]).toEqual([101]);
-  });
-
-  it('matches roles case-insensitively', () => {
-    const f = defaultFilters(PLAYERS);
-    expect([...visiblePlayers(PLAYERS, { ...f, roles: new Set(['medic']) })]).toEqual([102]);
   });
 });
 
