@@ -141,8 +141,15 @@ ANG-06b's full suite found one that pinned `overall_rating` absent.
 Check each frontend decision against `CODING_STANDARDS.md`'s Angular section
 and cite the rule it follows or the reason it departs: ANG-06c's grill left
 the team pickers without `required`, and review sent them back.
+A port or migration spec takes its behaviour from the source being ported
+(the template and its script), not from the app `CLAUDE.md` summary: ANG-06h's
+doc described a wall-height input the template never had.
 
-When tickets will run in parallel, give each parallel ticket its own
+When tickets will run in parallel, write each behaviour they share (input
+during a save, retry after a failed load, the dirty flag) once as a spec
+invariant, and cite it in every such ticket's acceptance criteria: ANG-06h's
+Sight Lines ignored canvas edits during a save and Zones & Bases lost them.
+Also when tickets will run in parallel, give each parallel ticket its own
 module(s) at the seam (e.g. a package with one file per ticket) so
 implementers never append to the same file. Shared files caused every merge
 conflict in the last run.
@@ -236,7 +243,8 @@ Add these constraints to every implementer prompt:
   on a 404 for everyone. This is the ownership red, since a guard mutation
   is refused (Step 7).
 - Run only your own test files, with pytest run from the nested Django dir
-  (`laserforce_simulator/`). The full suite is the orchestrator's job.
+  (`laserforce_simulator/`). The full suite is the orchestrator's job. A ticket
+  that touches `frontend/` also runs `npm --prefix frontend run build`.
 - Write files with Write and Edit, never a heredoc. Glob before creating a
   file, in case the name is taken. Scratch files get a unique prefix (your
   ticket ID).

@@ -72,6 +72,21 @@ def _write(path: Path, text: str) -> None:
         handle.write(text)
 
 
+def _match_line_endings(text: str, old: str, new: str) -> tuple[str, str]:
+    """``old`` / ``new`` with ``\\n`` spelled as ``\\r\\n`` when ``text`` is a CRLF file.
+
+    JSON patterns write line breaks as ``\\n``; a Windows checkout (``core.autocrlf``)
+    has CRLF, so a multi-line pattern would otherwise never match.
+    """
+    if "\r\n" not in text:
+        return old, new
+    return _crlf(old), _crlf(new)
+
+
+def _crlf(pattern: str) -> str:
+    return pattern.replace("\r\n", "\n").replace("\n", "\r\n")
+
+
 def mutate(
     target: Path, mutations: list[Mutation], pytest_args: list[str], cwd: Path
 ) -> list[Outcome]:
@@ -89,12 +104,13 @@ def mutate_with(
     outcomes = []
     try:
         for mutation in mutations:
-            count = original.count(mutation.old)
+            old, new = _match_line_endings(original, mutation.old, mutation.new)
+            count = original.count(old)
             if count != 1:
                 status = "not found" if count == 0 else "ambiguous"
                 outcomes.append(Outcome(mutation.name, status, []))
                 continue
-            _write(target, original.replace(mutation.old, mutation.new))
+            _write(target, original.replace(old, new))
             run = subprocess.run(
                 command,
                 cwd=cwd,
