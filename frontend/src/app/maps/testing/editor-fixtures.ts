@@ -157,7 +157,11 @@ export function releaseModeLoads(): void {
 /** Answers one grid load: `zones/?zone_size=` and `spawn-cells/`. */
 export function answerGridLoads(id: number, zones: MapZones, spawns: SpawnCells = SPAWNS): void {
   const req = expectMapRequest(id, 'zones/');
-  expect(req.request.params.get('zone_size')).toBe(String(zones.cell_size));
+  // No `expect` here: the app build compiles this file too (only *.spec.ts is excluded).
+  const sent = req.request.params.get('zone_size');
+  if (sent !== String(zones.cell_size)) {
+    throw new Error(`zones/ asked for zone_size=${sent}, expected ${zones.cell_size}`);
+  }
   flushData(req, zones);
   flushData(expectMapRequest(id, 'spawn-cells/'), spawns);
 }
