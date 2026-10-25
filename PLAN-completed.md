@@ -4951,6 +4951,41 @@ Refresh rule and procedure: `docs/agents/ci.md`.
   `duration_based_chunks`; no refresh schedule (slowest shard over ~40% above the mean on two
   runs in a row); stay at 4 shards. Out: the test password hasher (PERF-05).
 
+### PERF-05 · [DONE] Use a fast password hasher in tests
+
+Spec: #334
+
+**[DONE] Shipped (2026-10-24).** The root `conftest.py`'s `pytest_configure` sets
+`PASSWORD_HASHERS` to `MD5PasswordHasher` and clears Django's cached hasher list (a plain
+settings assignment fires no `setting_changed`). `settings.py` is untouched, so production
+keeps PBKDF2. `laserforce_simulator/tests/test_password_hasher.py` pins both halves.
+Local full suite 8525 passed on SQLite and Postgres.
+
+**Prio: Low (found 2026-10-24, PERF-04 grill).** No test settings set `PASSWORD_HASHERS`, so every
+`create_user` / `set_password` / login in the suite pays full PBKDF2. Shard 1 (accounts and API
+tests) was the slowest shard on CI. Probe first: time `accounts` and the API tests locally with
+and without `MD5PasswordHasher`; only ship it if the saving is real.
+
+**Probe (2026-10-24, `-n 4`, 16-core local, scratch settings module, 8522 passed every run).**
+accounts + `/api/` tests 25.5 s -> 9.0 s; full suite 265.1 / 196.4 s -> 129.2 / 133.3 s; summed
+per-test time 725.7 s -> 477.9 s (-34%). The saving is spread over `accounts` and almost every
+`test_api_*` file in `matches` and `teams`; hash-free files stay flat (`test_batch_sim` 34.0 vs
+34.6 s). The autouse login already uses `force_login` with a passwordless Account, so the cost is
+the tests' own `create_user(..., password=...)` / `login` calls. No test pins the hasher.
+
+**Grill (2026-10-24), settled:**
+1. Ship it.
+2. The override lives in the root `conftest.py`'s `pytest_configure`
+   (`settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]`): test-only,
+   `settings.py` untouched.
+3. MD5 only, the hasher Django's docs recommend for tests.
+4. One guard test in `laserforce_simulator/tests/`: the active hasher under pytest is MD5, and
+   `laserforce_simulator/settings.py` sets no `PASSWORD_HASHERS` (production keeps PBKDF2).
+5. CI claim: slowest of two runs via `ci_timings.py`. Refresh `.test_durations` in this PR only
+   under the `docs/agents/ci.md` rule (slowest shard > ~40% over the mean on two runs in a row).
+6. Out of scope: PERF-06 (pool oversubscription), rewriting tests' `create_user` / `login` to
+   `force_login`, and any production hasher change.
+
 ---
 
 ## Phase 6 — Users and Multiplayer

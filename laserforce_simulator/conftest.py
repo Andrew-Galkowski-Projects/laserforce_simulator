@@ -20,6 +20,9 @@ os.environ.setdefault("LF_CELERY_EAGER", "1")
 
 
 def pytest_configure(config):
+    from django.conf import settings
+    from django.contrib.auth.hashers import get_hashers
+
     from laserforce_simulator.celery_app import celery_app
     from laserforce_simulator.testing import install_close_in_transaction_guard
 
@@ -27,6 +30,11 @@ def pytest_configure(config):
     celery_app.conf.task_eager_propagates = True
     # CI-01: fail loudly on a DB close inside a test transaction (see testing.py).
     install_close_in_transaction_guard()
+    # PERF-05: full PBKDF2 on every test password cost about a third of the
+    # suite's test time. Tests only; settings.py keeps Django's default.
+    settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
+    # A plain assignment fires no setting_changed, so drop any cached hashers.
+    get_hashers.cache_clear()
 
 
 # ---------------------------------------------------------------------------

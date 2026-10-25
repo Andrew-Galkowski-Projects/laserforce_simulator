@@ -38,12 +38,7 @@ PERF-02 (speed up the CI Python test job) is **[DONE]**; see `PLAN-completed.md`
 
 PERF-04 (rebalance the CI test shards on CI timings) is **[DONE]**; see `PLAN-completed.md`.
 
-### PERF-05 · Use a fast password hasher in tests
-
-**Prio: Low (found 2026-10-24, PERF-04 grill).** No test settings set `PASSWORD_HASHERS`, so every
-`create_user` / `set_password` / login in the suite pays full PBKDF2. Shard 1 (accounts and API
-tests) was the slowest shard on CI. Probe first: time `accounts` and the API tests locally with
-and without `MD5PasswordHasher`; only ship it if the saving is real.
+PERF-05 (use a fast password hasher in tests) is **[DONE]**; see `PLAN-completed.md`.
 
 ### PERF-06 · Stop batch-sim process pools oversubscribing the CI shard runners
 
@@ -328,7 +323,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** PERF-05, PERF-06, TEST-01, TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** PERF-06, TEST-01, TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02

@@ -66,3 +66,10 @@ slowest of at least two runs.
 
 The 4-vCPU runner limits the suite, not coverage. Moving to Python 3.12 + sysmon
 saved about 45 s of an 11-minute test step. Measurements are on spec #324.
+
+## Test password hasher (PERF-05)
+
+The root `conftest.py`'s `pytest_configure` sets `PASSWORD_HASHERS` to
+`MD5PasswordHasher` for tests only. Full PBKDF2 on every test password cost about a third
+of the summed test time. `settings.py` sets no `PASSWORD_HASHERS`, so production keeps
+Django's PBKDF2 default; `laserforce_simulator/tests/test_password_hasher.py` pins both.
