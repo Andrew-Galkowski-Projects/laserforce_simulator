@@ -4,7 +4,8 @@ The Phase 8 replacement for the Django templates. The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
 layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
 below 768px) behind `authGuard`, the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
-Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail), on top of the client
+Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
+ANG-06e-g: Event log, Playback, Charts), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -109,13 +110,17 @@ src/
                           `rounds/:id/timeline/`; CDK virtual scroll, client-side filters),
                           /rounds/:id/playback (playback/: ANG-06f, the cursor shell +
                           snapshot-at.ts, playback-scoreboard, playback-feed, the beta
-                          playback-map; from `rounds/:id/playback/` + the timeline);
+                          playback-map; from `rounds/:id/playback/` + the timeline),
+                          /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
+                          (pure data + OVERLAY_KINDS), line-chart.ts (app-line-chart over
+                          Chart.js, ADR-0045), chart-colors.ts, the RoundCharts page);
                           shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
                           role-label.ts (roleLabel: CMD/HVY/...), side-tag.ts (sideTag: R / B),
                           event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
                           "In progress"), result-chip, route-record.ts (loadRouteRecord),
                           record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
-                          scoreboard-fixtures, timeline-fixtures, playback-fixtures)
+                          scoreboard-fixtures, timeline-fixtures, playback-fixtures, fake-canvas: a
+                          no-op 2D context + ResizeObserver for Chart.js specs)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures

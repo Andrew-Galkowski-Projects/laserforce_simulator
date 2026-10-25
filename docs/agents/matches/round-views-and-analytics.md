@@ -219,7 +219,7 @@ query counts, the Django page's empty-Side bonus).
 The Angular screen is `/rounds/:id/events` (`frontend/src/app/matches/round-events/`). The browser
 filters the timeline by **Event group** (`matches/shared/event-groups.ts`, the nine groups and their
 `--lf-ev-*` tokens) and by player (actor or target), as the Django page did. The kill feed was
-dropped. SIM-05 playback shipped as ANG-06f (below); the four charts are ANG-06g. The Django page
+dropped. SIM-05 playback shipped as ANG-06f (below); the four charts shipped as ANG-06g (below). The Django page
 stays until ANG-08.
 
 Tests: `matches/tests/test_api_round_timeline.py` (shape, order, null targets, Sides, ownership,
@@ -299,3 +299,37 @@ Tests:
 - `test_api_round_playback.py`: shape, map, ownership, fidelity and query count.
 - `test_playback_map.py`: the map and its order.
 - The Vitest specs beside each component.
+
+## ANG-06g Event charts
+
+The Angular screen is `/rounds/:id/charts` (`frontend/src/app/matches/round-charts/`), declared
+before `:id`. It needs no endpoint of its own: it `forkJoin`s the Round, `/timeline/` and
+`/playback/`. Glossary: **Chart overlay**.
+[ADR-0045](../../adr/0045-chart-js-for-angular-event-charts.md) records the library choice.
+
+- **`event-charts.ts`** is pure (no Angular, no Chart.js):
+  - `buildEventCharts(timeline, playback) -> EventCharts {players, series, overlays}`. Series are
+    keyed by `ChartKey` (`shots`, `lives`, `points` from the snapshot's `score`, `sp`); a point is
+    `{sec, value}` with `sec = tick / TICKS_PER_SECOND`, and an unchanged value adds no point. A
+    timeline player missing from Playback gets an empty series. Roles are lower-cased to `Role`.
+  - `OVERLAY_KINDS` is the Chart overlay registry: `elimination` (labelled with the eliminated
+    player), `special` (the actor) and `nuke` (from each `nuke_detonation` Highlight, labelled with
+    the Commander). A `special` at the same tick and actor as a detonation is not also a Special.
+    **RV-04 and RES-05 each add one entry here**, plus the events it marks.
+  - `defaultFilters`, `visiblePlayers` (Side AND role AND own box) and
+    `sideTotals(players, series, visible, 'sum' | 'avg')`: over the visible players only, each
+    counting from their first point.
+- **`line-chart.ts`** (`app-line-chart`) wraps one Chart.js line chart. It registers only what a
+  line chart draws; its own plugins (`lfOverlays`, and `lfCapLine` when `yMax` is set) go inline
+  in each chart's `plugins:` array, never globally. Lines are `stepped: 'before'` and hold their
+  last value to the end of the Round; the x-axis is mm:ss. Specs read its public `config`,
+  because jsdom has no canvas.
+- **`chart-colors.ts`**: `readToken`, `playerColors` (shades of the Side token mixed toward
+  `--lf-text`) and `resolveColor` (a probe element turns any CSS colour into one canvas can use).
+- **`round-charts.ts`** reads every token in one `palette` computed (colours plus
+  `--lf-font-body`), again when a `matchMedia` listener sees the colour scheme flip. Filters are
+  a `linkedSignal`, reset on each load and when you leave the page.
+- Specs: `matches/testing/fake-canvas.ts` (`stubCanvasContext`) gives jsdom a no-op 2D context
+  and a silent `ResizeObserver`, so a real `Chart` can be built and destroyed.
+- Out of scope (follow-ups): clicking a chart to seek Playback, a cursor synced with Playback,
+  zoom / pan.

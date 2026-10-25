@@ -6766,6 +6766,70 @@ screen is **Playback** ("Replay" is the glossary's re-simulation term).
 - **ADR (Q22):** [ADR-0044](docs/adr/0044-playback-state-from-logged-after-event-values.md).
   Grill complete, 2026-10-23.
 
+#### ANG-06g · [DONE] Event charts
+
+Spec: #350 (tickets #351, #352)
+
+**[DONE] Shipped (2026-10-25).** Angular `/rounds/:id/charts` ("Charts"), linked from Round detail
+and the Event log: the four Shots / Lives / Points / SP charts, one stepped line per player, built
+client-side from the `/playback/` snapshots and `/timeline/`, with no backend change. One filter
+bar (Sides, roles, players, overlay kinds, Side totals) drives all four. Chart.js 4.5.1 is used
+directly ([ADR-0045](docs/adr/0045-chart-js-for-angular-event-charts.md)). Where it differed from
+the grill:
+- **No `--lf-chart-*` tokens.** The overlays reuse the event tokens `--lf-ev-elimination`,
+  `--lf-ev-special` and `--lf-ev-nuke`; the cap line and axes use `--lf-text-muted` and
+  `--lf-border`. Player shades are `color-mix(in oklch, <Side token>, --lf-text)`, resolved to a
+  concrete colour through a probe element, since canvas cannot read a CSS variable.
+- A Special that is a Nuke detonation (same tick and actor as a `nuke_detonation` Highlight) shows
+  only as a Nuke. On a round with no stored Highlights it stays a Special.
+- The SP Side average divides by the visible players who have a value at that second; it differs
+  from all-visible only for a player missing from Playback (noted on #350).
+- Review: every chart label uses `--lf-font-body` (JetBrains Mono) instead of Chart.js's default;
+  the role is a `Role`, lower-cased once; the cap line follows `yMax`.
+- Follow-ups, out of scope: clicking a chart to seek Playback, a cursor synced with Playback,
+  zoom / pan. The x-axis always runs to the Round's full length.
+
+**Grill (ANG-06g, 2026-10-25), round 1 settled:**
+- **Library:** Chart.js 4 used directly (no `ng2-charts`), with an exact pinned version and
+  tree-shaken registration. Recorded in an ADR.
+- **Route:** its own route `rounds/:id/charts` ("Charts"), linked from Round detail beside Event
+  log and Playback.
+- **Data:** built client-side by a pure function over the existing `/playback/` snapshots
+  (series) and `/timeline/` (overlays). No new endpoint and no backend change. Same-tick changes
+  collapse into one point, and target SP changes show too.
+- **Filters:** one shared bar drives all four charts: Sides, Roles, Players, Overlays and a
+  Side-totals toggle.
+- **Overlays:** Eliminations, Specials (activations) and Nukes (detonations; the Django Nukes
+  overlay is dead). The kinds live in an extensible registry so RV-04 (Highlights) and RES-05
+  (Medic hits) each add one entry. Both stay out of scope.
+- **Colours:** player hues come from the `--lf-side-red` / `--lf-side-blue` tokens read at
+  runtime, varied in lightness per player. Overlay and cap colours are new `--lf-chart-*`
+  tokens. No hex in components.
+- **Parity:** stepped per-player lines; dashed Side totals (sum for shots, lives and points,
+  average for SP) computed from the visible players only; the SP axis at 0 to 99 with a dashed
+  cap line; an mm:ss x-axis and tooltip; the same colour for a player on every chart.
+- **Out of scope:** clicking a chart to seek playback, a cursor synced with Playback,
+  zoom / pan. They are follow-ups.
+- **Layout:** a 2x2 grid at 1280px and one column at 768px and below. Cards are 360 to 400px
+  tall, with the filter bar on top.
+- **A11y:** each canvas gets `role="img"` and an `aria-label`. The filters are Material
+  controls that work from the keyboard. No data-table fallback.
+
+**Round 2 settled:**
+- **Pinned version:** Chart.js 4.5.1. 4.6.1 is under two weeks old.
+- **Nukes overlay:** the timeline's `highlights` entries of kind `nuke_detonation`. The client
+  does not copy the detonation rule.
+- **Specials overlay:** every `special` event except detonations.
+- **Labels:** an Elimination is labelled with the target's name. A Special or Nuke is labelled
+  with the actor's name.
+- **Defaults:** every Side, Role, Player and Overlay box starts ticked, and Side totals start
+  off (the Django defaults).
+- **Dark mode:** a `matchMedia` listener re-reads the tokens and redraws when the colour scheme
+  flips.
+- **Filter state:** component signals only, reset when you leave the page.
+- **Links:** Round detail and the Event log page both link to Charts.
+- **Glossary:** **Chart overlay** added.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
