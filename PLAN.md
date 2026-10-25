@@ -46,6 +46,8 @@ TEST-01 (keep test media writes out of the real `MEDIA_ROOT`) is **[DONE]**; see
 
 ### TOOL-01 · Script the PLAN.md to PLAN-completed.md move
 
+Spec: #346
+
 **Prio: Low (found 2026-10-24, PERF-02 retro).** `/update-docs` Step 3 moves a shipped task's
 section by hand every time (PERF-01, PERF-03, PERF-02), and PERF-02's one-off script dropped
 the `---` rule before the next phase heading. A `scripts/move_done_task.py <ID> <shipped-note>`
@@ -53,6 +55,25 @@ would mark the heading `[DONE]`, insert the shipped note, move the section under
 heading in `PLAN-completed.md` (adding it if missing), leave a one-line `[DONE]` pointer, drop
 the ID from the **Sequencing Summary**, and keep every separator. Tests at the pure
 text-transform seam, like `test_watch_pr_ci.py`. `/update-docs` Step 3 then calls it.
+
+**Grill (2026-10-24), settled:**
+1. Seam: one pure `move_done_task(plan, completed, task_id, note, shipped) -> (plan, completed)`
+   in `scripts/move_done_task.py`; `main()` only reads, writes and prints one ASCII line. Tests in
+   `laserforce_simulator/test_move_done_task.py`, loaded by path.
+2. A section runs from its heading to the next heading of the same or higher level, or a `---`,
+   whichever is first, minus trailing blank lines; the `---` and the next `##` stay in `PLAN.md`.
+3. Heading becomes `### ID · [DONE] Title`; `**[DONE] Shipped (YYYY-MM-DD).** <note>` goes after the
+   `Spec: #n` line if any, else after the heading (PERF-06's layout). Date: today, `--date` overrides.
+4. Appended at the end of the `PLAN-completed.md` block whose `##` heading matches exactly, before
+   its trailing `---`; missing heading: a new block at the end of the file, wrapped in `---`.
+5. Pointer: `ID (<title, first letter lowercased>) is **[DONE]**; see \`PLAN-completed.md\`.`
+6. Sequencing Summary: drop the ID as a whole comma-list item, and an emptied bullet; any other
+   mention there (a range, the diagram) is left alone with a warning naming the line.
+7. Exit 1, writing nothing, on: ID not found, more than one match, already `[DONE]`, no enclosing
+   `##`. Writes keep each file's line endings, UTF-8 without a BOM.
+8. The note is the positional argument only; no `--note-file`, no `--dry-run`.
+9. Out: umbrella sub-items, prose elsewhere (e.g. the Found Issues intro), reflowing, `CLAUDE.md`.
+   No GLOSSARY term, no ADR.
 
 ---
 
