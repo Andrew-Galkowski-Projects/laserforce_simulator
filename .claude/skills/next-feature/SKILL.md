@@ -95,7 +95,10 @@ scaled to the target's core count (CI runners have 4 vCPUs). PERF-02 built a
 ticket on coverage being the cost, and one local timing would have shown the
 suite was CPU-bound. A probe for a split or a schedule also checks that each
 unit's cost holds wherever it lands: PERF-04 rebalanced on test durations that
-doubled in the shard holding the CPU-wide batch-sim pools.
+doubled in the shard holding the CPU-wide batch-sim pools. Local wall time is
+noisy (PERF-05's baseline ran 196 s, then 265 s): write `--junitxml` on both
+runs and compare them with `python scripts/compare_junit.py <base> <after>`;
+a flat control file (one the change can't touch) shows the gap is real.
 Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
 become ADRs in `docs/adr/` (next free number).
 
@@ -265,9 +268,9 @@ mismatches, field-name drift between spec and code, missing seam methods.
 "unlikely", "edge case") gets a red test before merge: it is a test to write,
 not a judgement call. (ANG-05: the one real bug was such a reported gap.)
 
-1. **Full suite** on SQLite (`python -m pytest laserforce_simulator`) and, when
-   `docker info` succeeds, on Postgres as the `CLAUDE.md` *Database* bullet
-   "Test suite on Postgres" says, plus
+1. **Full suite** on SQLite (`python scripts/run_suite.py`, which prints only
+   failures and the count line) and, when `docker info` succeeds, on Postgres
+   (`docker start lf-test-pg`, then `python scripts/run_suite.py --postgres`), plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
    Run every suite on its own, never in the background beside another: any
    `pytest -n auto` run (SQLite or Postgres) beside `test:ci` starves Vitest
@@ -376,7 +379,8 @@ A task that changes CI time reads each run with
 each shard's pytest line, coverage total, run start to `test-result`) and
 claims the **slowest of at least two runs** (PERF-02: 4m57s, then 6m08s).
 More runs of one commit come from closing and reopening the PR
-(`docs/agents/ci.md`).
+(`docs/agents/ci.md`); watch the new run with `watch_pr_ci.py <n> --after-run
+<previous run-id>`, or the watcher passes on the previous run's checks (PERF-05).
 Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work

@@ -35,8 +35,11 @@ Steps 2, 2b and 3 (CI runs them) and write
 `pytest: CI only (no Python changes)` in the test plan. Otherwise:
 
 ```powershell
-python -m pytest laserforce_simulator
+python scripts/run_suite.py
 ```
+
+It runs `pytest laserforce_simulator` and prints only the failures and the
+count line (the progress dots cost thousands of tokens).
 
 Report the exact pass/fail counts (e.g. `877 passed, 0 failed`), not a vague
 "tests pass". If anything fails, surface the failing test names and stop —
@@ -45,9 +48,9 @@ the PR is not ready until the suite is green.
 ## Step 2b - Run the full suite on PostgreSQL (when Docker is available)
 
 CI runs the suite on `postgres:16`, the canonical database. If `docker info`
-succeeds, start the throwaway container and run the suite exactly as the
-repo-root `CLAUDE.md` *Database* bullet "Test suite on Postgres (what CI
-runs)" says. That bullet is the only copy of the commands.
+succeeds, start the throwaway container as the repo-root `CLAUDE.md`
+*Database* bullet "Test suite on Postgres (what CI runs)" says, then run
+`python scripts/run_suite.py --postgres`.
 
 Report the exact counts, as in Step 2. A failure stops the PR. If Docker is
 not available, say so plainly: `Postgres run skipped: Docker unavailable`.
