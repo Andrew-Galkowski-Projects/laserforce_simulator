@@ -131,6 +131,23 @@ Spec: #342
         )
         self.assertNotIn("**Prio: Low.** Body.", result.plan)
 
+    def test_pointer_drops_a_trailing_parenthetical_from_the_title(self) -> None:
+        plan = _PLAN.replace("Keep media writes out", "Missile spent twice (bug)")
+        self.assertIn(
+            "TEST-01 (missile spent twice) is **[DONE]**;", _move(plan=plan).plan
+        )
+
+    def test_long_note_is_wrapped_at_100_columns(self) -> None:
+        note = " ".join(["`word`"] * 40)
+        completed = _move(note=note).completed
+        start = completed.index("**[DONE] Shipped")
+        paragraph = completed[start : completed.index("\n\n", start)].split("\n")
+        self.assertGreater(len(paragraph), 1)
+        self.assertTrue(
+            all(90 < len(line) <= 100 for line in paragraph[:-1]), paragraph
+        )
+        self.assertEqual(" ".join(paragraph).split(".** ", 1)[1], note)
+
     def test_note_goes_straight_after_the_heading_without_a_spec_line(
         self,
     ) -> None:

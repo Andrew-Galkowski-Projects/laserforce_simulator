@@ -18,6 +18,7 @@ import argparse
 import datetime
 import re
 import sys
+import textwrap
 from pathlib import Path
 from typing import NamedTuple
 
@@ -76,12 +77,12 @@ def _phase_heading(lines: list[str], start: int) -> str:
     raise MoveError("no enclosing ## heading")
 
 
-def _done_section(section: list[str], note_line: str) -> list[str]:
+def _done_section(section: list[str], note_lines: list[str]) -> list[str]:
     heading = re.sub(r" · ", " · [DONE] ", section[0], count=1)
     first = next((i for i in range(1, len(section)) if section[i].strip()), 0)
     has_spec_line = first > 0 and section[first].startswith("Spec: #")
     insert_at = first + 1 if has_spec_line else 1
-    return [heading, *section[1:insert_at], "", note_line, *section[insert_at:]]
+    return [heading, *section[1:insert_at], "", *note_lines, *section[insert_at:]]
 
 
 def _append_to_phase(lines: list[str], phase: str, section: list[str]) -> list[str]:
@@ -130,10 +131,16 @@ def move_done_task(
     end = _section_end(plan_lines, start, level)
     phase = _phase_heading(plan_lines, start)
 
-    note_line = f"**[DONE] Shipped ({shipped.isoformat()}).** {note}"
-    section = _done_section(plan_lines[start:end], note_line)
+    note_lines = textwrap.wrap(
+        f"**[DONE] Shipped ({shipped.isoformat()}).** {note}",
+        width=100,
+        break_long_words=False,
+        break_on_hyphens=False,
+    )
+    section = _done_section(plan_lines[start:end], note_lines)
+    short_title = re.sub(r" \([^()]*\)$", "", title)
     pointer = (
-        f"{task_id} ({title[:1].lower()}{title[1:]}) is **[DONE]**; "
+        f"{task_id} ({short_title[:1].lower()}{short_title[1:]}) is **[DONE]**; "
         "see `PLAN-completed.md`."
     )
     new_plan, warnings = _drop_from_summary(

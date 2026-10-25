@@ -228,8 +228,8 @@ Add these constraints to every implementer prompt:
   test, then just enough code, one slice at a time. Tests and code for a
   ticket come from the **same** agent. Test placement is in `CLAUDE.md`.
 - Every Implementation Decision gets a test you have seen go **red**: write it
-  first, or mutate the code back, before reporting done. Name each pairing in
-  your report. Config-only tickets need this most, because their tests pass
+  first, or mutate the code back with `python scripts/mutate.py`, before
+  reporting done. Name each pairing in your report. Config-only tickets need this most, because their tests pass
   the moment the setting lands. A cross-Account read uses
   `assert_owner_only` (`laserforce_simulator/testing.py`): written before the
   action exists, it is red, and its owner-gets-200 half keeps it from passing
@@ -291,7 +291,10 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
 2. **Mutation-test** the test that matters most: put the bug back on purpose
    and check the test catches it. Mutate the feature code (a route, a
    formula, a condition), never an auth or permission guard: the auto-mode
-   classifier refuses a run against a removed guard.
+   classifier refuses a run against a removed guard. Run each mutation with
+   `python scripts/mutate.py <file> <mutations.json> -- <pytest args>` (JSON
+   `[name, old, new]` triples in the scratchpad): it restores the file and
+   prints which tests caught each one. A `SURVIVED` line is a test to write.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees
    changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
    existing tab, close what you open, close the browser when done). Server on 8001;
@@ -327,7 +330,7 @@ parameterised tests (`it.each`, `@pytest.mark.parametrize`, `subTest`)
 before reporting a test missing (ANG-06e's false P1), and both reviewers to
 quote the grep or line behind any finding about what a file contains or lacks
 (PERF-02's false "durations file predates the split"). When the code diff
-(`git diff origin/main...HEAD --shortstat -- . ":!*.md"`) is under about 150
+(`git diff origin/main...HEAD --shortstat -- . ":!*.md" ":!*test_*.py" ":!*.spec.ts"`) is under about 150
 changed lines, spawn both reviewers with `model: sonnet`: TEST-01's two default
 reviewers spent 138k tokens on 60 lines for one nit. Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
