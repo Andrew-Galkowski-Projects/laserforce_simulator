@@ -308,6 +308,8 @@ jobs:
             exit 1
           fi
           curl -f -L http://localhost:8000/
+          # ANG-07: the nginx front door, in front of the smoke container above.
+          bash scripts/smoke_nginx.sh
 
       - name: Set up flyctl
         if: github.ref == 'refs/heads/main' && env.FLY_API_TOKEN != ''

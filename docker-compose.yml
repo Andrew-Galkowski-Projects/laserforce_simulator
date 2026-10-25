@@ -27,5 +27,14 @@ services:
       db:
         condition: service_healthy
 
+  # ANG-07 (ADR-0046): the front door. The SPA at http://localhost:8080/app/,
+  # every other path proxied to app; app's own 8000 stays published.
+  nginx:
+    build: ./frontend
+    ports:
+      - "8080:80"
+    depends_on:
+      - app
+
 volumes:
   postgres_data:
