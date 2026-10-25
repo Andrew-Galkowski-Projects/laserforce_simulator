@@ -15,11 +15,20 @@ test imports a task.
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
+from pathlib import Path
+
+import pytest
 
 os.environ.setdefault("LF_CELERY_EAGER", "1")
 
+# TEST-01: the temp MEDIA_ROOT this process made, so unconfigure removes only it.
+_session_media_root: Path | None = None
 
-def pytest_configure(config):
+
+def pytest_configure(config: pytest.Config) -> None:
+    global _session_media_root
     from django.conf import settings
     from django.contrib.auth.hashers import get_hashers
 
@@ -35,6 +44,16 @@ def pytest_configure(config):
     settings.PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
     # A plain assignment fires no setting_changed, so drop any cached hashers.
     get_hashers.cache_clear()
+    # TEST-01: keep every test's media writes out of the real media/ dir. One
+    # dir per xdist worker; runs before collection, so default_storage never
+    # resolves the real path. Per-test MEDIA_ROOT overrides still win.
+    _session_media_root = Path(tempfile.mkdtemp(prefix="lf-test-media-"))
+    settings.MEDIA_ROOT = _session_media_root
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    if _session_media_root is not None:
+        shutil.rmtree(_session_media_root, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -49,8 +68,6 @@ def pytest_configure(config):
 #
 # See `.claude/worktrees/ux-01-seam-contract.md` section 11.1.
 # ---------------------------------------------------------------------------
-
-import pytest
 
 SHARED_MANAGER_EMAIL = "test-manager@example.com"
 

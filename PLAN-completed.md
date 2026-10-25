@@ -5027,6 +5027,36 @@ refreshed file's 353 / 353 / 355 / 350 s (slowest -24%).
 6. Out of scope: a pool cap or pool shard, weighting the split, a 5th shard, predicted-vs-measured
    per-shard tooling.
 
+### TEST-01 · [DONE] Keep every test's media writes out of the real `MEDIA_ROOT`
+
+**Shipped (2026-10-24).** The root `conftest.py`'s `pytest_configure` sets `MEDIA_ROOT` to a
+fresh `lf-test-media-*` temp dir per xdist worker; `pytest_unconfigure` removes only that dir
+(a module global, never whatever `settings.MEDIA_ROOT` holds). A full run now leaves no files
+in `media/` (before: 114) and no temp dirs. Guard: `laserforce_simulator/tests/test_media_root.py`.
+Found: the leak was mostly `matches` League / Conference fixtures, not the older `core` tests.
+
+Spec: #342
+
+**Prio: Low (found 2026-10-24, PERF-02 retro).** Older `core` tests (`del.png`, `parity.png`,
+the default-map seeding in `_seed_defaults` / `_restore_default_images`) write into the real
+`laserforce_simulator/media/` because they use neither `TempMediaMixin` nor
+`ClassTempMediaMixin`. PERF-02 deleted the strays from its worktree by hand three times. Likely
+fix: an autouse session fixture in the root `conftest.py` that points `MEDIA_ROOT` at a temp
+dir, so no test can leak whichever mixin it uses, plus a test that a full run leaves `media/`
+untouched. **Open for its own grill:** whether the per-test mixins stay (they also give each
+test a clean dir) and how the default-map tests that copy from `Screenshots_and_video_examples/`
+behave under it.
+
+**Grill (2026-10-24).** Probe: a full suite run on a clean worktree leaves **114 files** in
+`media/maps/`, most from `matches` League / Conference / rotation tests, not only `core`.
+Settled: (1) `pytest_configure` in `laserforce_simulator/conftest.py` sets
+`settings.MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="lf-test-media-"))` (per xdist worker, beside
+the PERF-05 hasher override) and `pytest_unconfigure` removes it; (2) the per-test mixins and inline
+overrides stay; (3) `_seed_defaults` / `_restore_default_images` unchanged; (4) guard = two tests in
+`laserforce_simulator/tests/`: `MEDIA_ROOT` is a temp `Path`, not `BASE_DIR / "media"`, and a
+`default_storage.save` lands under it; (5) out: cleaning the main checkout's `media/`, `settings.py`,
+moving tests to `tmp_path`, a CI check; (6) no GLOSSARY term, no ADR.
+
 ---
 
 ## Phase 6 — Users and Multiplayer
