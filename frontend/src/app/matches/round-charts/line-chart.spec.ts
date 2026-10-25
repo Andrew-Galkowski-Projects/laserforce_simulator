@@ -1,7 +1,7 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Chart, TooltipItem } from 'chart.js';
 import { stubCanvasContext } from '../testing/fake-canvas';
-import { ChartTheme, LineChart, LineSeries } from './line-chart';
+import { ChartTheme, DrawnOverlay, LineChart, LineSeries } from './line-chart';
 
 const THEME: ChartTheme = { text: 'rgb(1, 2, 3)', grid: 'rgb(4, 5, 6)', cap: 'rgb(7, 8, 9)' };
 
@@ -108,6 +108,7 @@ describe('LineChart', () => {
     const plain = await render();
     expect(plain.config().options?.scales?.['y']?.max).toBeUndefined();
     expect(plain.config().plugins?.map((p) => p.id)).not.toContain('lfCapLine');
+    expect(plain.config().plugins?.map((p) => p.id)).toContain('lfOverlays');
     fixture.destroy();
 
     const sp = await render({ yMax: 99, capLine: true });
@@ -115,6 +116,65 @@ describe('LineChart', () => {
     expect(y?.min).toBe(0);
     expect(y?.max).toBe(99);
     expect(sp.config().plugins?.map((p) => p.id)).toContain('lfCapLine');
+  });
+
+  describe('Chart overlays', () => {
+    const OVERLAYS: DrawnOverlay[] = [
+      { sec: 120, label: 'Bolt', color: 'rgb(1, 1, 1)' },
+      { sec: 150, label: 'Ace', color: 'rgb(2, 2, 2)' },
+    ];
+
+    /** Runs the overlay plugin's draw against a recording context; returns what it did. */
+    function draw(chart: LineChart): string[] {
+      const calls: string[] = [];
+      const ctx = new Proxy({} as Record<string, unknown>, {
+        get: (target, prop: string) =>
+          prop in target ? target[prop] : (...args: unknown[]) => calls.push(`${prop}(${args})`),
+        set: (target, prop: string, value) => {
+          calls.push(`${prop}=${value}`);
+          target[prop] = value;
+          return true;
+        },
+      });
+      const fakeChart = {
+        ctx,
+        chartArea: { top: 10, bottom: 210, left: 0, right: 500 },
+        scales: { x: { getPixelForValue: (v: number) => v * 2 } },
+      };
+      const plugin = chart.config().plugins?.find((p) => p.id === 'lfOverlays');
+      (plugin?.afterDatasetsDraw as unknown as (c: typeof fakeChart) => void)(fakeChart);
+      return calls;
+    }
+
+    it('passes the overlay plugin inline on every chart', async () => {
+      const chart = await render();
+      expect(chart.config().plugins?.map((p) => p.id)).toContain('lfOverlays');
+      expect(Chart.registry.plugins.get('lfOverlays')).toBeUndefined();
+    });
+
+    it('draws a vertical line in its colour and a label for each overlay, at its second', async () => {
+      const calls = draw(await render({ overlays: OVERLAYS }));
+      expect(calls).toContain('strokeStyle=rgb(1, 1, 1)');
+      expect(calls).toContain('moveTo(240,10)');
+      expect(calls).toContain('lineTo(240,210)');
+      expect(calls).toContain('fillText(Bolt,0,0)');
+      expect(calls).toContain('strokeStyle=rgb(2, 2, 2)');
+      expect(calls).toContain('moveTo(300,10)');
+      expect(calls).toContain('fillText(Ace,0,0)');
+    });
+
+    it('draws nothing with no overlays', async () => {
+      expect(draw(await render())).toEqual([]);
+    });
+
+    it('redraws when the overlays change', async () => {
+      await render();
+      const chart = Chart.getChart(canvas());
+      const update = vi.spyOn(chart as Chart, 'update');
+      fixture.componentRef.setInput('overlays', OVERLAYS);
+      await fixture.whenStable();
+      expect(update).toHaveBeenCalled();
+    });
   });
 
   it('passes its plugins inline and never registers them globally', async () => {

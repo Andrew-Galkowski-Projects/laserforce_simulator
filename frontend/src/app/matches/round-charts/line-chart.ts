@@ -38,6 +38,13 @@ export interface LineSeries {
   dashed?: boolean;
 }
 
+/** A **Chart overlay** as drawn: a vertical line at `sec`, labelled, in a concrete colour. */
+export interface DrawnOverlay {
+  sec: number;
+  label: string;
+  color: string;
+}
+
 /** The chart chrome's colours, resolved from the `--lf-*` tokens. */
 export interface ChartTheme {
   /** Tick labels, axis titles, the legend. */
@@ -87,6 +94,8 @@ export class LineChart {
   readonly yMax = input<number | undefined>(undefined);
   /** Draws a dashed line at `yMax` (the SP cap). */
   readonly capLine = input(false);
+  /** The Chart overlays to draw (already filtered by kind). */
+  readonly overlays = input<readonly DrawnOverlay[]>([]);
 
   private readonly canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private chart: Chart<'line'> | null = null;
@@ -108,6 +117,36 @@ export class LineChart {
       ctx.lineTo(chartArea.right, y);
       ctx.stroke();
       ctx.restore();
+    },
+  };
+
+  /**
+   * The Chart overlays (RES-02's pattern): a vertical line across the chart area per overlay and
+   * its label, rotated, at the top. It reads the `overlays` input at draw time.
+   */
+  private readonly overlayPlugin: Plugin<'line'> = {
+    id: 'lfOverlays',
+    afterDatasetsDraw: (chart) => {
+      const { ctx, chartArea } = chart;
+      for (const overlay of this.overlays()) {
+        const x = chart.scales['x'].getPixelForValue(overlay.sec);
+        ctx.save();
+        ctx.globalAlpha = 0.55;
+        ctx.strokeStyle = overlay.color;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(x, chartArea.top);
+        ctx.lineTo(x, chartArea.bottom);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = overlay.color;
+        ctx.font = '10px sans-serif';
+        ctx.textAlign = 'right';
+        ctx.translate(x - 2, chartArea.top + 2);
+        ctx.rotate(-Math.PI / 2);
+        ctx.fillText(overlay.label, 0, 0);
+        ctx.restore();
+      }
     },
   };
 
@@ -153,7 +192,7 @@ export class LineChart {
           },
         },
       },
-      plugins: this.capLine() ? [this.capPlugin] : [],
+      plugins: this.capLine() ? [this.overlayPlugin, this.capPlugin] : [this.overlayPlugin],
     };
   });
 
@@ -165,6 +204,7 @@ export class LineChart {
     });
     effect(() => {
       const config = this.config();
+      this.overlays(); // The overlay plugin reads them at draw time: redraw when they change.
       if (!this.chart) return;
       this.chart.data = config.data;
       this.chart.options = config.options ?? {};

@@ -16,6 +16,60 @@
     </div>
   </div>
 
+  <section class="rc-filters" aria-label="Chart filters">
+    <fieldset class="rc-filters__set">
+      <legend>Sides</legend>
+      @for (side of sides; track side) {
+        <mat-checkbox
+          [attr.data-lf-side]="side"
+          [checked]="isTicked('sides', side)"
+          (change)="toggle('sides', side, $event.checked)"
+          ><span class="rc-badge">{{ sideTag(side) }}</span> {{ sideName(side) }}</mat-checkbox
+        >
+      }
+    </fieldset>
+    <fieldset class="rc-filters__set">
+      <legend>Roles</legend>
+      @for (role of roles; track role) {
+        <mat-checkbox
+          [checked]="isTicked('roles', role)"
+          (change)="toggle('roles', role, $event.checked)"
+          >{{ roleLabel(role) }}</mat-checkbox
+        >
+      }
+    </fieldset>
+    @for (side of sides; track side) {
+      <fieldset class="rc-filters__set rc-filters__players" [attr.data-lf-side]="side">
+        <legend>{{ sideName(side) }} players</legend>
+        @for (p of playersOn(side); track p.id) {
+          <mat-checkbox
+            [checked]="isTicked('players', p.id)"
+            (change)="toggle('players', p.id, $event.checked)"
+            ><span class="rc-swatch" [style.background-color]="colors().get(p.id)"></span
+            >{{ p.name }}</mat-checkbox
+          >
+        }
+      </fieldset>
+    }
+    <fieldset class="rc-filters__set">
+      <legend>Overlays</legend>
+      @for (k of overlayKinds; track k.kind) {
+        <mat-checkbox
+          [style.--rc-overlay]="'var(' + k.token + ')'"
+          [checked]="isTicked('overlays', k.kind)"
+          (change)="toggle('overlays', k.kind, $event.checked)"
+          >{{ k.label }}</mat-checkbox
+        >
+      }
+    </fieldset>
+    <fieldset class="rc-filters__set">
+      <legend>Lines</legend>
+      <mat-checkbox [checked]="filters().sideTotals" (change)="setSideTotals($event.checked)"
+        >Side totals</mat-checkbox
+      >
+    </fieldset>
+  </section>
+
   <div class="rc-grid">
     @for (card of cards(); track card.key) {
       <section class="rc-card" [attr.aria-labelledby]="'rc-title-' + card.key">
@@ -28,6 +82,7 @@
             [theme]="theme()"
             [yMax]="card.yMax"
             [capLine]="card.capLine"
+            [overlays]="overlays()"
           />
         </div>
       </section>

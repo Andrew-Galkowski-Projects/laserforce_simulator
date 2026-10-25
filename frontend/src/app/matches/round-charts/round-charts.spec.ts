@@ -14,7 +14,7 @@ import { RoundDetail } from '../round-detail/round-detail';
 import { stubCanvasContext } from '../testing/fake-canvas';
 import { roundDetail } from '../testing/match-fixtures';
 import { playbackPlayer, playbackSnapshot, roundPlayback } from '../testing/playback-fixtures';
-import { timeline } from '../testing/timeline-fixtures';
+import { timeline, timelineEvent } from '../testing/timeline-fixtures';
 import { LineChart } from './line-chart';
 import { RoundCharts } from './round-charts';
 
@@ -193,6 +193,144 @@ describe('Round charts (/rounds/:id/charts)', () => {
       const colourSets = charts().map((c) => c.datasets().map((d) => d.color));
       for (const colours of colourSets) expect(colours).toEqual(colourSets[0]);
       expect(new Set(colourSets[0]).size).toBe(4);
+    });
+  });
+
+  describe('filter bar', () => {
+    const boxes = (): HTMLElement[] => [...page().querySelectorAll<HTMLElement>('mat-checkbox')];
+    const input = (label: string): HTMLInputElement => {
+      const box = boxes().find((c) => text(c) === label);
+      const el = box?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      if (!el) throw new Error(`no ${label} checkbox`);
+      return el;
+    };
+    async function toggle(label: string): Promise<void> {
+      input(label).click();
+      await harness.fixture.whenStable();
+    }
+    const labelsOn = (chart: LineChart): (string | undefined)[] =>
+      chart.datasets().map((d) => d.label);
+
+    /** Ace scores 100 at 1:00; the others stay at 0. */
+    const scoring = (): RoundPlayback =>
+      roundPlayback({
+        players: [
+          playbackPlayer(101, [playbackSnapshot(), playbackSnapshot({ tick: 120, score: 100 })]),
+          playbackPlayer(201),
+          playbackPlayer(102, [playbackSnapshot(), playbackSnapshot({ tick: 120, sp: 4 })]),
+          playbackPlayer(202),
+        ],
+      });
+
+    it('lists the Sides, roles, players, overlay kinds and Side totals, all ticked but totals', async () => {
+      await open();
+      const fieldsets = [...page().querySelectorAll('.rc-filters fieldset')].map((f) => [
+        text(f.querySelector('legend')),
+        [...f.querySelectorAll('mat-checkbox')].map((c) => text(c)),
+      ]);
+      expect(fieldsets).toEqual([
+        ['Sides', ['R Red', 'B Blue']],
+        ['Roles', ['CMD', 'HVY', 'SCT', 'AMO', 'MED']],
+        ['Red players', ['Ace', 'Cleo']],
+        ['Blue players', ['Bolt', 'Dax']],
+        ['Overlays', ['Eliminations', 'Specials', 'Nukes']],
+        ['Lines', ['Side totals']],
+      ]);
+      const unticked = boxes()
+        .filter((c) => !c.querySelector<HTMLInputElement>('input')?.checked)
+        .map((c) => text(c));
+      expect(unticked).toEqual(['Side totals']);
+    });
+
+    it('drops a Side’s players from all four charts when the Side is unticked', async () => {
+      await open();
+      await toggle('B Blue');
+      for (const chart of charts()) expect(labelsOn(chart)).toEqual(['Ace', 'Cleo']);
+    });
+
+    it('drops a role’s players when the role is unticked', async () => {
+      await open();
+      await toggle('HVY');
+      expect(labelsOn(charts()[0])).toEqual(['Ace', 'Cleo', 'Dax']);
+    });
+
+    it('drops one player when their box is unticked, and brings them back', async () => {
+      await open();
+      await toggle('Ace');
+      for (const chart of charts()) expect(labelsOn(chart)).toEqual(['Bolt', 'Cleo', 'Dax']);
+      await toggle('Ace');
+      expect(labelsOn(charts()[0])).toEqual(['Ace', 'Bolt', 'Cleo', 'Dax']);
+    });
+
+    it('adds a dashed Red and Blue total (an average on SP) when Side totals is ticked', async () => {
+      await open(timeline(), scoring());
+      await toggle('Side totals');
+      const [, , points, sp] = charts();
+      expect(labelsOn(points)).toEqual(['Ace', 'Bolt', 'Cleo', 'Dax', 'Red total', 'Blue total']);
+      const redTotal = points.datasets()[4];
+      expect(redTotal.dashed).toBe(true);
+      expect(redTotal.points).toEqual([
+        { sec: 0, value: 0 },
+        { sec: 60, value: 100 },
+      ]);
+      expect(labelsOn(sp).slice(4)).toEqual(['Red avg', 'Blue avg']);
+      expect(sp.datasets()[4].points).toEqual([
+        { sec: 0, value: 0 },
+        { sec: 60, value: 2 },
+      ]);
+    });
+
+    it('totals only the visible players', async () => {
+      await open(timeline(), scoring());
+      await toggle('Side totals');
+      await toggle('Cleo');
+      const sp = charts()[3];
+      expect(sp.datasets().find((d) => d.label === 'Red avg')?.points).toEqual([
+        { sec: 0, value: 0 },
+      ]);
+    });
+
+    it('leaves out the total of a Side with no visible players', async () => {
+      await open();
+      await toggle('Side totals');
+      await toggle('B Blue');
+      expect(labelsOn(charts()[0])).toEqual(['Ace', 'Cleo', 'Red total']);
+    });
+  });
+
+  describe('Chart overlays', () => {
+    const overlayTimeline = (): RoundTimeline =>
+      timeline({
+        events: [
+          timelineEvent({ tick: 240, event_type: 'elimination', target_name: 'Bolt' }),
+          timelineEvent({ tick: 90, event_type: 'special', actor_name: 'Cleo' }),
+        ],
+      });
+    const toggleOverlay = async (label: string): Promise<void> => {
+      const box = [...page().querySelectorAll('mat-checkbox')].find((c) => text(c) === label);
+      box?.querySelector<HTMLInputElement>('input')?.click();
+      await harness.fixture.whenStable();
+    };
+
+    it('marks every chart at each overlay, coloured by its kind', async () => {
+      document.documentElement.style.setProperty('--lf-ev-elimination', 'rgb(9, 9, 9)');
+      await open(overlayTimeline());
+      for (const chart of charts()) {
+        expect(chart.overlays().map((o) => [o.sec, o.label])).toEqual([
+          [45, 'Cleo'],
+          [120, 'Bolt'],
+        ]);
+      }
+      expect(charts()[0].overlays()[1].color).toBe('rgb(9, 9, 9)');
+      document.documentElement.style.removeProperty('--lf-ev-elimination');
+    });
+
+    it('removes a kind’s overlays from every chart when it is unticked', async () => {
+      await open(overlayTimeline());
+      await toggleOverlay('Specials');
+      for (const chart of charts()) {
+        expect(chart.overlays().map((o) => o.label)).toEqual(['Bolt']);
+      }
     });
   });
 
