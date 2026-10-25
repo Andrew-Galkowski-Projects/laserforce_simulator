@@ -104,7 +104,7 @@ src/
     matches/              matches.routes.ts: /matches (match-list: Match History, two server-paged
                           tables, each row's teams-cell <a> stretched over the row), /matches/new +
                           /rounds/new (setup-form, route data kind 'match' | 'round'; also uses
-                          teams/shared/form-errors), /matches/:id + /rounds/:id (match-detail,
+                          shared/form-errors), /matches/:id + /rounds/:id (match-detail,
                           round-detail: ANG-06d, layout B, from the Round API's `scoreboard`),
                           /rounds/:id/events (round-events: the Event log, ANG-06e, from
                           `rounds/:id/timeline/`; CDK virtual scroll, client-side filters),

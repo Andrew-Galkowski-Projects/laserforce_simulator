@@ -8,6 +8,7 @@ import {
   CellKey,
   CellPair,
   ComputedSightLines,
+  MapBase,
   MapHeatmap,
   MapZones,
   SightLines,
@@ -19,6 +20,7 @@ import {
   ZoneType,
 } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
+import { apiMessage } from '../shared/api-message';
 import { PixelPoint, cellKeys } from './grid';
 
 /** The Zone-size picker's options, exactly the Django editor's. */
@@ -163,7 +165,7 @@ export class MapEditorStore {
     this.openSub = forkJoin([this.maps.get(id), this.maps.zoneConfig(id)]).subscribe({
       next: ([map, config]) => {
         this._map.set(map);
-        this.savedBases = toBases(config);
+        this.savedBases = toBases(config.bases);
         this._zoneSize.set(map.confirmed_zone_size ?? DEFAULT_ZONE_SIZE);
         this._status.set('ready');
         this.loadGrid();
@@ -172,8 +174,7 @@ export class MapEditorStore {
         if (error instanceof ApiError && error.status === 404) {
           this._status.set('not-found');
         } else {
-          const detail = error instanceof ApiError ? ` ${error.message}` : '';
-          this._loadError.set(`Could not load the map.${detail}`);
+          this._loadError.set(`Could not load the map. ${apiMessage(error)}`.trimEnd());
           this._status.set('error');
         }
       },
@@ -221,7 +222,7 @@ export class MapEditorStore {
     const map = this.requireMap();
     return this.maps.replaceZoneConfig(map.id, body).pipe(
       tap((saved) => {
-        this.savedBases = toBases(saved);
+        this.savedBases = toBases(saved.bases);
         this._zoneEdit.update((state) => ({
           zones: saved.zones ?? state?.zones ?? [],
           wallMeta: saved.wall_meta,
@@ -395,8 +396,6 @@ export class MapEditorStore {
 }
 
 /** A config's Bases by type. */
-function toBases(config: ZoneConfig): Bases {
-  return Object.fromEntries(
-    config.bases.map((b) => [b.type, { x_px: b.x_px, y_px: b.y_px }]),
-  ) as Bases;
+export function toBases(bases: readonly MapBase[]): Bases {
+  return Object.fromEntries(bases.map((b) => [b.type, { x_px: b.x_px, y_px: b.y_px }])) as Bases;
 }

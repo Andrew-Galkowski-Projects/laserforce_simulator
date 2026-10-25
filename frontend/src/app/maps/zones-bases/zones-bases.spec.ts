@@ -809,6 +809,32 @@ describe('Zones & Bases mode', () => {
       await stable();
     });
 
+    it('ignores canvas edits while the save is in flight, so the response loses none', async () => {
+      await open();
+      await press('Low Wall', 'Paint wall');
+      await clickCell([0, 1]);
+      save().click();
+      await stable();
+      const { req } = expectSave();
+      const before = structuredClone(zoneEdit().zones);
+      await clickCell([2, 2]);
+      fire('pointerdown', [1, 1]);
+      fire('pointermove', [1, 2]);
+      fire('pointerup', [1, 2]);
+      await stable();
+      expect(zoneEdit().zones).toEqual(before);
+      await press('Red Base', 'Place base');
+      await clickCell([1, 0]);
+      expect(zoneEdit().bases).toEqual({});
+      await press('Red Spawn', 'Spawn brush');
+      await clickCell([0, 0]);
+      expect(zoneEdit().spawnEdited).toBe(false);
+      http.expectNone(() => true);
+      flushData(req, zoneConfig({ bases: [] }));
+      await stable();
+      expect(store().zoneConfigDirty()).toBe(false);
+    });
+
     it('sends the loaded Spawn cells, as edited, once a Spawn brush was used', async () => {
       await open();
       await press('Blue Spawn', 'Spawn brush');

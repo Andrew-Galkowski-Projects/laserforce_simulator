@@ -1,6 +1,6 @@
 // Sorts a failed Roster import into the three places the screen shows errors.
 import { ApiError } from '../../api/api-client';
-import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 
 /** The import form's one control; every envelope item with this `field` belongs to it. */
 const FILE_FIELD = 'csv_file';

@@ -11,7 +11,7 @@ import { MatOption, MatSelect } from '@angular/material/select';
 import { Router, RouterLink } from '@angular/router';
 import { Team, TeamSlotsInput } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { applyApiErrors } from '../shared/form-errors';
+import { applyApiErrors } from '../../shared/form-errors';
 import { injectNotify } from '../shared/notify';
 import { SLOTS, SlotKey } from '../shared/roster';
 import { loadRouteTeam } from '../shared/route-team';

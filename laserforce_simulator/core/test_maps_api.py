@@ -18,6 +18,7 @@ import io
 
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
+from django.http.response import HttpResponseBase
 from django.test import TestCase
 from django.urls import reverse
 from PIL import Image as PILImage
@@ -238,7 +239,7 @@ class TestMapsOriginalImage(TempMediaMixin, TestCase):
         self.api = APIClient()
         self.api.force_login(get_shared_manager())
 
-    def get_image(self, pk: int, api: APIClient | None = None):
+    def get_image(self, pk: int, api: APIClient | None = None) -> HttpResponseBase:
         return (api or self.api).get(
             reverse("arenamap-image", args=[pk]), HTTP_ACCEPT="*/*"
         )

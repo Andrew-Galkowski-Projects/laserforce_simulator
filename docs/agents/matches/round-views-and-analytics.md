@@ -324,8 +324,9 @@ before `:id`. It needs no endpoint of its own: it `forkJoin`s the Round, `/timel
   in each chart's `plugins:` array, never globally. Lines are `stepped: 'before'` and hold their
   last value to the end of the Round; the x-axis is mm:ss. Specs read its public `config`,
   because jsdom has no canvas.
-- **`chart-colors.ts`**: `readToken`, `playerColors` (shades of the Side token mixed toward
-  `--lf-text`) and `resolveColor` (a probe element turns any CSS colour into one canvas can use).
+- **`chart-colors.ts`**: `playerColors` (shades of the Side token mixed toward
+  `--lf-text`) and `resolveColor` (a probe element turns any CSS colour into one canvas can use);
+  tokens are read with `shared/read-token.ts` `readToken` (also used by the map editor palette).
 - **`round-charts.ts`** reads every token in one `palette` computed (colours plus
   `--lf-font-body`), again when a `matchMedia` listener sees the colour scheme flip. Filters are
   a `linkedSignal`, reset on each load and when you leave the page.

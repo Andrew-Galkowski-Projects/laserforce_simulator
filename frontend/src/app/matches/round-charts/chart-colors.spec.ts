@@ -1,4 +1,5 @@
-import { playerColors, readToken, resolveColor, shade } from './chart-colors';
+import { readToken } from '../../shared/read-token';
+import { playerColors, resolveColor, shade } from './chart-colors';
 import { ChartPlayer } from './event-charts';
 
 const player = (id: number, side: 'red' | 'blue'): ChartPlayer => ({

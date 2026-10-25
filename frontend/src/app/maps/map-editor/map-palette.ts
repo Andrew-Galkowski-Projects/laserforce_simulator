@@ -1,6 +1,6 @@
 // The editor canvas's colours, read from the `--lf-map-*` tokens at draw time (a canvas cannot
 // read a CSS variable): the ANG-06g probe pattern. No colour literal lives here.
-import { readToken } from '../../matches/round-charts/chart-colors';
+import { readToken } from '../../shared/read-token';
 
 /** Every colour the editor canvas paints with, plus the body font for Cell labels. */
 export interface MapPalette {

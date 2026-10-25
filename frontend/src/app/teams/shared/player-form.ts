@@ -13,7 +13,7 @@ import { MatInput } from '@angular/material/input';
 import { RouterLink } from '@angular/router';
 import { map } from 'rxjs';
 import { Player, PlayerInput, PlayerStats, Role } from '../../api/players.models';
-import { applyApiErrors } from './form-errors';
+import { applyApiErrors } from '../../shared/form-errors';
 import { STAT_GROUPS, STAT_KEYS, overallRating } from './player-stats';
 
 /** The five Preferred-role checkboxes, in the order they are emitted. */

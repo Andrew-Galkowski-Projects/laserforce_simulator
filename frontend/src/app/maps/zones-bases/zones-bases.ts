@@ -1,11 +1,10 @@
 import { Component, DestroyRef, computed, effect, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
-import { ApiError } from '../../api/api-client';
-import { BASE_TYPES, BaseType, Facing, MapBase } from '../../api/maps.models';
+import { BASE_TYPES, BaseType, Facing } from '../../api/maps.models';
 import { Cell, cellsInRect } from '../map-editor/grid';
 import { CellPointer, MapFrame, useMapLayer } from '../map-editor/map-canvas';
-import { Bases, MapEditorStore } from '../map-editor/map-editor.store';
+import { MapEditorStore, toBases } from '../map-editor/map-editor.store';
 import {
   fillCell,
   paintBases,
@@ -15,6 +14,7 @@ import {
   paintSpawns as paintSpawnCells,
   strokeCell,
 } from '../map-editor/map-paint';
+import { apiMessage } from '../shared/api-message';
 import {
   SaveMessage,
   SpawnBrush,
@@ -65,10 +65,6 @@ type Brush =
 const NONE: Brush = { kind: 'none' };
 
 const sameCell = (a: Cell, b: Cell): boolean => a[0] === b[0] && a[1] === b[1];
-
-/** A saved config's Bases by type. */
-const toBases = (bases: MapBase[]): Bases =>
-  Object.fromEntries(bases.map((b) => [b.type, { x_px: b.x_px, y_px: b.y_px }])) as Bases;
 
 /**
  * Zones & Bases mode (ANG-06h-3), ported from the Django editor's inline script: place the six
@@ -221,8 +217,7 @@ export class ZonesBasesMode {
         },
         error: (error: unknown) => {
           this.saving.set(false);
-          const detail = error instanceof ApiError ? ` ${error.message}` : '';
-          this.saveError.set(`Could not save the configuration.${detail}`);
+          this.saveError.set(`Could not save the configuration. ${apiMessage(error)}`.trimEnd());
         },
       });
   }
@@ -233,7 +228,9 @@ export class ZonesBasesMode {
     this.rampStart.set(null);
   }
 
+  /** Ignored while a save is in flight: its response replaces the edit state wholesale. */
   private pointer({ type, cell }: CellPointer): void {
+    if (this.saving()) return;
     switch (type) {
       case 'down':
         if (cell) this.down(cell);

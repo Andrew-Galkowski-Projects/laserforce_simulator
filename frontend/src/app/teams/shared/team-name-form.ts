@@ -4,7 +4,7 @@ import { MatButton } from '@angular/material/button';
 import { MatError, MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { RouterLink } from '@angular/router';
-import { applyApiErrors } from './form-errors';
+import { applyApiErrors } from '../../shared/form-errors';
 
 /** The Team name form shared by Create Team and Edit Team (`TeamForm`: `name`). */
 @Component({

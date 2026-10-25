@@ -6,14 +6,14 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatError, MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { Router, RouterLink } from '@angular/router';
-import { filter, switchMap } from 'rxjs';
-import { ApiError } from '../../api/api-client';
+import { EMPTY, Observable, expand, filter, reduce, switchMap } from 'rxjs';
 import { ArenaMap } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
-import { applyApiErrors } from '../../teams/shared/form-errors';
+import { applyApiErrors } from '../../shared/form-errors';
+import { apiMessage } from '../shared/api-message';
 
-/** The API's page-size cap: every Arena map on one page (there are only a handful). */
+/** The API's page-size cap; the list follows further pages past it. */
 const PAGE_SIZE = 100;
 
 /** `MapUploadForm.name`'s `max_length`. */
@@ -72,16 +72,26 @@ export class MapList {
     this.destroyRef.onDestroy(() => {
       for (const src of this.thumbs().values()) URL.revokeObjectURL(src);
     });
-    this.maps
-      .list({ page_size: PAGE_SIZE, ordering: 'created_at' })
+    this.listAll()
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
-        next: (page) => {
-          this.list.set(page.items);
-          page.items.filter((m) => m.image !== null).forEach((m) => this.loadThumb(m.id));
+        next: (maps) => {
+          this.list.set(maps);
+          maps.filter((m) => m.image !== null).forEach((m) => this.loadThumb(m.id));
         },
         error: () => this.loadError.set(true),
       });
+  }
+
+  /** Every Arena map, oldest first: page 1, then each further page `meta.total_pages` names. */
+  private listAll(): Observable<ArenaMap[]> {
+    const params = { page_size: PAGE_SIZE, ordering: 'created_at' };
+    return this.maps.list(params).pipe(
+      expand(({ meta }) =>
+        meta.page < meta.total_pages ? this.maps.list({ ...params, page: meta.page + 1 }) : EMPTY,
+      ),
+      reduce((all, page) => [...all, ...page.items], [] as ArenaMap[]),
+    );
   }
 
   /** The message under a field: the server's, else the client-side check's, once touched. */
@@ -146,7 +156,7 @@ export class MapList {
           this.deleted.set(`Deleted map “${map.name}”.`);
         },
         error: (err: unknown) => {
-          const reason = err instanceof ApiError ? err.message : 'Something went wrong.';
+          const reason = apiMessage(err, 'Something went wrong.');
           this.deleted.set(null);
           this.deleteError.set(`Could not delete “${map.name}”: ${reason}`);
         },

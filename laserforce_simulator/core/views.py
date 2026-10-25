@@ -35,7 +35,6 @@ _update_spawn_cells_in_zone_data = services.update_spawn_cells
 # (`ensure_default_maps`); re-exported for core/tests.py.
 _DEFAULT_MAPS = services._DEFAULT_MAPS
 _seed_defaults = services._seed_defaults
-_restore_default_images = services._restore_default_images
 
 
 def _first_form_error(form: forms.BaseForm) -> str:

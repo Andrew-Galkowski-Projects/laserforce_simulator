@@ -148,6 +148,30 @@ describe('Map list page', () => {
       await nav;
     });
 
+    it('follows every page of the list and renders all its cards', async () => {
+      await signIn();
+      harness = await RouterTestingHarness.create();
+      const nav = harness.navigateByUrl('/maps');
+      await harness.fixture.whenStable();
+      const meta = { page_size: 100, count: 3, total_pages: 2 };
+      const first = http.expectOne((r) => r.url === LIST_URL);
+      first.flush({ data: [SYRACUSE, WAREHOUSE], meta: { ...meta, page: 1 } });
+      await harness.fixture.whenStable();
+      const second = http.expectOne((r) => r.url === LIST_URL);
+      expect(second.request.params.get('page')).toBe('2');
+      expect(second.request.params.get('ordering')).toBe('created_at');
+      expect(second.request.params.get('page_size')).toBe('100');
+      second.flush({ data: [BLANK], meta: { ...meta, page: 2 } });
+      await nav;
+      await harness.fixture.whenStable();
+      expect(cards().map((c) => c.querySelector('h2')?.textContent?.trim())).toEqual([
+        expect.stringContaining('Syracuse Laser Tag'),
+        expect.stringContaining('Warehouse'),
+        expect.stringContaining('Blank'),
+      ]);
+      await answerThumbs();
+    });
+
     it('shows a card per map with its name and pixel size', async () => {
       await open();
       expect(cards().map((c) => c.querySelector('h2')?.textContent?.trim())).toEqual([

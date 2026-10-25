@@ -1,7 +1,6 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { MatButton } from '@angular/material/button';
 import { MatProgressSpinner } from '@angular/material/progress-spinner';
-import { ApiError } from '../../api/api-client';
 import { BaseType, CellKey, SightLinesInput, ZoneType } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
 import { Cell, baseCell, cellKey, keyCells } from '../map-editor/grid';
@@ -15,6 +14,7 @@ import {
   paintGridLines,
   strokeCell,
 } from '../map-editor/map-paint';
+import { apiMessage } from '../shared/api-message';
 import {
   bulkToggleSight,
   bulkToggleStrongSpots,
@@ -26,6 +26,9 @@ import {
   toggleSight,
   toggleStrongSpot,
 } from './sight-edit';
+
+/** A failed request's text when the server sent no message. */
+const SERVER_ERROR = 'Server error';
 
 /** What the Sight Lines mode shows: one Cell's LOS, one Base's tagging Cells, or a ranking. */
 export type SightView = 'zone' | BaseType | 'high_los' | 'heavy_spots';
@@ -87,8 +90,10 @@ export class SightLinesMode {
 
   constructor() {
     this.canvas.cursor.set('pointer');
-    // The store keeps the area across mode toggles (and reloads it on a Zone-size change).
-    if (this.store.sightStatus() === 'idle') this.store.loadSightLines();
+    // The store keeps a loaded area across mode toggles (and reloads it on a Zone-size change);
+    // a failed load is retried on re-entry.
+    const status = this.store.sightStatus();
+    if (status === 'idle' || status === 'error') this.store.loadSightLines();
   }
 
   /** The hint beside the controls, as the Django editor words it per view. */
@@ -153,7 +158,7 @@ export class SightLinesMode {
       error: (error: unknown) => {
         this.computing.set(false);
         this.notice.set(null);
-        this.alert.set({ tone: 'error', text: `Error: ${messageOf(error)}` });
+        this.alert.set({ tone: 'error', text: `Error: ${apiMessage(error, SERVER_ERROR)}` });
       },
     });
   }
@@ -172,7 +177,7 @@ export class SightLinesMode {
       },
       error: (error: unknown) => {
         this.saving.set(false);
-        this.alert.set({ tone: 'error', text: `Error: ${messageOf(error)}` });
+        this.alert.set({ tone: 'error', text: `Error: ${apiMessage(error, SERVER_ERROR)}` });
       },
     });
   }
@@ -199,7 +204,7 @@ export class SightLinesMode {
         this.saving.set(false);
         this.alert.set({
           tone: 'error',
-          text: `Saved ${i} of ${total} batches — retry. ${messageOf(error)}`,
+          text: `Saved ${i} of ${total} batches — retry. ${apiMessage(error, SERVER_ERROR)}`,
         });
       },
     });
@@ -376,9 +381,4 @@ function drawRanking(frame: MapFrame, ranked: readonly Cell[]): void {
 /** Fills each on-grid Cell of `keys`, `inset` px in from its edges. */
 function fillKeys(frame: MapFrame, keys: Iterable<CellKey>, colour: string, inset = 0): void {
   for (const cell of keyCells(keys)) fillCell(frame, cell, colour, inset);
-}
-
-/** The server's message for a failed request. */
-function messageOf(error: unknown): string {
-  return error instanceof ApiError ? error.message : 'Server error';
 }

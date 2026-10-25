@@ -190,6 +190,37 @@ describe('Sight Lines mode', () => {
       const error = page().querySelector('app-sight-lines-mode [role="alert"]');
       expect(text(error)).toBe('Could not load the sight lines.');
     });
+
+    it('retries a failed load when the mode is left and entered again', async () => {
+      await signIn();
+      harness = await RouterTestingHarness.create();
+      const nav = harness.navigateByUrl('/maps/4/editor');
+      await stable();
+      answerEditorLoads(editorMap());
+      await nav;
+      await stable();
+      button('Sight Lines')?.click();
+      await stable();
+      expectMapRequest(4, 'sight-lines/').flush(
+        { errors: [{ code: 'server_error', message: 'Boom.', field: null }], meta: {} },
+        { status: 500, statusText: 'Server Error' },
+      );
+      await stable();
+      expect(store().sightStatus()).toBe('error');
+      // The failure cancelled the first load's other two GETs.
+      const siblings = http.match(
+        (r) => r.url.endsWith('/ranked-cells/') || r.url.endsWith('/strong-spots/'),
+      );
+      expect(siblings.map((r) => r.cancelled)).toEqual([true, true]);
+      button('Zones & Bases')?.click();
+      await stable();
+      button('Sight Lines')?.click();
+      await stable();
+      answerSightLoads();
+      await stable();
+      expect(store().sightStatus()).toBe('ready');
+      expect(page().querySelector('app-sight-lines-mode [role="alert"]')).toBeNull();
+    });
   });
 
   /** Clicks Save Sight Lines and returns the PUT it sends. */
