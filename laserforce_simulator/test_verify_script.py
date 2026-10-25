@@ -82,3 +82,21 @@ class SelectChangesTests(TestCase):
         mode, data = verify.select_changes(compute)
         self.assertEqual(mode, "branch")
         self.assertEqual(data["changed"], ["b.py"])
+
+
+class BucketTests(TestCase):
+    def test_a_django_template_is_a_template(self) -> None:
+        buckets = changed_files.bucket(
+            ["laserforce_simulator/templates/matches/x.html"]
+        )
+        self.assertEqual(
+            buckets["templates"], ["laserforce_simulator/templates/matches/x.html"]
+        )
+
+    def test_an_angular_template_is_other(self) -> None:
+        # An Angular component's .html is no Django template: it must not
+        # trigger the full pytest suite on a frontend-only branch (ANG-06g retro).
+        path = "frontend/src/app/matches/round-charts/round-charts.html"
+        buckets = changed_files.bucket([path])
+        self.assertEqual(buckets["templates"], [])
+        self.assertEqual(buckets["other"], [path])

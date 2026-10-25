@@ -64,6 +64,9 @@ Only update docs directly affected by the branch changes. Do not rewrite section
 
 Read `PLAN.md` in full.
 
+A task that is a numbered item under an umbrella heading (ANG-06's `5c. **Title (ID)**`)
+moves with the same script.
+
 For each completed task visible in the diff:
 - Find the matching entry in PLAN.md (match by feature ID, e.g. FIX-01, MAP-01, STAT-02).
 - Write its shipped note: a few sentences on what shipped and, where the implementation differed from the plan (e.g. a field the plan didn't mention), what changed.
@@ -89,7 +92,7 @@ Docs written before the task promise its arrival ("stays 403 until ANG-03",
 `CODING_STANDARDS.md` and the ADRs included:
 
 ```
-git grep -n "<TASK-ID>" -- "*.md"
+git grep -n "<TASK-ID>" -- ":/*.md"
 ```
 
 Rewrite each forward reference to the shipped state. When the task changed a

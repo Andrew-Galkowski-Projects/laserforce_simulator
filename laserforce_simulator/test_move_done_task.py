@@ -257,6 +257,67 @@ class SequencingSummaryTests(TestCase):
         self.assertEqual(result.warnings, [])
 
 
+_ITEM_PLAN = """# Development Plan
+
+---
+
+## Phase 8
+
+### ANG-06 · Migrate views
+
+Intro.
+
+5b. **[DONE] Playback** — done (ANG-06f, in `PLAN-completed.md`).
+5c. **Event charts (ANG-06g)** — build the four charts. RES-05 attaches here. Spec: #350
+
+   **Grill:**
+   - **Library:** Chart.js.
+6. **Map editor** — most complex
+
+**Note:** after.
+
+---
+"""
+
+
+class NumberedItemTests(TestCase):
+    """A task that is a numbered item under an umbrella heading (ANG-06's ``5c.``)."""
+
+    def test_moves_as_a_level_four_section_with_its_spec_and_note(self) -> None:
+        result = _move(plan=_ITEM_PLAN, task_id="ANG-06g")
+        self.assertTrue(
+            result.completed.endswith("""## Phase 8
+
+#### ANG-06g · [DONE] Event charts
+
+Spec: #350
+
+**[DONE] Shipped (2026-10-24).** It works.
+
+Build the four charts. RES-05 attaches here.
+
+**Grill:**
+- **Library:** Chart.js.
+
+---
+"""),
+            result.completed,
+        )
+
+    def test_leaves_a_done_pointer_and_the_next_item(self) -> None:
+        plan = _move(plan=_ITEM_PLAN, task_id="ANG-06g").plan
+        self.assertIn(
+            "5c. **[DONE] Event charts** (ANG-06g, in `PLAN-completed.md`).\n"
+            "6. **Map editor** — most complex\n",
+            plan,
+        )
+        self.assertNotIn("Grill", plan)
+
+    def test_a_done_item_is_not_found(self) -> None:
+        with self.assertRaisesRegex(move_done_task.MoveError, "not found"):
+            _move(plan=_ITEM_PLAN, task_id="ANG-06f")
+
+
 class FailureTests(TestCase):
     def assert_refused(self, plan: str, task_id: str, reason: str) -> None:
         with self.assertRaisesRegex(move_done_task.MoveError, reason):

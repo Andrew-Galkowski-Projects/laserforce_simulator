@@ -140,7 +140,8 @@ def bucket(paths: list[str]) -> dict[str, list[str]]:
             out["migrations"].append(p)
         elif p.endswith(".py"):
             out["python"].append(p)
-        elif p.endswith((".html", ".htm")):
+        elif p.endswith((".html", ".htm")) and parts[0] != "frontend":
+            # Angular component templates are frontend code, not Django templates.
             out["templates"].append(p)
         else:
             out["other"].append(p)

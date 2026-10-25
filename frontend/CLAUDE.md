@@ -156,6 +156,8 @@ colours in light mode, all-mono JetBrains Mono.
   (a layout concern for ANG-06). Data screens (team strips, stat tables, the log) are hand-rolled.
 - **Font:** JetBrains Mono is self-hosted by `@fontsource/jetbrains-mono` (400 / 500 / 700, in the
   `angular.json` `styles` list). Never add a Google Fonts link or other font CDN.
+- **Canvas** (Chart.js, the playback map) ignores CSS: pass it token values read at runtime,
+  `--lf-font-body` as well as the colours ([ADR-0045](../docs/adr/0045-chart-js-for-angular-event-charts.md)).
 - `theme.spec.ts` compiles the real `styles.scss` into jsdom and reads the computed tokens and
   Material roles on the document root (and `--side*` on `[data-lf-side]` elements) in light and
   dark (it emulates `prefers-color-scheme` by rewriting the media condition, since jsdom matches no

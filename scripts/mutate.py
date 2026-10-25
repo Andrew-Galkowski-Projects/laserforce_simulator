@@ -2,9 +2,9 @@
 """Put bugs back on purpose and check the tests catch each one.
 
 ``/next-feature`` Step 7 (and the implementers' red pairing): each mutation
-replaces one exact snippet of the target file, runs pytest, and records which
-tests failed. The target is restored byte for byte after every run, also when
-pytest crashes. A shell loop of ``sed`` and ``cp`` is refused by the worktree
+replaces one exact snippet of the target file, runs the tests, and records
+which failed. The target is restored byte for byte after every run, also when
+the run crashes. A shell loop of ``sed`` and ``cp`` is refused by the worktree
 isolation guard, so this does it in one plain command.
 
 The mutations file is JSON, a list of ``[name, old, new]``; ``old`` must occur
@@ -14,12 +14,19 @@ missing or ambiguous.
 Usage::
 
     python scripts/mutate.py <target file> <mutations.json> -- <pytest args>
+    python scripts/mutate.py <target file> <mutations.json> --run -- <any command>
+
+``--run`` takes the words after ``--`` as the whole command (Vitest:
+``npm --prefix frontend exec -- ng test --watch=false --include=<spec>``), run
+with ``NO_COLOR=1``. Either way a non-zero exit is a caught mutation.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -38,13 +45,21 @@ class Outcome(NamedTuple):
     failed: list[str]
 
 
-def failed_tests(pytest_output: str) -> list[str]:
-    """Node ids from pytest's ``FAILED <id> - <reason>`` summary lines."""
-    return [
-        line.removeprefix("FAILED ").split(" - ", 1)[0].replace("\\", "/")
-        for line in pytest_output.splitlines()
-        if line.startswith("FAILED ")
-    ]
+# Vitest: `` FAIL  |<project>| <file> > <describe> > <test>``.
+_VITEST_FAIL = re.compile(r"^\s*FAIL\s+(?:\|[^|]+\|\s+)?(.+?)\s*$")
+
+
+def failed_tests(output: str) -> list[str]:
+    """Failed tests from pytest's ``FAILED <id> - <reason>`` lines or Vitest's ``FAIL`` lines."""
+    failed = []
+    for line in output.splitlines():
+        if line.startswith("FAILED "):
+            failed.append(
+                line.removeprefix("FAILED ").split(" - ", 1)[0].replace("\\", "/")
+            )
+        elif match := _VITEST_FAIL.match(line):
+            failed.append(match.group(1))
+    return failed
 
 
 def _read(path: Path) -> str:
@@ -61,6 +76,15 @@ def mutate(
     target: Path, mutations: list[Mutation], pytest_args: list[str], cwd: Path
 ) -> list[Outcome]:
     """Run pytest once per mutation of ``target``; return each outcome in order."""
+    return mutate_with(
+        target, mutations, [sys.executable, "-m", "pytest", *pytest_args], cwd
+    )
+
+
+def mutate_with(
+    target: Path, mutations: list[Mutation], command: list[str], cwd: Path
+) -> list[Outcome]:
+    """Run ``command`` once per mutation of ``target``; return each outcome in order."""
     original = _read(target)
     outcomes = []
     try:
@@ -72,13 +96,19 @@ def mutate(
                 continue
             _write(target, original.replace(mutation.old, mutation.new))
             run = subprocess.run(
-                [sys.executable, "-m", "pytest", *pytest_args],
+                command,
                 cwd=cwd,
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
+                env={**os.environ, "NO_COLOR": "1"},
+                shell=sys.platform == "win32" and Path(command[0]).suffix == "",
             )
             status = "caught" if run.returncode != 0 else "survived"
-            outcomes.append(Outcome(mutation.name, status, failed_tests(run.stdout)))
+            outcomes.append(
+                Outcome(mutation.name, status, failed_tests(run.stdout + run.stderr))
+            )
     finally:
         _write(target, original)
     return outcomes
@@ -88,12 +118,20 @@ def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("target", type=Path, help="the file to mutate")
     parser.add_argument("mutations", type=Path, help="JSON list of [name, old, new]")
-    parser.add_argument("pytest_args", nargs="*", help="after --: passed to pytest")
-    args = parser.parse_args(argv)
+    parser.add_argument(
+        "--run", action="store_true", help="the words after -- are the whole command"
+    )
+    # Split at the first `--` by hand: argparse would eat a second one the
+    # command needs (`npm exec -- ng test`).
+    argv = sys.argv[1:] if argv is None else argv
+    split = argv.index("--") if "--" in argv else len(argv)
+    args = parser.parse_args(argv[:split])
+    tail = argv[split + 1 :]
     mutations = [
         Mutation(*m) for m in json.loads(args.mutations.read_text(encoding="utf-8"))
     ]
-    outcomes = mutate(args.target, mutations, args.pytest_args, cwd=Path.cwd())
+    command = tail if args.run else [sys.executable, "-m", "pytest", *tail]
+    outcomes = mutate_with(args.target, mutations, command, cwd=Path.cwd())
     for outcome in outcomes:
         label = "caught" if outcome.status == "caught" else outcome.status.upper()
         detail = f": {', '.join(outcome.failed)}" if outcome.failed else ""
