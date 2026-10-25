@@ -84,6 +84,30 @@ class SelectChangesTests(TestCase):
         self.assertEqual(data["changed"], ["b.py"])
 
 
+def _scope(targets: list[str], full_suite: bool) -> dict:
+    return {
+        "nothing_changed": False,
+        "pytest_targets": targets,
+        "pytest_full_suite": full_suite,
+    }
+
+
+class PytestScopeTests(TestCase):
+    def test_no_python_change_skips_pytest(self) -> None:
+        # ANG-07 retro: a Docker / docs-only branch ran a bare `pytest -q`,
+        # which is the full suite, because empty targets were never told
+        # apart from the no-mapping fallback.
+        self.assertIsNone(verify.pytest_scope(_scope([], False)))
+
+    def test_unmapped_code_runs_the_full_suite(self) -> None:
+        self.assertEqual(verify.pytest_scope(_scope([], True)), [])
+
+    def test_mapped_code_runs_its_targets(self) -> None:
+        self.assertEqual(
+            verify.pytest_scope(_scope(["teams/tests/"], False)), ["teams/tests/"]
+        )
+
+
 class BucketTests(TestCase):
     def test_a_django_template_is_a_template(self) -> None:
         buckets = changed_files.bucket(

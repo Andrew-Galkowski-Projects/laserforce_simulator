@@ -134,7 +134,10 @@ function in a `*services.py` module, or a DRF endpoint tested through the API
 client. Every new public name, signature and return shape at the seam goes in
 the spec's Implementation Decisions. Grep each name the spec cites that already
 exists (a model field, a service method) before publishing: ANG-06a's spec said
-`currentUser().player` where the field is `self_insert`. For every field the
+`currentUser().player` where the field is `self_insert`. For every HTTP assertion
+the spec makes (a status, a body text, a header), `curl` the real endpoint once:
+ANG-07's spec expected `/` to show `base.html`'s title, and anonymous `/`
+redirects to the sign-in page. For every field the
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
 exact key-set asserts) and name each hit in the spec as a test to update:
 ANG-06b's full suite found one that pinned `overall_rating` absent.

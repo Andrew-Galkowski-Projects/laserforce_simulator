@@ -116,6 +116,20 @@ def select_changes(compute: Callable[..., Any]) -> tuple[str, Any]:
     return "branch", compute(base="main", mode="branch")
 
 
+def pytest_scope(data: Any) -> list[str] | None:
+    """The pytest targets to run: ``[]`` is the full suite, ``None`` is a skip.
+
+    No targets is the full suite only when code changed with no mapping
+    (``pytest_full_suite``); otherwise no Python or template changed, and a
+    bare ``pytest`` would run everything for nothing (ANG-07 retro).
+    """
+    if data["nothing_changed"]:
+        return None
+    if data["pytest_targets"] or data["pytest_full_suite"]:
+        return list(data["pytest_targets"])
+    return None
+
+
 def main() -> int:
     mode, data = select_changes(cf.compute)
     repo_root = str(data["repo_root"])
@@ -219,10 +233,12 @@ def main() -> int:
         results["mypy"] = ("SKIP", "no changed .py files")
 
     # --- pytest ---
+    targets = pytest_scope(data)
     if data["nothing_changed"]:
         results["pytest"] = ("SKIP", "nothing changed")
+    elif targets is None:
+        results["pytest"] = ("SKIP", "no Python changes")
     else:
-        targets = list(data["pytest_targets"])
         code, out = _run(_tool("pytest", "-q", *targets), cwd=django_dir)
         scope = " ".join(targets) if targets else "full suite"
         results["pytest"] = (

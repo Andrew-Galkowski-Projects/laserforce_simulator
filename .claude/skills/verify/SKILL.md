@@ -48,7 +48,7 @@ The script:
    relation or check the JSON in Python.
 3. Derives the pytest targets from the authoritative app→tests mapping in
    `changed_files.py` and runs `pytest -q` against them (full suite only if a
-   change matched no mapping).
+   change matched no mapping; SKIP when no Python or Django template changed).
 3b. When anything under `frontend/` changed, runs `npm run lint`,
    `format:check` and `test:ci` in `frontend/` as the `ng-lint`, `prettier`
    and `vitest` rows (SKIP otherwise). A missing `frontend/node_modules` is a
