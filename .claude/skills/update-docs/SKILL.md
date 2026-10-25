@@ -66,9 +66,8 @@ Read `PLAN.md` in full.
 
 For each completed task visible in the diff:
 - Find the matching entry in PLAN.md (match by feature ID, e.g. FIX-01, MAP-01, STAT-02).
-- If it is not already marked `- completed`, append `- completed` on the line after its description.
-- If the implementation differed from the plan (e.g. a field was added that the plan didn't mention), add a brief `- note: <what changed>` line.
-- Then move the finished section out of `PLAN.md` into `PLAN-completed.md`, under the same `##` phase heading (add the heading if it's missing), and drop its ID from `PLAN.md`'s **Sequencing Summary**. `PLAN.md` holds open work only (see CLAUDE.md, **Issue tracker**).
+- Write its shipped note: a few sentences on what shipped and, where the implementation differed from the plan (e.g. a field the plan didn't mention), what changed.
+- Then move the finished section with `python scripts/move_done_task.py <ID> "<shipped note>"` (through the Bash tool, which keeps the quotes; `--date YYYY-MM-DD` for a past merge date). It marks the heading `[DONE]`, inserts `**[DONE] Shipped (<date>).** <note>`, appends the section under the same `##` heading in `PLAN-completed.md` (adding it if missing), leaves a one-line pointer and drops the ID from the **Sequencing Summary**. Fix by hand each line it prints a `WARNING` for (a range or prose mention it won't edit). `PLAN.md` holds open work only (see CLAUDE.md, **Issue tracker**).
 
 Do NOT add new plan items, modify future phases, or rewrite prose — only mark items done and add implementation notes where relevant.
 

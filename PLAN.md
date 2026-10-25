@@ -44,15 +44,7 @@ PERF-06 (rebalance the CI shards after PERF-05) is **[DONE]**; see `PLAN-complet
 
 TEST-01 (keep test media writes out of the real `MEDIA_ROOT`) is **[DONE]**; see `PLAN-completed.md`.
 
-### TOOL-01 · Script the PLAN.md to PLAN-completed.md move
-
-**Prio: Low (found 2026-10-24, PERF-02 retro).** `/update-docs` Step 3 moves a shipped task's
-section by hand every time (PERF-01, PERF-03, PERF-02), and PERF-02's one-off script dropped
-the `---` rule before the next phase heading. A `scripts/move_done_task.py <ID> <shipped-note>`
-would mark the heading `[DONE]`, insert the shipped note, move the section under the same `##`
-heading in `PLAN-completed.md` (adding it if missing), leave a one-line `[DONE]` pointer, drop
-the ID from the **Sequencing Summary**, and keep every separator. Tests at the pure
-text-transform seam, like `test_watch_pr_ci.py`. `/update-docs` Step 3 then calls it.
+TOOL-01 (script the PLAN.md to PLAN-completed.md move) is **[DONE]**; see `PLAN-completed.md`.
 
 ---
 
@@ -302,7 +294,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
