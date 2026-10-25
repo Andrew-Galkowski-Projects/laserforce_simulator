@@ -1,0 +1,132 @@
+<div class="zb-controls">
+  <span class="zb-label">Place base</span>
+  <div class="zb-group" role="group" aria-label="Place base">
+    @for (type of baseTypes; track type) {
+      <button
+        mat-stroked-button
+        type="button"
+        [class.zb-active]="selectedBase() === type"
+        [attr.aria-pressed]="selectedBase() === type"
+        (click)="toggleBase(type)"
+      >
+        {{ baseLabels[type] }}
+      </button>
+    }
+  </div>
+  <button mat-stroked-button type="button" (click)="clearBases()">Clear All Bases</button>
+</div>
+
+<div class="zb-controls">
+  <span class="zb-label">Paint wall</span>
+  <div class="zb-group" role="group" aria-label="Paint wall">
+    <button
+      mat-stroked-button
+      type="button"
+      [class.zb-active]="wallType() === null"
+      [attr.aria-pressed]="wallType() === null"
+      (click)="armWall(null)"
+    >
+      None
+    </button>
+    @for (wall of wallBrushes; track wall.type) {
+      <button
+        mat-stroked-button
+        type="button"
+        [class.zb-active]="wallType() === wall.type"
+        [attr.aria-pressed]="wallType() === wall.type"
+        (click)="armWall(wall.type)"
+      >
+        {{ wall.label }}
+      </button>
+    }
+  </div>
+  @if (wallType() === 5) {
+    <label class="zb-field">
+      <span>Facing</span>
+      <select id="zb-facing" (change)="pickFacing($event)">
+        @for (f of facings; track f) {
+          <option [value]="f" [selected]="f === facing()">{{ f }}</option>
+        }
+      </select>
+    </label>
+  }
+</div>
+
+<div class="zb-controls">
+  <span class="zb-label">Elevation</span>
+  <div class="zb-group" role="group" aria-label="Elevation">
+    @for (tool of elevationTools; track tool.label) {
+      <button
+        mat-stroked-button
+        type="button"
+        [class.zb-active]="elevationTool() === tool.tool"
+        [attr.aria-pressed]="elevationTool() === tool.tool"
+        (click)="armElevation(tool.tool)"
+      >
+        {{ tool.label }}
+      </button>
+    }
+  </div>
+  @if (elevationTool() === 'paint') {
+    <label class="zb-field">
+      <span>Value</span>
+      <select id="zb-elevation" (change)="pickElevation($event)">
+        @for (v of elevationValues; track v) {
+          <option [value]="v" [selected]="v === elevationValue()">{{ v.toFixed(1) }}</option>
+        }
+      </select>
+    </label>
+    <small class="zb-hint">
+      Drag to paint elevation. Wall height: add <code>height</code> to wall_meta via JSON.
+    </small>
+  }
+  @if (elevationTool() === 'ramp') {
+    <small class="zb-hint">
+      Paint elevation on two cells first, then click each to fill the rectangle between them using
+      those elevations as the ramp endpoints.
+    </small>
+  }
+</div>
+
+<div class="zb-controls">
+  <span class="zb-label">Spawn brush</span>
+  <div class="zb-group" role="group" aria-label="Spawn brush">
+    @for (s of spawnBrushes; track s.label) {
+      <button
+        mat-stroked-button
+        type="button"
+        [class.zb-active]="spawnBrush() === s.brush"
+        [attr.aria-pressed]="spawnBrush() === s.brush"
+        (click)="armSpawn(s.brush)"
+      >
+        {{ s.label }}
+      </button>
+    }
+  </div>
+  <small class="zb-hint">
+    Select spawn brush then click cells. Auto-generated on Compute Sight Lines; manual edits
+    override.
+  </small>
+</div>
+
+<div class="zb-controls">
+  <button
+    mat-stroked-button
+    type="button"
+    [class.zb-active]="bulk()"
+    [attr.aria-pressed]="bulk()"
+    (click)="toggleBulk()"
+  >
+    Bulk Edit: {{ bulk() ? 'On' : 'Off' }}
+  </button>
+  <button mat-flat-button type="button" [disabled]="saving() || !store.zoneEdit()" (click)="save()">
+    Save Configuration
+  </button>
+</div>
+
+<p class="zb-message" role="status" [class.zb-warning]="message()?.kind === 'warning'">
+  {{ message()?.text }}
+</p>
+@if (saveError(); as error) {
+  <p class="zb-error" role="alert">{{ error }}</p>
+}

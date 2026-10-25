@@ -1,0 +1,70 @@
+// Zones & Bases controls. Colours come from the --lf-* tokens only (ADR-0043); the canvas reads
+// the --lf-map-* tokens at draw time through `frame.palette`.
+:host {
+  display: block;
+}
+
+.zb-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.zb-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--lf-text-muted);
+}
+
+.zb-controls + .zb-controls {
+  margin-top: 0.5rem;
+}
+
+.zb-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+
+  select {
+    padding: 0.25rem 0.4rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+    color: var(--lf-text);
+    font: inherit;
+  }
+}
+
+.zb-hint {
+  font-style: italic;
+  color: var(--lf-text-muted);
+}
+
+.zb-message {
+  margin: 0.5rem 0 0;
+  min-height: 1lh;
+
+  &.zb-warning {
+    padding: 0.4rem 0.6rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+  }
+}
+
+.zb-error {
+  margin: 0.5rem 0 0;
+  color: var(--lf-side-red-text);
+}
+
+.zb-group {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+
+  .zb-active {
+    background: color-mix(in srgb, var(--lf-accent) 18%, transparent);
+    border-color: var(--lf-accent);
+  }
+}
