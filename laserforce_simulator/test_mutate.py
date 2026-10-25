@@ -66,6 +66,14 @@ class MutateTests(TestCase):
         self.assertEqual(missing.status, "not found")
         self.assertEqual(ambiguous.status, "ambiguous")
 
+    def test_a_multi_line_pattern_matches_a_crlf_file(self) -> None:
+        # JSON patterns spell line breaks as \n; a Windows checkout has CRLF.
+        [outcome] = self._mutate(
+            ("plus to minus", "(a, b):\n    return a + b", "(a, b):\n    return a - b")
+        )
+        self.assertEqual(outcome.status, "caught")
+        self.assertEqual(self.target.read_bytes(), _CALC)
+
     def test_target_is_restored_byte_for_byte(self) -> None:
         self._mutate(("plus to minus", "a + b", "a - b"), ("no-op", "b\r\n", "b \r\n"))
         self.assertEqual(self.target.read_bytes(), _CALC)
