@@ -24,6 +24,11 @@ export class MapsService {
     return this.api.getRaw(`maps/${id}/processed-image/`);
   }
 
+  /** The original uploaded image (raw PNG / JPEG, not enveloped): the map list thumbnail. */
+  image(id: number): Observable<Blob> {
+    return this.api.getRaw(`maps/${id}/image/`);
+  }
+
   /** Multipart POST of `name` + `image`; resolves to the new map (201). */
   upload(body: MapUploadInput): Observable<ArenaMap> {
     const formData = new FormData();

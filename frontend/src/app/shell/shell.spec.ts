@@ -6,6 +6,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
 import { signIn } from '../api/testing/auth-fixtures';
 import { releaseMatchesLoads } from '../matches/testing/matches-loads';
+import { releaseMapsLoads } from '../maps/testing/maps-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
@@ -57,6 +58,7 @@ describe('App shell (layout B)', () => {
   afterEach(() => {
     releaseTeamsLoads();
     releaseMatchesLoads();
+    releaseMapsLoads();
     http.verify();
     delete (window as Partial<Window>).matchMedia;
   });
@@ -117,6 +119,16 @@ describe('App shell (layout B)', () => {
     links.find((a) => a.textContent?.trim() === 'Matches')?.click();
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/matches');
+  });
+
+  it('has a Maps entry right after Matches that opens /maps', async () => {
+    await open('/teams');
+    const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
+    const labels = links.map((a) => a.textContent?.trim());
+    expect(labels.indexOf('Maps')).toBe(labels.indexOf('Matches') + 1);
+    links.find((a) => a.textContent?.trim() === 'Maps')?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe('/maps');
   });
 
   it('keeps the sidebar open beside the page at 768px and wider, with no menu toggle', async () => {

@@ -51,6 +51,7 @@ function arenaMap(id: number, name: string): ArenaMap {
     img_height: 600,
     created_at: '2026-10-22T12:00:00Z',
     has_confirmed_config: true,
+    confirmed_zone_size: 50,
   };
 }
 

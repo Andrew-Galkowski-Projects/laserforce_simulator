@@ -19,6 +19,7 @@ const MAP: ArenaMap = {
   img_height: 600,
   created_at: '2026-10-21T12:00:00Z',
   has_confirmed_config: true,
+  confirmed_zone_size: 40,
 };
 
 describe('MapsService', () => {
@@ -68,6 +69,16 @@ describe('MapsService', () => {
     const png = new Blob([new Uint8Array([137, 80, 78, 71])], { type: 'image/png' });
     req.flush(png);
     expect(await result).toBe(png);
+  });
+
+  it("fetches a Map's original image as a raw Blob", async () => {
+    const result = firstValueFrom(maps.image(7));
+    const req = http.expectOne(`${BASE}/maps/7/image/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.responseType).toBe('blob');
+    const jpeg = new Blob([new Uint8Array([255, 216, 255])], { type: 'image/jpeg' });
+    req.flush(jpeg);
+    expect(await result).toBe(jpeg);
   });
 
   it('surfaces an unknown Map as ApiError 404', async () => {

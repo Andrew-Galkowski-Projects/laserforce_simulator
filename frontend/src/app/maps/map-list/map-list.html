@@ -1,0 +1,88 @@
+<h1>Arena Maps</h1>
+
+@if (deleted(); as message) {
+  <p class="map-list__status" role="status">{{ message }}</p>
+}
+@if (deleteError(); as message) {
+  <p class="map-list__error" role="alert">{{ message }}</p>
+}
+
+@if (loadError()) {
+  <p class="map-list__error" role="alert">Could not load the maps. Please try again.</p>
+} @else if (list(); as maps) {
+  @if (maps.length === 0) {
+    <p class="map-list__empty">No maps found.</p>
+  } @else {
+    <div class="map-list__grid">
+      @for (map of maps; track map.id) {
+        <article class="map-card">
+          @if (thumbs().get(map.id); as src) {
+            <img class="map-card__thumb" [src]="src" [alt]="map.name" />
+          } @else {
+            <div class="map-card__thumb map-card__thumb--none">No image</div>
+          }
+          <div class="map-card__body">
+            <h2 class="map-card__name">
+              {{ map.name }}
+              @if (map.is_default) {
+                <span class="map-card__badge map-card__badge--default">Default</span>
+              }
+            </h2>
+            @if (map.img_width !== null && map.img_height !== null) {
+              <p class="map-card__size">{{ map.img_width }} &times; {{ map.img_height }} px</p>
+            }
+            @if (map.confirmed_zone_size !== null) {
+              <span class="map-card__badge map-card__badge--configured"
+                >Configured — {{ map.confirmed_zone_size }}px zones</span
+              >
+            } @else {
+              <span class="map-card__badge map-card__badge--unconfigured">No zone config</span>
+            }
+          </div>
+          <div class="map-card__actions">
+            <a mat-flat-button [routerLink]="['/maps', map.id, 'editor']">Open Editor</a>
+            <button mat-stroked-button type="button" (click)="remove(map)">Delete</button>
+          </div>
+        </article>
+      }
+    </div>
+  }
+}
+
+<section class="map-upload" aria-labelledby="map-upload-heading">
+  <h2 id="map-upload-heading">Upload New Map</h2>
+  <form [formGroup]="uploadForm" (ngSubmit)="upload()" novalidate>
+    @for (message of uploadErrors(); track $index) {
+      <p class="map-list__error" role="alert">{{ message }}</p>
+    }
+    <mat-form-field appearance="outline">
+      <mat-label>Map Name</mat-label>
+      <input
+        matInput
+        formControlName="name"
+        autocomplete="off"
+        required
+        [attr.maxlength]="nameMaxLength"
+      />
+      @if (fieldError('name'); as message) {
+        <mat-error data-field-error="name">{{ message }}</mat-error>
+      }
+    </mat-form-field>
+    <div class="map-upload__file">
+      <label for="map-upload-file">Image File (PNG, JPG)</label>
+      <input
+        id="map-upload-file"
+        type="file"
+        accept="image/png,image/jpeg,image/jpg"
+        required
+        (change)="pickFile($event)"
+      />
+      @if (fieldError('image'); as message) {
+        <p class="map-upload__file-error" data-field-error="image">{{ message }}</p>
+      }
+    </div>
+    <div class="map-upload__actions">
+      <button mat-flat-button type="submit" [disabled]="uploading()">Upload &amp; Edit</button>
+    </div>
+  </form>
+</section>

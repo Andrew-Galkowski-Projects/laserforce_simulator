@@ -16,6 +16,8 @@ export interface ArenaMap {
   created_at: string;
   /** True when the map has a confirmed zone config (usable for simulation). */
   has_confirmed_config: boolean;
+  /** The latest confirmed config's Zone size in px; null exactly when `has_confirmed_config` is false. */
+  confirmed_zone_size: number | null;
 }
 
 /** `MapUploadForm` fields, sent as multipart `name` + `image`. */

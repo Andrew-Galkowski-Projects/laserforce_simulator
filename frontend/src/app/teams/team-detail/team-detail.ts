@@ -11,7 +11,7 @@ import { injectNotify } from '../shared/notify';
 import { ROLE_LABELS, SLOTS, benchPlayers } from '../shared/roster';
 import { loadRouteTeam } from '../shared/route-team';
 import { TeamNotFound } from '../shared/team-not-found';
-import { ConfirmDialog, ConfirmDialogData } from './confirm-dialog';
+import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
 
 /**
  * One Active Slots row: the slot's label, the slotted Player id and that Player, or `null`

@@ -1,0 +1,159 @@
+// The Arena maps list (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+:host {
+  display: block;
+}
+
+h1 {
+  margin: 0 0 1.5rem;
+  font-family: var(--lf-font-heading);
+}
+
+.map-list__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(16rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.map-list__empty {
+  margin: 0 0 2rem;
+  color: var(--lf-text-muted);
+}
+
+.map-list__error,
+.map-list__status {
+  margin: 0 0 1rem;
+  padding: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: var(--lf-radius);
+}
+
+.map-list__error {
+  color: var(--mat-sys-error);
+}
+
+.map-list__status {
+  color: var(--lf-ev-resupply);
+}
+
+.map-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+}
+
+.map-card__thumb {
+  display: block;
+  width: 100%;
+  height: 11.25rem;
+  object-fit: cover;
+  background: var(--lf-surface-alt);
+}
+
+.map-card__thumb--none {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--lf-text-muted);
+}
+
+.map-card__body {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+  padding: 1rem 1rem 0.5rem;
+}
+
+.map-card__name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.map-card__size {
+  margin: 0;
+  font-family: var(--lf-font-numeric);
+  font-size: 0.875rem;
+  color: var(--lf-text-muted);
+}
+
+.map-card__badge {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: var(--lf-radius);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.map-card__badge--default {
+  color: var(--lf-text-muted);
+}
+
+.map-card__badge--configured {
+  color: var(--lf-ev-resupply);
+  background: color-mix(in srgb, var(--lf-ev-resupply) 12%, transparent);
+}
+
+.map-card__badge--unconfigured {
+  color: var(--lf-ev-missile);
+  background: color-mix(in srgb, var(--lf-ev-missile) 12%, transparent);
+}
+
+.map-card__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: auto;
+  padding: 0.5rem 1rem 1rem;
+}
+
+.map-upload {
+  max-width: 40rem;
+  padding: 1.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+
+  h2 {
+    margin: 0 0 1rem;
+    font-family: var(--lf-font-heading);
+    font-size: 1.125rem;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+}
+
+.map-upload__file {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+
+  input {
+    max-width: 100%;
+    color: var(--lf-text);
+  }
+}
+
+.map-upload__file-error {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--mat-sys-error);
+}
+
+.map-upload__actions {
+  margin-top: 0.5rem;
+}
