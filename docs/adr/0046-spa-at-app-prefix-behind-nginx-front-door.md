@@ -28,6 +28,8 @@ The base href is a Docker build flag only, so `angular.json`, `environment.prod.
 - **Fly.io stays Django-only.** Fly runs one image per machine, so a sidecar doesn't map onto it.
   Serving the SPA there is a follow-up task.
 - The self-hosted Tailscale handler points at nginx, not at Django. nginx keeps the incoming
-  `X-Forwarded-Proto` so Django still sees https behind Funnel.
+  `X-Forwarded-Proto` so Django still sees https behind Funnel. That trusts the first hop:
+  Tailscale's proxy rewrites the header, and the dev stack is local-only (its directly published
+  Django `:8000` trusted the header already).
 - Links to `/app/...` shared before ANG-08 break when the SPA moves to `/`, unless ANG-08 adds a
   redirect.

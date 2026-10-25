@@ -1,8 +1,10 @@
 # ANG-07 (ADR-0046): the SPA at /app/, everything else proxied to Django.
-# Rendered by the nginx image's envsubst: only ${DJANGO_UPSTREAM} and
-# ${NGINX_PORT} are filled in; nginx's own $variables are left alone.
+# Rendered by the nginx image's envsubst: only ${DJANGO_UPSTREAM}, ${NGINX_PORT}
+# and ${NGINX_LOCAL_RESOLVERS} are filled in; nginx's own $variables are left alone.
 
 # Keep https from Tailscale Funnel (or any TLS proxy in front); else our own scheme.
+# The header is trusted from the first hop: Tailscale's proxy rewrites it, and the dev
+# stack is local-only (Django's own published :8000 trusted it already).
 map $http_x_forwarded_proto $lf_forwarded_proto {
     default $http_x_forwarded_proto;
     ""      $scheme;
@@ -19,7 +21,7 @@ server {
     absolute_redirect off;
 
     gzip on;
-    gzip_types text/css application/javascript application/json image/svg+xml;
+    gzip_types text/plain text/css application/javascript application/json image/svg+xml;
 
     root /usr/share/nginx/html;
 
@@ -42,8 +44,14 @@ server {
         try_files $uri =404;
     }
 
+    # The container's own DNS (from /etc/resolv.conf: Docker's 127.0.0.11 under
+    # compose), asked per request because proxy_pass uses a variable: a recreated
+    # app container's new IP is picked up instead of a 502.
+    resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
+
     location / {
-        proxy_pass http://${DJANGO_UPSTREAM};
+        set $django_upstream ${DJANGO_UPSTREAM};
+        proxy_pass http://$django_upstream;
         # $http_host keeps the port, so Django's CSRF Origin check matches.
         proxy_set_header Host $http_host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
