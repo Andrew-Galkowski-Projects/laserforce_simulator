@@ -79,7 +79,48 @@ Every component uses the theme chosen in ANG-04b.
 5b. **[DONE] Playback** — scrubber, play/step/speed, live Side scoreboards, current row, beta map
    (ANG-06f, in `PLAN-completed.md`). RV-04's timeline pips and MECH-15's tick-0 frame attach here.
 5c. **Event charts (ANG-06g)** — choose the charting library, then build the four Shots / Lives / Points
-   / SP charts with filters and overlays. RES-05 attaches here.
+   / SP charts with filters and overlays. RES-05 attaches here. Spec: #350
+
+   **Grill (ANG-06g, 2026-10-25), round 1 settled:**
+   - **Library:** Chart.js 4 used directly (no `ng2-charts`), with an exact pinned version and
+     tree-shaken registration. Recorded in an ADR.
+   - **Route:** its own route `rounds/:id/charts` ("Charts"), linked from Round detail beside Event
+     log and Playback.
+   - **Data:** built client-side by a pure function over the existing `/playback/` snapshots
+     (series) and `/timeline/` (overlays). No new endpoint and no backend change. Same-tick changes
+     collapse into one point, and target SP changes show too.
+   - **Filters:** one shared bar drives all four charts: Sides, Roles, Players, Overlays and a
+     Side-totals toggle.
+   - **Overlays:** Eliminations, Specials (activations) and Nukes (detonations; the Django Nukes
+     overlay is dead). The kinds live in an extensible registry so RV-04 (Highlights) and RES-05
+     (Medic hits) each add one entry. Both stay out of scope.
+   - **Colours:** player hues come from the `--lf-side-red` / `--lf-side-blue` tokens read at
+     runtime, varied in lightness per player. Overlay and cap colours are new `--lf-chart-*`
+     tokens. No hex in components.
+   - **Parity:** stepped per-player lines; dashed Side totals (sum for shots, lives and points,
+     average for SP) computed from the visible players only; the SP axis at 0 to 99 with a dashed
+     cap line; an mm:ss x-axis and tooltip; the same colour for a player on every chart.
+   - **Out of scope:** clicking a chart to seek playback, a cursor synced with Playback,
+     zoom / pan. They are follow-ups.
+   - **Layout:** a 2x2 grid at 1280px and one column at 768px and below. Cards are 360 to 400px
+     tall, with the filter bar on top.
+   - **A11y:** each canvas gets `role="img"` and an `aria-label`. The filters are Material
+     controls that work from the keyboard. No data-table fallback.
+
+   **Round 2 settled:**
+   - **Pinned version:** Chart.js 4.5.1. 4.6.1 is under two weeks old.
+   - **Nukes overlay:** the timeline's `highlights` entries of kind `nuke_detonation`. The client
+     does not copy the detonation rule.
+   - **Specials overlay:** every `special` event except detonations.
+   - **Labels:** an Elimination is labelled with the target's name. A Special or Nuke is labelled
+     with the actor's name.
+   - **Defaults:** every Side, Role, Player and Overlay box starts ticked, and Side totals start
+     off (the Django defaults).
+   - **Dark mode:** a `matchMedia` listener re-reads the tokens and redraws when the colour scheme
+     flips.
+   - **Filter state:** component signals only, reset when you leave the page.
+   - **Links:** Round detail and the Event log page both link to Charts.
+   - **Glossary:** **Chart overlay** added.
 6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
 
 **Note (ANG-04b, 2026-10-21):** ANG-06 builds to
