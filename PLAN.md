@@ -44,6 +44,8 @@ PERF-06 (rebalance the CI shards after PERF-05) is **[DONE]**; see `PLAN-complet
 
 ### TEST-01 · Keep every test's media writes out of the real `MEDIA_ROOT`
 
+Spec: #342
+
 **Prio: Low (found 2026-10-24, PERF-02 retro).** Older `core` tests (`del.png`, `parity.png`,
 the default-map seeding in `_seed_defaults` / `_restore_default_images`) write into the real
 `laserforce_simulator/media/` because they use neither `TempMediaMixin` nor
@@ -53,6 +55,16 @@ dir, so no test can leak whichever mixin it uses, plus a test that a full run le
 untouched. **Open for its own grill:** whether the per-test mixins stay (they also give each
 test a clean dir) and how the default-map tests that copy from `Screenshots_and_video_examples/`
 behave under it.
+
+**Grill (2026-10-24).** Probe: a full suite run on a clean worktree leaves **114 files** in
+`media/maps/`, most from `matches` League / Conference / rotation tests, not only `core`.
+Settled: (1) `pytest_configure` in `laserforce_simulator/conftest.py` sets
+`settings.MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="lf-test-media-"))` (per xdist worker, beside
+the PERF-05 hasher override) and `pytest_unconfigure` removes it; (2) the per-test mixins and inline
+overrides stay; (3) `_seed_defaults` / `_restore_default_images` unchanged; (4) guard = two tests in
+`laserforce_simulator/tests/`: `MEDIA_ROOT` is a temp `Path`, not `BASE_DIR / "media"`, and a
+`default_storage.save` lands under it; (5) out: cleaning the main checkout's `media/`, `settings.py`,
+moving tests to `tmp_path`, a CI check; (6) no GLOSSARY term, no ADR.
 
 ### TOOL-01 · Script the PLAN.md to PLAN-completed.md move
 
