@@ -326,7 +326,10 @@ verify installs and runtime claims. Tell the Spec reviewer to search for
 parameterised tests (`it.each`, `@pytest.mark.parametrize`, `subTest`)
 before reporting a test missing (ANG-06e's false P1), and both reviewers to
 quote the grep or line behind any finding about what a file contains or lacks
-(PERF-02's false "durations file predates the split"). Show both reports. Fix the
+(PERF-02's false "durations file predates the split"). When the code diff
+(`git diff origin/main...HEAD --shortstat -- . ":!*.md"`) is under about 150
+changed lines, spawn both reviewers with `model: sonnet`: TEST-01's two default
+reviewers spent 138k tokens on 60 lines for one nit. Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
 tests, and review again only if a fix changed behaviour. The fix pass is
 the orchestrator's own work, not a ticket: tell its agent to **stage** its
