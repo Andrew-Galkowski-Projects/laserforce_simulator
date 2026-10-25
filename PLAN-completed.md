@@ -4986,6 +4986,47 @@ the tests' own `create_user(..., password=...)` / `login` calls. No test pins th
 6. Out of scope: PERF-06 (pool oversubscription), rewriting tests' `create_user` / `login` to
    `force_login`, and any production hasher change.
 
+### PERF-06 · [DONE] Rebalance the CI shards after PERF-05
+
+Spec: #338
+
+**[DONE] Shipped (2026-10-24).** `.test_durations` refreshed from PERF-05's CI runs
+40146467543 and 40146890755 (8529 tests, per-test median); the batch-sim pool is unchanged.
+`docs/agents/ci.md` gained a refresh-after-a-broad-cost-shift clause and its **Limit**
+paragraph now records the pool probe.
+
+**Prio: Low (found 2026-10-24, PERF-04).** PERF-04 rebalanced `.test_durations` on CI timings,
+but the slowest shard stayed at about 205 s of pytest (5m19s to `test-result`); the slow shard
+only moved from 1 to 2. Batch simulations size their process pool to every CPU
+(`matches/tasks.py`, `min(os.cpu_count(), n)`), on top of the 4 xdist workers on a 4-vCPU
+runner. That slows every test in whichever shard holds them, and a recorded duration
+understates a pool test's CPU cost: in run 40134227072, shard 2 was predicted at 519 s of test
+time and measured 732 s, and `test_strong_team_winpct_not_diluted_by_alternation` went from a
+24 s median to 50.6 s. **Open for its own grill:** cap the pool under xdist (the serial-vs-parallel
+determinism tests need a pool wider than 1), give the pool tests their own shard, or weight them
+in the split. Probe with `ci_timings.py` and the `durations-shard-<n>` artifacts.
+
+**Probe (2026-10-24, on PERF-05's CI runs 40146467543 and 40146890755).** The premise did not
+hold. Tests never size the pool to every CPU: five test sites spawn real pools with explicit
+`workers=2` / `workers=4`, and only the 120-game `workers=4` test is heavy. The shard holding
+the pool tests was not the slowest in either run (shard 3 was). The skew is stale durations:
+PERF-05 made the accounts / API tests about 3x faster, so shard 1 measured 90-137 s of test time
+against 523 s predicted. Pinned to 4 cores at `-n 4`, `test_batch_sim.py` took 34 s with the
+pool and 57 s with the 120-game test serial (20.7 s vs 44.0 s): the pool shortens the long pole.
+Scored on the two runs' medians, the current split's groups are 114 / 431 / 470 / 395 s and a
+refreshed file's 353 / 353 / 355 / 350 s (slowest -24%).
+
+**Grill (2026-10-24), settled:**
+1. Ship a `.test_durations` refresh from runs 40146467543 and 40146890755; leave the pool alone.
+2. Keep the ID; retitled from "Stop batch-sim process pools oversubscribing the CI shard runners".
+3. `docs/agents/ci.md`'s refresh rule gains a clause: also refresh right after a change that
+   shifts a broad class of tests' cost (PERF-05's hasher). The 40% rule missed this one.
+4. Rewrite the `docs/agents/ci.md` **Limit** paragraph to the probe result; drop its PERF-06 pointer.
+5. Evidence: slowest of two PR CI runs (`ci_timings.py`) against PERF-05's 4m24s / 3m51s. No
+   Python change, no new test. One spec, one ticket.
+6. Out of scope: a pool cap or pool shard, weighting the split, a 5th shard, predicted-vs-measured
+   per-shard tooling.
+
 ---
 
 ## Phase 6 — Users and Multiplayer

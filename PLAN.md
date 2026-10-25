@@ -40,18 +40,7 @@ PERF-04 (rebalance the CI test shards on CI timings) is **[DONE]**; see `PLAN-co
 
 PERF-05 (use a fast password hasher in tests) is **[DONE]**; see `PLAN-completed.md`.
 
-### PERF-06 · Stop batch-sim process pools oversubscribing the CI shard runners
-
-**Prio: Low (found 2026-10-24, PERF-04).** PERF-04 rebalanced `.test_durations` on CI timings,
-but the slowest shard stayed at about 205 s of pytest (5m19s to `test-result`); the slow shard
-only moved from 1 to 2. Batch simulations size their process pool to every CPU
-(`matches/tasks.py`, `min(os.cpu_count(), n)`), on top of the 4 xdist workers on a 4-vCPU
-runner. That slows every test in whichever shard holds them, and a recorded duration
-understates a pool test's CPU cost: in run 40134227072, shard 2 was predicted at 519 s of test
-time and measured 732 s, and `test_strong_team_winpct_not_diluted_by_alternation` went from a
-24 s median to 50.6 s. **Open for its own grill:** cap the pool under xdist (the serial-vs-parallel
-determinism tests need a pool wider than 1), give the pool tests their own shard, or weight them
-in the split. Probe with `ci_timings.py` and the `durations-shard-<n>` artifacts.
+PERF-06 (rebalance the CI shards after PERF-05) is **[DONE]**; see `PLAN-completed.md`.
 
 ### TEST-01 · Keep every test's media writes out of the real `MEDIA_ROOT`
 
@@ -323,7 +312,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** PERF-06, TEST-01, TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** TEST-01, TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
