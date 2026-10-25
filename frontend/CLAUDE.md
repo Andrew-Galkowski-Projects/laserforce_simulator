@@ -5,7 +5,7 @@ The Phase 8 replacement for the Django templates. The stack is fixed by
 layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
 below 768px) behind `authGuard`, the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
 Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
-ANG-06e-g: Event log, Playback, Charts), on top of the client
+ANG-06e-g: Event log, Playback, Charts) and the Maps area (ANG-06h: map list and editor), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -81,12 +81,16 @@ src/
     app.routes.ts         'login' (signedOutGuard, lazy) | '' -> lazy Shell behind authGuard:
                           '' -> /teams, 'teams' -> lazy teams/teams.routes.ts,
                           'matches' / 'rounds' -> lazy matches/matches.routes.ts
-                          (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk) | '**' -> ''
+                          (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk), 'maps' -> lazy
+                          maps/maps.routes.ts | '**' -> ''
     shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
                           over drawer below); toolbar colours via mat.toolbar-overrides
     login/                sign-in form; returnUrl honoured only when it is an in-app path
     shared/               cross-feature helpers: save-blob.ts (saveBlob: a Blob as a named
-                          download; roster-import's template CSV, round-detail's Export PDF)
+                          download; roster-import's template CSV, round-detail's Export PDF),
+                          confirm-dialog.ts (ConfirmDialog), form-errors.ts (applyApiErrors,
+                          GENERIC_ERROR_MESSAGE), read-token.ts (readToken: a --lf-* value for
+                          canvas)
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
                           team-create, team-detail, team-edit, team-slots, player-add,
                           player-edit, team-generate, roster-import (import-errors.ts:
@@ -99,7 +103,7 @@ src/
                           404 or player.team !== :id -> notFound, else loadError),
                           player-not-found.ts (back to /teams/:id),
                           notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
-                          team-name-form.ts, form-errors.ts (applyApiErrors, GENERIC_ERROR_MESSAGE), team-page.scss,
+                          team-name-form.ts, team-page.scss,
                           team-form.scss; testing/teams-loads.ts (releaseTeamsLoads, specs only)
     matches/              matches.routes.ts: /matches (match-list: Match History, two server-paged
                           tables, each row's teams-cell <a> stretched over the row), /matches/new +
@@ -121,6 +125,17 @@ src/
                           record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
                           scoreboard-fixtures, timeline-fixtures, playback-fixtures, fake-canvas: a
                           no-op 2D context + ResizeObserver for Chart.js specs)
+    maps/                 ANG-06h, maps.routes.ts: /maps (map-list: cards, upload, delete; follows
+                          every page) and /maps/:id/editor (map-editor/: the shell with the Zone-size
+                          picker, mode toggle and canDeactivate guard; map-editor.store.ts
+                          (MapEditorStore, one per visit: all three modes' state + per-area dirty
+                          flags); map-canvas.ts (useMapLayer: the drawing hook a mode registers;
+                          read its header comment first); map-stage.ts, map-paint.ts, map-palette.ts
+                          (the --lf-map-* tokens), grid.ts). One folder per mode, each with a pure
+                          module beside its component: zones-bases/ (zones.ts), sight-lines/
+                          (sight-edit.ts: 100-key batch split), heatmap/ (heat-cells.ts);
+                          shared/api-message.ts; testing/ (editor-fixtures incl. releaseModeLoads,
+                          maps-loads). The Django editor template is the behavioural reference.
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures
@@ -170,7 +185,7 @@ colours in light mode, all-mono JetBrains Mono.
 Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-0041 (JWT).
 
 - **`ApiClient` is the only `HttpClient` user.** Components inject a resource service, never
-  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `delete`, `upload` (multipart) and `getRaw` (a Blob
+  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `put`, `delete`, `upload` (multipart) and `getRaw` (a Blob
   with the bearer header and no envelope unwrap: the CSV template, ANG-06 2b). Each takes a
   path relative to `apiBaseUrl` (`'teams/'`, `'rounds/7/events/'`, trailing slash as the API routes
   it) and an optional `{ context }`.

@@ -80,38 +80,7 @@ Every component uses the theme chosen in ANG-04b.
    (ANG-06f, in `PLAN-completed.md`). RV-04's timeline pips and MECH-15's tick-0 frame attach here.
 5c. **[DONE] Event charts** — four Shots / Lives / Points / SP charts with filters and Chart
    overlays (ANG-06g, in `PLAN-completed.md`). RES-05 and RV-04's chart toggle attach here.
-6. **Map editor** — most complex: canvas overlay, zone painting, sight-line drag-select (migrate last)
-   (ANG-06h). Spec: #355. **Grill settled (owner, 2026-10-25):**
-   - **Scope:** the whole `/maps/` area — list (cards, upload, delete) and all three editor modes
-     (Zones & Bases, Sight Lines, Heatmap). Routes `/maps` and `/maps/:id/editor`; a "Maps" shell
-     nav link after Matches.
-   - **Ownership / sim:** none. Maps stay shared reference data (ADR-0038); the heatmap's round
-     scoping is already server-side. No engine, RNG or migration change.
-   - **API gaps closed:** `ArenaMapSerializer` gains a nullable read-only `confirmed_zone_size` (list
-     badge; update any exact key-set asserts). `GET /api/maps/` runs the same default-map seeding
-     and image restore as HTML `map_list`, moved into `core/services.py`. New raw, un-enveloped
-     `GET /api/maps/<id>/image/` (original image; `/media/` is behind the session gate), fetched
-     as a blob into an object URL for list thumbnails and the editor's original-image panel.
-   - **Drawing:** one canvas overlay on the processed image plus a pointer-events-none heatmap
-     canvas; full redraw per change, coalesced to one `requestAnimationFrame` during drags;
-     pointer events.
-   - **Structure:** editor state logic ported from the inline JS into pure TS modules with their own
-     specs (grid state, rect paint, bases, ramp, bidirectional LOS toggle, spawn-edited flag,
-     100-key batch split); one component per mode plus the list, sharing an editor-state service.
-     Canvas pixels untested (ANG-06f precedent); specs pin the payloads sent.
-   - **Unsaved edits:** confirm before a zone-size change and on leaving the route
-     (`canDeactivate`) when dirty (Django silently discards).
-   - **Saves:** Save Configuration replaces local state with the PUT response, shows success; the
-     UXP-10 missing-base warning stays non-blocking. Sight lines keep 100-key batches (PUT, then
-     PATCH); a mid-run failure shows "Saved N of M batches — retry" and stays dirty.
-   - **Colours:** the ~25 rgba literals become semantic `--lf-map-*` tokens (light + dark) plus
-     `LF_TOKENS`, read via the ANG-06g probe, redrawn on a `matchMedia` theme flip; bases use the
-     `data-lf-side` tokens.
-   - **List:** upload success navigates to the editor; `required` / `max_length` 100 /
-     `invalid_image` errors inline. Delete uses the Teams-list confirm pattern; 409 `map_in_use`
-     shows the server message and keeps the card.
-   - **Out:** Django template removal (ANG-08), the single-cell LOS endpoint, async compute,
-     undo/redo, the deferred ANG-01c validations, `is_public`, any new editor tools.
+6. **[DONE] Map editor** (ANG-06h, in `PLAN-completed.md`).
 
 **Note (ANG-04b, 2026-10-21):** ANG-06 builds to
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md): layout B (lfstats-like)

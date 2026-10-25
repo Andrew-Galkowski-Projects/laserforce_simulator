@@ -140,11 +140,11 @@ at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
 
 Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](frontend/) (see
 [ADR-0042](docs/adr/0042-angular-frontend-stack.md)). So far it has a sign-in page, an app shell (a
-header with Sign out and a Teams / Matches sidebar that becomes a drawer on small screens), the Teams
+header with Sign out and a Teams / Matches / Maps sidebar that becomes a drawer on small screens), the Teams
 screens: list, detail (with Remove player), Create, Edit and Assign Slots, plus Add Player and Edit
 Player (the 19 Stats with a live Overall rating), and the Matches screens: Match History (your Matches
 and Single Rounds, paged), New Match and New Single Round (simulate and open the result), and the Match and Round pages: a Match Summary per Round, and
-each Round's per-player scoreboard (sortable, with MVP scores and a PDF export) and its Event log (every event, colour-coded and filterable by type and player, with the round's Highlights), and its Playback (watch the round unfold: play / step / 1-8x speed, live per-Side scoreboards, a newest-first event feed and a beta map), and its Charts (Shots, Lives, Points and SP over time per player, with Side totals and Elimination / Special / Nuke overlays, built with Chart.js). They sit on the typed API services and
+each Round's per-player scoreboard (sortable, with MVP scores and a PDF export) and its Event log (every event, colour-coded and filterable by type and player, with the round's Highlights), and its Playback (watch the round unfold: play / step / 1-8x speed, live per-Side scoreboards, a newest-first event feed and a beta map), and its Charts (Shots, Lives, Points and SP over time per player, with Side totals and Elimination / Special / Nuke overlays, built with Chart.js), and the Maps screens: the Arena map list (upload, delete, configured badge) and the map editor (Zones & Bases, Sight Lines and the multi-round Heatmap, asking before it discards unsaved edits). They sit on the typed API services and
 the JWT sign-in / silent-refresh flow. The Django pages stay live until ANG-08. Styling comes from the app theme in
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md). The theme follows the
 OS light / dark setting and uses JetBrains Mono, self-hosted. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is
@@ -340,6 +340,7 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 | `/api/maps/` | Arena map list (shared across accounts) / POST (multipart `name` + `image`) to upload a map |
 | `/api/maps/<id>/` | Arena map detail / DELETE (refused with `409` while a Season that is not completed uses the map) |
 | `/api/maps/<id>/processed-image/` | Black-and-white processed map image (PNG) |
+| `/api/maps/<id>/image/` | The original uploaded map image |
 | `/api/maps/<id>/zones/` | Detect the zone grid for a zone size (`?zone_size=`) |
 | `/api/maps/<id>/zone-config/` | Saved zone configuration (zones, walls, elevation, spawns, bases) / PUT to replace it |
 | `/api/maps/<id>/sight-lines/` | Saved sight lines (`?zone_size=`) / PUT to replace / PATCH to merge a batch |

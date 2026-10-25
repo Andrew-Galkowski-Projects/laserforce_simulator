@@ -6830,6 +6830,55 @@ the grill:
 - **Links:** Round detail and the Event log page both link to Charts.
 - **Glossary:** **Chart overlay** added.
 
+#### ANG-06h · [DONE] Map editor
+
+**[DONE] Shipped (2026-10-25).** The whole /maps/ area is in the SPA: the map list (cards with
+thumbnails, confirmed-zone-size badge, upload to the editor, confirmed delete with the 409
+map_in_use message, every page followed) and /maps/:id/editor with Zones & Bases, Sight Lines and
+Heatmap, ported from the Django template into pure TS modules under one MapEditorStore and a
+useMapLayer canvas hook, coloured by new --lf-map-* tokens. Server side:
+ArenaMapSerializer.confirmed_zone_size, the API list seeds the default maps via
+services.ensure_default_maps (shared with HTML map_list), and a raw GET /api/maps/<id>/image/ (the
+session-gated /media/ is unreachable from the JWT SPA). Beyond the plan: unsaved edits now prompt
+before a Zone-size change or leaving the editor (Django discarded them silently); Sight Lines keeps
+unsaved edits across a mode toggle and retries a failed load; Strong spots save through their own
+button; the grill found core CLAUDE.md's wall-height input never existed. ConfirmDialog,
+applyApiErrors and readToken moved into app/shared/.
+
+Most complex: canvas overlay, zone painting, sight-line drag-select
+
+(migrate last). Spec: #355. **Grill settled (owner, 2026-10-25):**
+- **Scope:** the whole `/maps/` area — list (cards, upload, delete) and all three editor modes
+  (Zones & Bases, Sight Lines, Heatmap). Routes `/maps` and `/maps/:id/editor`; a "Maps" shell
+  nav link after Matches.
+- **Ownership / sim:** none. Maps stay shared reference data (ADR-0038); the heatmap's round
+  scoping is already server-side. No engine, RNG or migration change.
+- **API gaps closed:** `ArenaMapSerializer` gains a nullable read-only `confirmed_zone_size` (list
+  badge; update any exact key-set asserts). `GET /api/maps/` runs the same default-map seeding
+  and image restore as HTML `map_list`, moved into `core/services.py`. New raw, un-enveloped
+  `GET /api/maps/<id>/image/` (original image; `/media/` is behind the session gate), fetched
+  as a blob into an object URL for list thumbnails and the editor's original-image panel.
+- **Drawing:** one canvas overlay on the processed image plus a pointer-events-none heatmap
+  canvas; full redraw per change, coalesced to one `requestAnimationFrame` during drags;
+  pointer events.
+- **Structure:** editor state logic ported from the inline JS into pure TS modules with their own
+  specs (grid state, rect paint, bases, ramp, bidirectional LOS toggle, spawn-edited flag,
+  100-key batch split); one component per mode plus the list, sharing an editor-state service.
+  Canvas pixels untested (ANG-06f precedent); specs pin the payloads sent.
+- **Unsaved edits:** confirm before a zone-size change and on leaving the route
+  (`canDeactivate`) when dirty (Django silently discards).
+- **Saves:** Save Configuration replaces local state with the PUT response, shows success; the
+  UXP-10 missing-base warning stays non-blocking. Sight lines keep 100-key batches (PUT, then
+  PATCH); a mid-run failure shows "Saved N of M batches — retry" and stays dirty.
+- **Colours:** the ~25 rgba literals become semantic `--lf-map-*` tokens (light + dark) plus
+  `LF_TOKENS`, read via the ANG-06g probe, redrawn on a `matchMedia` theme flip; bases use the
+  `data-lf-side` tokens.
+- **List:** upload success navigates to the editor; `required` / `max_length` 100 /
+  `invalid_image` errors inline. Delete uses the Teams-list confirm pattern; 409 `map_in_use`
+  shows the server message and keeps the card.
+- **Out:** Django template removal (ANG-08), the single-cell LOS endpoint, async compute,
+  undo/redo, the deferred ANG-01c validations, `is_public`, any new editor tools.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
