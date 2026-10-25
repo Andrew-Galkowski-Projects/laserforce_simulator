@@ -295,6 +295,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    `python scripts/mutate.py <file> <mutations.json> -- <pytest args>` (JSON
    `[name, old, new]` triples in the scratchpad): it restores the file and
    prints which tests caught each one. A `SURVIVED` line is a test to write.
+   Frontend code takes `--run -- npm --prefix frontend exec -- ng test
+   --watch=false --include=<spec>` in place of the pytest args.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees
    changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
    existing tab, close what you open, close the browser when done). Server on 8001;
@@ -334,7 +336,9 @@ quote the grep or line behind any finding about what a file contains or lacks
 changed lines, spawn both reviewers with `model: sonnet`: TEST-01's two default
 reviewers spent 138k tokens on 60 lines for one nit. Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
-tests, and review again only if a fix changed behaviour. The fix pass is
+tests, and review again only if a fix changed behaviour. A fix that changes
+what a screen shows re-takes that screen's Step 7 screenshots before Step 9
+(ANG-06g's chart font). The fix pass is
 the orchestrator's own work, not a ticket: tell its agent to **stage** its
 files and report, not commit (the auto-mode classifier refuses its commit).
 Copy them onto the integration branch with

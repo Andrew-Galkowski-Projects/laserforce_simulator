@@ -7,6 +7,11 @@ shipped note, appends the section under the same ``##`` heading in
 ``PLAN.md`` and drops the ID from the Sequencing Summary. Every ``---``
 separator stays where it was.
 
+A task can also be a numbered item under an umbrella heading, as ANG-06's
+``5c. **Event charts (ANG-06g)** — ...``. It moves as a ``#### ID · [DONE]
+<title>`` section, and leaves ``5c. **[DONE] <title>** (ID, in
+`PLAN-completed.md`).`` in its place.
+
 Usage::
 
     python scripts/move_done_task.py <ID> "<shipped note>" [--date YYYY-MM-DD]
@@ -122,27 +127,83 @@ def _drop_from_summary(lines: list[str], task_id: str) -> tuple[list[str], list[
     return [*lines[:start], *kept, *lines[end:]], warnings
 
 
+def _item_pattern(task_id: str) -> re.Pattern[str]:
+    """A numbered item naming ``task_id``: ``5c. **Title (ID)** — description``."""
+    return re.compile(
+        rf"^(\d+[a-z]?)\. \*\*(.+?) \({re.escape(task_id)}\)\*\*(?: — (.*))?$"
+    )
+
+
+def _find_item(lines: list[str], task_id: str) -> int | None:
+    """Index of ``task_id``'s one numbered item, or None when it has none."""
+    pattern = _item_pattern(task_id)
+    found = [i for i, line in enumerate(lines) if pattern.match(line)]
+    if len(found) > 1:
+        raise MoveError(f"{task_id}: matches {len(found)} numbered items in PLAN.md")
+    return found[0] if found else None
+
+
+def _item_end(lines: list[str], start: int) -> int:
+    """Index one past the item's last line; it runs on while lines are blank or indented."""
+    end = start + 1
+    while end < len(lines) and (
+        lines[end].strip() == "" or lines[end].startswith("   ")
+    ):
+        end += 1
+    while lines[end - 1].strip() == "":
+        end -= 1
+    return end
+
+
+def _item_section(
+    lines: list[str], task_id: str, note_lines: list[str]
+) -> tuple[list[str], str]:
+    """The item as a ``#### ID · [DONE] title`` section, and its title."""
+    match = _item_pattern(task_id).match(lines[0])
+    assert match is not None
+    title, description = match.group(2), match.group(3) or ""
+    spec = re.search(r"\s*Spec: (#\d+)\s*$", description)
+    if spec:
+        description = description[: spec.start()]
+    body = [line[3:] if line.startswith("   ") else line for line in lines[1:]]
+    section = [f"#### {task_id} · [DONE] {title}", ""]
+    if spec:
+        section += [f"Spec: {spec.group(1)}", ""]
+    section += note_lines
+    if description:
+        section += ["", description[:1].upper() + description[1:]]
+    if body:
+        section += body if body[0].strip() == "" else ["", *body]
+    return section, title
+
+
 def move_done_task(
     plan: str, completed: str, task_id: str, note: str, shipped: datetime.date
 ) -> MoveResult:
     """Return the new PLAN.md and PLAN-completed.md text after moving ``task_id``."""
     plan_lines = plan.split("\n")
-    start, level, title = _find_task(plan_lines, task_id)
-    end = _section_end(plan_lines, start, level)
-    phase = _phase_heading(plan_lines, start)
-
     note_lines = textwrap.wrap(
         f"**[DONE] Shipped ({shipped.isoformat()}).** {note}",
         width=100,
         break_long_words=False,
         break_on_hyphens=False,
     )
-    section = _done_section(plan_lines[start:end], note_lines)
-    short_title = re.sub(r" \([^()]*\)$", "", title)
-    pointer = (
-        f"{task_id} ({short_title[:1].lower()}{short_title[1:]}) is **[DONE]**; "
-        "see `PLAN-completed.md`."
-    )
+    item = _find_item(plan_lines, task_id)
+    if item is not None:
+        start, end = item, _item_end(plan_lines, item)
+        section, title = _item_section(plan_lines[start:end], task_id, note_lines)
+        number = plan_lines[start].split(".", 1)[0]
+        pointer = f"{number}. **[DONE] {title}** ({task_id}, in `PLAN-completed.md`)."
+    else:
+        start, level, title = _find_task(plan_lines, task_id)
+        end = _section_end(plan_lines, start, level)
+        section = _done_section(plan_lines[start:end], note_lines)
+        short_title = re.sub(r" \([^()]*\)$", "", title)
+        pointer = (
+            f"{task_id} ({short_title[:1].lower()}{short_title[1:]}) is **[DONE]**; "
+            "see `PLAN-completed.md`."
+        )
+    phase = _phase_heading(plan_lines, start)
     new_plan, warnings = _drop_from_summary(
         [*plan_lines[:start], pointer, *plan_lines[end:]], task_id
     )
