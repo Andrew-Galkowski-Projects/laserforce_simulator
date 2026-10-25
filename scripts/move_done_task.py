@@ -32,8 +32,27 @@ class MoveResult(NamedTuple):
     warnings: list[str]
 
 
-def _task_heading(task_id: str) -> re.Pattern[str]:
-    return re.compile(rf"^(#{{3,4}}) {re.escape(task_id)} · (.*)$")
+def _find_task(lines: list[str], task_id: str) -> tuple[int, int, str]:
+    """``(line index, heading level, title)`` of ``task_id``'s one open heading."""
+    pattern = re.compile(rf"^(#{{3,4}}) {re.escape(task_id)} · (.*)$")
+    found = [(i, m) for i, line in enumerate(lines) if (m := pattern.match(line))]
+    if not found:
+        raise MoveError(f"{task_id}: task heading not found in PLAN.md")
+    if len(found) > 1:
+        raise MoveError(f"{task_id}: matches {len(found)} headings in PLAN.md")
+    start, match = found[0]
+    title = match.group(2)
+    if title.startswith("[DONE]"):
+        raise MoveError(f"{task_id}: heading is already [DONE]")
+    return start, len(match.group(1)), title
+
+
+def _block_end(lines: list[str], start: int) -> int:
+    """Index of the next ``## `` heading after ``start``, or the end of ``lines``."""
+    end = start + 1
+    while end < len(lines) and not lines[end].startswith("## "):
+        end += 1
+    return end
 
 
 def _section_end(lines: list[str], start: int, level: int) -> int:
@@ -59,8 +78,10 @@ def _phase_heading(lines: list[str], start: int) -> str:
 
 def _done_section(section: list[str], note_line: str) -> list[str]:
     heading = re.sub(r" · ", " · [DONE] ", section[0], count=1)
-    after = 3 if section[2:3] and section[2].startswith("Spec: #") else 1
-    return [heading, *section[1:after], "", note_line, *section[after:]]
+    first = next((i for i in range(1, len(section)) if section[i].strip()), 0)
+    has_spec_line = first > 0 and section[first].startswith("Spec: #")
+    insert_at = first + 1 if has_spec_line else 1
+    return [heading, *section[1:insert_at], "", note_line, *section[insert_at:]]
 
 
 def _append_to_phase(lines: list[str], phase: str, section: list[str]) -> list[str]:
@@ -68,10 +89,7 @@ def _append_to_phase(lines: list[str], phase: str, section: list[str]) -> list[s
         while lines and lines[-1].strip() == "":
             lines = lines[:-1]
         return [*lines, "", "---", "", phase, "", *section, "", "---", ""]
-    start = lines.index(phase)
-    end = start + 1
-    while end < len(lines) and not lines[end].startswith("## "):
-        end += 1
+    end = _block_end(lines, lines.index(phase))
     while lines[end - 1].strip() in ("", "---"):
         end -= 1
     return [*lines[:end], "", *section, *lines[end:]]
@@ -85,9 +103,7 @@ def _drop_from_summary(lines: list[str], task_id: str) -> tuple[list[str], list[
     if "## Sequencing Summary" not in lines:
         return lines, []
     start = lines.index("## Sequencing Summary")
-    end = start + 1
-    while end < len(lines) and not lines[end].startswith("## "):
-        end += 1
+    end = _block_end(lines, start)
     item = re.escape(task_id)
     mention = re.compile(rf"(?<![\w-]){item}(?![\w-])")
     only_item = re.compile(rf"^\s*- \*\*[^*]+:\*\* {item}\.?$")
@@ -110,18 +126,7 @@ def move_done_task(
 ) -> MoveResult:
     """Return the new PLAN.md and PLAN-completed.md text after moving ``task_id``."""
     plan_lines = plan.split("\n")
-    pattern = _task_heading(task_id)
-    starts = [i for i, line in enumerate(plan_lines) if pattern.match(line)]
-    if not starts:
-        raise MoveError(f"{task_id}: task heading not found in PLAN.md")
-    if len(starts) > 1:
-        raise MoveError(f"{task_id}: matches {len(starts)} headings in PLAN.md")
-    start = starts[0]
-    match = pattern.match(plan_lines[start])
-    assert match is not None
-    level, title = len(match.group(1)), match.group(2)
-    if title.startswith("[DONE]"):
-        raise MoveError(f"{task_id}: heading is already [DONE]")
+    start, level, title = _find_task(plan_lines, task_id)
     end = _section_end(plan_lines, start, level)
     phase = _phase_heading(plan_lines, start)
 

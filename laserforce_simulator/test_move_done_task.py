@@ -142,6 +142,16 @@ Spec: #342
             result.completed,
         )
 
+    def test_note_follows_a_spec_line_with_no_blank_line_above_it(self) -> None:
+        plan = _PLAN.replace("out\n\nSpec: #342", "out\nSpec: #342")
+        result = _move(plan=plan)
+        self.assertIn(
+            "### TEST-01 · [DONE] Keep media writes out\nSpec: #342\n\n"
+            "**[DONE] Shipped (2026-10-24).** It works.\n\n"
+            "**Prio: Low.** Body.\n",
+            result.completed,
+        )
+
     def test_rule_and_next_phase_heading_stay_in_plan(self) -> None:
         # PERF-02's hand move dropped the --- before the next ## heading.
         result = _move(task_id="TOOL-01")
