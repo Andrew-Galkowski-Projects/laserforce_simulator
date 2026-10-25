@@ -43,7 +43,8 @@ python scripts/refresh_test_durations.py <run-id> [<run-id> ...]
 ```
 
 Pass two or three green runs: each test gets its median across them, because one
-runner's timings swing by a minute. The script refuses a run that is missing any
+runner's timings swing by a minute. When the refresh is the whole change, pass three:
+PERF-06's two-run medians predicted the slowest shard 24% lighter, and CI gave about 10%. The script refuses a run that is missing any
 shard's artifact. To get more runs of one commit, close and reopen the PR: each
 reopen is a new run ID; watch it with `scripts/watch_pr_ci.py <pr> --after-run
 <previous run-id>`, since the PR's checks still list the old run at first. Never `gh run rerun` a run you want timings from: the
@@ -65,7 +66,9 @@ silently skips or repeats groups.
 `python scripts/ci_timings.py <run-id>` prints every job's time, each shard's
 pytest summary, the combined coverage total, and the time from run start to
 `test-result`. Run times vary by about 30 s or more, so judge a change on the
-slowest of at least two runs.
+slowest of at least two runs. `--durations` adds each shard's predicted test time
+(the committed file) against its measured artifact, with the files that drifted
+most: the first read when the shards look unbalanced (PERF-06).
 
 ## Why sharding
 

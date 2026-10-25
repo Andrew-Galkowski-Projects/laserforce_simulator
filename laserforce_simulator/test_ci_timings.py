@@ -99,3 +99,53 @@ class CoverageTotalTests(TestCase):
             "info - 2026-10-24 16:33:26,504 -- Found 1 coverage files to report",
         )
         self.assertIsNone(ci_timings.coverage_total(log))
+
+
+class ShardDriftTests(TestCase):
+    """PERF-06 retro: predicted (committed file) vs measured (CI artifact) per shard
+    found PERF-05's stale shard 1 (523 s predicted, 90 s measured) in one read."""
+
+    _PREDICTED = {
+        "accounts/tests/test_a.py::T::one": 80.0,
+        "accounts/tests/test_a.py::T::two": 20.0,
+        "accounts/tests/test_b.py::T::one": 5.0,
+        "matches/tests/test_c.py::T::one": 50.0,
+    }
+
+    def test_one_line_per_shard_with_predicted_and_measured(self) -> None:
+        shards = {
+            2: {"matches/tests/test_c.py::T::one": 55.0},
+            1: {
+                "accounts/tests/test_a.py::T::one": 2.0,
+                "accounts/tests/test_a.py::T::two": 1.0,
+                "accounts/tests/test_b.py::T::one": 5.0,
+            },
+        }
+        lines = ci_timings.shard_drift(self._PREDICTED, shards, top=1)
+        self.assertEqual(
+            [line for line in lines if line.startswith("shard")],
+            [
+                "shard 1: 3 tests, predicted 105s, measured 8s (0.08x)",
+                "shard 2: 1 tests, predicted 50s, measured 55s (1.10x)",
+            ],
+        )
+
+    def test_worst_drifting_file_listed_under_its_shard(self) -> None:
+        shards = {
+            1: {
+                "accounts/tests/test_a.py::T::one": 2.0,
+                "accounts/tests/test_a.py::T::two": 1.0,
+                "accounts/tests/test_b.py::T::one": 5.0,
+            }
+        }
+        lines = ci_timings.shard_drift(self._PREDICTED, shards, top=1)
+        self.assertEqual(
+            lines[1].split(),
+            ["pred", "100.0", "meas", "3.0", "accounts/tests/test_a.py"],
+        )
+        self.assertEqual(len(lines), 2)
+
+    def test_test_missing_from_the_file_counts_as_zero_predicted(self) -> None:
+        shards = {1: {"core/test_new.py::test_x": 4.0}}
+        lines = ci_timings.shard_drift({}, shards, top=1)
+        self.assertEqual(lines[0], "shard 1: 1 tests, predicted 0s, measured 4s (new)")
