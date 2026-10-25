@@ -1,0 +1,36 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Round" />
+} @else if (load.loadError(); as message) {
+  <p class="rc-error" role="alert">{{ message }}</p>
+} @else if (load.record(); as rec) {
+  @let r = rec.round;
+  <div class="rc-pagehead">
+    <div>
+      <p class="rc-kicker">Charts</p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+    </div>
+    <div class="rc-actions">
+      <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'events']">Event log</a>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'playback']">Playback</a>
+    </div>
+  </div>
+
+  <div class="rc-grid">
+    @for (card of cards(); track card.key) {
+      <section class="rc-card" [attr.aria-labelledby]="'rc-title-' + card.key">
+        <h2 [id]="'rc-title-' + card.key">{{ card.title }}</h2>
+        <div class="rc-chart">
+          <app-line-chart
+            [title]="card.title"
+            [datasets]="card.datasets"
+            [maxSec]="maxSec()"
+            [theme]="theme()"
+            [yMax]="card.yMax"
+            [capLine]="card.capLine"
+          />
+        </div>
+      </section>
+    }
+  </div>
+}

@@ -1,0 +1,146 @@
+import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { Chart, TooltipItem } from 'chart.js';
+import { stubCanvasContext } from '../testing/fake-canvas';
+import { ChartTheme, LineChart, LineSeries } from './line-chart';
+
+const THEME: ChartTheme = { text: 'rgb(1, 2, 3)', grid: 'rgb(4, 5, 6)', cap: 'rgb(7, 8, 9)' };
+
+const ACE: LineSeries = {
+  label: 'Ace',
+  color: 'rgb(200, 0, 0)',
+  points: [
+    { sec: 0, value: 30 },
+    { sec: 60, value: 29 },
+  ],
+};
+
+describe('LineChart', () => {
+  let fixture: ComponentFixture<LineChart>;
+  let restore: () => void;
+
+  async function render(inputs: Partial<Record<string, unknown>> = {}): Promise<LineChart> {
+    fixture = TestBed.createComponent(LineChart);
+    const all = { title: 'Shots over time', datasets: [ACE], maxSec: 900, theme: THEME, ...inputs };
+    for (const [name, value] of Object.entries(all)) fixture.componentRef.setInput(name, value);
+    await fixture.whenStable();
+    return fixture.componentInstance;
+  }
+
+  const canvas = (): HTMLCanvasElement =>
+    (fixture.nativeElement as HTMLElement).querySelector('canvas') as HTMLCanvasElement;
+
+  beforeEach(() => {
+    restore = stubCanvasContext();
+  });
+
+  afterEach(() => {
+    fixture?.destroy();
+    restore();
+  });
+
+  it('names the canvas as an image with the chart title', async () => {
+    await render();
+    expect(canvas().getAttribute('role')).toBe('img');
+    expect(canvas().getAttribute('aria-label')).toBe('Shots over time');
+  });
+
+  it('draws each series as a stepped line with no point markers', async () => {
+    const chart = await render();
+    const [ds] = chart.config().data.datasets;
+    expect(ds.label).toBe('Ace');
+    expect(ds.data).toEqual([
+      { x: 0, y: 30 },
+      { x: 60, y: 29 },
+      { x: 900, y: 29 },
+    ]);
+    expect(ds.stepped).toBe('before');
+    expect(ds.pointRadius).toBe(0);
+    expect(ds.borderWidth).toBe(1.5);
+    expect(ds.borderColor).toBe('rgb(200, 0, 0)');
+    expect(ds.borderDash).toEqual([]);
+  });
+
+  it('dashes a dashed series', async () => {
+    const chart = await render({ datasets: [{ ...ACE, dashed: true }] });
+    expect(chart.config().data.datasets[0].borderDash).toEqual([6, 4]);
+  });
+
+  it('does not extend a series that already reaches the end, or an empty one', async () => {
+    const chart = await render({
+      datasets: [
+        {
+          ...ACE,
+          points: [
+            { sec: 0, value: 1 },
+            { sec: 900, value: 2 },
+          ],
+        },
+        { ...ACE, label: 'Gone', points: [] },
+      ],
+    });
+    const [full, empty] = chart.config().data.datasets;
+    expect(full.data).toEqual([
+      { x: 0, y: 1 },
+      { x: 900, y: 2 },
+    ]);
+    expect(empty.data).toEqual([]);
+  });
+
+  it('runs the x-axis from 0 to the round length in seconds, labelled mm:ss', async () => {
+    const chart = await render();
+    const x = chart.config().options?.scales?.['x'];
+    expect(x?.type).toBe('linear');
+    expect(x?.min).toBe(0);
+    expect(x?.max).toBe(900);
+    const tickLabel = x?.ticks?.callback as (value: number) => string;
+    expect(tickLabel(90)).toBe('01:30');
+  });
+
+  it('titles the tooltip with the mm:ss of the hovered second', async () => {
+    const chart = await render();
+    const tooltip = chart.config().options?.plugins?.tooltip;
+    expect(chart.config().options?.interaction).toEqual({ mode: 'index', intersect: false });
+    const title = tooltip?.callbacks?.title as unknown as (items: TooltipItem<'line'>[]) => string;
+    expect(title([{ parsed: { x: 125, y: 0 } } as TooltipItem<'line'>])).toBe('02:05');
+  });
+
+  it('caps the y-axis at yMax and draws the cap line only when asked', async () => {
+    const plain = await render();
+    expect(plain.config().options?.scales?.['y']?.max).toBeUndefined();
+    expect(plain.config().plugins?.map((p) => p.id)).not.toContain('lfCapLine');
+    fixture.destroy();
+
+    const sp = await render({ yMax: 99, capLine: true });
+    const y = sp.config().options?.scales?.['y'];
+    expect(y?.min).toBe(0);
+    expect(y?.max).toBe(99);
+    expect(sp.config().plugins?.map((p) => p.id)).toContain('lfCapLine');
+  });
+
+  it('passes its plugins inline and never registers them globally', async () => {
+    await render({ yMax: 99, capLine: true });
+    expect(Chart.registry.plugins.get('lfCapLine')).toBeUndefined();
+  });
+
+  it('colours the axes and grid from the theme', async () => {
+    const chart = await render();
+    const x = chart.config().options?.scales?.['x'];
+    expect(x?.ticks?.color).toBe(THEME.text);
+    expect(x?.grid?.color).toBe(THEME.grid);
+    expect(chart.config().options?.plugins?.legend?.labels?.color).toBe(THEME.text);
+  });
+
+  it('creates a chart on the canvas, updates it when the inputs change, and destroys it', async () => {
+    await render();
+    const chart = Chart.getChart(canvas());
+    expect(chart?.data.datasets.map((d) => d.label)).toEqual(['Ace']);
+
+    fixture.componentRef.setInput('datasets', [{ ...ACE, label: 'Bolt' }]);
+    await fixture.whenStable();
+    expect(Chart.getChart(canvas())?.data.datasets.map((d) => d.label)).toEqual(['Bolt']);
+
+    const el = canvas();
+    fixture.destroy();
+    expect(Chart.getChart(el)).toBeUndefined();
+  });
+});

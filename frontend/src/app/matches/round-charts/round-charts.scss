@@ -1,0 +1,72 @@
+// Round charts, ADR-0043 layout B: contract tokens only, never a colour literal.
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1 {
+  margin: 0;
+  font: 700 1.5rem/1.2 var(--lf-font-heading);
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font: 700 1rem var(--lf-font-heading);
+}
+
+.rc-error {
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+}
+
+.rc-pagehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.rc-kicker {
+  margin: 0.25rem 0;
+  color: var(--lf-text-muted);
+  font-size: 0.8rem;
+}
+
+.rc-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+// Two columns above 768px, one at 768px and below.
+.rc-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1rem;
+}
+
+@media (min-width: 769px) {
+  .rc-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+.rc-card {
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.rc-chart {
+  position: relative;
+  height: 380px;
+}

@@ -198,6 +198,13 @@ describe('Round detail (/rounds/:id)', () => {
       expect(text(playback?.previousElementSibling)).toBe('Event log');
     });
 
+    it("links to the Round's Charts, right after Playback", async () => {
+      await open(round());
+      const charts = [...page().querySelectorAll('a')].find((a) => text(a) === 'Charts');
+      expect(charts?.getAttribute('href')).toBe('/rounds/9/charts');
+      expect(text(charts?.previousElementSibling)).toBe('Playback');
+    });
+
     it('subtitles a Match round "Match Round N – date", back to its Match', async () => {
       await open(round({ match: 7, round_number: 2 }));
       expect(text(page().querySelector('.rd-kicker'))).toBe('Match Round 2 – Mar 17, 2026 09:05');
