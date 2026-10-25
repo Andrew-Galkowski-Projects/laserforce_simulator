@@ -131,6 +131,29 @@ export function answerEditorLoads(
   answerGridLoads(map.id, zones ?? mapZones(map.confirmed_zone_size ?? 50));
 }
 
+/** Each mode's own GETs, answered by `releaseModeLoads` (path suffix -> data). */
+const MODE_LOADS: [string, () => unknown][] = [
+  ['/sight-lines/', () => sightLines()],
+  ['/ranked-cells/', () => ({ ranked_cells: [] })],
+  ['/strong-spots/', () => ({ cells: [] })],
+  ['/heatmap/', () => heatmap()],
+];
+
+/**
+ * Answers every pending Sight Lines / Heatmap mode GET. A spec that switches to a mode it is not
+ * testing (the shell's mode toggle) calls this before `verify()`, so a mode that loads its data
+ * on entry doesn't break it.
+ */
+export function releaseModeLoads(): void {
+  for (const [suffix, data] of MODE_LOADS) {
+    http()
+      .match((r) => r.method === 'GET' && r.url.startsWith(MAPS_URL) && r.url.endsWith(suffix))
+      .forEach((req) => {
+        if (!req.cancelled) flushData(req, data());
+      });
+  }
+}
+
 /** Answers one grid load: `zones/?zone_size=` and `spawn-cells/`. */
 export function answerGridLoads(id: number, zones: MapZones, spawns: SpawnCells = SPAWNS): void {
   const req = expectMapRequest(id, 'zones/');

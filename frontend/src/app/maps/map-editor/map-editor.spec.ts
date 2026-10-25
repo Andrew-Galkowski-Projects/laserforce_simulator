@@ -21,6 +21,7 @@ import {
   flushData,
   flushError,
   mapZones,
+  releaseModeLoads,
   zoneConfig,
 } from '../testing/editor-fixtures';
 import { releaseMapsLoads } from '../testing/maps-loads';
@@ -62,6 +63,7 @@ describe('Map editor shell', () => {
   afterEach(() => {
     document.querySelector('.cdk-overlay-container')?.remove();
     releaseMapsLoads();
+    releaseModeLoads();
     http.verify();
     restoreCanvas();
     url['createObjectURL'] = before.create;
