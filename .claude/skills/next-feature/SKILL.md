@@ -91,7 +91,9 @@ Facts come from subagents reading the code; decisions come from the owner.
 When the task is a bug or a red check, reproduce it before round 1: the
 probe's result is a settled fact in that round, not a question. A performance
 task gets the same probe: time the suspected cost locally, with and without it,
-scaled to the target's core count (CI runners have 4 vCPUs). PERF-02 built a
+scaled to the target's core count (CI runners have 4 vCPUs; pin a run to 4 cores,
+children included, through the PowerShell tool with `cmd /c start '""' /b /wait
+/affinity F <python> -m pytest ...`, as PERF-06 did). PERF-02 built a
 ticket on coverage being the cost, and one local timing would have shown the
 suite was CPU-bound. A probe for a split or a schedule also checks that each
 unit's cost holds wherever it lands: PERF-04 rebalanced on test durations that

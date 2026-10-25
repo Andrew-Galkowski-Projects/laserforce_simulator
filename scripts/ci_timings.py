@@ -7,9 +7,14 @@ Measuring a CI-time change (PERF-02) took 6-10 ``gh`` calls per run, and
 read in one plain command. Judge a CI-time claim on the slowest of at least two
 runs (``docs/agents/ci.md``).
 
+``--durations`` adds, per test shard, the committed ``.test_durations``'s
+predicted test time against the shard's ``durations-shard-<n>`` artifact, with
+the files that drifted most. Run it from a checkout of the commit the run split
+on. PERF-06 found PERF-05's stale shard 1 this way (523 s predicted, 90 s measured).
+
 Usage::
 
-    python scripts/ci_timings.py <run-id>
+    python scripts/ci_timings.py <run-id> [--durations]
 """
 
 from __future__ import annotations
@@ -63,6 +68,30 @@ def coverage_total(log: str) -> str | None:
     return None
 
 
+def shard_drift(
+    predicted: dict[str, float], shards: dict[int, dict[str, float]], top: int
+) -> list[str]:
+    """Per shard, the committed file's predicted test time against the shard's
+    measured ``durations-shard-<n>`` artifact, then its ``top`` worst-drifting files."""
+    lines = []
+    for shard, measured in sorted(shards.items()):
+        pred = sum(predicted.get(test, 0.0) for test in measured)
+        meas = sum(measured.values())
+        ratio = f"{meas / pred:.2f}x" if pred else "new"
+        lines.append(
+            f"shard {shard}: {len(measured)} tests, predicted {pred:.0f}s, "
+            f"measured {meas:.0f}s ({ratio})"
+        )
+        files: dict[str, list[float]] = {}
+        for test, seconds in measured.items():
+            entry = files.setdefault(test.split("::")[0], [0.0, 0.0])
+            entry[0] += predicted.get(test, 0.0)
+            entry[1] += seconds
+        worst = sorted(files.items(), key=lambda kv: -abs(kv[1][1] - kv[1][0]))
+        lines += [f"    pred {p:7.1f}  meas {m:7.1f}  {f}" for f, (p, m) in worst[:top]]
+    return lines
+
+
 def _run(command: list[str]) -> str:
     """A command's stdout, decoded as UTF-8 (CI logs are; the Windows default
     codepage is not), with any stray byte replaced."""
@@ -81,6 +110,11 @@ def _job_log(run_id: str, job: dict[str, object]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run_id")
+    parser.add_argument(
+        "--durations",
+        action="store_true",
+        help="also compare each shard's CI durations with the committed file",
+    )
     args = parser.parse_args()
 
     run = json.loads(_gh("run", "view", args.run_id, "--json", "createdAt,jobs"))
@@ -96,6 +130,12 @@ def main() -> int:
         print(line)
         if name == "test-result":
             print(f"run start -> test-result: {elapsed(started, job['completedAt'])}")
+    if args.durations:
+        from refresh_test_durations import DURATIONS_FILE, download_shards
+
+        predicted = json.loads(DURATIONS_FILE.read_text(encoding="utf-8"))
+        for line in shard_drift(predicted, download_shards(args.run_id), top=3):
+            print(line)
     return 0
 
 

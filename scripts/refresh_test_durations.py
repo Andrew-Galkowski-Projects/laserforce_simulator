@@ -23,7 +23,7 @@ from pathlib import Path
 from statistics import median
 from typing import NamedTuple
 
-_DURATIONS_FILE = Path(__file__).resolve().parent.parent / (
+DURATIONS_FILE = Path(__file__).resolve().parent.parent / (
     "laserforce_simulator/.test_durations"
 )
 _SHARD_JOB_RE = re.compile(r"^test \((\d+)\)$")
@@ -95,7 +95,7 @@ def _shard_jobs(run_id: str) -> list[int]:
     )
 
 
-def _download_shards(run_id: str) -> dict[int, dict[str, float]]:
+def download_shards(run_id: str) -> dict[int, dict[str, float]]:
     """Each ``durations-shard-<n>`` artifact of the run that exists; a shard
     that failed uploaded none, which ``merge_runs`` reports. Not checked: ``gh``
     exits non-zero when no artifact matches, and ``_shard_jobs`` has already
@@ -127,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         runs = [
-            RunDurations(run_id, _shard_jobs(run_id), _download_shards(run_id))
+            RunDurations(run_id, _shard_jobs(run_id), download_shards(run_id))
             for run_id in args.run_ids
         ]
         merged = merge_runs(runs)
@@ -135,9 +135,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {error}", file=sys.stderr)
         return 1
     # pytest-split's own format, so a refresh diff stays reviewable.
-    with open(_DURATIONS_FILE, "w", encoding="utf-8") as f:
+    with open(DURATIONS_FILE, "w", encoding="utf-8") as f:
         json.dump(merged, f, sort_keys=True, indent=4)
-    print(f"wrote {len(merged)} tests to {_DURATIONS_FILE}")
+    print(f"wrote {len(merged)} tests to {DURATIONS_FILE}")
     return 0
 
 
