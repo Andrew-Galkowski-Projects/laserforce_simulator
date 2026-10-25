@@ -33,7 +33,10 @@ still runs, at the average duration, so a stale file only unbalances the shards.
 
 Every green shard keeps its own tests' CI timings as the `durations-shard-<n>`
 artifact for 30 days (PERF-04). **Refresh** when `ci_timings.py` shows the slowest
-shard's pytest more than about 40% over the mean of the shards, on two runs in a row:
+shard's pytest more than about 40% over the mean of the shards, on two runs in a row.
+Also refresh right after a change that shifts a broad class of tests' cost: PERF-05's
+test hasher made shard 1 run at a fifth of its prediction, and one slow runner kept the
+40% check from firing (PERF-06):
 
 ```
 python scripts/refresh_test_durations.py <run-id> [<run-id> ...]
@@ -48,10 +51,11 @@ re-run keeps the ID and drops the earlier attempt's artifacts (PERF-04). Commit 
 file in a normal PR. Don't record it locally: a 16-worker machine's proportions don't
 match the 4-vCPU runners.
 
-**Limit:** a refresh balances the recorded durations, not the CPU load. Batch-sim tests
-start a process pool sized to every CPU on top of the 4 xdist workers, which slows the
-whole shard that holds them, so one shard still runs about 2x the others after a
-refresh (PERF-04 measured 203 s against 94 s). PERF-06 tracks the fix.
+**Limit:** a refresh balances the recorded durations, not the CPU load, and one
+runner can run every shard 1.5-2x slow. The batch-sim pool tests pass an explicit
+`workers=2` / `workers=4`, and the pool helps: pinned to 4 cores at `-n 4`,
+`test_batch_sim.py` took 34 s with the pool and 57 s with its 120-game test serial,
+because that test is the long pole. Leave the pool alone (PERF-06 probe).
 
 To change the shard count, edit the matrix and `--splits` together: a mismatch
 silently skips or repeats groups.
