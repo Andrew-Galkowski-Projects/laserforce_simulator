@@ -956,3 +956,46 @@ class TestAggregateMapHeatmap(_ServiceTestCase):
     def test_no_config_rows_cols_zero(self) -> None:
         data = services.aggregate_map_heatmap(self.map, 40, None, self.user_a)
         self.assertEqual((data["rows"], data["cols"], data["round_count"]), (0, 0, 0))
+
+
+class TestEnsureDefaultMaps(TempMediaMixin, TestCase):
+    """ANG-06h -- the HTML map list's default-map seeding, as a service."""
+
+    DEFAULT_NAMES = {"Syracuse Laser Tag", "San Marcos Laser Tag"}
+
+    def test_empty_db_seeds_the_defaults_with_their_images(self) -> None:
+        services.ensure_default_maps()
+        maps = ArenaMap.objects.all()
+        self.assertEqual({m.name for m in maps}, self.DEFAULT_NAMES)
+        for arena_map in maps:
+            with self.subTest(name=arena_map.name):
+                self.assertTrue(arena_map.is_default)
+                self.assertGreater(arena_map.img_width, 0)
+                self.assertTrue((self.media_root / arena_map.image.name).exists())
+
+    def test_second_call_adds_no_rows(self) -> None:
+        services.ensure_default_maps()
+        services.ensure_default_maps()
+        self.assertEqual(ArenaMap.objects.count(), 2)
+
+    def test_existing_map_blocks_seeding(self) -> None:
+        make_bare_map()
+        services.ensure_default_maps()
+        self.assertEqual(
+            list(ArenaMap.objects.values_list("name", flat=True)), ["Bare Arena"]
+        )
+
+    def test_restores_a_missing_default_image_without_adding_rows(self) -> None:
+        services.ensure_default_maps()
+        arena_map = ArenaMap.objects.order_by("pk").first()
+        (self.media_root / arena_map.image.name).unlink()
+        services.ensure_default_maps()
+        self.assertTrue((self.media_root / arena_map.image.name).exists())
+        self.assertEqual(ArenaMap.objects.count(), 2)
+
+    def test_skips_for_non_filesystem_storage(self) -> None:
+        from unittest.mock import MagicMock, patch
+
+        with patch("django.core.files.storage.default_storage", new=MagicMock()):
+            services.ensure_default_maps()
+        self.assertEqual(ArenaMap.objects.count(), 0)

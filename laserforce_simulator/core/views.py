@@ -1,5 +1,4 @@
 import json
-import shutil
 
 from django import forms
 from django.conf import settings
@@ -16,7 +15,6 @@ from django.http import (
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
 from django.views.static import serve
-from PIL import Image as PILImage
 
 from . import services
 from .forms import (
@@ -33,11 +31,11 @@ from .models import ArenaMap
 _get_image_local_path = services._get_image_local_path
 _clear_processed_cache = services._clear_processed_cache
 _update_spawn_cells_in_zone_data = services.update_spawn_cells
-
-_DEFAULT_MAPS = [
-    ("Syracuse Laser Tag", "Syracuse_Laser_Tag_Map_cropped.png"),
-    ("San Marcos Laser Tag", "San_Marcos_Laser_Tag_Map.jpg"),
-]
+# ANG-06h — the default-map seeding moved to core/services.py
+# (`ensure_default_maps`); re-exported for core/tests.py.
+_DEFAULT_MAPS = services._DEFAULT_MAPS
+_seed_defaults = services._seed_defaults
+_restore_default_images = services._restore_default_images
 
 
 def _first_form_error(form: forms.BaseForm) -> str:
@@ -59,60 +57,8 @@ def _json_object(body: bytes) -> dict:
     return data
 
 
-def _seed_defaults():
-    from django.core.files.storage import FileSystemStorage, default_storage
-
-    if not isinstance(default_storage, FileSystemStorage):
-        return
-
-    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
-    maps_dir = settings.MEDIA_ROOT / "maps"
-    maps_dir.mkdir(parents=True, exist_ok=True)
-
-    for name, filename in _DEFAULT_MAPS:
-        src = screenshots_dir / filename
-        if not src.exists():
-            continue
-        dst = maps_dir / filename
-        if not dst.exists():
-            shutil.copy2(src, dst)
-        relative_path = f"maps/{filename}"
-        if not ArenaMap.objects.filter(image=relative_path).exists():
-            with PILImage.open(dst) as img:
-                w, h = img.size
-            ArenaMap.objects.create(
-                name=name,
-                image=relative_path,
-                is_default=True,
-                img_width=w,
-                img_height=h,
-            )
-
-
-def _restore_default_images() -> None:
-    """UXP-02 — copy back the image of any existing default map whose file is
-    missing (a fresh media volume or a rebuilt container). Never adds rows."""
-    from django.core.files.storage import FileSystemStorage, default_storage
-
-    if not isinstance(default_storage, FileSystemStorage):
-        return
-
-    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
-    maps_dir = settings.MEDIA_ROOT / "maps"
-    for _name, filename in _DEFAULT_MAPS:
-        src = screenshots_dir / filename
-        dst = maps_dir / filename
-        if dst.exists() or not src.exists():
-            continue
-        if ArenaMap.objects.filter(image=f"maps/{filename}").exists():
-            maps_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
-
-
 def map_list(request):
-    if not ArenaMap.objects.exists():
-        _seed_defaults()
-    _restore_default_images()
+    services.ensure_default_maps()
     maps = ArenaMap.objects.order_by("created_at")
     return render(request, "maps/map_list.html", {"maps": maps})
 
