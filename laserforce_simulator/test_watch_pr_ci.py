@@ -67,3 +67,26 @@ class VerdictTests(TestCase):
     def test_cancelled_check_is_fail(self) -> None:
         checks = [_check("test", "cancel")]
         self.assertEqual(watch_pr_ci.verdict(checks, {"111": "completed"}), "fail")
+
+
+class AfterRunTests(TestCase):
+    """PERF-05 retro: right after a close/reopen, ``gh pr checks`` still lists the
+    previous run's finished checks, so a plain watch passed on the stale run."""
+
+    def test_checks_from_the_previous_run_are_pending(self) -> None:
+        checks = [_check("test", "pass", "111"), _check("screenshots", "pass", "111")]
+        self.assertEqual(
+            watch_pr_ci.verdict(checks, {"111": "completed"}, after_run=111), "pending"
+        )
+
+    def test_a_mix_of_old_and_new_runs_is_pending(self) -> None:
+        checks = [_check("test", "pass", "222"), _check("screenshots", "pass", "111")]
+        statuses = {"222": "completed", "111": "completed"}
+        self.assertEqual(
+            watch_pr_ci.verdict(checks, statuses, after_run=111), "pending"
+        )
+
+    def test_settled_newer_runs_give_the_normal_verdict(self) -> None:
+        checks = [_check("test", "fail", "222"), _check("screenshots", "pass", "333")]
+        statuses = {"222": "completed", "333": "completed"}
+        self.assertEqual(watch_pr_ci.verdict(checks, statuses, after_run=111), "fail")

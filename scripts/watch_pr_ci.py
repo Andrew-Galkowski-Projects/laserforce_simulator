@@ -8,12 +8,16 @@ check has left ``pending`` and every workflow run behind them is completed
 (a later job such as ``docker`` is only listed once the job it needs passes),
 then print each check and the PR's mergeable state.
 
+Right after a close/reopen, ``gh pr checks`` still lists the previous run's
+finished checks. Pass that run's id as ``--after-run`` so the watch waits for
+the new runs instead of passing on the stale one.
+
 Exit status: 0 when every check passed or was skipped, 1 on any failure or
 cancellation, 2 on timeout.
 
 Usage::
 
-    python scripts/watch_pr_ci.py <pr> [--interval 30] [--timeout 3600]
+    python scripts/watch_pr_ci.py <pr> [--after-run <id>] [--interval 30] [--timeout 3600]
 """
 
 from __future__ import annotations
@@ -39,9 +43,18 @@ def run_ids(checks: list[dict[str, str]]) -> list[str]:
     return ids
 
 
-def verdict(checks: list[dict[str, str]], run_statuses: dict[str, str]) -> str:
-    """``"pending"`` until settled, then ``"pass"`` or ``"fail"``."""
+def verdict(
+    checks: list[dict[str, str]],
+    run_statuses: dict[str, str],
+    after_run: int | None = None,
+) -> str:
+    """``"pending"`` until settled, then ``"pass"`` or ``"fail"``.
+
+    With ``after_run``, a check whose run id is not newer counts as pending.
+    """
     if not checks or any(c["bucket"] == "pending" for c in checks):
+        return "pending"
+    if after_run is not None and any(int(rid) <= after_run for rid in run_ids(checks)):
         return "pending"
     if any(status != "completed" for status in run_statuses.values()):
         return "pending"
@@ -66,6 +79,7 @@ def _run_status(run_id: str) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("pr")
+    parser.add_argument("--after-run", type=int, default=None)
     parser.add_argument("--interval", type=int, default=30)
     parser.add_argument("--timeout", type=int, default=3600)
     args = parser.parse_args()
@@ -74,7 +88,7 @@ def main() -> int:
     while True:
         checks = _checks(args.pr)
         statuses = {rid: _run_status(rid) for rid in run_ids(checks)}
-        result = verdict(checks, statuses)
+        result = verdict(checks, statuses, args.after_run)
         if result != "pending":
             break
         if time.monotonic() > deadline:
