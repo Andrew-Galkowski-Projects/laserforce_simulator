@@ -19,7 +19,7 @@ class TestPytestUsesMd5(TestCase):
     def test_active_hasher_is_md5(self) -> None:
         self.assertEqual(get_hasher().algorithm, "md5")
 
-    def test_a_new_accounts_password_is_an_md5_hash(self) -> None:
+    def test_a_new_accounts_password_hashes_as_md5(self) -> None:
         user = get_user_model().objects.create_user(
             email="perf05-hasher@example.com", password="Str0ng-Passphrase-9"
         )
