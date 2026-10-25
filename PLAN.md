@@ -42,29 +42,7 @@ PERF-05 (use a fast password hasher in tests) is **[DONE]**; see `PLAN-completed
 
 PERF-06 (rebalance the CI shards after PERF-05) is **[DONE]**; see `PLAN-completed.md`.
 
-### TEST-01 · Keep every test's media writes out of the real `MEDIA_ROOT`
-
-Spec: #342
-
-**Prio: Low (found 2026-10-24, PERF-02 retro).** Older `core` tests (`del.png`, `parity.png`,
-the default-map seeding in `_seed_defaults` / `_restore_default_images`) write into the real
-`laserforce_simulator/media/` because they use neither `TempMediaMixin` nor
-`ClassTempMediaMixin`. PERF-02 deleted the strays from its worktree by hand three times. Likely
-fix: an autouse session fixture in the root `conftest.py` that points `MEDIA_ROOT` at a temp
-dir, so no test can leak whichever mixin it uses, plus a test that a full run leaves `media/`
-untouched. **Open for its own grill:** whether the per-test mixins stay (they also give each
-test a clean dir) and how the default-map tests that copy from `Screenshots_and_video_examples/`
-behave under it.
-
-**Grill (2026-10-24).** Probe: a full suite run on a clean worktree leaves **114 files** in
-`media/maps/`, most from `matches` League / Conference / rotation tests, not only `core`.
-Settled: (1) `pytest_configure` in `laserforce_simulator/conftest.py` sets
-`settings.MEDIA_ROOT = Path(tempfile.mkdtemp(prefix="lf-test-media-"))` (per xdist worker, beside
-the PERF-05 hasher override) and `pytest_unconfigure` removes it; (2) the per-test mixins and inline
-overrides stay; (3) `_seed_defaults` / `_restore_default_images` unchanged; (4) guard = two tests in
-`laserforce_simulator/tests/`: `MEDIA_ROOT` is a temp `Path`, not `BASE_DIR / "media"`, and a
-`default_storage.save` lands under it; (5) out: cleaning the main checkout's `media/`, `settings.py`,
-moving tests to `tmp_path`, a CI check; (6) no GLOSSARY term, no ADR.
+TEST-01 (keep test media writes out of the real `MEDIA_ROOT`) is **[DONE]**; see `PLAN-completed.md`.
 
 ### TOOL-01 · Script the PLAN.md to PLAN-completed.md move
 
@@ -324,7 +302,7 @@ Angular.
 - **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
-- **Other:** TEST-01, TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
+- **Other:** TOOL-01, LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
 
 **Parked, below everything:** GEN-02 (compute tiers), LG-02x-2 (Duos / Trios) and the LG-02
