@@ -1,0 +1,58 @@
+// Sight Lines mode controls. Colours come from the --lf-* tokens only (ADR-0043); the canvas
+// reads the --lf-map-* tokens at draw time.
+:host {
+  display: block;
+}
+
+.sl-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sl-view {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+
+  select {
+    padding: 0.25rem 0.4rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+    color: var(--lf-text);
+    font: inherit;
+  }
+}
+
+.sl-on {
+  background: color-mix(in srgb, var(--lf-accent) 18%, transparent);
+  border-color: var(--lf-accent);
+}
+
+.sl-hint,
+.sl-muted {
+  color: var(--lf-text-muted);
+}
+
+.sl-hint {
+  font-style: italic;
+}
+
+.sl-alert {
+  margin: 0.5rem 0 0;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface-alt);
+}
+
+.sl-success {
+  border-color: var(--lf-accent);
+}
+
+.sl-error {
+  border-color: var(--lf-side-red);
+  color: var(--lf-side-red-text);
+}
