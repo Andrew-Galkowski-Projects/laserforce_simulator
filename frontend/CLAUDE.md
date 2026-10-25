@@ -14,8 +14,8 @@ auth** below.
 - **Angular 22** (22.2.x), scaffolded with `npx -p @angular/cli@22 ng new`. The CLI is a
   `devDependency`: run it as `npx ng ...` or through the npm scripts, never a global install.
 - **Standalone components, zoneless change detection, signals.** No NgModules, no `zone.js`.
-- **No SSR.** `ng build` writes plain static files to `dist/frontend/browser/` (served by nginx in
-  ANG-07).
+- **No SSR.** `ng build` writes plain static files to `dist/frontend/browser/` (served by nginx at
+  `/app/` in the Docker stacks: see **Served from Docker** below).
 - **Angular Material** (and the CDK), Material 3, themed from the app's `--lf-*` tokens and
   following the OS light/dark setting. See **Theme** below and
   [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md).
@@ -243,6 +243,25 @@ CORS allow-list (ANG-02) has exactly `http://localhost:4200`, so open the app on
 `127.0.0.1`. Both dev origins are the same site, so the `SameSite=Lax` refresh cookie (ADR-0041)
 still travels.
 
+## Served from Docker (ANG-07)
+
+[ADR-0046](../docs/adr/0046-spa-at-app-prefix-behind-nginx-front-door.md): until ANG-08 the Docker
+stacks put nginx in front of Django. It serves the SPA at `/app/` and proxies everything else
+(`/api/`, the Django pages, `/admin/`, `/static/`) to `${DJANGO_UPSTREAM}`, so the SPA is
+same-origin with the API and needs no CORS.
+
+- `frontend/Dockerfile` builds with `--base-href /app/` on the command line. `src/index.html` keeps
+  `<base href="/">`, and `angular.json` is untouched, so `ng serve` and the CI build stay at `/`.
+  Never write an absolute asset or link path (`src="/..."`): use the Router or a relative path,
+  or it breaks under `/app/`.
+- `frontend/nginx/default.conf.template` is rendered by the nginx image's envsubst. It sets
+  `no-cache` on `index.html` and `immutable` on hashed `js` / `css` / fonts, falls back to
+  `/app/index.html` for deep links, and allows 20 MB bodies (map uploads). The proxy forwards
+  `Host $http_host` and the incoming `X-Forwarded-Proto`, and resolves the upstream per request.
+- `scripts/smoke_nginx.sh` is its test (CI `docker` job; running it locally:
+  [`docs/agents/ci.md`](../docs/agents/ci.md)). `docker compose up` serves it on
+  <http://localhost:8080/app/>.
+
 ## Windows notes
 
 - **Write source files with the editor tools (Write / Edit), never PowerShell `Set-Content` /
@@ -252,4 +271,5 @@ still travels.
 - `core.autocrlf` is on, so a Windows checkout has CRLF endings. `.prettierrc` sets
   `endOfLine: auto` so `format:check` passes on both Windows and the Linux CI runner.
 - `node_modules/`, `dist/` and `.angular/cache/` are ignored by `frontend/.gitignore`; never
-  stage them. The root `.dockerignore` excludes the whole of `frontend/` until ANG-07.
+  stage them. The root `.dockerignore` excludes the whole of `frontend/` from the Django image;
+  `frontend/.dockerignore` keeps the same three out of the nginx image's build context.

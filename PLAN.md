@@ -95,11 +95,7 @@ will have full API coverage from ANG-01d-1 / ANG-01d-2 / ANG-01e / ANG-01f, but 
 ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six
 items above are scoped.
 
-### ANG-07 · Serve Angular from Docker (nginx sidecar)
-
-Once Angular is built (`ng build --configuration production`), serve it via an nginx sidecar service.
-nginx serves the Angular static files on port 80 and proxies `/api/` requests to the Django container
-on port 8000. Add `nginx.conf` and update `docker-compose.yml` with the `nginx` service.
+ANG-07 (serve Angular from Docker) is **[DONE]**; see `PLAN-completed.md`.
 
 ### ANG-08 · Remove Django template views
 
@@ -280,10 +276,9 @@ so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in 
 ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail, Event timeline, Playback [done] -> Event charts [done] -> Map editor)   <- NEXT
         + still to scope: League / Season, League screens,
           Tournaments, Accounts
-    -> ANG-07  Serve Angular from an nginx sidecar
-      -> ANG-08  Remove Django template views (Admin stays)
-        -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
-          -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
+    -> ANG-08  Remove Django template views (Admin stays; moves the SPA from /app/ to /, ADR-0046)
+      -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
+        -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
@@ -315,6 +310,9 @@ The following were explicitly scoped out and should not be implemented until re-
   outstanding refresh tokens valid until they expire (7 days). Blacklisting every `OutstandingToken`
   for the Account on change is the fix; access tokens already expire within 15 minutes
 - **Custom domain** — deferred until the project grows; fly.dev subdomain is sufficient for now
+- **Serve the Angular SPA on Fly.io** (ANG-07 follow-up, ADR-0046) — ANG-07's nginx front door runs
+  only in the two compose stacks. Fly runs one image per machine, so a sidecar doesn't map onto it;
+  Fly stays Django-only until a task puts nginx and gunicorn in one image (or a second Fly app)
 - **Goal-recompute throttling** (MOVE-04) — behavioural perf lever (staler goals every *N* ticks);
   out of MOVE-02 scope, opened only if the MOVE-02 path cache alone is insufficient for the
   map-mode perf target

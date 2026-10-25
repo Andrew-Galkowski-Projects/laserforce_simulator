@@ -15,5 +15,6 @@ coverage.xml
 media/
 staticfiles/
 node_modules/
-# ANG-04: the Angular SPA is not part of the Django image (ANG-07 adds an nginx stage).
+# The Angular SPA is not part of the Django image: frontend/Dockerfile builds the
+# nginx front door from its own context (ANG-07, ADR-0046).
 frontend/
