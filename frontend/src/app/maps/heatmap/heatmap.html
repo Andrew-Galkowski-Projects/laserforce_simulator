@@ -1,0 +1,31 @@
+<div class="hm-controls">
+  <label for="heatmap-side">Side</label>
+  <select id="heatmap-side" (change)="pickSide($event)">
+    @for (option of sides; track option.value) {
+      <option [value]="option.value" [selected]="option.value === (store.heatmapSide() ?? '')">
+        {{ option.label }}
+      </option>
+    }
+  </select>
+  @if (store.heatmapStatus() === 'ready' && store.heatmap(); as data) {
+    @if (data.round_count > 0) {
+      <span class="hm-count">Rounds aggregated: {{ data.round_count }}</span>
+    }
+  }
+</div>
+
+@switch (store.heatmapStatus()) {
+  @case ('loading') {
+    <p class="hm-muted hm-notice">Loading the heatmap...</p>
+  }
+  @case ('error') {
+    <p class="hm-error" role="alert">Could not load the heatmap.</p>
+  }
+  @case ('ready') {
+    @if (store.heatmap()?.round_count === 0) {
+      <p class="hm-notice" role="status">
+        No rounds have been played at this Zone size ({{ store.zoneSize() }}px) yet.
+      </p>
+    }
+  }
+}
