@@ -16,7 +16,8 @@ frontend -------------------------------------------------^
   beside the shards.
 - **`test`**: a 4-runner matrix. Each runner runs `pytest --splits 4 --group <n>`
   (`pytest-split`) with the usual `-n auto --dist worksteal`, coverage through
-  `sys.monitoring` (`COVERAGE_CORE=sysmon`), and `--durations=25`. It keeps its
+  `sys.monitoring` (`COVERAGE_CORE=sysmon`), and `--durations=25`, then fails if a
+  `laserforce_simulator/media/` dir exists (a test bypassed the temp `MEDIA_ROOT`, TEST-01). It keeps its
   `.coverage` data as the `coverage-shard-<n>` artifact, and its tests' timings
   (`--store-durations --clean-durations`) as `durations-shard-<n>`.
 - **`coverage`**: downloads the shards' data files, runs `coverage combine`, writes

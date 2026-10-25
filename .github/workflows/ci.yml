@@ -135,6 +135,17 @@ jobs:
           pytest --splits 4 --group ${{ matrix.group }} --durations-path .test_durations --store-durations --clean-durations --cov=. --cov-report= --durations=25
           mv .coverage .coverage.shard${{ matrix.group }}
 
+      - name: Check no test wrote into the real media/ dir
+        # TEST-01: the root conftest points MEDIA_ROOT at a per-worker temp
+        # dir, so a media/ folder here means a test bypassed MEDIA_ROOT.
+        working-directory: ./laserforce_simulator
+        run: |
+          if [ -d media ]; then
+            find media -type f | head -20
+            echo "::error::Tests wrote into laserforce_simulator/media/; write under settings.MEDIA_ROOT instead."
+            exit 1
+          fi
+
       - name: Keep this shard's coverage data
         uses: actions/upload-artifact@v4
         with:

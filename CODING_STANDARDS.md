@@ -46,6 +46,7 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 - Tests go through public seams with real in-memory objects or Django `TestCase`. Flag a test that only checks that a mock returned what it was told to return.
 - Simulation tests use a fixed seed or injected deterministic stats. Flag an exact point-total assertion on an unseeded run.
 - Test placement follows the root `CLAUDE.md` ("Test placement").
+- Teardown deletes only a path the same code created and kept in a variable. Flag a delete (`rmtree`, `unlink`, `delete`) whose target is read back from settings or the environment: if setup failed, that value can still be the real directory (TEST-01's first `pytest_unconfigure` would have removed the real `media/`).
 
 ## Naming
 
