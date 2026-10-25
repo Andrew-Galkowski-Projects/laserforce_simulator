@@ -212,6 +212,10 @@ class SequencingSummaryTests(TestCase):
         plan = _summary("- **Other:** TEST-01b, TEST-01, LG-06.")
         self.assertIn("- **Other:** TEST-01b, LG-06.\n", _move(plan=plan).plan)
 
+    def test_longer_id_earlier_in_the_list_is_kept(self) -> None:
+        plan = _summary("- **Other:** LG-06, TEST-01b, TEST-01.")
+        self.assertIn("- **Other:** LG-06, TEST-01b.\n", _move(plan=plan).plan)
+
     def test_other_mention_is_left_alone_with_a_warning(self) -> None:
         line = "- **Mechanics:** TEST-01..TEST-05, then MECH-07"
         result = _move(plan=_summary(line))
