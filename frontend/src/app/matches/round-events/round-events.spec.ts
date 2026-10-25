@@ -146,6 +146,11 @@ describe('Event log (/rounds/:id/events)', () => {
       expect(link('Playback')?.getAttribute('href')).toBe('/rounds/9/playback');
     });
 
+    it("links to the Round's Charts", async () => {
+      await open();
+      expect(link('Charts')?.getAttribute('href')).toBe('/rounds/9/charts');
+    });
+
     it('titles the tab "Event Log - <app title>"', async () => {
       await open();
       expect(TestBed.inject(Title).getTitle()).toBe(`Event Log - ${APP_TITLE}`);

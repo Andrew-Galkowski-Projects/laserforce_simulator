@@ -3,6 +3,7 @@ import { APP_TITLE } from '../app-title';
 import { MatchDetail } from './match-detail/match-detail';
 import { MatchList } from './match-list/match-list';
 import { Playback } from './playback/playback';
+import { RoundCharts } from './round-charts/round-charts';
 import { RoundDetail } from './round-detail/round-detail';
 import { RoundEvents } from './round-events/round-events';
 import { SetupForm } from './setup-form/setup-form';
@@ -26,7 +27,7 @@ export const MATCHES_ROUTES: Routes = [
 /**
  * Single Rounds, lazily loaded under `/rounds` from this same module (one chunk for the area).
  * There is no `/rounds` list: Single Rounds are a section of Match History. `:id/events` (the
- * Event log) and `:id/playback` (Playback) come before `:id`.
+ * Event log), `:id/playback` (Playback) and `:id/charts` (the event charts) come before `:id`.
  */
 export const ROUNDS_ROUTES: Routes = [
   {
@@ -37,5 +38,6 @@ export const ROUNDS_ROUTES: Routes = [
   },
   { path: ':id/events', component: RoundEvents, title: `Event Log - ${APP_TITLE}` },
   { path: ':id/playback', component: Playback, title: `Playback - ${APP_TITLE}` },
+  { path: ':id/charts', component: RoundCharts, title: `Charts - ${APP_TITLE}` },
   { path: ':id', component: RoundDetail, title: `Round - ${APP_TITLE}` },
 ];
