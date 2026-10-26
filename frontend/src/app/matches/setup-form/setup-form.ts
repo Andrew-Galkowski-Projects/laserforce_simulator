@@ -120,13 +120,13 @@ export class SetupForm {
         : this.rounds.create({ ...sides, arena_map });
     const area = this.kind === 'match' ? '/matches' : '/rounds';
     // Django's success flash (`create_match` / `create_single_round`), but "Tie game." for a tie.
-    const done = this.kind === 'match' ? 'Match simulated!' : 'Round complete!';
+    const headline = this.kind === 'match' ? 'Match simulated!' : 'Round complete!';
     this.busy.set(true);
     created.subscribe({
       next: (result) => {
         void this.router.navigate([area, result.id]);
         const outcome = result.winner_name !== null ? `${result.winner_name} won!` : 'Tie game.';
-        this.notify(`${done} ${outcome}`);
+        this.notify(`${headline} ${outcome}`);
       },
       error: (error: unknown) => {
         this.busy.set(false);
