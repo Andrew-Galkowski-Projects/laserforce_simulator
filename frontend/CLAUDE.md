@@ -23,6 +23,8 @@ auth** below.
 - **Vitest** through the `@angular/build:unit-test` builder (`ng test`), on jsdom.
   `vitest-base.config.mts` (wired by `runnerConfig` in `angular.json`) only raises `testTimeout`
   to 15 s: under the full parallel run a heavy route spec's first render passed 5 s (ANG-06c).
+  `src/test-setup.ts` (`setupFiles`) resets the TestBed before each test, so a spec whose
+  `afterEach(verify)` throws fails alone instead of failing every later test in its file.
 - **ESLint** (`angular-eslint`, `eslint.config.js`) and **Prettier** (`.prettierrc`, print width
   100, single quotes, `endOfLine: auto`). Both are enforced in CI.
 - **Node 24** (`.nvmrc`, `engines.node >=24`), npm only, `package-lock.json` committed.
@@ -270,7 +272,9 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   `fixture.debugElement.query(By.directive(Screen))`. A failing `toBeInstanceOf` / `toEqual` on a
   component instance makes Vitest print its whole object graph and run Node out of memory, with
   no test summary. A spec that lands on a screen it isn't testing (shell, login, routes) releases
-  that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`).
+  that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`), right after the
+  navigation and before any assertion: a failed assertion then can't leave them open too
+  (ANG-06-11).
 - **Timer-driven code** (a play loop, a timed flash): fake only the timer you drive
   (`vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })`), and only after the first
   render, so zoneless `whenStable` keeps its real `setTimeout` / rAF. Call `vi.useRealTimers()` in

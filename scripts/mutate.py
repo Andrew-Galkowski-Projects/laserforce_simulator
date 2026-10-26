@@ -8,8 +8,11 @@ the run crashes. A shell loop of ``sed`` and ``cp`` is refused by the worktree
 isolation guard, so this does it in one plain command.
 
 The mutations file is JSON, a list of ``[name, old, new]``; ``old`` must occur
-in the target exactly once. Exits 1 when a mutation survives or its pattern is
-missing or ambiguous. Exits 2, before any mutation, when the command already
+in the target exactly once. A mutation is caught when the run fails and names a
+failed test; a failed run that names none (a build or collection error, e.g. a
+mutation that does not compile) is ``BROKEN``: rewrite that mutation. Exits 1
+when a mutation survives, is broken, or its pattern is missing or ambiguous.
+Exits 2, before any mutation, when the command already
 fails on the unchanged file (``BASELINE FAILED``): a red test catches every
 mutation and proves nothing.
 
@@ -20,7 +23,8 @@ Usage::
 
 ``--run`` takes the words after ``--`` as the whole command (Vitest:
 ``npm --prefix frontend exec -- ng test --watch=false --include=<spec>``), run
-with ``NO_COLOR=1``. Either way a non-zero exit is a caught mutation.
+with ``NO_COLOR=1``. Failed tests are read from pytest's ``FAILED`` and Vitest's
+``FAIL`` lines.
 """
 
 from __future__ import annotations
@@ -43,7 +47,7 @@ class Mutation(NamedTuple):
 
 class Outcome(NamedTuple):
     name: str
-    status: str  # "caught", "survived", "not found" or "ambiguous"
+    status: str  # "caught", "survived", "broken", "not found" or "ambiguous"
     failed: list[str]
 
 
@@ -140,10 +144,14 @@ def mutate_with(
                 continue
             _write(target, original.replace(old, new))
             run = _run(command, cwd)
-            status = "caught" if run.returncode != 0 else "survived"
-            outcomes.append(
-                Outcome(mutation.name, status, failed_tests(run.stdout + run.stderr))
-            )
+            failed = failed_tests(run.stdout + run.stderr)
+            if run.returncode == 0:
+                status = "survived"
+            else:
+                # A failed run that names no test is a build or collection error: the
+                # mutation never reached a test, so nothing caught it.
+                status = "caught" if failed else "broken"
+            outcomes.append(Outcome(mutation.name, status, failed))
     finally:
         _write(target, original)
     return outcomes
