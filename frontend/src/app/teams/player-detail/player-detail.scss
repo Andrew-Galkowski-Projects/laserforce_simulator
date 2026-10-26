@@ -49,13 +49,16 @@ h2 {
   color: var(--mat-sys-error);
 }
 
-/* The identity card beside the Overall and Stat cards; stacked below 768px (layout B). */
+/*
+ * The identity card beside the Overall and Stat cards. Stacked below 1100px: from 768px the
+ * sidebar sits beside the page, and a 1:3 split left the card too narrow for a name or a site.
+ */
 .player {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 3fr);
+  grid-template-columns: minmax(15rem, 1fr) minmax(0, 3fr);
   gap: 1.5rem;
 
-  @media (max-width: 767.98px) {
+  @media (max-width: 1099.98px) {
     grid-template-columns: minmax(0, 1fr);
   }
 }
