@@ -10,6 +10,7 @@ import { MatError, MatFormField, MatHint, MatLabel } from '@angular/material/for
 import { MatOption, MatSelect } from '@angular/material/select';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
 import { Observable } from 'rxjs';
+import { listAll } from '../../api/list-all';
 import { ArenaMap } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
 import { MatchType } from '../../api/matches.models';
@@ -18,6 +19,7 @@ import { RoundsService } from '../../api/rounds.service';
 import { TeamListItem } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
 import { applyApiErrors } from '../../shared/form-errors';
+import { injectNotify } from '../../shared/notify';
 import { SetupKind } from '../shared/setup-kind';
 
 /** `Match.MATCH_TYPE_CHOICES`, as Django's `MatchForm` offers them. */
@@ -25,9 +27,6 @@ const MATCH_TYPES: readonly { value: MatchType; label: string }[] = [
   { value: 'friendly', label: 'Friendly' },
   { value: 'tournament', label: 'Tournament' },
 ];
-
-/** The API's max page size: Teams / maps beyond the first 100 are not offered. */
-const PICKER_PAGE_SIZE = 100;
 
 /** Django's wording for a missing required field, as the API sends it for the other forms. */
 const REQUIRED_MESSAGE = 'This field is required.';
@@ -56,6 +55,7 @@ export class SetupForm {
   private readonly matches = inject(MatchesService);
   private readonly rounds = inject(RoundsService);
   private readonly router = inject(Router);
+  private readonly notify = injectNotify();
 
   protected readonly kind = inject(ActivatedRoute).snapshot.data['kind'] as SetupKind;
 
@@ -86,12 +86,14 @@ export class SetupForm {
   protected readonly busy = signal(false);
 
   constructor() {
-    inject(TeamsService)
-      .list({ page_size: PICKER_PAGE_SIZE, ordering: 'name' })
-      .subscribe((page) => this.teams.set(page.items));
-    inject(MapsService)
-      .list({ has_confirmed_config: true, page_size: PICKER_PAGE_SIZE, ordering: 'name' })
-      .subscribe((page) => this.maps.set(page.items));
+    const teams = inject(TeamsService);
+    const maps = inject(MapsService);
+    listAll((page) => teams.list({ ...page, ordering: 'name' })).subscribe((items) =>
+      this.teams.set(items),
+    );
+    listAll((page) =>
+      maps.list({ ...page, has_confirmed_config: true, ordering: 'name' }),
+    ).subscribe((items) => this.maps.set(items));
   }
 
   /**
@@ -112,14 +114,20 @@ export class SetupForm {
     const { team_red, team_blue, match_type, arena_map } = this.form.getRawValue();
     // `required` passed, so both sides are picked.
     const sides = { team_red, team_blue } as { team_red: number; team_blue: number };
-    const created: Observable<{ id: number }> =
+    const created: Observable<{ id: number; winner_name: string | null }> =
       this.kind === 'match'
         ? this.matches.create({ ...sides, match_type, arena_map })
         : this.rounds.create({ ...sides, arena_map });
     const area = this.kind === 'match' ? '/matches' : '/rounds';
+    // Django's success flash (`create_match` / `create_single_round`), but "Tie game." for a tie.
+    const headline = this.kind === 'match' ? 'Match simulated!' : 'Round complete!';
     this.busy.set(true);
     created.subscribe({
-      next: (result) => void this.router.navigate([area, result.id]),
+      next: (result) => {
+        void this.router.navigate([area, result.id]);
+        const outcome = result.winner_name !== null ? `${result.winner_name} won!` : 'Tie game.';
+        this.notify(`${headline} ${outcome}`);
+      },
       error: (error: unknown) => {
         this.busy.set(false);
         this.nonFieldErrors.set(applyApiErrors(this.form, error));

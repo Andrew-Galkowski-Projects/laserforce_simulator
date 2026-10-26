@@ -9,6 +9,7 @@ import { HarnessLoader } from '@angular/cdk/testing';
 import { TestbedHarnessEnvironment } from '@angular/cdk/testing/testbed';
 import { MatFormFieldHarness } from '@angular/material/form-field/testing';
 import { MatSelectHarness } from '@angular/material/select/testing';
+import { MatSnackBarHarness } from '@angular/material/snack-bar/testing';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../environments/environment';
@@ -129,22 +130,50 @@ describe('Setup form (/matches/new, /rounds/new)', () => {
   const paramsOf = (req: TestRequest): Record<string, string | null> =>
     Object.fromEntries(req.request.params.keys().map((k) => [k, req.request.params.get(k)]));
 
-  it('loads the Teams by name and the confirmed-config maps by name, 100 a page', async () => {
+  it('loads the Teams by name and the confirmed-config maps by name, from page 1 at 100 a page', async () => {
     await harness.navigateByUrl('/matches/new');
     expect(routerUrl()).toBe('/matches/new');
     const teams = http.expectOne((req) => req.url === `${BASE}/teams/`);
     expect(teams.request.method).toBe('GET');
-    expect(paramsOf(teams)).toEqual({ page_size: '100', ordering: 'name' });
+    expect(paramsOf(teams)).toEqual({ page: '1', page_size: '100', ordering: 'name' });
     const maps = http.expectOne((req) => req.url === `${BASE}/maps/`);
     expect(maps.request.method).toBe('GET');
     expect(paramsOf(maps)).toEqual({
       has_confirmed_config: 'true',
+      page: '1',
       page_size: '100',
       ordering: 'name',
     });
-    teams.flush({ data: [], meta: {} });
-    maps.flush({ data: [], meta: {} });
+    teams.flush(pageEnvelope([]));
+    maps.flush(pageEnvelope([]));
     await harness.fixture.whenStable();
+  });
+
+  it('offers the Teams and maps of every page, not only the first', async () => {
+    await harness.navigateByUrl('/matches/new');
+    http
+      .expectOne((req) => req.url === `${BASE}/teams/` && req.params.get('page') === '1')
+      .flush(pageEnvelope([team(3, 'Alpha')], 1, 2));
+    http
+      .expectOne((req) => req.url === `${BASE}/maps/` && req.params.get('page') === '1')
+      .flush(pageEnvelope([arenaMap(11, 'Classic Arena')], 1, 2));
+    const teamsPage2 = http.expectOne(
+      (req) => req.url === `${BASE}/teams/` && req.params.get('page') === '2',
+    );
+    expect(paramsOf(teamsPage2)).toEqual({ page: '2', page_size: '100', ordering: 'name' });
+    teamsPage2.flush(pageEnvelope([team(4, 'Bravo')], 2, 2));
+    http
+      .expectOne((req) => req.url === `${BASE}/maps/` && req.params.get('page') === '2')
+      .flush(pageEnvelope([arenaMap(12, 'Warehouse')], 2, 2));
+    await harness.fixture.whenStable();
+    for (const label of ['Red Team', 'Blue Team']) {
+      expect((await optionsOf(label)).map((o) => o.text)).toEqual(['Alpha', 'Bravo']);
+    }
+    expect((await optionsOf('Arena Map')).map((o) => o.text)).toEqual([
+      'No map (3-zone fallback)',
+      'Classic Arena',
+      'Warehouse',
+    ]);
   });
 
   it('offers every Team on both sides, invalid rosters disabled and marked', async () => {
@@ -233,6 +262,68 @@ describe('Setup form (/matches/new, /rounds/new)', () => {
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/rounds/44');
     releaseMatchesLoads();
+  });
+
+  it.each([
+    {
+      url: '/matches/new',
+      label: 'Simulate Match',
+      api: 'matches',
+      created: () => matchRow({ id: 31, winner: 4, winner_name: 'Bravo' }),
+      notice: 'Match simulated! Bravo won!',
+    },
+    {
+      url: '/matches/new',
+      label: 'Simulate Match',
+      api: 'matches',
+      created: () => matchRow({ id: 31, winner: null, winner_name: null }),
+      notice: 'Match simulated! Tie game.',
+    },
+    {
+      url: '/rounds/new',
+      label: 'Simulate Round',
+      api: 'rounds',
+      created: () => roundDetail({ id: 44, winner: 3, winner_name: 'Alpha' }),
+      notice: 'Round complete! Alpha won!',
+    },
+    {
+      url: '/rounds/new',
+      label: 'Simulate Round',
+      api: 'rounds',
+      created: () => roundDetail({ id: 44, winner: null, winner_name: null }),
+      notice: 'Round complete! Tie game.',
+    },
+  ])('on $url, says "$notice" once the create succeeds', async (c) => {
+    await open(c.url);
+    await (await select('Red Team')).clickOptions({ text: 'Alpha' });
+    await (await select('Blue Team')).clickOptions({ text: 'Bravo' });
+    button(c.label).click();
+    await harness.fixture.whenStable();
+    http
+      .expectOne(`${BASE}/${c.api}/`)
+      .flush({ data: c.created(), meta: {} }, { status: 201, statusText: 'Created' });
+    await harness.fixture.whenStable();
+    // Release the detail screen's GETs first, so a failed assertion can't leak them into verify().
+    releaseMatchesLoads();
+    const snackBar = await loader.getHarness(MatSnackBarHarness);
+    expect(await snackBar.getMessage()).toBe(c.notice);
+    expect(await snackBar.getActionDescription()).toBe('Close');
+  });
+
+  it('shows no notice when the create fails', async () => {
+    await open('/rounds/new');
+    await (await select('Red Team')).clickOptions({ text: 'Alpha' });
+    await (await select('Blue Team')).clickOptions({ text: 'Bravo' });
+    button('Simulate Round').click();
+    await harness.fixture.whenStable();
+    http
+      .expectOne(`${BASE}/rounds/`)
+      .flush(
+        { errors: [{ code: 'x', message: 'Nope.', field: null }], meta: {} },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await harness.fixture.whenStable();
+    expect(await loader.getAllHarnesses(MatSnackBarHarness)).toEqual([]);
   });
 
   it('posts a Tournament Match when Tournament is chosen', async () => {
