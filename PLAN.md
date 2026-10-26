@@ -93,7 +93,18 @@ below (13b, 14, 16); the item's grill confirms it.
 9. **[DONE] Head-to-head & history** (ANG-06-9, in `PLAN-completed.md`).
 10. **[DONE] Round extras** (ANG-06-10, in `PLAN-completed.md`).
 11. **Enhanced setup / detail check (ANG-06-11)** — confirm items 3-4 cover the `enhanced_*` templates and
-    `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`.
+    `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`. Spec: #389.
+    Settled (owner, 2026-10-26 grill): `match-detail` already shows every value and link of
+    `enhanced_match_detail.html`, and `setup-form` every field, hint and error of both
+    `enhanced_*_setup.html`. `matches/match_detail.html` is dead: no view renders it. Three gaps,
+    one ticket, frontend only (no API, model, ownership or engine change):
+    (1) after a create, a `notify.ts` snackbar with Django's flash wording, "Match simulated!
+    <winner_name> won!" / "Round complete! <winner_name> won!", from the create response, and
+    "... Tie game." when `winner_name` is null (Django's flash reads "Tie won!"; it is left alone);
+    (2) the Team and map pickers load every page through `listAll`, not one 100-row page;
+    (3) delete the dead `match_detail.html` (no view or URL name, so the ANG-08 ruling does not
+    apply). Out of scope: heading text, the trophy / "Tie Game" header, "Basic Simulation" wording,
+    Round detail (item 4), and an error state for a failed picker load (existing behaviour).
 12. **Batch simulate (ANG-06-12)** — form, status polling, save games. Replaces `matches/batch_simulate`.
 13a. **Tournaments: list, create, participant pool (ANG-06-13a)** — pool add-existing / generate / import /
     remove, participant import. Replaces `tournament_list`, `tournament_create`.
