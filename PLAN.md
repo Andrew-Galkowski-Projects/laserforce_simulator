@@ -88,7 +88,41 @@ so each is frontend parity work like 1-6, with its own grill. Order is by depend
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **Player pages (ANG-06-8)** — player list (`/players/`), player detail, player delete, career stats, role
    benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
-   `player_career_stats`, `role_benchmarks`.
+   `player_career_stats`, `role_benchmarks`. Spec: #372
+   Grill (owner, 2026-10-26) — no model / ownership / simulation change:
+   - **Routes:** `/players` (list), `/players/benchmarks`, `/players/:id/stats` (career),
+     `/teams/:id/players/:playerId` (detail). No delete route: Delete on detail opens
+     `ConfirmDialog` (Django's warning text), then `DELETE`, snackbar
+     `Player "<name>" removed from <team>`, `/teams/:id`.
+   - **API additions:** read-only `team_name` on `PlayerSerializer` (list rows) and read-only
+     `manager` (Account id or null) on `TeamSerializer` (*This is me* rule). The spec names every
+     test that pins either serializer's key set.
+   - **Preferred roles** header is not sortable (the API cannot order a JSON list); the other 22
+     columns sort as in Django. Recorded deviation.
+   - **List state in the URL:** `?sort=&dir=&page=&per_page=`, Django's names and defaults (`team`,
+     asc, 10; options 10/25/50/100); sort or page-size change resets to page 1; "N player(s)
+     total", Previous / "Page X of Y" / Next, ↑/↓ on the active column, empty state "No players yet."
+   - **Sidebar:** a Players entry after Teams.
+   - **Career chart:** the Chart.js `app-line-chart` (ADR-0045) moves from `matches/round-charts/`
+     to `app/shared/`; Django's labels and dashed line.
+   - **Δ follows Display:** `delta_mean` or `delta_median` per the toggle (Django always used the
+     mean; `career-and-benchmarks.md` says it swaps). Deliberate fix.
+   - **Filters in the URL:** `?threshold=&display=`; threshold input `min="0"` + `required`;
+     benchmarks keep raw stat keys and both no-data messages verbatim.
+   - **Links:** list names → career stats; Team detail's Player names → player detail; detail has
+     Career stats / Edit / Delete and "← Team"; *My player* → player detail; the career page's
+     head-to-head link waits for ANG-06-9.
+   - **Self-insert on detail:** *Unlink* when this Player is the Self-insert, else *This is me* when
+     `team.manager` is the Account, neither for an Unmanaged Team; snackbars with Django's flash text;
+     "You" badge on detail, list and career.
+   - **Out:** head-to-head pages (ANG-06-9), League player detail (ANG-06-16), sorting by Preferred
+     roles, removing Django pages (ANG-08).
+   - **Stat bars:** four new tokens `--lf-rating-elite/-good/-fair/-poor` (light + dark,
+     `LF_TOKENS`) at Django's 80 / 60 / 40 thresholds; the value always shows beside the bar.
+   - **Tickets:** two in parallel, A (serializer fields, list, detail + delete + Self-insert, Team
+     detail links, *My player*, sidebar) and B (career, benchmarks, the chart move). The
+     orchestrator first lands `players.routes.ts` with stub routes, the `career()` / `benchmarks()`
+     service methods + types, and `team_name` on `Player` in every shared fixture.
 9. **Head-to-head & history (ANG-06-9)** — team H2H, player H2H, team match history, compare rounds. Replaces
    `matches/head_to_head`, `player_head_to_head`, `team_history`, `compare_rounds`.
 10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces
