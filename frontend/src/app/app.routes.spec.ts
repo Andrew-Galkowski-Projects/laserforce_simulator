@@ -19,6 +19,7 @@ import { MatchDetail } from './matches/match-detail/match-detail';
 import { MatchList } from './matches/match-list/match-list';
 import { RoundDetail } from './matches/round-detail/round-detail';
 import { SetupForm } from './matches/setup-form/setup-form';
+import { BatchSimulate } from './matches/batch-simulate/batch-simulate';
 import { releaseMatchesLoads } from './matches/testing/matches-loads';
 import { MapEditor } from './maps/map-editor/map-editor';
 import { MapList } from './maps/map-list/map-list';
@@ -234,6 +235,15 @@ describe('app routes', () => {
         expect(TestBed.inject(Title).getTitle()).toBe(title);
       },
     );
+
+    it('resolves /matches/batch to Batch Simulate, not to a Match', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/matches/batch');
+      expect(routerUrl()).toBe('/matches/batch');
+      expect(harness.fixture.debugElement.query(By.directive(BatchSimulate))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(MatchDetail))).toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe('Batch Simulate - Laserforce Simulator');
+    });
   });
 
   describe('signed in, analytics screens (ANG-06-9)', () => {

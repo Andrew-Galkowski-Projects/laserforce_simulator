@@ -1,0 +1,272 @@
+<h1>Batch Simulate</h1>
+<p class="intro">
+  Run 10–500 rounds in memory and watch the win-probability distribution build up live. No match
+  records are saved.
+</p>
+<section class="setup">
+  @if (noValidTeams()) {
+    <p>You need at least one Team with a valid roster before you can simulate.</p>
+    <a mat-flat-button routerLink="/teams">Go to Teams</a>
+  } @else {
+    <form [formGroup]="form" (ngSubmit)="start()" novalidate>
+      @for (message of nonFieldErrors(); track $index) {
+        <p class="error" role="alert">{{ message }}</p>
+      }
+      <div class="setup__row">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic" data-lf-side="red">
+          <mat-label>Red Team</mat-label>
+          <mat-select formControlName="team_red">
+            @for (team of teams(); track team.id) {
+              <mat-option [value]="team.id" [disabled]="!team.is_valid_roster">
+                {{ teamLabel(team) }}
+              </mat-option>
+            }
+          </mat-select>
+          @if (form.controls.team_red.hasError('required')) {
+            <mat-error>{{ requiredMessage }}</mat-error>
+          } @else if (form.controls.team_red.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic" data-lf-side="blue">
+          <mat-label>Blue Team</mat-label>
+          <mat-select formControlName="team_blue">
+            @for (team of teams(); track team.id) {
+              <mat-option [value]="team.id" [disabled]="!team.is_valid_roster">
+                {{ teamLabel(team) }}
+              </mat-option>
+            }
+          </mat-select>
+          @if (form.controls.team_blue.hasError('required')) {
+            <mat-error>{{ requiredMessage }}</mat-error>
+          } @else if (form.controls.team_blue.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      </div>
+      <div class="setup__row">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Arena Map</mat-label>
+          <mat-select formControlName="arena_map" canSelectNullableOptions>
+            <mat-option [value]="null">No map (3-zone fallback)</mat-option>
+            @for (arenaMap of maps(); track arenaMap.id) {
+              <mat-option [value]="arenaMap.id">{{ arenaMap.name }}</mat-option>
+            }
+          </mat-select>
+          @if (form.controls.arena_map.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Number of simulations</mat-label>
+          <mat-select formControlName="n">
+            @for (choice of nChoices; track choice) {
+              <mat-option [value]="choice">{{ choice }}</mat-option>
+            }
+          </mat-select>
+          @if (form.controls.n.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      </div>
+      <div class="setup__actions">
+        <button mat-flat-button type="submit" [disabled]="running()">Run</button>
+      </div>
+    </form>
+  }
+</section>
+
+@if (phase() === 'running' || phase() === 'complete') {
+  <section class="progress">
+    <mat-progress-bar
+      mode="determinate"
+      [value]="progressValue()"
+      aria-label="Batch run progress"
+    ></mat-progress-bar>
+    <p class="progress__label" role="status">{{ progressLabel() }}</p>
+  </section>
+}
+
+@if (runError(); as message) {
+  <p class="error run-error" role="alert">{{ message }}</p>
+}
+
+@if (aggregate(); as agg) {
+  @let names = { red: run()?.team_red_name ?? 'Red', blue: run()?.team_blue_name ?? 'Blue' };
+  <section class="results">
+    <h2>Results — {{ agg.n }} simulations</h2>
+
+    <div class="cards">
+      <div class="card card--red" data-lf-side="red">
+        <span class="side-badge">{{ sideTag('red') }}</span>
+        <span class="card__value">{{ agg.red_win_pct | number: '1.1-1' }}%</span>
+        <span class="card__caption">{{ names.red }} win rate</span>
+        <span class="card__record"
+          >{{ agg.red_wins }} W / {{ agg.ties }} T / {{ agg.blue_wins }} L</span
+        >
+      </div>
+      <div class="card card--ties">
+        <span class="card__value">{{ agg.ties }}</span>
+        <span class="card__caption">Ties</span>
+      </div>
+      <div class="card card--blue" data-lf-side="blue">
+        <span class="side-badge">{{ sideTag('blue') }}</span>
+        <span class="card__value">{{ agg.blue_win_pct | number: '1.1-1' }}%</span>
+        <span class="card__caption">{{ names.blue }} win rate</span>
+        <span class="card__record"
+          >{{ agg.blue_wins }} W / {{ agg.ties }} T / {{ agg.red_wins }} L</span
+        >
+      </div>
+    </div>
+
+    <div class="averages-row">
+      <table class="averages" data-lf-side="red">
+        <caption>
+          <span class="side-badge">{{ sideTag('red') }}</span>
+          {{
+            names.red
+          }}
+          averages
+        </caption>
+        <tbody>
+          <tr>
+            <th scope="row">Score</th>
+            <td class="num">{{ agg.avg_red_score | number: '1.0-0' }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Survivors</th>
+            <td class="num">{{ agg.avg_red_survivors | number: '1.2-2' }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <table class="averages" data-lf-side="blue">
+        <caption>
+          <span class="side-badge">{{ sideTag('blue') }}</span>
+          {{
+            names.blue
+          }}
+          averages
+        </caption>
+        <tbody>
+          <tr>
+            <th scope="row">Score</th>
+            <td class="num">{{ agg.avg_blue_score | number: '1.0-0' }}</td>
+          </tr>
+          <tr>
+            <th scope="row">Survivors</th>
+            <td class="num">{{ agg.avg_blue_survivors | number: '1.2-2' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    @if (agg.n > 0) {
+      @let sides = agg.side_advantage;
+      <div class="side-advantage-block">
+        <table class="side-advantage">
+          <caption>
+            Map-side advantage (sides alternated evenly)
+          </caption>
+          <thead>
+            <tr>
+              <th scope="col">Side</th>
+              <th scope="col" class="num">Win rate</th>
+              <th scope="col" class="num">Avg score</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr data-lf-side="red">
+              <th scope="row" class="side-name">Red side</th>
+              <td class="num">
+                {{ sides.red_side_win_pct | number: '1.1-1' }}% ({{ sides.red_side_wins }} W)
+              </td>
+              <td class="num">{{ sides.avg_red_side_score | number: '1.0-0' }}</td>
+            </tr>
+            <tr data-lf-side="blue">
+              <th scope="row" class="side-name">Blue side</th>
+              <td class="num">
+                {{ sides.blue_side_win_pct | number: '1.1-1' }}% ({{ sides.blue_side_wins }} W)
+              </td>
+              <td class="num">{{ sides.avg_blue_side_score | number: '1.0-0' }}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="side-advantage__note">
+          {{ sides.side_ties }} side ties. Raw physical-side signal — the per-team results above are
+          side-neutral.
+        </p>
+      </div>
+    }
+
+    <div class="distribution">
+      <h3>Score distribution</h3>
+      @if (histogram(); as hist) {
+        @if (hist.labels.length > 0) {
+          <div class="distribution__chart">
+            <app-score-histogram [histogram]="hist" [redName]="names.red" [blueName]="names.blue" />
+          </div>
+        }
+      }
+    </div>
+
+    @if (canSave()) {
+      <div class="save-games" [formGroup]="saveCounts">
+        <h3>Save games</h3>
+        <p class="save-games__intro">
+          Re-run selected games with the exact same random sequence and save them as browsable
+          rounds. <strong>Average</strong> games have scores closest to the mean;
+          <strong>Highlight</strong> games are the most lopsided or unusual.
+        </p>
+        <div class="save-games__row">
+          <div class="save-games__pick">
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>Average games</mat-label>
+              <mat-select formControlName="avg">
+                @for (choice of saveChoices; track choice.value) {
+                  <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <button mat-stroked-button type="button" [disabled]="saving()" (click)="save('avg')">
+              Save Average Game(s)
+            </button>
+          </div>
+          <div class="save-games__pick">
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>Highlight games</mat-label>
+              <mat-select formControlName="outlier">
+                @for (choice of saveChoices; track choice.value) {
+                  <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+            <button
+              mat-stroked-button
+              type="button"
+              [disabled]="saving()"
+              (click)="save('outlier')"
+            >
+              Save Highlight Game(s)
+            </button>
+          </div>
+        </div>
+        @if (saveMessage(); as message) {
+          <div
+            class="save-status"
+            [class.save-status--error]="message.tone === 'error'"
+            [attr.role]="message.tone === 'error' ? 'alert' : 'status'"
+          >
+            <p>{{ message.text }}</p>
+            @if (savedRounds().length > 0) {
+              <div class="save-status__links">
+                @for (id of savedRounds(); track id) {
+                  <a mat-stroked-button [routerLink]="['/rounds', id]">View Round {{ id }}</a>
+                }
+              </div>
+            }
+          </div>
+        }
+      </div>
+    }
+  </section>
+}
