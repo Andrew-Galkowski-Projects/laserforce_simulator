@@ -14,7 +14,9 @@ import {
 } from 'rxjs';
 import { ApiClient } from '../api/api-client';
 import { SKIP_AUTH_REFRESH, TOKEN_PATH } from './auth.tokens';
-import { RegisterInput, User } from './user';
+import { PasswordChangeInput, RegisterInput, User } from './user';
+
+const SELF_INSERT_PATH = 'accounts/me/self-insert/';
 
 interface AccessToken {
   access: string;
@@ -87,6 +89,25 @@ export class AuthService {
   /** Creates the Account. Does not sign in: call `login` afterwards. */
   register(body: RegisterInput): Observable<User> {
     return this.api.post<User>('accounts/register/', body);
+  }
+
+  /** Changes the signed-in Account's password. The session and the access token stay valid. */
+  changePassword(body: PasswordChangeInput): Observable<void> {
+    return this.api.post<void>('accounts/me/password/', body);
+  }
+
+  /** Links `playerId` as the Self-insert; the Account the server returns becomes `currentUser`. */
+  linkSelfInsert(playerId: number): Observable<User> {
+    return this.api
+      .put<User>(SELF_INSERT_PATH, { player: playerId })
+      .pipe(tap((user) => this.user.set(user)));
+  }
+
+  /** Clears the Self-insert link (a 204 with no body); `currentUser` keeps it if the call fails. */
+  unlinkSelfInsert(): Observable<void> {
+    return this.api
+      .delete(SELF_INSERT_PATH)
+      .pipe(tap(() => this.user.update((user) => user && { ...user, self_insert: null })));
   }
 
   /**

@@ -4,7 +4,8 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
-import { signIn } from '../api/testing/auth-fixtures';
+import { SELF_INSERT, USER, signIn } from '../api/testing/auth-fixtures';
+import { User } from '../auth/user';
 import { releaseMatchesLoads } from '../matches/testing/matches-loads';
 import { releaseMapsLoads } from '../maps/testing/maps-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
@@ -40,7 +41,7 @@ describe('App shell (layout B)', () => {
   let http: HttpTestingController;
   let harness: RouterTestingHarness;
 
-  async function open(url: string, width = 1280): Promise<void> {
+  async function open(url: string, width = 1280, user: User = USER): Promise<void> {
     viewport(width);
     TestBed.configureTestingModule({
       providers: [
@@ -50,7 +51,7 @@ describe('App shell (layout B)', () => {
       ],
     });
     http = TestBed.inject(HttpTestingController);
-    await signIn();
+    await signIn(user);
     harness = await RouterTestingHarness.create();
     await harness.navigateByUrl(url);
   }
@@ -89,9 +90,95 @@ describe('App shell (layout B)', () => {
     expect(toolbar?.hasAttribute('color')).toBe(false);
   });
 
+  /** The open account menu's items (Material renders them in the overlay, outside the shell). */
+  function menuItems(): HTMLElement[] {
+    return [...document.querySelectorAll<HTMLElement>('.mat-mdc-menu-panel [mat-menu-item]')];
+  }
+
+  function menuItem(label: string): HTMLElement | undefined {
+    return menuItems().find((item) => item.textContent?.trim() === label);
+  }
+
+  async function openAccountMenu(): Promise<void> {
+    button('Account')?.click();
+    await harness.fixture.whenStable();
+  }
+
+  const LINKED: User = { ...USER, self_insert: SELF_INSERT };
+
+  it('puts the email on a labelled account-menu button, with the full email as its title', async () => {
+    await open('/teams');
+    const account = button('Account');
+    expect(account?.textContent).toContain('ann@example.com');
+    expect(account?.getAttribute('title')).toBe('ann@example.com');
+  });
+
+  it('turns the account button into an icon below 600px', async () => {
+    await open('/teams', 599);
+    expect(button('Account')).toBeDefined();
+    expect(header()?.textContent).not.toContain('ann@example.com');
+  });
+
+  it('offers Change password and Sign out, but no Self-insert items when none is linked', async () => {
+    await open('/teams');
+    await openAccountMenu();
+    expect(menuItems().map((item) => item.textContent?.trim())).toEqual([
+      'Change password',
+      'Sign out',
+    ]);
+  });
+
+  it('offers My player and Unlink Self-insert first when a Self-insert is linked', async () => {
+    await open('/teams', 1280, LINKED);
+    await openAccountMenu();
+    expect(menuItems().map((item) => item.textContent?.trim())).toEqual([
+      'My player',
+      'Unlink Self-insert',
+      'Change password',
+      'Sign out',
+    ]);
+    expect(menuItem('My player')?.getAttribute('href')).toBe('/teams/3');
+  });
+
+  it('opens Change password from the menu', async () => {
+    await open('/teams');
+    await openAccountMenu();
+    menuItem('Change password')?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe('/account/password');
+  });
+
+  it('unlinks the Self-insert from the menu and says so', async () => {
+    await open('/teams', 1280, LINKED);
+    await openAccountMenu();
+    menuItem('Unlink Self-insert')?.click();
+    const req = http.expectOne(`${BASE}/accounts/me/self-insert/`);
+    expect(req.request.method).toBe('DELETE');
+    req.flush(null, { status: 204, statusText: 'No Content' });
+    await harness.fixture.whenStable();
+    expect(document.body.textContent).toContain('Self-insert unlinked.');
+    await openAccountMenu();
+    expect(menuItem('My player')).toBeUndefined();
+  });
+
+  it('keeps the Self-insert and shows the generic message when unlinking fails', async () => {
+    await open('/teams', 1280, LINKED);
+    await openAccountMenu();
+    menuItem('Unlink Self-insert')?.click();
+    http
+      .expectOne(`${BASE}/accounts/me/self-insert/`)
+      .error(new ProgressEvent('error'), { status: 0 });
+    await harness.fixture.whenStable();
+    expect(document.body.textContent).toContain('Something went wrong. Please try again.');
+    await openAccountMenu();
+    expect(menuItem('My player')).toBeDefined();
+  });
+
   it('signs out through token/logout/ and lands on /login', async () => {
     await open('/teams');
-    button('Sign out')?.click();
+    // Sign out sits in the account menu (ANG-06 item 7), no longer on the toolbar itself.
+    await openAccountMenu();
+    menuItem('Sign out')?.click();
     const req = http.expectOne(`${BASE}/token/logout/`);
     expect(req.request.method).toBe('POST');
     req.flush(null, { status: 204, statusText: 'No Content' });

@@ -8,6 +8,9 @@ import { signIn } from './api/testing/auth-fixtures';
 import { releaseTeamsLoads } from './teams/testing/teams-loads';
 import { routes } from './app.routes';
 import { authInterceptor } from './auth/auth.interceptor';
+import { PasswordChange } from './account/password-change/password-change';
+import { Register } from './register/register';
+import { Shell } from './shell/shell';
 import { MatchDetail } from './matches/match-detail/match-detail';
 import { MatchList } from './matches/match-list/match-list';
 import { RoundDetail } from './matches/round-detail/round-detail';
@@ -124,6 +127,39 @@ describe('app routes', () => {
       expect(harness.fixture.debugElement.query(By.directive(TeamDetail))).toBeNull();
       expect(harness.routeNativeElement?.querySelector('h1')?.textContent?.trim()).toBe(heading);
       expect(TestBed.inject(Title).getTitle()).toBe(`${heading} - Laserforce Simulator`);
+    });
+  });
+
+  describe('Accounts screens', () => {
+    it('shows the register page to a signed-out visitor, with its title', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/register');
+      expect(routerUrl()).toBe('/register');
+      expect(harness.fixture.debugElement.query(By.directive(Register))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe('Create an account - Laserforce Simulator');
+    });
+
+    it('sends a signed-in visit to /register on to /teams', async () => {
+      await signIn();
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/register');
+      expect(routerUrl()).toBe('/teams');
+    });
+
+    it('resolves /account/password inside the shell when signed in, with its title', async () => {
+      await signIn();
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/account/password');
+      expect(routerUrl()).toBe('/account/password');
+      expect(harness.fixture.debugElement.query(By.directive(PasswordChange))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(Shell))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe('Change password - Laserforce Simulator');
+    });
+
+    it('sends a signed-out visit to /account/password to /login with a returnUrl', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/account/password');
+      expect(routerUrl()).toBe('/login?returnUrl=%2Faccount%2Fpassword');
     });
   });
 

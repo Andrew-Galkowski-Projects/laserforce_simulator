@@ -30,7 +30,25 @@ mat-toolbar {
   flex: 1;
 }
 
+.shell__account {
+  min-width: 0;
+  max-width: 20rem;
+}
+
+.shell__avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: 50%;
+  font-weight: 700;
+  color: var(--lf-accent);
+}
+
 .shell__user {
+  display: block;
   overflow: hidden;
   font-size: 0.875rem;
   color: var(--lf-text-muted);

@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { TeamsService } from '../../api/teams.service';
-import { injectNotify } from '../shared/notify';
+import { injectNotify } from '../../shared/notify';
 import { loadRouteTeam } from '../shared/route-team';
 import { TeamNameForm } from '../shared/team-name-form';
 import { TeamNotFound } from '../shared/team-not-found';
