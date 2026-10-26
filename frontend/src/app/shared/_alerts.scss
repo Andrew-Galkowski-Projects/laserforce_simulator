@@ -1,0 +1,20 @@
+// The boxed lines above a form: a confirmation (role="status") and an error (role="alert").
+// Shared by the sign-in / register card and Change password.
+
+@mixin box {
+  margin: 0 0 0.5rem;
+  padding: 0.75rem;
+  border: 1px solid var(--lf-accent);
+  border-radius: var(--lf-radius);
+}
+
+@mixin notice {
+  @include box;
+}
+
+@mixin error {
+  @include box;
+
+  border-color: var(--mat-sys-error);
+  color: var(--mat-sys-error);
+}

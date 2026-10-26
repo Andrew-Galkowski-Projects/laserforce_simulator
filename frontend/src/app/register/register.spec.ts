@@ -187,6 +187,24 @@ describe('Register page', () => {
     http.expectNone(`${BASE}/accounts/register/`);
   });
 
+  it('disables Create account while the request is in flight, and enables it after a failure', async () => {
+    await harness.navigateByUrl('/register');
+    await submit();
+    const button = (): HTMLButtonElement | undefined =>
+      [...page().querySelectorAll('button')].find(
+        (b) => b.textContent?.trim() === 'Create account',
+      );
+    expect(button()?.disabled).toBe(true);
+    http
+      .expectOne(`${BASE}/accounts/register/`)
+      .flush(
+        { errors: [{ code: 'invalid', message: 'Something is off.', field: null }], meta: {} },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    await harness.fixture.whenStable();
+    expect(button()?.disabled).toBe(false);
+  });
+
   it('shows the invite, email and two password fields, with the invite code from the link', async () => {
     await harness.navigateByUrl('/register?invite=ABC123');
     expect(page().querySelector('h1')?.textContent).toContain('Create an account');

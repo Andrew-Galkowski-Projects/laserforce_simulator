@@ -4,13 +4,12 @@ import { MatButton } from '@angular/material/button';
 import { MatError, MatFormField, MatHint, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
+import { catchError, map, of, switchMap } from 'rxjs';
 import { APP_TITLE } from '../app-title';
+import { HOME_URL } from '../auth/auth.guard';
 import { AuthService } from '../auth/auth.service';
 import { REGISTERED_STATE } from '../login/login';
 import { applyApiErrors } from '../shared/form-errors';
-
-/** Where a new Account lands once it is signed in. */
-const HOME = '/teams';
 
 /** Invite-only sign-up (`RegisterForm`), open to signed-out visitors only. */
 @Component({
@@ -25,7 +24,7 @@ const HOME = '/teams';
     MatLabel,
   ],
   selector: 'app-register',
-  styleUrl: '../login/login.scss',
+  styleUrl: '../shared/auth-card.scss',
   templateUrl: './register.html',
 })
 export class Register {
@@ -56,17 +55,27 @@ export class Register {
     const body = this.form.getRawValue();
     this.errors.set([]);
     this.busy.set(true);
-    this.auth.register(body).subscribe({
-      next: () =>
-        this.auth.login(body.email, body.password1).subscribe({
-          next: () => void this.router.navigateByUrl(HOME),
-          // The Account exists; only the sign-in failed, so send them to sign in by hand.
-          error: () => void this.router.navigateByUrl('/login', { state: REGISTERED_STATE }),
-        }),
-      error: (error: unknown) => {
-        this.busy.set(false);
-        this.errors.set(applyApiErrors(this.form, error));
-      },
-    });
+    this.auth
+      .register(body)
+      .pipe(
+        // The Account exists once register succeeds, so a failed sign-in is not a form error:
+        // it becomes `false`, and they are sent to sign in by hand.
+        switchMap(() =>
+          this.auth.login(body.email, body.password1).pipe(
+            map(() => true),
+            catchError(() => of(false)),
+          ),
+        ),
+      )
+      .subscribe({
+        next: (signedIn) =>
+          void (signedIn
+            ? this.router.navigateByUrl(HOME_URL)
+            : this.router.navigateByUrl('/login', { state: REGISTERED_STATE })),
+        error: (error: unknown) => {
+          this.busy.set(false);
+          this.errors.set(applyApiErrors(this.form, error));
+        },
+      });
   }
 }

@@ -1,9 +1,9 @@
-<section class="login">
+<section class="auth-card">
   <h1>Create an account</h1>
-  <p class="login__app">{{ title }}</p>
+  <p class="auth-card__app">{{ title }}</p>
   <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
     @for (message of errors(); track $index) {
-      <p class="login__error" role="alert">{{ message }}</p>
+      <p class="auth-card__error" role="alert">{{ message }}</p>
     }
     <mat-form-field appearance="outline" subscriptSizing="dynamic">
       <mat-label>Invite code</mat-label>
@@ -61,5 +61,5 @@
     </mat-form-field>
     <button mat-flat-button type="submit" [disabled]="busy()">Create account</button>
   </form>
-  <p class="login__switch"><a routerLink="/login">Already have an account? Sign in</a></p>
+  <p class="auth-card__switch"><a routerLink="/login">Already have an account? Sign in</a></p>
 </section>

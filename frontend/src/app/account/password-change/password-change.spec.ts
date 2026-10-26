@@ -7,6 +7,7 @@ import { environment } from '../../../environments/environment';
 import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
+import { AuthService } from '../../auth/auth.service';
 
 const BASE = environment.apiBaseUrl;
 const FILLED = {
@@ -92,6 +93,35 @@ describe('Change password page', () => {
       expect(input(name).value).toBe('');
     }
     expect(page().querySelector('mat-error')).toBeNull();
+    expect(TestBed.inject(Router).url).toBe('/account/password');
+  });
+
+  it('disables Change password while the request is in flight, and enables it afterwards', async () => {
+    await submit();
+    const button = (): HTMLButtonElement | undefined =>
+      [...page().querySelectorAll('button')].find(
+        (b) => b.textContent?.trim() === 'Change password',
+      );
+    expect(button()?.disabled).toBe(true);
+    http
+      .expectOne(`${BASE}/accounts/me/password/`)
+      .flush(null, { status: 204, statusText: 'No Content' });
+    await harness.fixture.whenStable();
+    expect(button()?.disabled).toBe(false);
+  });
+
+  it('keeps the Account signed in, in the shell, after the change', async () => {
+    await submit();
+    http
+      .expectOne(`${BASE}/accounts/me/password/`)
+      .flush(null, { status: 204, statusText: 'No Content' });
+    await harness.fixture.whenStable();
+    // The account button carries the email as its title at every width (the text is only the
+    // initial below 600px, and jsdom has no matchMedia to say which applies).
+    const shell = harness.fixture.nativeElement as HTMLElement;
+    const account = shell.querySelector('header button[aria-label="Account"]');
+    expect(account?.getAttribute('title')).toBe('ann@example.com');
+    expect(TestBed.inject(AuthService).isSignedIn()).toBe(true);
     expect(TestBed.inject(Router).url).toBe('/account/password');
   });
 
