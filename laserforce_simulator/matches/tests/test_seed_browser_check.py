@@ -146,6 +146,27 @@ class SeedBrowserCheckMapTests(ClassTempMediaMixin, TestCase):
         self.assertTrue(game_round.events.filter(event_type="movement").exists())
         self.assertIn(f"mapped Single Round {game_round.pk}", self.output)
 
+    def test_compare_rounds_has_points_for_both_single_rounds(self) -> None:
+        # The two Single Rounds share their Teams, so they are the Compare
+        # Rounds check pair; both need events for the points-over-time chart.
+        mapped = self._mapped_round()
+        mapless = GameRound.objects.get(
+            manager=mapped.manager, match__isnull=True, arena_map__isnull=True
+        )
+        api = APIClient()
+        api.force_login(mapped.manager)
+
+        response = api.get(
+            "/api/rounds/compare/", {"round_a": mapless.pk, "round_b": mapped.pk}
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        series = response.json()["data"]["points_series"]
+        self.assertTrue(series)
+        for team in series:
+            self.assertTrue(team["a"], team["team_name"])
+            self.assertTrue(team["b"], team["team_name"])
+
     def test_playback_api_returns_a_map_for_the_mapped_round(self) -> None:
         game_round = self._mapped_round()
         api = APIClient()

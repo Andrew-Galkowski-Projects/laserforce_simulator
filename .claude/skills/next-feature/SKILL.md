@@ -109,6 +109,12 @@ become ADRs in `docs/adr/` (next free number).
 The PLAN.md section often already holds answers the owner gave earlier. Read
 them and don't re-ask; put them in the first round as settled.
 
+A port task (a Django screen moving to Angular) maps every screen it replaces
+to its `/api/` route before round 1: grep `api_urls.py` and the viewsets'
+`@action`s. A missing or partial route is a settled fact in round 1, and a
+backend ticket. PLAN.md said ANG-01 covered every ANG-06 item; ANG-06-9's
+Team match history had no endpoint.
+
 Cover, in the same rounds:
 
 - **Ownership.** Which Account sees and edits what, and where the `manager`
@@ -150,7 +156,11 @@ and cite the rule it follows or the reason it departs: ANG-06c's grill left
 the team pickers without `required`, and review sent them back.
 A port or migration spec takes its behaviour from the source being ported
 (the template and its script), not from the app `CLAUDE.md` summary: ANG-06h's
-doc described a wall-height input the template never had.
+doc described a wall-height input the template never had. For each template
+card or table row, list every value it renders and name the API field behind
+it; a value with no field is a backend change in the spec (ANG-06-9's Single
+Round cards showed Won / Lost / Tie, and the spec's response shape had no
+`result`).
 
 When tickets will run in parallel, write each behaviour they share (input
 during a save, retry after a failed load, the dirty flag) once as a spec
@@ -203,7 +213,11 @@ spent 63k tokens on a 10-line change.
 For more tickets, implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
 another agent is still committing can branch from a stale tip, so confirm
-each one's base before starting the next. Before starting tickets that run in
+each one's base before starting the next. The agent resets its own worktree
+off `origin/main` as its first step; wait for that with one background call
+through the PowerShell tool (the Bash worktree guard refuses an `until` loop
+over `git`): `while ((git rev-parse --short <agent branch>) -eq '<origin/main
+sha>') { Start-Sleep 5 }`. Before starting tickets that run in
 parallel, prepare the integration tip yourself:
 
 - Grep it for every helper two of them will need, and move each into a neutral
@@ -224,7 +238,10 @@ parallel, prepare the integration tip yourself:
   ticket that replaces it: every acceptance criterion must be computable from
   them (ANG-06f: the map stub could not dim deactivated players). A slot for
   later work needs a caller that can fill it; a routed component gets no
-  projected content (ANG-06f's RV-04 `<ng-content>`).
+  projected content (ANG-06f's RV-04 `<ng-content>`). When an early ticket
+  registers **placeholder routes**, give their block in `app.routes.spec.ts`
+  an `afterEach(() => http.match(() => true))`, so the screen tickets never
+  edit that spec as their screens start loading data (ANG-06-9).
 - When a ticket adds a **required** field to a shared API model type, add the
   field to every shared spec fixture that builds that type first. Otherwise
   the ticket must edit fixtures another ticket owns (ANG-06d: `scoreboard`
@@ -258,7 +275,12 @@ Add these constraints to every implementer prompt:
   is refused (Step 7).
 - Run only your own test files, with pytest run from the nested Django dir
   (`laserforce_simulator/`). The full suite is the orchestrator's job. A ticket
-  that touches `frontend/` also runs `npm --prefix frontend run build`.
+  that touches `frontend/` also runs `npm --prefix frontend run build`. A new
+  API endpoint also gets an entry in the N+1 registry and runs it:
+  `laserforce_simulator/api/tests/test_detail_action_query_counts.py` (a
+  detail `@action` GET: a `SCALERS` entry) or `test_list_query_counts.py` (a
+  list). ANG-06-9's registry test failed only in the full suite, and its
+  scaler then caught a real N+1.
 - Write files with Write and Edit, never a heredoc. Glob before creating a
   file, in case the name is taken. Scratch files get a unique prefix (your
   ticket ID).

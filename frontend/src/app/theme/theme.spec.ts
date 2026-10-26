@@ -252,6 +252,23 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
       expect(failing).toEqual([]);
     });
 
+    it(`colours a link with --lf-accent, readable on --lf-bg and --lf-surface, in ${scheme} mode`, () => {
+      const root = applyStylesheet(scheme);
+      // jsdom drops a var() colour, so read the compiled rule rather than a link's computed style.
+      const linkRules = [...(styleElement?.sheet?.cssRules ?? [])].filter(
+        (rule): rule is CSSStyleRule => rule instanceof CSSStyleRule && rule.selectorText === 'a',
+      );
+      expect(linkRules.map((rule) => rule.style.getPropertyValue('color'))).toContain(
+        'var(--lf-accent)',
+      );
+      const value = (name: string) => root.getPropertyValue(name).trim();
+      for (const bg of TEXT_BACKGROUNDS) {
+        expect(contrast(value('--lf-accent'), value(bg)), bg).toBeGreaterThanOrEqual(
+          MIN_TEXT_CONTRAST,
+        );
+      }
+    });
+
     it(`points a [data-lf-side] element's --side* aliases at its Side in ${scheme} mode`, () => {
       applyStylesheet(scheme);
       const red = document.createElement('div');

@@ -82,8 +82,11 @@ Every component uses the theme chosen in ANG-04b.
    overlays (ANG-06g, in `PLAN-completed.md`). RES-05 and RV-04's chart toggle attach here.
 6. **[DONE] Map editor** (ANG-06h, in `PLAN-completed.md`).
 
-Items 7-20 (planned 2026-10-25, owner-approved). The API behind every one already exists (ANG-01),
-so each is frontend parity work like 1-6, with its own grill. Order is by dependency, then complexity.
+Items 7-20 (planned 2026-10-25, owner-approved). Each is frontend parity work like 1-6, with its own
+grill. Order is by dependency, then complexity. ANG-01 covers most of their API, but not all: item 9's
+Team match history had no endpoint. A check on 2026-10-26 (ANG-06-9 retro) found every screen in
+10-20 has an endpoint, and four only partly cover their template. Each gap is noted on its item
+below (13b, 14, 16); the item's grill confirms it.
 
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **[DONE] Player pages** (ANG-06-8, in `PLAN-completed.md`).
@@ -96,13 +99,18 @@ so each is frontend parity work like 1-6, with its own grill. Order is by depend
 13a. **Tournaments: list, create, participant pool (ANG-06-13a)** — pool add-existing / generate / import /
     remove, participant import. Replaces `tournament_list`, `tournament_create`.
 13b. **Tournament detail (ANG-06-13b)** — draw + draw edit, reseed, lock, play next / all with status. Replaces
-    `tournament_detail`, `_tournament_round`.
+    `tournament_detail`, `_tournament_round`. API gap: `tournaments/<id>/` lacks the round-robin
+    crosstable (`rr_crosstable`) and `can_play` / `next_node` (`tournament_services/detail.py`).
 14. **League core (ANG-06-14)** — list, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
-    history, new-team picker / reassign, next season, and the league sidebar in the Shell.
+    history, new-team picker / reassign, next season, and the league sidebar in the Shell. API gaps:
+    the delete confirm's `delete_summary` counts (Seasons, Matches, Tournaments, Teams, Players) have
+    no endpoint, and `dashboard/` lacks `has_owner_evaluations` (the "View past evaluations" link).
 15. **League stats (ANG-06-15)** — leaders, player stats, player ratings, team stats, statistical feats, game
     log, power rankings, playoffs.
 16. **League team & player (ANG-06-16)** — team roster, schedule, team history, league player detail, free
-    agents, watch list (+ the watch flag).
+    agents, watch list (+ the watch flag). API gap: `teams/<id>/roster/` sends only the Player ref,
+    role and watched flag; the template also shows age, height, home site, years playing, total games,
+    Overall rating and Potential.
 17. **League finances (ANG-06-17)** — league and team finances.
 18. **Season screens (ANG-06-18)** — dashboard, standings, schedule, awards, owner evaluation, conferences.
 19. **Season play loop (ANG-06-19)** — play week / two months / until end / playoffs, status and cancel, the

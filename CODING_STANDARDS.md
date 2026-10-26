@@ -42,6 +42,12 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   (`applyApiErrors`) sets `subscriptSizing="dynamic"`, so a wrapped line pushes the
   next field down instead of overlapping it (ANG-06 item 7's invite hint and password
   rules).
+- **Name pickers get room.** A `mat-select` whose options are entity names ("Player
+  (Team)", "#id - Red vs Blue") takes at least half the form's row, and a full row
+  when the form is narrow, so the chosen label stays whole. Flag one that shares a
+  row with short filters. The flex recipe is `.h2h-picker__wide` in
+  `frontend/src/app/shared/head-to-head/h2h-page.scss` (ANG-06-9's H2H and Compare
+  pickers clipped names at 1280px and 768px).
 
 ## Tests
 
