@@ -40,6 +40,7 @@ npm --prefix frontend run test:ci         # Vitest, one headless run (what CI us
 npm --prefix frontend run lint            # ng lint
 npm --prefix frontend run format:check    # prettier --check .
 npm --prefix frontend run format          # prettier --write .
+npm --prefix frontend exec -- prettier --write frontend/<path>   # one file; path from the repo root
 npm --prefix frontend run build           # production build (environment.prod.ts swapped in)
 npm --prefix frontend exec -- ng generate component foo   # any other ng command
 ```
@@ -273,7 +274,9 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   render, so zoneless `whenStable` keeps its real `setTimeout` / rAF. Call `vi.useRealTimers()` in
   `afterEach`. Example: `matches/playback/playback.spec.ts`.
 - **Live check without the owner's ports:**
-  - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 manage.py runserver 8001`.
+  - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 <python> <worktree>/laserforce_simulator/manage.py runserver 8001`.
+    The absolute `manage.py` path lets `scripts/stop_worktree_servers.ps1` find the server: the
+    main checkout's `.venv` Python with a relative path carries no worktree path (ANG-06-10).
   - Run `npm --prefix frontend run start:worktree`. Its `worktree` configuration serves on 4201
     and swaps in `environment.worktree.ts`, which points at `:8001`. No committed file is edited.
   - In dev mode, reach a service from DevTools through `ng.ɵgetInjectorProviders`.

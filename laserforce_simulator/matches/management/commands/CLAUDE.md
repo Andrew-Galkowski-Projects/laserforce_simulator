@@ -70,7 +70,10 @@ Match looks like mid-Season). The mapped Single Round plays on "Browser Check Ar
 map (zone size 20) whose PNG is drawn in code with PIL (no `media/` file needed) and uploaded via
 `core/services.py::upload_map`, then given a confirmed zone config with red/blue bases, sight lines
 and base sight lines, so `load_map_context` resolves. The Round is upgraded to `fidelity="full"`
-(movement events) for Playback's map, the heatmap and map-editor checks. The map-less Single Round
+(movement events) for Playback's map, the heatmap and map-editor checks. Its first missile hit
+(or first missile) is flagged `friendly_fire` by `mark_friendly_fire_missile`, so the Missile log
+shows one tinted Friendly-fire row; only the flag changes, actor and target stay as simulated
+(ANG-06-10 retro). The map-less Single Round
 is upgraded to `"full"` too, and the two share their Teams: they are the Compare Rounds pair, with a
 points chart on both sides (ANG-06-9 retro). The summary prints the map id and the mapped Round id. `--clean` removes the map through `delete_map` (image and processed
 cache go on commit). Each `removed` count is that model's own rows (`_deleted`), not

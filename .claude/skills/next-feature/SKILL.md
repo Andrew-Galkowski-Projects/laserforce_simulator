@@ -76,7 +76,9 @@ checkout into the worktree's `laserforce_simulator/`, then run
 `frontend/`, also run `npm --prefix frontend ci` (a worktree has no
 `node_modules`). Run `migrate` again after merging any ticket that adds a migration,
 before a browser check. Run any server on `--port 8001` so the owner's 8000
-stays theirs. In a worktree session, give each shell call one plain command,
+stays theirs, and start `runserver` through the worktree's absolute
+`laserforce_simulator/manage.py` path: `stop_worktree_servers.ps1` finds a
+server by its worktree path, and a relative one has none (ANG-06-10 kept 8001). In a worktree session, give each shell call one plain command,
 with literal values in place of `&&` chains and `$(...)`: the isolation guard
 refuses commands it can't verify. Look up a value in one call and pass it
 literally in the next.
@@ -113,7 +115,9 @@ A port task (a Django screen moving to Angular) maps every screen it replaces
 to its `/api/` route before round 1: grep `api_urls.py` and the viewsets'
 `@action`s. A missing or partial route is a settled fact in round 1, and a
 backend ticket. PLAN.md said ANG-01 covered every ANG-06 item; ANG-06-9's
-Team match history had no endpoint.
+Team match history had no endpoint. Also grep `frontend/src` for each feature
+PLAN.md lists: one already shipped is a settled fact, not a ticket (ANG-06-10's
+Export PDF came with ANG-06d).
 
 Cover, in the same rounds:
 
@@ -178,9 +182,9 @@ Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 
 Follow `to-tickets` on the spec. Vertical tracer-bullet slices (model,
 service, view/endpoint, tests), each sized for one fresh session: estimated
-tokens / 150k is the ticket count. A ported Angular screen with its spec costs
-about 100k tokens (ANG-06-8: four screens, ~424k across two tickets), so count
-screens before dividing. A task small enough for one session gets one ticket.
+tokens / 150k is the ticket count. A ported Angular screen with its spec and
+mutation runs costs about 160k tokens (ANG-06-10: one screen per ticket, 157k
+and 170k), so count screens before dividing. A task small enough for one session gets one ticket.
 Don't pad.
 
 Create each ticket as a sub-issue of the spec with native blocked-by edges,

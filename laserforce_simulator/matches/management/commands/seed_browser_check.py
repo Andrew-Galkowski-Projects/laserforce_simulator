@@ -144,6 +144,20 @@ def create_browser_check_map() -> ArenaMap:
     return arena_map
 
 
+def mark_friendly_fire_missile(game_round: GameRound) -> None:
+    """Flag the Round's first missile hit (or first missile) as Friendly fire.
+
+    A simulated Round rarely fires at a teammate, and the Missile log check
+    needs one tinted row. Only the flag changes: actor and target stay as
+    simulated (ANG-06-10 retro).
+    """
+    missiles = game_round.events.filter(event_type="missiled").order_by("timestamp")
+    event = missiles.filter(metadata__result="hit").first() or missiles.first()
+    if event is not None:
+        event.metadata = {**event.metadata, "friendly_fire": True}
+        event.save(update_fields=["metadata"])
+
+
 def _deleted(queryset: QuerySet) -> int:
     """Delete ``queryset`` and return how many of its own model's rows went.
 
@@ -196,7 +210,7 @@ class Command(BaseCommand):
         # A sandbox Round persists at "scores"; the GEN-01 lazy upgrade replays
         # it off its seed to "full". Both Single Rounds get events, so Compare
         # Rounds has a points chart on both sides; the mapped one also feeds
-        # Playback's map and the heatmap.
+        # Playback's map, the heatmap and the Missile log (one Friendly-fire row).
         game_round = BatchSimulator().ensure_fidelity(
             create_sandbox_round(third, fourth, arena_map=None, user=a), "full"
         )
@@ -204,6 +218,7 @@ class Command(BaseCommand):
         mapped_round = BatchSimulator().ensure_fidelity(
             create_sandbox_round(third, fourth, arena_map=arena_map, user=a), "full"
         )
+        mark_friendly_fire_missile(mapped_round)
         unfinished = Match.objects.create(
             team_red=red,
             team_blue=fourth,
