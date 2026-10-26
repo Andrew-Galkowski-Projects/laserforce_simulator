@@ -1,6 +1,6 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { Chart, TooltipItem } from 'chart.js';
-import { stubCanvasContext } from '../testing/fake-canvas';
+import { stubCanvasContext } from '../matches/testing/fake-canvas';
 import { ChartTheme, DrawnOverlay, LineChart, LineSeries } from './line-chart';
 
 const THEME: ChartTheme = {
@@ -183,6 +183,69 @@ describe('LineChart', () => {
       fixture.componentRef.setInput('overlays', OVERLAYS);
       await fixture.whenStable();
       expect(update).toHaveBeenCalled();
+    });
+  });
+
+  describe('a count axis (the career points trend)', () => {
+    const TREND: LineSeries = {
+      label: 'Avg points (rolling 10)',
+      color: 'rgb(9, 9, 9)',
+      points: [
+        { sec: 1, value: 2500 },
+        { sec: 2, value: 4500 },
+      ],
+      pointRadius: 2,
+    };
+
+    it('titles the clock axis "Time (s)" and leaves the y-axis untitled by default', async () => {
+      const options = (await render()).config().options;
+      expect(options?.scales?.['x']?.title?.text).toBe('Time (s)');
+      expect(options?.scales?.['y']?.title?.display).toBeFalsy();
+    });
+
+    it('titles both axes in the theme colour and font when given titles', async () => {
+      const chart = await render({
+        datasets: [TREND],
+        maxSec: 2,
+        xAxis: 'count',
+        xTitle: 'Round number',
+        yTitle: 'Avg points (rolling 10)',
+      });
+      const scales = chart.config().options?.scales;
+      expect(scales?.['x']?.title).toMatchObject({
+        display: true,
+        text: 'Round number',
+        color: THEME.text,
+        font: { family: 'Test Mono' },
+      });
+      expect(scales?.['y']?.title).toMatchObject({
+        display: true,
+        text: 'Avg points (rolling 10)',
+        color: THEME.text,
+        font: { family: 'Test Mono' },
+      });
+    });
+
+    it('draws straight lines with the series point radius, labelled with plain numbers', async () => {
+      const chart = await render({ datasets: [TREND], maxSec: 2, xAxis: 'count' });
+      const [ds] = chart.config().data.datasets;
+      expect(ds.stepped).toBe(false);
+      expect(ds.pointRadius).toBe(2);
+      expect(ds.data).toEqual([
+        { x: 1, y: 2500 },
+        { x: 2, y: 4500 },
+      ]);
+      const x = chart.config().options?.scales?.['x'];
+      expect(x?.min).toBeUndefined();
+      expect(x?.max).toBe(2);
+      const ticks = x?.ticks as { stepSize?: number; precision?: number };
+      expect(ticks.stepSize).toBeUndefined();
+      expect(ticks.precision).toBe(0);
+      const tooltip = chart.config().options?.plugins?.tooltip;
+      const title = tooltip?.callbacks?.title as unknown as (
+        items: TooltipItem<'line'>[],
+      ) => string;
+      expect(title([{ parsed: { x: 7, y: 0 } } as TooltipItem<'line'>])).toBe('7');
     });
   });
 

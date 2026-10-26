@@ -35,7 +35,7 @@ import {
   sideTotals,
   visiblePlayers,
 } from './event-charts';
-import { ChartTheme, DrawnOverlay, LineChart, LineSeries } from './line-chart';
+import { ChartTheme, DrawnOverlay, LineChart, LineSeries } from '../../shared/line-chart';
 
 /** Each card's heading and y-axis; SP's Side totals are averages, the others sums. */
 const CHART_META: Record<ChartKey, { title: string; total: TotalMode; yMax?: number }> = {
