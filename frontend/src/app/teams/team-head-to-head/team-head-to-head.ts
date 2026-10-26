@@ -6,8 +6,7 @@ import { MatAnchor, MatButton } from '@angular/material/button';
 import { MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { EMPTY, catchError, switchMap } from 'rxjs';
-import { ApiError } from '../../api/api-client';
+import { EMPTY, switchMap } from 'rxjs';
 import {
   ImpactfulPlayer,
   TeamH2HDetailRow,
@@ -33,6 +32,7 @@ import { plural, record } from '../../shared/head-to-head/h2h-format';
 import { DASH, fixed } from '../../players/shared/benchmark-format';
 import { apiMessage } from '../../shared/api-message';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
+import { notFoundOrError } from '../../shared/not-found-or-error';
 import { TeamNotFound } from '../shared/team-not-found';
 
 /** The URL's picks, each dropped when the API would refuse it (INV-1). */
@@ -118,13 +118,9 @@ export class TeamHeadToHead {
           this.error.set(null);
           this.notFound.set(false);
           if (q.team_a === undefined || q.team_b === undefined) return EMPTY;
-          return analytics.teamHeadToHead({ ...q, team_a: q.team_a, team_b: q.team_b }).pipe(
-            catchError((error: unknown) => {
-              if (error instanceof ApiError && error.status === 404) this.notFound.set(true);
-              else this.error.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
-              return EMPTY;
-            }),
-          );
+          return analytics
+            .teamHeadToHead({ ...q, team_a: q.team_a, team_b: q.team_b })
+            .pipe(notFoundOrError(this.notFound, this.error));
         }),
         takeUntilDestroyed(destroyRef),
       )

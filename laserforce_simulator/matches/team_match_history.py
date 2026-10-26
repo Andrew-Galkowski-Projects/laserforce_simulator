@@ -8,7 +8,8 @@ Matches through ``owned_match_q`` and Rounds through ``owned_game_round_q``.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import asdict, dataclass
 
 from django.contrib.auth.base_user import AbstractBaseUser
 from django.db.models import Q
@@ -20,6 +21,7 @@ from matches.models import (
     Match,
     PlayerRoundState,
     SeriesMatch,
+    Tournament,
     TournamentPlayerEntry,
 )
 from teams.models import Player, Team
@@ -33,6 +35,41 @@ ROLE_ORDER: list[tuple[str, str]] = [
     ("ammo", "Ammo Carrier"),
     ("medic", "Medic"),
 ]
+
+
+@dataclass(frozen=True)
+class HistoryStats:
+    """The record tiles over the in-scope games (a null winner is a tie)."""
+
+    total_matches: int
+    match_wins: int
+    match_losses: int
+    match_ties: int
+    total_rounds: int
+    round_wins: int
+    round_losses: int
+    round_ties: int
+
+
+@dataclass(frozen=True)
+class TeamMatchHistory:
+    """One Team's match history, scoped to the Account's own games.
+
+    ``scope_options``, ``roster_rows`` and each row's ``roles`` stay dicts:
+    the HTML view's tests read them by key from the template context.
+    """
+
+    team: Team
+    matches: list[Match]
+    detailed_rounds: list[GameRound]
+    unique_opponents: list[Team]
+    scope_options: list[dict]
+    show_scope_filter: bool
+    overall_checked: bool
+    has_any_games: bool
+    roster_rows: list[dict]
+    role_columns: list[str]
+    stats: HistoryStats
 
 
 def _empty_roles() -> dict[str, dict]:
@@ -57,25 +94,23 @@ def _member_players(team: Team) -> tuple[list[Player], set[int]]:
     return members, {p.id for p in members}
 
 
-def _roster_rows(
+def _color_by_round(
     team: Team, user: AbstractBaseUser | None, in_scope: Callable[[int | None], bool]
-) -> list[dict]:
-    """Role-breakdown roster over the in-scope Rounds.
-
-    Derived from ``PlayerRoundState`` rather than ``team.players`` so a draw
-    team still shows a full roster. A state belongs to the Team in a Round iff
-    its ``team_color`` is the colour the Team wore that Round.
-    """
+) -> dict[int, str]:
+    """The colour ``team`` wore in each of its in-scope Rounds, by Round id."""
     color_by_round: dict[int, str] = {}
     for gr in (
         GameRound.objects.filter(Q(team_red=team) | Q(team_blue=team))
         .filter(owned_game_round_q(user))
         .only("id", "team_red_id", "team_blue_id", "match_id")
     ):
-        if not in_scope(gr.match_id):
-            continue
-        color_by_round[gr.id] = "red" if gr.team_red_id == team.id else "blue"
+        if in_scope(gr.match_id):
+            color_by_round[gr.id] = "red" if gr.team_red_id == team.id else "blue"
+    return color_by_round
 
+
+def _tally_roster(color_by_round: dict[int, str]) -> dict[int, dict]:
+    """Per-Player games and role buckets from the Team's side of each Round."""
     roster: dict[int, dict] = {}
     # ``get_mvp`` reads each state's Round: fetch it in the same query.
     states = PlayerRoundState.objects.filter(
@@ -94,6 +129,36 @@ def _roster_rows(
             bucket["games"] += 1
             bucket["mvp_sum"] += st.get_mvp
             bucket["score_sum"] += st.points_scored
+    return roster
+
+
+def _role_cells(roles: dict[str, dict]) -> list[dict]:
+    """One cell per role in ``ROLE_ORDER``; averages are None for no games."""
+    cells = []
+    for key, _label in ROLE_ORDER:
+        bucket = roles[key]
+        games = bucket["games"]
+        cells.append(
+            {
+                "role": key,
+                "games": games,
+                "avg_mvp": (bucket["mvp_sum"] / games) if games else None,
+                "avg_score": (bucket["score_sum"] / games) if games else None,
+            }
+        )
+    return cells
+
+
+def _roster_rows(
+    team: Team, user: AbstractBaseUser | None, in_scope: Callable[[int | None], bool]
+) -> list[dict]:
+    """Role-breakdown roster over the in-scope Rounds.
+
+    Derived from ``PlayerRoundState`` rather than ``team.players`` so a draw
+    team still shows a full roster. A state belongs to the Team in a Round iff
+    its ``team_color`` is the colour the Team wore that Round.
+    """
+    roster = _tally_roster(_color_by_round(team, user, in_scope))
 
     member_players, member_ids = _member_players(team)
     for player in member_players:
@@ -104,28 +169,15 @@ def _roster_rows(
                 "roles": _empty_roles(),
             }
 
-    rows = []
-    for player_id, entry in roster.items():
-        cells = []
-        for key, _label in ROLE_ORDER:
-            bucket = entry["roles"][key]
-            games = bucket["games"]
-            cells.append(
-                {
-                    "role": key,
-                    "games": games,
-                    "avg_mvp": (bucket["mvp_sum"] / games) if games else None,
-                    "avg_score": (bucket["score_sum"] / games) if games else None,
-                }
-            )
-        rows.append(
-            {
-                "player": entry["player"],
-                "games_played": entry["games_played"],
-                "is_merc": player_id not in member_ids,
-                "roles": cells,
-            }
-        )
+    rows = [
+        {
+            "player": entry["player"],
+            "games_played": entry["games_played"],
+            "is_merc": player_id not in member_ids,
+            "roles": _role_cells(entry["roles"]),
+        }
+        for player_id, entry in roster.items()
+    ]
     # Members first, then mercs; within each, most-played first, then by name.
     rows.sort(
         key=lambda row: (row["is_merc"], -row["games_played"], row["player"].name)
@@ -133,7 +185,7 @@ def _roster_rows(
     return rows
 
 
-def _record(games: list, team: Team) -> tuple[int, int, int]:
+def _record(games: Sequence[Match | GameRound], team: Team) -> tuple[int, int, int]:
     """(wins, losses, ties): a null winner is a tie (an unfinished Match too)."""
     wins = sum(1 for g in games if g.winner_id == team.id)
     losses = sum(1 for g in games if g.winner_id is not None and g.winner_id != team.id)
@@ -141,16 +193,10 @@ def _record(games: list, team: Team) -> tuple[int, int, int]:
     return wins, losses, ties
 
 
-def build_team_match_history(
-    team: Team, user: AbstractBaseUser | None, scopes: set[str] | None
-) -> dict:
-    """One Team's match history, scoped to ``user``'s own games.
-
-    ``scopes`` is the selected scope keys (``"freeform"`` / ``"t<id>"``);
-    ``None`` selects every scope, and unknown keys are ignored. Returns model
-    instances in ``team``, ``matches``, ``detailed_rounds``,
-    ``unique_opponents`` and each roster row's ``player``.
-    """
+def _fetch_games(
+    team: Team, user: AbstractBaseUser | None
+) -> tuple[list[Match], list[GameRound]]:
+    """The Account's own Matches and standalone Rounds for ``team``, newest first."""
     all_matches = list(
         Match.objects.filter(Q(team_red=team) | Q(team_blue=team))
         .filter(owned_match_q(user))
@@ -165,18 +211,55 @@ def build_team_match_history(
         .select_related("team_red", "team_blue", "winner")
         .order_by("-date_played")
     )
+    return all_matches, standalone_rounds
 
-    # Each Match belongs to a Tournament (SeriesMatch -> BracketNode ->
-    # Tournament) or, lacking a SeriesMatch, to the free-form bucket.
-    match_tournament = {}
-    tournaments_by_id = {}
-    for sm in SeriesMatch.objects.filter(
-        match_id__in=[m.id for m in all_matches],
-        node__tournament__isnull=False,
-    ).select_related("node__tournament"):
-        tourney = sm.node.tournament
-        match_tournament[sm.match_id] = tourney
-        tournaments_by_id[tourney.id] = tourney
+
+def _tournament_by_match(matches: list[Match]) -> dict[int, Tournament]:
+    """Each tournament Match's Tournament (SeriesMatch -> BracketNode -> Tournament).
+
+    A Match lacking a SeriesMatch belongs to the free-form bucket and is absent.
+    """
+    return {
+        sm.match_id: sm.node.tournament
+        for sm in SeriesMatch.objects.filter(
+            match_id__in=[m.id for m in matches],
+            node__tournament__isnull=False,
+        ).select_related("node__tournament")
+    }
+
+
+def _scope_options(has_freeform: bool, tournaments: list[Tournament]) -> list[dict]:
+    """Free-form first (when it has games), then each Tournament by name."""
+    options = []
+    if has_freeform:
+        options.append({"key": FREEFORM_SCOPE, "label": "Free-form matches"})
+    unique = {t.id: t for t in tournaments}
+    for tourney in sorted(unique.values(), key=lambda t: t.name.lower()):
+        options.append({"key": f"t{tourney.id}", "label": tourney.name})
+    return options
+
+
+def _opponents(games: Sequence[Match | GameRound], team: Team) -> list[Team]:
+    """Each distinct opponent of ``team`` in ``games``, by name."""
+    opponents: dict[int, Team] = {}
+    for game in games:
+        opp = _opponent(game, team)
+        opponents.setdefault(opp.id, opp)
+    return sorted(opponents.values(), key=lambda t: t.name)
+
+
+def build_team_match_history(
+    team: Team, user: AbstractBaseUser | None, scopes: set[str] | None
+) -> TeamMatchHistory:
+    """One Team's match history, scoped to ``user``'s own games.
+
+    ``scopes`` is the selected scope keys (``"freeform"`` / ``"t<id>"``);
+    ``None`` selects every scope, and unknown keys are ignored. Returns model
+    instances in ``team``, ``matches``, ``detailed_rounds``,
+    ``unique_opponents`` and each roster row's ``player``.
+    """
+    all_matches, standalone_rounds = _fetch_games(team, user)
+    match_tournament = _tournament_by_match(all_matches)
 
     def _match_scope(match_id: int | None) -> str:
         tourney = match_tournament.get(match_id)
@@ -185,11 +268,7 @@ def build_team_match_history(
     has_freeform = bool(standalone_rounds) or any(
         m.id not in match_tournament for m in all_matches
     )
-    scope_options = []
-    if has_freeform:
-        scope_options.append({"key": FREEFORM_SCOPE, "label": "Free-form matches"})
-    for tourney in sorted(tournaments_by_id.values(), key=lambda t: t.name.lower()):
-        scope_options.append({"key": f"t{tourney.id}", "label": tourney.name})
+    scope_options = _scope_options(has_freeform, list(match_tournament.values()))
     valid_scope_keys = {opt["key"] for opt in scope_options}
 
     selected = set(valid_scope_keys) if scopes is None else scopes & valid_scope_keys
@@ -206,33 +285,28 @@ def build_team_match_history(
     match_wins, match_losses, match_ties = _record(matches, team)
     round_wins, round_losses, round_ties = _record(detailed_rounds, team)
 
-    opponents: dict[int, Team] = {}
-    for game in [*matches, *detailed_rounds]:
-        opp = _opponent(game, team)
-        opponents.setdefault(opp.id, opp)
-
-    return {
-        "team": team,
-        "matches": matches,
-        "detailed_rounds": detailed_rounds,
-        "unique_opponents": sorted(opponents.values(), key=lambda t: t.name),
-        "scope_options": scope_options,
-        "show_scope_filter": len(scope_options) >= 2,
-        "overall_checked": bool(valid_scope_keys) and selected == valid_scope_keys,
-        "has_any_games": bool(all_matches or standalone_rounds),
-        "roster_rows": _roster_rows(team, user, _round_in_scope),
-        "role_columns": [label for _, label in ROLE_ORDER],
-        "stats": {
-            "total_matches": len(matches),
-            "match_wins": match_wins,
-            "match_losses": match_losses,
-            "match_ties": match_ties,
-            "total_rounds": len(detailed_rounds),
-            "round_wins": round_wins,
-            "round_losses": round_losses,
-            "round_ties": round_ties,
-        },
-    }
+    return TeamMatchHistory(
+        team=team,
+        matches=matches,
+        detailed_rounds=detailed_rounds,
+        unique_opponents=_opponents([*matches, *detailed_rounds], team),
+        scope_options=scope_options,
+        show_scope_filter=len(scope_options) >= 2,
+        overall_checked=bool(valid_scope_keys) and selected == valid_scope_keys,
+        has_any_games=bool(all_matches or standalone_rounds),
+        roster_rows=_roster_rows(team, user, _round_in_scope),
+        role_columns=[label for _, label in ROLE_ORDER],
+        stats=HistoryStats(
+            total_matches=len(matches),
+            match_wins=match_wins,
+            match_losses=match_losses,
+            match_ties=match_ties,
+            total_rounds=len(detailed_rounds),
+            round_wins=round_wins,
+            round_losses=round_losses,
+            round_ties=round_ties,
+        ),
+    )
 
 
 def _opponent(game: Match | GameRound, team: Team) -> Team:
@@ -245,11 +319,11 @@ def _result(game: Match | GameRound, team: Team) -> str:
     return "won" if game.winner_id == team.id else "lost"
 
 
-def team_match_history_payload(history: dict) -> dict:
+def team_match_history_payload(history: TeamMatchHistory) -> dict:
     """``build_team_match_history`` output as the API's ``data`` (no ORM rows)."""
-    team: Team = history["team"]
+    team = history.team
     matches = []
-    for m in history["matches"]:
+    for m in history.matches:
         is_red = m.team_red_id == team.id
         matches.append(
             {
@@ -269,7 +343,7 @@ def team_match_history_payload(history: dict) -> dict:
             }
         )
     single_rounds = []
-    for r in history["detailed_rounds"]:
+    for r in history.detailed_rounds:
         is_red = r.team_red_id == team.id
         single_rounds.append(
             {
@@ -285,11 +359,11 @@ def team_match_history_payload(history: dict) -> dict:
         "team": team_ref(team),
         "scope_options": [
             {"key": o["key"], "label": o["label"], "selected": o["checked"]}
-            for o in history["scope_options"]
+            for o in history.scope_options
         ],
-        "show_scope_filter": history["show_scope_filter"],
-        "has_any_games": history["has_any_games"],
-        "stats": history["stats"],
+        "show_scope_filter": history.show_scope_filter,
+        "has_any_games": history.has_any_games,
+        "stats": asdict(history.stats),
         "role_columns": [{"role": key, "label": label} for key, label in ROLE_ORDER],
         "roster": [
             {
@@ -298,9 +372,9 @@ def team_match_history_payload(history: dict) -> dict:
                 "is_merc": row["is_merc"],
                 "roles": row["roles"],
             }
-            for row in history["roster_rows"]
+            for row in history.roster_rows
         ],
-        "opponents": [team_ref(t) for t in history["unique_opponents"]],
+        "opponents": [team_ref(t) for t in history.unique_opponents],
         "matches": matches,
         "single_rounds": single_rounds,
     }

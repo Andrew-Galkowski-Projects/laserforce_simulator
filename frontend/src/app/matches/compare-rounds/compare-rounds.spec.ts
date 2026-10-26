@@ -466,6 +466,19 @@ describe('Compare Rounds (/rounds/compare)', () => {
       expect(rows().map((r) => text(cells(r)[0]))).toEqual(['Ace', 'Max', 'Zed']);
     });
 
+    it('sorts the rows by name ignoring case', async () => {
+      await open(
+        undefined,
+        comparison({
+          deltas: [
+            deltaRow({ player_id: 1, name: 'Zed' }),
+            deltaRow({ player_id: 2, name: 'alice' }),
+          ],
+        }),
+      );
+      expect(rows().map((r) => text(cells(r)[0]))).toEqual(['alice', 'Zed']);
+    });
+
     it('marks your own Self-insert with the "You" badge, and no one else (INV-6)', async () => {
       const self = { ...SELF_INSERT, id: 2 };
       await open(

@@ -1,3 +1,4 @@
+from dataclasses import fields
 from datetime import date, datetime
 
 from celery.result import AsyncResult
@@ -360,12 +361,12 @@ def team_match_history(request, team_id):
     # selected" (Overall toggled off) is distinguishable from a fresh page load
     # (which defaults to Overall = every scope on).
     scopes = set(request.GET.getlist("scope")) if "applied" in request.GET else None
-    context = build_team_match_history(team, request.user, scopes)
+    history = build_team_match_history(team, request.user, scopes)
+    context = {field.name: getattr(history, field.name) for field in fields(history)}
 
     # The doughnut is HTML-only (ADR-0045 keeps the SPA line-only).
-    stats = context["stats"]
     context["winloss_chart"] = {
-        key: stats[key]
+        key: getattr(history.stats, key)
         for key in (
             "match_wins",
             "match_losses",

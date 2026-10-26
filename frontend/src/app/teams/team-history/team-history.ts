@@ -3,16 +3,15 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatAnchor } from '@angular/material/button';
 import { ActivatedRoute, ParamMap, Router, RouterLink } from '@angular/router';
-import { EMPTY, catchError, combineLatest, switchMap } from 'rxjs';
-import { ApiError } from '../../api/api-client';
+import { EMPTY, combineLatest, switchMap } from 'rxjs';
 import { HistoryRoleCell, TeamHistory as TeamHistoryData } from '../../api/analytics.models';
 import { AnalyticsService } from '../../api/analytics.service';
 import { AuthService } from '../../auth/auth.service';
 import { Result } from '../../matches/shared/result';
 import { ResultChip } from '../../matches/shared/result-chip';
 import { fixed } from '../../players/shared/benchmark-format';
-import { apiMessage } from '../../shared/api-message';
-import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
+import { queryId } from '../../shared/head-to-head/h2h-query';
+import { notFoundOrError } from '../../shared/not-found-or-error';
 import { TeamNotFound } from '../shared/team-not-found';
 
 /** A scope key the API knows the shape of: `freeform` or `t<tournament id>`. */
@@ -72,13 +71,15 @@ export class TeamHistory {
           this.history.set(null);
           this.notFound.set(false);
           this.loadError.set(null);
-          return analytics.teamHistory(Number(params.get('id')), historyScopes(query)).pipe(
-            catchError((error: unknown) => {
-              if (error instanceof ApiError && error.status === 404) this.notFound.set(true);
-              else this.loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
-              return EMPTY;
-            }),
-          );
+          // An id that is not a whole number >= 1 names no Team: not found, no request.
+          const id = queryId(params, 'id');
+          if (id === undefined) {
+            this.notFound.set(true);
+            return EMPTY;
+          }
+          return analytics
+            .teamHistory(id, historyScopes(query))
+            .pipe(notFoundOrError(this.notFound, this.loadError));
         }),
         takeUntilDestroyed(inject(DestroyRef)),
       )

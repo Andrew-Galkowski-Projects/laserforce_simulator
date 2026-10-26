@@ -5,17 +5,18 @@ import { MatButton } from '@angular/material/button';
 import { MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { ActivatedRoute, Router } from '@angular/router';
-import { EMPTY, catchError, switchMap } from 'rxjs';
+import { EMPTY, switchMap } from 'rxjs';
 import { PlayerStatDeltaRow, RoundComparison, StatDelta } from '../../api/analytics.models';
 import { AnalyticsService } from '../../api/analytics.service';
-import { ApiError } from '../../api/api-client';
 import { listAll } from '../../api/list-all';
 import { GameRoundListItem } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
 import { AuthService } from '../../auth/auth.service';
 import { apiMessage } from '../../shared/api-message';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
+import { queryId } from '../../shared/head-to-head/h2h-query';
 import { ChartTheme, LineChart, LinePoint, LineSeries } from '../../shared/line-chart';
+import { notFoundOrError } from '../../shared/not-found-or-error';
 import { readToken } from '../../shared/read-token';
 import { TICKS_PER_SECOND } from '../shared/clock';
 import { RecordNotFound } from '../shared/record-not-found';
@@ -24,14 +25,6 @@ import { sideTag } from '../shared/side-tag';
 
 /** The per-Team chart colours, in `points_series` order (a shared Team set has at most 2). */
 const TEAM_COLOUR_TOKENS = ['--lf-chart-1', '--lf-chart-2'] as const;
-
-/**
- * A `round_a` / `round_b` query value as an id (INV-1): a whole number >= 1, else `undefined`
- * so the pick is dropped.
- */
-export function roundPick(raw: string | null): number | undefined {
-  return raw !== null && /^[1-9]\d*$/.test(raw) ? Number(raw) : undefined;
-}
 
 /** A stat value as shown: whole numbers as-is, a fraction (MVP) to two decimals. */
 function statValue(value: number): string {
@@ -107,7 +100,7 @@ export class CompareRounds {
   protected readonly rows = computed(() => {
     const deltas = this.comparison()?.deltas ?? [];
     return [...deltas]
-      .sort((x, y) => (x.name < y.name ? -1 : x.name > y.name ? 1 : 0))
+      .sort((x, y) => x.name.localeCompare(y.name, undefined, { sensitivity: 'base' }))
       .map((row: PlayerStatDeltaRow) => ({
         ...row,
         isSelf: row.player_id === this.selfId(),
@@ -158,20 +151,17 @@ export class CompareRounds {
     this.route.queryParamMap
       .pipe(
         switchMap((query) => {
-          const a = roundPick(query.get('round_a'));
-          const b = roundPick(query.get('round_b'));
+          // INV-1: a pick that is not a whole number >= 1 is dropped.
+          const a = queryId(query, 'round_a');
+          const b = queryId(query, 'round_b');
           this.form.setValue({ round_a: a ? String(a) : '', round_b: b ? String(b) : '' });
           this.comparison.set(null);
           this.notFound.set(false);
           this.compareError.set(null);
           if (a === undefined || b === undefined) return EMPTY;
-          return analytics.compareRounds(a, b).pipe(
-            catchError((error: unknown) => {
-              if (error instanceof ApiError && error.status === 404) this.notFound.set(true);
-              else this.compareError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
-              return EMPTY;
-            }),
-          );
+          return analytics
+            .compareRounds(a, b)
+            .pipe(notFoundOrError(this.notFound, this.compareError));
         }),
         takeUntilDestroyed(destroyRef),
       )

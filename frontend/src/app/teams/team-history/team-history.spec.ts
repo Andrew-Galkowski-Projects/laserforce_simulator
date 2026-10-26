@@ -544,5 +544,14 @@ describe('Team match history (/teams/:id/history)', () => {
       expect(text(page())).not.toContain('Team not found');
       expect(page().querySelector('.th-tile')).toBeNull();
     });
+
+    it('says "Team not found" for a non-numeric id, with no request', async () => {
+      await setUp();
+      await harness.navigateByUrl('/teams/abc/history');
+      await harness.fixture.whenStable();
+      http.expectNone(() => true);
+      expect(text(page().querySelector('h1'))).toBe('Team not found');
+      expect(page().querySelector('[role="alert"]')).toBeNull();
+    });
   });
 });

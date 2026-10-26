@@ -6,8 +6,7 @@ import { MatAnchor, MatButton } from '@angular/material/button';
 import { MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
-import { EMPTY, catchError, switchMap } from 'rxjs';
-import { ApiError } from '../../api/api-client';
+import { EMPTY, switchMap } from 'rxjs';
 import { PlayerH2HParams, PlayerHeadToHead as PlayerH2HData } from '../../api/analytics.models';
 import { AnalyticsService } from '../../api/analytics.service';
 import { listAll } from '../../api/list-all';
@@ -19,6 +18,7 @@ import { H2HCard, H2HPlayerName } from '../../shared/head-to-head/h2h-card';
 import { H2HCharts } from '../../shared/head-to-head/h2h-charts';
 import { plural, record } from '../../shared/head-to-head/h2h-format';
 import { H2HMapTable } from '../../shared/head-to-head/h2h-map-table';
+import { notFoundOrError } from '../../shared/not-found-or-error';
 import { capitalise, fixed } from '../shared/benchmark-format';
 import {
   PROVENANCE_OPTIONS,
@@ -139,13 +139,9 @@ export class PlayerHeadToHead {
           this.notFound.set(false);
           if (q.player_a === undefined || q.player_b === undefined) return EMPTY;
           const params = { ...q, player_a: q.player_a, player_b: q.player_b };
-          return analytics.playerHeadToHead(params).pipe(
-            catchError((error: unknown) => {
-              if (error instanceof ApiError && error.status === 404) this.notFound.set(true);
-              else this.error.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
-              return EMPTY;
-            }),
-          );
+          return analytics
+            .playerHeadToHead(params)
+            .pipe(notFoundOrError(this.notFound, this.error));
         }),
         takeUntilDestroyed(destroyRef),
       )
