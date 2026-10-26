@@ -77,11 +77,10 @@ def _roster_rows(
         color_by_round[gr.id] = "red" if gr.team_red_id == team.id else "blue"
 
     roster: dict[int, dict] = {}
+    # ``get_mvp`` reads each state's Round: fetch it in the same query.
     states = PlayerRoundState.objects.filter(
         game_round_id__in=color_by_round.keys()
-    ).select_related(
-        "player", "game_round"
-    )  # ``get_mvp`` reads the Round
+    ).select_related("player", "game_round")
     for st in states:
         if st.team_color != color_by_round.get(st.game_round_id):
             continue
