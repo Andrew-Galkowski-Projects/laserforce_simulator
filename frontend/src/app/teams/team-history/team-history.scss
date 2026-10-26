@@ -130,6 +130,10 @@ h3 {
 
 .th-roster__name {
   text-align: left !important;
+
+  a {
+    color: var(--lf-accent);
+  }
 }
 
 .th-roster__group {

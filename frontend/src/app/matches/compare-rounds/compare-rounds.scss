@@ -37,8 +37,10 @@ h2 {
   align-items: baseline;
   margin-bottom: 1rem;
 
+  // Round A and B share a row (Compare wraps below), or take one each when the form is under
+  // 44rem, so a long "#id - red vs blue" label stays whole.
   mat-form-field {
-    flex: 1 1 18rem;
+    flex: 1 1 max(calc(50% - 0.5rem), min(100%, (44rem - 100%) * 999));
     min-width: 0;
   }
 }

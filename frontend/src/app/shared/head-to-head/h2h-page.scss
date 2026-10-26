@@ -38,8 +38,10 @@ h2 {
     min-width: 0;
   }
 
+  // Team / Player A and B share a row, or take one each when the form is under 36rem, so a long
+  // "name (team)" label stays whole; the filters wrap onto the next row.
   .h2h-picker__wide {
-    flex: 2 1 14rem;
+    flex: 1 1 max(calc(50% - 0.5rem), min(100%, (36rem - 100%) * 999));
   }
 }
 
