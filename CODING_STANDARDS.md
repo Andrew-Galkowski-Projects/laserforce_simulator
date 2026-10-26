@@ -38,6 +38,10 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   form carries each widget's constraints (`min`, `max`, `maxlength`, `required`) on the
   matching control. Flag a control missing one (ANG-06b shipped the Player profile
   inputs without their bounds).
+- **Wrapping field text.** A `mat-form-field` with a `mat-hint` or a server error
+  (`applyApiErrors`) sets `subscriptSizing="dynamic"`, so a wrapped line pushes the
+  next field down instead of overlapping it (ANG-06 item 7's invite hint and password
+  rules).
 
 ## Tests
 

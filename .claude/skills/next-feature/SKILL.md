@@ -51,7 +51,9 @@ merged (check `git log origin/main --oneline` for its ID) but isn't marked `[DON
 is bookkeeping, not the next feature: say so and offer to close it out.
 
 Print its ID, title and one sentence, and confirm with the user before going
-on. Read its PLAN.md section in full, plus the app `CLAUDE.md` index for the
+on. An umbrella item without `(ID)` in its bold title gets one now
+(`5c. **Event charts (ANG-06g)**`): the spec and ticket titles use it, and
+`move_done_task.py` finds the item by it. Read its PLAN.md section in full, plus the app `CLAUDE.md` index for the
 area and the `docs/agents/<app>/` feature doc its pointer names.
 
 If the section already has `Spec: #<n>`, read that issue and skip to Step 4's
@@ -137,7 +139,9 @@ exists (a model field, a service method) before publishing: ANG-06a's spec said
 `currentUser().player` where the field is `self_insert`. For every HTTP assertion
 the spec makes (a status, a body text, a header), `curl` the real endpoint once:
 ANG-07's spec expected `/` to show `base.html`'s title, and anonymous `/`
-redirects to the sign-in page. For every field the
+redirects to the sign-in page. For every user-facing message the spec quotes,
+find the line that produces it: ANG-06 item 7 promised "Something went wrong"
+where `ApiClient` says "Could not reach the server.". For every field the
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
 exact key-set asserts) and name each hit in the spec as a test to update:
 ANG-06b's full suite found one that pinned `overall_rating` absent.
@@ -270,6 +274,9 @@ Add these constraints to every implementer prompt:
   overrides the reuse-the-tab rule in `CLAUDE.md`.
 - Commit only on your ticket branch. Merge the integration tip into it before
   reporting done. Comment the commit hash on your ticket issue.
+- Stage and commit in one call, `git add <paths>; if ($?) { git commit -F <file> }`,
+  naming the paths `git status --short` lists (a `git mv` or `git rm` has
+  staged its old path already, and naming it fails the add).
 
 ## Step 7: Verify
 
@@ -305,7 +312,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    classifier refuses a run against a removed guard. Run each mutation with
    `python scripts/mutate.py <file> <mutations.json> -- <pytest args>` (JSON
    `[name, old, new]` triples in the scratchpad): it restores the file and
-   prints which tests caught each one. A `SURVIVED` line is a test to write.
+   prints which tests caught each one. A `SURVIVED` line is a test to write;
+   `BASELINE FAILED` (exit 2, nothing mutated) means a test is red on the
+   unchanged code: fix it first.
    Frontend code takes `--run -- npm --prefix frontend exec -- ng test
    --watch=false --include=<spec>` in place of the pytest args.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees

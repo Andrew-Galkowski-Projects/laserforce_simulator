@@ -98,6 +98,25 @@ class MutateTests(TestCase):
         self.assertIn("caught    plus to minus: test_calc.py::test_add", printed)
         self.assertIn("SURVIVED  no-op", printed)
 
+    def test_main_exits_2_without_mutating_when_the_tests_already_fail(self) -> None:
+        # A test that is red on the unchanged file "catches" every mutation and
+        # proves nothing (ANG-06 item 7), so main stops before the first one.
+        (self.root / "test_calc.py").write_text(
+            "from calc import add\n\n\ndef test_add():\n    assert add(2, 3) == 6\n"
+        )
+        mutations = self.root / "mutations.json"
+        mutations.write_text(json.dumps([["plus to minus", "a + b", "a - b"]]))
+        out = io.StringIO()
+        with contextlib.chdir(self.root), contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as caught:
+                mutate.main([str(self.target), str(mutations), "--", *_ARGS])
+        self.assertEqual(caught.exception.code, 2)
+        printed = out.getvalue()
+        self.assertIn("BASELINE FAILED", printed)
+        self.assertIn("test_calc.py::test_add", printed)
+        self.assertNotIn("caught", printed)
+        self.assertEqual(self.target.read_bytes(), _CALC)
+
     def test_main_exits_0_when_every_mutation_is_caught(self) -> None:
         mutations = self.root / "mutations.json"
         mutations.write_text(json.dumps([["plus to minus", "a + b", "a - b"]]))
@@ -139,6 +158,24 @@ class RunAnyCommandTests(TestCase):
         self.assertIn("caught    plus to minus", printed)
         self.assertIn("SURVIVED  no-op", printed)
         self.assertEqual(self.target.read_bytes(), _CALC)
+
+    def test_a_command_that_fails_on_the_unchanged_file_exits_2(self) -> None:
+        out = io.StringIO()
+        with contextlib.chdir(self.root), contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as caught:
+                mutate.main(
+                    [
+                        str(self.target),
+                        str(self.mutations),
+                        "--run",
+                        "--",
+                        sys.executable,
+                        "-c",
+                        "import sys; sys.exit(1)",
+                    ]
+                )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("BASELINE FAILED", out.getvalue())
 
     def test_passes_a_second_double_dash_through_to_the_command(self) -> None:
         # `npm exec -- ng test ...` needs its own `--`.

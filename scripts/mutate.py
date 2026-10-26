@@ -9,7 +9,9 @@ isolation guard, so this does it in one plain command.
 
 The mutations file is JSON, a list of ``[name, old, new]``; ``old`` must occur
 in the target exactly once. Exits 1 when a mutation survives or its pattern is
-missing or ambiguous.
+missing or ambiguous. Exits 2, before any mutation, when the command already
+fails on the unchanged file (``BASELINE FAILED``): a red test catches every
+mutation and proves nothing.
 
 Usage::
 
@@ -87,6 +89,32 @@ def _crlf(pattern: str) -> str:
     return pattern.replace("\r\n", "\n").replace("\n", "\r\n")
 
 
+def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+    # No bytecode writes: a cached .pyc is checked by mtime + size, so a same-size
+    # mutation written within the same second as the last run would reuse stale code.
+    return subprocess.run(
+        command,
+        cwd=cwd,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env={**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+        shell=sys.platform == "win32" and Path(command[0]).suffix == "",
+    )
+
+
+def baseline_failures(command: list[str], cwd: Path) -> list[str] | None:
+    """``None`` when ``command`` passes on the unchanged files, else the tests that failed.
+
+    A test that is already red "catches" every mutation and proves nothing.
+    """
+    run = _run(command, cwd)
+    if run.returncode == 0:
+        return None
+    return failed_tests(run.stdout + run.stderr)
+
+
 def mutate(
     target: Path, mutations: list[Mutation], pytest_args: list[str], cwd: Path
 ) -> list[Outcome]:
@@ -111,16 +139,7 @@ def mutate_with(
                 outcomes.append(Outcome(mutation.name, status, []))
                 continue
             _write(target, original.replace(old, new))
-            run = subprocess.run(
-                command,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                env={**os.environ, "NO_COLOR": "1"},
-                shell=sys.platform == "win32" and Path(command[0]).suffix == "",
-            )
+            run = _run(command, cwd)
             status = "caught" if run.returncode != 0 else "survived"
             outcomes.append(
                 Outcome(mutation.name, status, failed_tests(run.stdout + run.stderr))
@@ -147,6 +166,12 @@ def main(argv: list[str] | None = None) -> None:
         Mutation(*m) for m in json.loads(args.mutations.read_text(encoding="utf-8"))
     ]
     command = tail if args.run else [sys.executable, "-m", "pytest", *tail]
+    failures = baseline_failures(command, cwd=Path.cwd())
+    if failures is not None:
+        detail = f": {', '.join(failures)}" if failures else ""
+        line = f"BASELINE FAILED{detail} -- fix the tests before mutating"
+        print(line.encode("ascii", "replace").decode("ascii"))
+        sys.exit(2)
     outcomes = mutate_with(args.target, mutations, command, cwd=Path.cwd())
     for outcome in outcomes:
         label = "caught" if outcome.status == "caught" else outcome.status.upper()
