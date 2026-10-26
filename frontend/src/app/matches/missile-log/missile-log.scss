@@ -78,6 +78,7 @@ h1 {
 
 // ---- Table ----------------------------------------------------------------------------------
 .ml-table-wrap {
+  container-type: inline-size;
   overflow-x: auto;
   border: 1px solid var(--lf-border);
   border-radius: var(--lf-radius);
@@ -105,6 +106,21 @@ h1 {
 
   tbody tr:last-child td {
     border-bottom: 0;
+  }
+}
+
+// Narrow content (the 768px viewport leaves ~530px): tighter cells and wrapping headers, so all
+// seven columns, Points included, fit without a sideways scroll.
+@container (max-width: 640px) {
+  .ml-table {
+    th,
+    td {
+      padding: 0.4rem 0.35rem;
+    }
+
+    th {
+      white-space: normal;
+    }
   }
 }
 
