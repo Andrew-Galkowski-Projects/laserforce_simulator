@@ -1,9 +1,12 @@
-<section class="login">
+<section class="auth-card">
   <h1>Sign in</h1>
-  <p class="login__app">{{ title }}</p>
+  <p class="auth-card__app">{{ title }}</p>
   <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    @if (registered && !error()) {
+      <p class="auth-card__notice" role="status">Account created. Please sign in.</p>
+    }
     @if (error(); as message) {
-      <p class="login__error" role="alert">{{ message }}</p>
+      <p class="auth-card__error" role="alert">{{ message }}</p>
     }
     <mat-form-field appearance="outline">
       <mat-label>Email</mat-label>
@@ -27,4 +30,5 @@
     </mat-form-field>
     <button mat-flat-button type="submit" [disabled]="busy()">Sign in</button>
   </form>
+  <p class="auth-card__switch"><a routerLink="/register">Create an account</a></p>
 </section>

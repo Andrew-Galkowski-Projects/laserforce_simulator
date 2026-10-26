@@ -85,8 +85,7 @@ Every component uses the theme chosen in ANG-04b.
 Items 7-20 (planned 2026-10-25, owner-approved). The API behind every one already exists (ANG-01),
 so each is frontend parity work like 1-6, with its own grill. Order is by dependency, then complexity.
 
-7. **Accounts screens** — register, password change (+ done), self-insert link / unlink. `/login`
-   already exists. Replaces `accounts/*`.
+7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **Player pages** — player list (`/players/`), player detail, player delete, career stats, role
    benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
    `player_career_stats`, `role_benchmarks`.

@@ -142,8 +142,10 @@ at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
 ### Frontend (Angular, in progress)
 
 Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](frontend/) (see
-[ADR-0042](docs/adr/0042-angular-frontend-stack.md)). So far it has a sign-in page, an app shell (a
-header with Sign out and a Teams / Matches / Maps sidebar that becomes a drawer on small screens), the Teams
+[ADR-0042](docs/adr/0042-angular-frontend-stack.md)). So far it has a sign-in page, invite-only
+registration (`/register?invite=<code>`, signed in straight away) and Change password, an app shell (a
+header with an account menu — My player and Unlink Self-insert when linked, Change password, Sign out — and a
+Teams / Matches / Maps sidebar that becomes a drawer on small screens), the Teams
 screens: list, detail (with Remove player), Create, Edit and Assign Slots, plus Add Player and Edit
 Player (the 19 Stats with a live Overall rating), and the Matches screens: Match History (your Matches
 and Single Rounds, paged), New Match and New Single Round (simulate and open the result), and the Match and Round pages: a Match Summary per Round, and

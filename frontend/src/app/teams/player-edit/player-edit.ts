@@ -2,7 +2,7 @@ import { Component, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { Player, PlayerInput } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
-import { injectNotify } from '../shared/notify';
+import { injectNotify } from '../../shared/notify';
 import { PlayerForm } from '../shared/player-form';
 import { PlayerNotFound } from '../shared/player-not-found';
 import { loadRoutePlayer } from '../shared/route-player';

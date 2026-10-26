@@ -7,7 +7,7 @@ import { ApiError } from '../../api/api-client';
 import { Player, Role } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
 import { AuthService } from '../../auth/auth.service';
-import { injectNotify } from '../shared/notify';
+import { injectNotify } from '../../shared/notify';
 import { ROLE_LABELS, SLOTS, benchPlayers } from '../shared/roster';
 import { loadRouteTeam } from '../shared/route-team';
 import { TeamNotFound } from '../shared/team-not-found';

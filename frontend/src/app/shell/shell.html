@@ -13,10 +13,38 @@
     }
     <span class="shell__title">{{ title }}</span>
     <span class="shell__spacer"></span>
-    <span class="shell__user">{{ user()?.email }}</span>
-    <button mat-button type="button" (click)="signOut()">Sign out</button>
+    @if (roomy()) {
+      <button
+        mat-button
+        type="button"
+        class="shell__account"
+        aria-label="Account"
+        [attr.title]="user()?.email"
+        [matMenuTriggerFor]="account"
+      >
+        <span class="shell__user">{{ user()?.email }}</span>
+      </button>
+    } @else {
+      <button
+        mat-icon-button
+        type="button"
+        aria-label="Account"
+        [attr.title]="user()?.email"
+        [matMenuTriggerFor]="account"
+      >
+        <span aria-hidden="true" class="shell__avatar">{{ initial() }}</span>
+      </button>
+    }
   </mat-toolbar>
 </header>
+<mat-menu #account="matMenu" xPosition="before">
+  @if (user()?.self_insert; as player) {
+    <a mat-menu-item [routerLink]="['/teams', player.team]">My player</a>
+    <button mat-menu-item type="button" (click)="unlinkSelfInsert()">Unlink Self-insert</button>
+  }
+  <a mat-menu-item routerLink="/account/password">Change password</a>
+  <button mat-menu-item type="button" (click)="signOut()">Sign out</button>
+</mat-menu>
 <mat-sidenav-container class="shell__body">
   <mat-sidenav #nav [mode]="wide() ? 'side' : 'over'" [opened]="wide()" class="shell__nav">
     <mat-nav-list>

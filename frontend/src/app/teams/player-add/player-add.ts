@@ -3,7 +3,7 @@ import { Router } from '@angular/router';
 import { PlayerInput } from '../../api/players.models';
 import { Team } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { injectNotify } from '../shared/notify';
+import { injectNotify } from '../../shared/notify';
 import { PlayerForm } from '../shared/player-form';
 import { loadRouteTeam } from '../shared/route-team';
 import { TeamNotFound } from '../shared/team-not-found';

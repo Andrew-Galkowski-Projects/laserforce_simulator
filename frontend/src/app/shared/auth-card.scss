@@ -1,3 +1,6 @@
+// The signed-out card around Sign in and Create an account: centred, outside the shell.
+@use './alerts';
+
 :host {
   display: flex;
   justify-content: center;
@@ -8,7 +11,7 @@
   color: var(--lf-text);
 }
 
-.login {
+.auth-card {
   width: 100%;
   max-width: 24rem;
   padding: 2rem 1.5rem;
@@ -24,7 +27,7 @@ h1 {
   font-size: 1.5rem;
 }
 
-.login__app {
+.auth-card__app {
   margin: 0.25rem 0 1.5rem;
   color: var(--lf-text-muted);
 }
@@ -35,10 +38,19 @@ form {
   gap: 0.5rem;
 }
 
-.login__error {
-  margin: 0 0 0.5rem;
-  padding: 0.75rem;
-  border: 1px solid var(--mat-sys-error);
-  border-radius: var(--lf-radius);
-  color: var(--mat-sys-error);
+.auth-card__notice {
+  @include alerts.notice;
+}
+
+.auth-card__error {
+  @include alerts.error;
+}
+
+.auth-card__switch {
+  margin: 1.25rem 0 0;
+  font-size: 0.875rem;
+
+  a {
+    color: var(--lf-accent);
+  }
 }

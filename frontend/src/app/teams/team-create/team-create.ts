@@ -1,7 +1,7 @@
 import { Component, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { TeamsService } from '../../api/teams.service';
-import { injectNotify } from '../shared/notify';
+import { injectNotify } from '../../shared/notify';
 import { TeamNameForm } from '../shared/team-name-form';
 
 /** `/teams/new`: create a Team, then land on its detail page. */

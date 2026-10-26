@@ -5,6 +5,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
+import { SELF_INSERT } from '../api/testing/auth-fixtures';
 import { FLOW_ROUTES } from './testing/flow-routes';
 import { authInterceptor } from './auth.interceptor';
 import { AuthService } from './auth.service';
@@ -261,6 +262,84 @@ describe('AuthService', () => {
       expect(auth.accessToken()).toBeNull();
       expect(auth.currentUser()).toBeNull();
       expect(TestBed.inject(Router).url).toBe('/login');
+    });
+  });
+
+  describe('Account changes', () => {
+    it('changePassword posts the three fields and keeps the session', async () => {
+      await signIn();
+      const body = {
+        old_password: 'Secret-123',
+        new_password1: 'Newer-456',
+        new_password2: 'Newer-456',
+      };
+
+      const done = firstValueFrom(auth.changePassword(body), { defaultValue: undefined });
+      const req = http.expectOne(`${BASE}/accounts/me/password/`);
+      expect(req.request.method).toBe('POST');
+      expect(req.request.body).toEqual(body);
+      expect(req.request.headers.get('Authorization')).toBe('Bearer acc-1');
+      req.flush(null, { status: 204, statusText: 'No Content' });
+      await done;
+
+      expect(auth.accessToken()).toBe('acc-1');
+      expect(auth.currentUser()).toEqual(USER);
+    });
+
+    it('linkSelfInsert puts the Player id and makes the returned Account the current user', async () => {
+      await signIn();
+      const linked = { ...USER, self_insert: SELF_INSERT };
+
+      const result = firstValueFrom(auth.linkSelfInsert(9));
+      const req = http.expectOne(`${BASE}/accounts/me/self-insert/`);
+      expect(req.request.method).toBe('PUT');
+      expect(req.request.body).toEqual({ player: 9 });
+      req.flush({ data: linked, meta: {} });
+
+      expect(await result).toEqual(linked);
+      expect(auth.currentUser()?.self_insert?.id).toBe(9);
+    });
+
+    it('linkSelfInsert leaves the current user alone when the link is refused', async () => {
+      await signIn();
+      const result = firstValueFrom(auth.linkSelfInsert(9)).catch((e: unknown) => e);
+      http
+        .expectOne(`${BASE}/accounts/me/self-insert/`)
+        .flush(
+          { errors: [{ code: 'not_eligible', message: 'No.', field: null }], meta: {} },
+          { status: 400, statusText: 'Bad Request' },
+        );
+      expect(await result).toMatchObject({ status: 400 });
+      expect(auth.currentUser()).toEqual(USER);
+    });
+
+    async function signInLinked(): Promise<void> {
+      const result = firstValueFrom(auth.login('ann@example.com', 'pw'));
+      http.expectOne(`${BASE}/token/`).flush({ data: { access: 'acc-1' }, meta: {} });
+      http
+        .expectOne(`${BASE}/accounts/me/`)
+        .flush({ data: { ...USER, self_insert: SELF_INSERT }, meta: {} });
+      await result;
+    }
+
+    it('unlinkSelfInsert deletes the link and clears self_insert on the current user', async () => {
+      await signInLinked();
+      const done = firstValueFrom(auth.unlinkSelfInsert(), { defaultValue: undefined });
+      const req = http.expectOne(`${BASE}/accounts/me/self-insert/`);
+      expect(req.request.method).toBe('DELETE');
+      req.flush(null, { status: 204, statusText: 'No Content' });
+      await done;
+      expect(auth.currentUser()).toEqual(USER);
+    });
+
+    it('unlinkSelfInsert keeps the link on the current user when the call fails', async () => {
+      await signInLinked();
+      const done = firstValueFrom(auth.unlinkSelfInsert()).catch((e: unknown) => e);
+      http
+        .expectOne(`${BASE}/accounts/me/self-insert/`)
+        .error(new ProgressEvent('error'), { status: 0 });
+      expect(await done).toMatchObject({ status: 0 });
+      expect(auth.currentUser()?.self_insert?.id).toBe(9);
     });
   });
 });

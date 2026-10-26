@@ -5,6 +5,8 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../../environments/environment';
 import { AuthService } from '../../auth/auth.service';
 import { User } from '../../auth/user';
+import { Player } from '../players.models';
+import { PROFILE, STATS } from './player-fixtures';
 
 export const USER: User = {
   id: 1,
@@ -12,6 +14,16 @@ export const USER: User = {
   date_joined: '2026-10-01T09:00:00Z',
   is_staff: false,
   self_insert: null,
+};
+
+/** A Player on Team 3, to link as `USER`'s Self-insert. */
+export const SELF_INSERT: Player = {
+  id: 9,
+  team: 3,
+  name: 'Dan',
+  preferred_roles: ['medic'],
+  ...PROFILE,
+  ...STATS,
 };
 
 /**

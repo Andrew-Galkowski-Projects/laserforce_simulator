@@ -18,3 +18,10 @@ export interface RegisterInput {
   password2: string;
   invite: string;
 }
+
+/** `StyledPasswordChangeForm` fields. */
+export interface PasswordChangeInput {
+  old_password: string;
+  new_password1: string;
+  new_password2: string;
+}

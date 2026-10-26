@@ -123,6 +123,19 @@ describe('Login page', () => {
     expect(routerUrl()).toBe('/login?returnUrl=%2Fteams');
   });
 
+  it('links to the register page', async () => {
+    await harness.navigateByUrl('/login');
+    const link = [...page().querySelectorAll('a')].find(
+      (a) => a.textContent?.trim() === 'Create an account',
+    );
+    expect(link?.getAttribute('href')).toBe('/register');
+  });
+
+  it('shows no "Account created" notice on a plain visit', async () => {
+    await harness.navigateByUrl('/login');
+    expect(page().textContent).not.toContain('Account created');
+  });
+
   it('shows the same message when the server cannot be reached', async () => {
     await harness.navigateByUrl('/login');
     await submit('ann@example.com', 'Secret-123');

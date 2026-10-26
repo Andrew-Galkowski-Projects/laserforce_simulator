@@ -1,0 +1,65 @@
+<section class="auth-card">
+  <h1>Create an account</h1>
+  <p class="auth-card__app">{{ title }}</p>
+  <form [formGroup]="form" (ngSubmit)="submit()" novalidate>
+    @for (message of errors(); track $index) {
+      <p class="auth-card__error" role="alert">{{ message }}</p>
+    }
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Invite code</mat-label>
+      <input matInput formControlName="invite" autocomplete="off" required />
+      <mat-hint>Registration is invite-only. Use the link or code you were sent.</mat-hint>
+      @if (form.controls.invite.hasError('required')) {
+        <mat-error>An invite code is required to register.</mat-error>
+      }
+      @if (form.controls.invite.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Email</mat-label>
+      <input matInput type="email" formControlName="email" autocomplete="email" required />
+      <mat-hint>Your email address is how you sign in.</mat-hint>
+      @if (form.controls.email.hasError('required')) {
+        <mat-error>Enter your email.</mat-error>
+      }
+      @if (form.controls.email.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Password</mat-label>
+      <input
+        matInput
+        type="password"
+        formControlName="password1"
+        autocomplete="new-password"
+        required
+      />
+      @if (form.controls.password1.hasError('required')) {
+        <mat-error>Enter a password.</mat-error>
+      }
+      @if (form.controls.password1.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Confirm password</mat-label>
+      <input
+        matInput
+        type="password"
+        formControlName="password2"
+        autocomplete="new-password"
+        required
+      />
+      @if (form.controls.password2.hasError('required')) {
+        <mat-error>Enter the password again.</mat-error>
+      }
+      @if (form.controls.password2.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+    <button mat-flat-button type="submit" [disabled]="busy()">Create account</button>
+  </form>
+  <p class="auth-card__switch"><a routerLink="/login">Already have an account? Sign in</a></p>
+</section>

@@ -1,4 +1,4 @@
-// The Teams screens' confirmation snackbar: one action label and one duration.
+// The app's confirmation snackbar: one action label and one duration.
 import { inject } from '@angular/core';
 import { MatSnackBar } from '@angular/material/snack-bar';
 
