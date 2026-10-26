@@ -1,0 +1,97 @@
+@if (notFound()) {
+  <h1>Player not found.</h1>
+  <p><a routerLink="/players">&larr; Back to Players</a></p>
+} @else if (loadError(); as message) {
+  <p class="bp-error" role="alert">{{ message }}</p>
+} @else if (career(); as c) {
+  <div class="bp-head">
+    <h1>
+      {{ c.player.name }}
+      @if (isSelf()) {
+        <span class="badge--you">You</span>
+      }
+      @if (c.player.team; as team) {
+        <small class="muted">&#32;— {{ team.name }}</small>
+      }
+    </h1>
+    <a mat-stroked-button routerLink="/players/benchmarks">Role benchmarks</a>
+  </div>
+  <p>
+    Total rounds: <strong>{{ c.total_rounds }}</strong>
+  </p>
+
+  @if (!c.has_rounds) {
+    <p class="bp-notice">No rounds played yet.</p>
+  } @else {
+    <div class="bp-scroll">
+      <table class="bp-table" id="career-totals">
+        <thead>
+          <tr>
+            <th>Games</th>
+            <th>Avg points</th>
+            <th>Tag ratio</th>
+            <th>Avg survival</th>
+            <th>Avg accuracy</th>
+            <th>Avg SP earned</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            @for (cell of totals(); track $index) {
+              <td>{{ cell }}</td>
+            }
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <app-benchmark-filter [minRounds]="c.min_rounds" [display]="c.display" />
+
+    @for (r of roles(); track r.role) {
+      <section class="career-role">
+        <h3>
+          {{ capitalise(r.role) }}
+          <small class="muted">— {{ r.games }} game{{ r.games === 1 ? '' : 's' }}</small>
+        </h3>
+        <div class="bp-scroll">
+          <table class="bp-table" [id]="'career-role-' + r.role">
+            <thead>
+              <tr>
+                <th>Stat</th>
+                <th>Player value</th>
+                <th>Mean</th>
+                <th>Median</th>
+                <th>Δ</th>
+                <th>Percentile</th>
+                <th>n</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of r.rows; track row.key) {
+                <tr>
+                  <td>{{ row.label }}</td>
+                  <td>{{ row.value }}</td>
+                  @for (cell of row.benchmark; track $index) {
+                    <td>{{ cell }}</td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+
+    <section class="career-trend" aria-label="Points trend">
+      <app-line-chart
+        [title]="trendLabel"
+        [datasets]="trend()"
+        [maxSec]="lastRound()"
+        [theme]="theme()"
+        xAxis="count"
+        xTitle="Round number"
+        [yTitle]="trendLabel"
+      />
+    </section>
+  }
+}

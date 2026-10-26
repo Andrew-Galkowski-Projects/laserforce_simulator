@@ -1,0 +1,56 @@
+<h1>Role Benchmarks</h1>
+<p class="bp-sub">
+  Per-role averages computed from every player's career-average when playing the role, over your
+  saved Rounds (plus any unclaimed ones). Filter the population to players with at least N rounds in
+  that role.
+</p>
+
+@if (loadError(); as message) {
+  <p class="bp-error" role="alert">{{ message }}</p>
+} @else if (data(); as d) {
+  <app-benchmark-filter [minRounds]="d.min_rounds" [display]="d.display" />
+
+  @if (!d.any_data) {
+    <p class="bp-notice">
+      @if (d.min_rounds > 0) {
+        No benchmarks yet: a player needs at least {{ d.min_rounds }} saved Round{{
+          d.min_rounds === 1 ? '' : 's'
+        }}
+        in a role to count. Lower <strong>Min rounds in role</strong> above to include players with
+        fewer Rounds.
+      } @else {
+        No saved Rounds yet. Play and save some Rounds first.
+      }
+    </p>
+  }
+
+  @for (t of tables(); track t.role) {
+    <h2>{{ t.heading }}</h2>
+    <div class="bp-scroll">
+      <table class="bp-table" [id]="'benchmark-table-' + t.role">
+        <thead>
+          <tr>
+            <th>Stat</th>
+            <th>Mean</th>
+            <th>Median</th>
+            <th>P25</th>
+            <th>P75</th>
+            <th>P90</th>
+            <th>N</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of t.rows; track r.stat) {
+            <tr>
+              <td>{{ r.stat }}</td>
+              @for (v of r.values; track $index) {
+                <td>{{ v }}</td>
+              }
+              <td>{{ r.n }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}
