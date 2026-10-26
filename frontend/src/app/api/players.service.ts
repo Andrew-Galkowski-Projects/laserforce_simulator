@@ -1,10 +1,17 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiClient, Page } from './api-client';
-import { Player, PlayerInput, PlayerListParams } from './players.models';
+import {
+  CareerParams,
+  CareerStats,
+  Player,
+  PlayerInput,
+  PlayerListParams,
+  RoleBenchmarks,
+} from './players.models';
 
 /**
- * `/api/players/`: list, detail, edit and delete. The API has no standalone
+ * `/api/players/`: list, detail, edit, delete, career and role benchmarks. The API has no standalone
  * Player create: add one through `TeamsService.addPlayer`.
  */
 @Injectable({ providedIn: 'root' })
@@ -26,5 +33,15 @@ export class PlayersService {
 
   delete(id: number): Observable<void> {
     return this.api.delete(`players/${id}/`);
+  }
+
+  /** The career averages, per-role benchmark tables and points trend (HX-01 / HX-02). */
+  career(id: number, params?: CareerParams): Observable<CareerStats> {
+    return this.api.get<CareerStats>(`players/${id}/career/`, params);
+  }
+
+  /** The per-role benchmark distributions over the caller's own and Unmanaged Rounds. */
+  benchmarks(params?: CareerParams): Observable<RoleBenchmarks> {
+    return this.api.get<RoleBenchmarks>('players/benchmarks/', params);
   }
 }

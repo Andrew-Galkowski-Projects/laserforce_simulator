@@ -9,6 +9,10 @@ import { releaseTeamsLoads } from './teams/testing/teams-loads';
 import { routes } from './app.routes';
 import { authInterceptor } from './auth/auth.interceptor';
 import { PasswordChange } from './account/password-change/password-change';
+import { PlayerCareer } from './players/player-career/player-career';
+import { PlayerList } from './players/player-list/player-list';
+import { RoleBenchmarks } from './players/role-benchmarks/role-benchmarks';
+import { releasePlayersLoads } from './players/testing/players-loads';
 import { Register } from './register/register';
 import { Shell } from './shell/shell';
 import { MatchDetail } from './matches/match-detail/match-detail';
@@ -45,6 +49,7 @@ describe('app routes', () => {
     releaseTeamsLoads();
     releaseMatchesLoads();
     releaseMapsLoads();
+    releasePlayersLoads();
     http.verify();
   });
 
@@ -127,6 +132,27 @@ describe('app routes', () => {
       expect(harness.fixture.debugElement.query(By.directive(TeamDetail))).toBeNull();
       expect(harness.routeNativeElement?.querySelector('h1')?.textContent?.trim()).toBe(heading);
       expect(TestBed.inject(Title).getTitle()).toBe(`${heading} - Laserforce Simulator`);
+    });
+  });
+
+  describe('Players area (ANG-06-8)', () => {
+    it.each([
+      ['/players', PlayerList, 'Players - Laserforce Simulator'],
+      ['/players/benchmarks', RoleBenchmarks, 'Role Benchmarks - Laserforce Simulator'],
+      ['/players/5/stats', PlayerCareer, 'Career Stats - Laserforce Simulator'],
+    ])('resolves %s to its screen and page title', async (url, screen, title) => {
+      await signIn();
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
+
+    it('sends a signed-out visit to /players to /login with a returnUrl', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/players');
+      expect(routerUrl()).toBe('/login?returnUrl=%2Fplayers');
     });
   });
 

@@ -1,11 +1,21 @@
 // Shared spec fixtures. Imported only by *.spec.ts files.
 import { Player, PlayerStats } from '../players.models';
 
-/** A blank profile (no age, the model defaults) and the Overall of all-50 Stats. */
+/**
+ * The read-only fields every Player carries: a blank profile (no age, the model defaults), the
+ * Overall of all-50 Stats and a placeholder Team name.
+ */
 export const PROFILE: Pick<
   Player,
-  'age' | 'started_playing_age' | 'total_games' | 'home_site' | 'height' | 'overall_rating'
+  | 'age'
+  | 'started_playing_age'
+  | 'total_games'
+  | 'home_site'
+  | 'height'
+  | 'overall_rating'
+  | 'team_name'
 > = {
+  team_name: 'Team',
   age: null,
   started_playing_age: null,
   total_games: 0,

@@ -35,6 +35,7 @@ function team(overrides: Partial<Team> = {}): Team {
     slot_ammo: 12,
     is_valid_roster: false,
     roster_errors: ['Heavy slot is empty.', 'Medic slot is empty.'],
+    manager: null,
     players: [
       player(11, 'Ann', ['scout']),
       player(12, 'Bob'),

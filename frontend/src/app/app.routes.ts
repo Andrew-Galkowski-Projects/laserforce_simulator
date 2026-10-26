@@ -40,6 +40,10 @@ export const routes: Routes = [
         loadChildren: () => import('./matches/matches.routes').then((m) => m.ROUNDS_ROUTES),
       },
       {
+        path: 'players',
+        loadChildren: () => import('./players/players.routes').then((m) => m.PLAYERS_ROUTES),
+      },
+      {
         path: 'account/password',
         loadComponent: () =>
           import('./account/password-change/password-change').then((m) => m.PasswordChange),

@@ -23,6 +23,7 @@ const PLAYER: Player = {
   speed: 31,
   id: 40,
   team: 3,
+  team_name: 'Red Dragons',
   name: 'Ace',
   preferred_roles: ['commander', 'scout'],
   age: 27,
@@ -156,8 +157,9 @@ describe('Edit Player page', () => {
     button('Save Changes').click();
     await harness.fixture.whenStable();
     const req = http.expectOne(`${BASE}/players/40/`);
-    const { id, team, overall_rating, ...fields } = PLAYER;
-    void [id, team, overall_rating];
+    // The body is every field the form edits: the read-only ones (incl. ANG-06-8's team_name) stay out.
+    const { id, team, team_name, overall_rating, ...fields } = PLAYER;
+    void [id, team, team_name, overall_rating];
     expect(req.request.body).toEqual(fields);
     req.flush(
       { errors: [{ code: 'x', message: 'x', field: null }], meta: {} },
