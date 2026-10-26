@@ -1,0 +1,84 @@
+@if (notFound()) {
+  <app-player-not-found [teamId]="teamId()" />
+} @else if (loadError(); as message) {
+  <p class="player__error" role="alert">{{ message }}</p>
+} @else if (player(); as p) {
+  @if (team(); as t) {
+    <p class="player__back">
+      <a [routerLink]="['/teams', t.id]">&larr; {{ t.name }}</a>
+    </p>
+
+    <div class="player">
+      <section class="player__card player__identity">
+        <h1>
+          {{ p.name }}
+          @if (isSelf()) {
+            <span class="badge badge--you">You</span>
+          }
+        </h1>
+        <p class="muted player__team">{{ t.name }}</p>
+        @if (isSelf()) {
+          <button mat-stroked-button type="button" (click)="unlink()">Unlink</button>
+        } @else if (canLink()) {
+          <button mat-stroked-button type="button" (click)="link(p)">This is me</button>
+        }
+
+        <div class="player__avatar" aria-hidden="true">{{ initial(p) }}</div>
+
+        <table class="player__profile">
+          <tbody>
+            @for (row of profile(); track row.label) {
+              <tr>
+                <th scope="row">{{ row.label }}</th>
+                <td>{{ row.value }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+
+        @if (roles().length > 0) {
+          <div class="player__roles">
+            <small class="muted">Preferred roles</small>
+            <div>
+              @for (r of roles(); track r) {
+                <span class="tag">{{ r }}</span>
+              }
+            </div>
+          </div>
+        }
+
+        <div class="player__actions">
+          <a mat-stroked-button [routerLink]="['/players', p.id, 'stats']">Career stats</a>
+          <a mat-stroked-button [routerLink]="['/teams', t.id, 'players', p.id, 'edit']">Edit</a>
+          <button mat-stroked-button type="button" class="player__delete" (click)="remove(p)">
+            Delete
+          </button>
+        </div>
+      </section>
+
+      <div class="player__main">
+        <div class="player__card player__overall">
+          <div class="muted">Overall</div>
+          <div class="player__overall-value">{{ overall(p) }}</div>
+        </div>
+
+        <div class="player__groups">
+          @for (g of groups(); track g.label) {
+            <section class="player__card player__group">
+              <h2>{{ g.label }}</h2>
+              @for (s of g.stats; track s.label) {
+                <div class="stat">
+                  <span class="stat__label">{{ s.label }}</span>
+                  <div class="stat__track" aria-hidden="true">
+                    <div class="stat__bar stat__bar--{{ s.tier }}" [style.width.%]="s.value"></div>
+                  </div>
+                  <span class="stat__value">{{ s.value }}</span>
+                </div>
+              }
+            </section>
+          }
+        </div>
+      </div>
+    </div>
+  }
+}

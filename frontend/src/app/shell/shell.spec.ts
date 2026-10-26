@@ -8,6 +8,7 @@ import { SELF_INSERT, USER, signIn } from '../api/testing/auth-fixtures';
 import { User } from '../auth/user';
 import { releaseMatchesLoads } from '../matches/testing/matches-loads';
 import { releaseMapsLoads } from '../maps/testing/maps-loads';
+import { releasePlayersLoads } from '../players/testing/players-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
@@ -58,6 +59,7 @@ describe('App shell (layout B)', () => {
 
   afterEach(() => {
     releaseTeamsLoads();
+    releasePlayersLoads();
     releaseMatchesLoads();
     releaseMapsLoads();
     http.verify();
@@ -137,7 +139,17 @@ describe('App shell (layout B)', () => {
       'Change password',
       'Sign out',
     ]);
-    expect(menuItem('My player')?.getAttribute('href')).toBe('/teams/3');
+    // ANG-06-8 changed the target on purpose: My player now opens the Player's own detail page
+    // (`/teams/:team/players/:id`), which ANG-06-8a added; it used to land on the Team.
+    expect(menuItem('My player')?.getAttribute('href')).toBe('/teams/3/players/9');
+  });
+
+  it('opens player detail from My player', async () => {
+    await open('/teams', 1280, LINKED);
+    await openAccountMenu();
+    menuItem('My player')?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe('/teams/3/players/9');
   });
 
   it('opens Change password from the menu', async () => {
@@ -198,11 +210,22 @@ describe('App shell (layout B)', () => {
     expect(routerUrl()).toBe('/teams');
   });
 
-  it('has a Matches entry right after Teams that opens /matches', async () => {
+  it('has a Players entry right after Teams that opens /players', async () => {
     await open('/teams');
     const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
     const labels = links.map((a) => a.textContent?.trim());
-    expect(labels.indexOf('Matches')).toBe(labels.indexOf('Teams') + 1);
+    expect(labels.indexOf('Players')).toBe(labels.indexOf('Teams') + 1);
+    links.find((a) => a.textContent?.trim() === 'Players')?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe('/players');
+  });
+
+  // ANG-06-8 put Players between Teams and Matches on purpose; the order stays one entry per area.
+  it('has a Matches entry right after Players that opens /matches', async () => {
+    await open('/teams');
+    const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
+    const labels = links.map((a) => a.textContent?.trim());
+    expect(labels.indexOf('Matches')).toBe(labels.indexOf('Players') + 1);
     links.find((a) => a.textContent?.trim() === 'Matches')?.click();
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/matches');

@@ -1,6 +1,7 @@
 import { Routes } from '@angular/router';
 import { APP_TITLE } from '../app-title';
 import { PlayerAdd } from './player-add/player-add';
+import { PlayerDetail } from './player-detail/player-detail';
 import { PlayerEdit } from './player-edit/player-edit';
 import { TeamCreate } from './team-create/team-create';
 import { TeamDetail } from './team-detail/team-detail';
@@ -27,6 +28,7 @@ export const TEAMS_ROUTES: Routes = [
   { path: ':id/edit', component: TeamEdit, title: `Edit Team - ${APP_TITLE}` },
   { path: ':id/slots', component: TeamSlots, title: `Assign Slots - ${APP_TITLE}` },
   { path: ':id/players/new', component: PlayerAdd, title: `Add Player - ${APP_TITLE}` },
+  { path: ':id/players/:playerId', component: PlayerDetail, title: `Player - ${APP_TITLE}` },
   {
     path: ':id/players/:playerId/edit',
     component: PlayerEdit,

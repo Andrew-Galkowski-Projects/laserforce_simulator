@@ -39,7 +39,7 @@
 </header>
 <mat-menu #account="matMenu" xPosition="before">
   @if (user()?.self_insert; as player) {
-    <a mat-menu-item [routerLink]="['/teams', player.team]">My player</a>
+    <a mat-menu-item [routerLink]="['/teams', player.team, 'players', player.id]">My player</a>
     <button mat-menu-item type="button" (click)="unlinkSelfInsert()">Unlink Self-insert</button>
   }
   <a mat-menu-item routerLink="/account/password">Change password</a>
@@ -54,6 +54,13 @@
         routerLinkActive="shell__link--active"
         (click)="wide() || nav.close()"
         >Teams</a
+      >
+      <a
+        mat-list-item
+        routerLink="/players"
+        routerLinkActive="shell__link--active"
+        (click)="wide() || nav.close()"
+        >Players</a
       >
       <a
         mat-list-item

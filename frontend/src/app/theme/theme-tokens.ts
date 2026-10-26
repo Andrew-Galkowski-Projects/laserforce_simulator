@@ -76,6 +76,12 @@ export const LF_COLOUR_TOKENS = [
   '--lf-ev-locking',
   '--lf-ev-base',
   '--lf-ev-movement',
+  // Player detail's Stat bars (ANG-06-8a), by tier: 80+, 60+, 40+, below 40. The value always
+  // shows beside the bar, so the colour is never the only signal.
+  '--lf-rating-elite',
+  '--lf-rating-good',
+  '--lf-rating-fair',
+  '--lf-rating-poor',
   ...LF_MAP_TOKENS,
 ] as const;
 

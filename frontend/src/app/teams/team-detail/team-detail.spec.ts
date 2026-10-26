@@ -8,6 +8,7 @@ import { environment } from '../../../environments/environment';
 import { Player, Role } from '../../api/players.models';
 import { PROFILE, STATS } from '../../api/testing/player-fixtures';
 import { USER, signIn } from '../../api/testing/auth-fixtures';
+import { releasePlayersLoads } from '../../players/testing/players-loads';
 import { releaseTeamsLoads } from '../testing/teams-loads';
 import { Team } from '../../api/teams.models';
 import { routes } from '../../app.routes';
@@ -276,7 +277,50 @@ describe('Team detail page', () => {
     for (const label of ['View ->', 'Match History']) {
       expect(links.some((l) => l.startsWith(label))).toBe(false);
     }
-    expect(links).toHaveLength(14);
+    // ANG-06-8a made each Player name a link to player detail (5 more): still one link per
+    // migrated page, none to an unmigrated one.
+    expect(links).toHaveLength(19);
+  });
+
+  /** Each row's Player-name link href in the table under the heading `title`. */
+  function nameLinks(title: string): string[] {
+    const heading = [...page().querySelectorAll('h2')].find((h) => h.textContent?.trim() === title);
+    const table = heading?.parentElement?.querySelector('table');
+    if (!table) throw new Error(`no ${title} table`);
+    return [...table.querySelectorAll('tbody tr')].map((tr) => {
+      const a = [...tr.querySelectorAll('a')].find((el) => el.textContent?.trim() !== 'Edit');
+      return a ? `${a.textContent?.trim()} -> ${a.getAttribute('href')}` : '';
+    });
+  }
+
+  it("links each Player's name, active and bench, to their player detail page", async () => {
+    await open();
+    expect(nameLinks('Active Slots')).toEqual([
+      'Cat -> /teams/7/players/13',
+      'Ann -> /teams/7/players/11',
+      'Bob -> /teams/7/players/12',
+    ]);
+    expect(nameLinks('Bench')).toEqual([
+      'Dan -> /teams/7/players/14',
+      'Eve -> /teams/7/players/15',
+    ]);
+  });
+
+  it('puts the "You" badge after the name link, outside it', async () => {
+    await open(team(), { ...USER, self_insert: player(14, 'Dan', ['medic']) });
+    const badge = page().querySelector('.badge--you');
+    expect(badge?.closest('a')).toBeNull();
+    expect(badge?.previousElementSibling?.tagName).toBe('A');
+    expect(badge?.previousElementSibling?.textContent?.trim()).toBe('Dan');
+  });
+
+  it('opens player detail from a name', async () => {
+    await open();
+    [...page().querySelectorAll('a')].find((a) => a.textContent?.trim() === 'Eve')?.click();
+    await harness.fixture.whenStable();
+    releasePlayersLoads();
+    releaseTeamsLoads();
+    expect(routerUrl()).toBe('/teams/7/players/15');
   });
 
   /** Each row's Edit link href in the table under the heading `title`. */

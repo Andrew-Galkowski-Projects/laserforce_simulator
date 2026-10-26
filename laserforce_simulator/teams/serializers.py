@@ -54,11 +54,13 @@ class PlayerSerializer(serializers.ModelSerializer):
     read-only here; writes bind ``PlayerForm`` (ADR-0039)."""
 
     overall_rating = serializers.FloatField(read_only=True)
+    # ANG-06-8a: the Players list's Team column (Free Agents included).
+    team_name = serializers.CharField(source="team.name", read_only=True)
 
     class Meta:
         model = Player
         fields = (
-            ["id", "team", "name", "preferred_roles"]
+            ["id", "team", "team_name", "name", "preferred_roles"]
             + _PLAYER_STAT_FIELDS
             + [
                 "age",
@@ -96,7 +98,10 @@ class TeamSerializer(serializers.ModelSerializer):
     players = PlayerSerializer(many=True, read_only=True)
     is_valid_roster = serializers.BooleanField(read_only=True)
     roster_errors = serializers.ListField(child=serializers.CharField(), read_only=True)
+    # ANG-06-8a: the managing Account's id, or None for an Unmanaged Team
+    # (player detail offers *This is me* only on the viewer's own Team).
+    manager = serializers.PrimaryKeyRelatedField(read_only=True)
 
     class Meta:
         model = Team
-        fields = _TEAM_BASE_FIELDS + ["players"]
+        fields = _TEAM_BASE_FIELDS + ["manager", "players"]
