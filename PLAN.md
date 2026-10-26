@@ -82,6 +82,43 @@ Every component uses the theme chosen in ANG-04b.
    overlays (ANG-06g, in `PLAN-completed.md`). RES-05 and RV-04's chart toggle attach here.
 6. **[DONE] Map editor** (ANG-06h, in `PLAN-completed.md`).
 
+Items 7-20 (planned 2026-10-25, owner-approved). The API behind every one already exists (ANG-01),
+so each is frontend parity work like 1-6, with its own grill. Order is by dependency, then complexity.
+
+7. **Accounts screens** — register, password change (+ done), self-insert link / unlink. `/login`
+   already exists. Replaces `accounts/*`.
+8. **Player pages** — player list (`/players/`), player detail, player delete, career stats, role
+   benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
+   `player_career_stats`, `role_benchmarks`.
+9. **Head-to-head & history** — team H2H, player H2H, team match history, compare rounds. Replaces
+   `matches/head_to_head`, `player_head_to_head`, `team_history`, `compare_rounds`.
+10. **Round extras** — missile log, movement heatmap, round report export. Replaces
+    `matches/missile_log`, `movement_heatmap`.
+11. **Enhanced setup / detail check** — confirm items 3-4 cover the `enhanced_*` templates and
+    `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`.
+12. **Batch simulate** — form, status polling, save games. Replaces `matches/batch_simulate`.
+13a. **Tournaments: list, create, participant pool** — pool add-existing / generate / import /
+    remove, participant import. Replaces `tournament_list`, `tournament_create`.
+13b. **Tournament detail** — draw + draw edit, reseed, lock, play next / all with status. Replaces
+    `tournament_detail`, `_tournament_round`.
+14. **League core** — list, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
+    history, new-team picker / reassign, next season, and the league sidebar in the Shell.
+15. **League stats** — leaders, player stats, player ratings, team stats, statistical feats, game
+    log, power rankings, playoffs.
+16. **League team & player** — team roster, schedule, team history, league player detail, free
+    agents, watch list (+ the watch flag).
+17. **League finances** — league and team finances.
+18. **Season screens** — dashboard, standings, schedule, awards, owner evaluation, conferences.
+19. **Season play loop** — play week / two months / until end / playoffs, status and cancel, the
+    live view, member nights. Replaces `seasons/play_week_live` and the play actions.
+20. **Landing & nav** — landing page, the Shell's Play / Tools / Help top-nav sections, and one
+    shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
+    block, prospects, hall of fame) — no per-stub components. Replaces `core/landing`,
+    `_partials/topnav_*`, `_placeholder`.
+
+Settled (owner, 2026-10-25): ANG-08 stays blocked until 7-20 are all `[DONE]` (no per-area
+template removal in between); Phase 3.5 (LFS-01 / LFS-02) waits until after all of ANG-06.
+
 **Note (ANG-04b, 2026-10-21):** ANG-06 builds to
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md): layout B (lfstats-like)
 structure, the `--lf-*` tokens and `data-lf-side` only (no hex in components), Material kept and
@@ -93,7 +130,7 @@ and log search, and position icons (roles stay CMD / HVY / SCT / AMO / MED until
 **Note (ANG-01 re-slice, 2026-10-14):** the League / Season, League-screens and Tournament surfaces
 will have full API coverage from ANG-01d-1 / ANG-01d-2 / ANG-01e / ANG-01f, but they are **not yet planned** as
 ANG-06 migration items — add them (and the Accounts screens backed by ANG-01g) here once the six
-items above are scoped.
+items above are scoped. *Done 2026-10-25: items 7-20 above.*
 
 ANG-07 (serve Angular from Docker) is **[DONE]**; see `PLAN-completed.md`.
 
