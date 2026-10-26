@@ -24,6 +24,16 @@
       } @else {
         <a mat-stroked-button [routerLink]="['/matches', r.match]">&larr; Back to Match</a>
       }
+      @if (r.team_red !== null) {
+        <a mat-stroked-button [routerLink]="['/teams', r.team_red, 'history']"
+          >{{ r.team_red_name }} History</a
+        >
+      }
+      @if (r.team_blue !== null) {
+        <a mat-stroked-button [routerLink]="['/teams', r.team_blue, 'history']"
+          >{{ r.team_blue_name }} History</a
+        >
+      }
       <a mat-stroked-button [routerLink]="['/rounds', r.id, 'events']">Event log</a>
       <a mat-stroked-button [routerLink]="['/rounds', r.id, 'playback']">Playback</a>
       <a mat-stroked-button [routerLink]="['/rounds', r.id, 'charts']">Charts</a>

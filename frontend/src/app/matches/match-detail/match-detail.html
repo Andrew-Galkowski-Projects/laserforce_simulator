@@ -94,5 +94,11 @@
 
   <p class="match-detail__back">
     <a mat-stroked-button routerLink="/matches">&larr; Back to Matches</a>
+    <a mat-stroked-button [routerLink]="['/teams', m.team_red, 'history']"
+      >{{ m.team_red_name }} History</a
+    >
+    <a mat-stroked-button [routerLink]="['/teams', m.team_blue, 'history']"
+      >{{ m.team_blue_name }} History</a
+    >
   </p>
 }

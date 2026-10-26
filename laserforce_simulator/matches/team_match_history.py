@@ -238,10 +238,10 @@ def _opponent(game: Match | GameRound, team: Team) -> Team:
     return game.team_blue if game.team_red_id == team.id else game.team_red
 
 
-def _match_result(match: Match, team: Team) -> str:
-    if match.winner_id is None:
+def _result(game: Match | GameRound, team: Team) -> str:
+    if game.winner_id is None:
         return "tie"
-    return "won" if match.winner_id == team.id else "lost"
+    return "won" if game.winner_id == team.id else "lost"
 
 
 def team_match_history_payload(history: dict) -> dict:
@@ -254,7 +254,7 @@ def team_match_history_payload(history: dict) -> dict:
             {
                 "id": m.id,
                 "opponent": team_ref(_opponent(m, team)),
-                "result": _match_result(m, team),
+                "result": _result(m, team),
                 "team_points": m.red_total_points if is_red else m.blue_total_points,
                 "opponent_points": (
                     m.blue_total_points if is_red else m.red_total_points
@@ -274,6 +274,7 @@ def team_match_history_payload(history: dict) -> dict:
             {
                 "id": r.id,
                 "opponent": team_ref(_opponent(r, team)),
+                "result": _result(r, team),
                 "team_points": r.red_points if is_red else r.blue_points,
                 "opponent_points": r.blue_points if is_red else r.red_points,
                 "date_played": r.date_played,

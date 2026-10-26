@@ -14,6 +14,7 @@ import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { matchRow, pageEnvelope, roundRow } from '../testing/match-fixtures';
+import { releaseTeamsLoads } from '../../teams/testing/teams-loads';
 import { releaseMatchesLoads } from '../testing/matches-loads';
 
 const BASE = environment.apiBaseUrl;
@@ -214,7 +215,7 @@ describe('Match History (/matches)', () => {
     await open([matchRow()], [roundRow()]);
     const header = page().querySelector('.match-list__header');
     expect(text(header?.querySelector('h1'))).toBe('Match History');
-    expect(links(header)).toEqual([
+    expect(links(header?.querySelector('.match-list__actions'))).toEqual([
       ['New Match', '/matches/new'],
       ['New Single Round', '/rounds/new'],
     ]);
@@ -263,7 +264,39 @@ describe('Match History (/matches)', () => {
     ]);
     expect(section('matches')).toBeNull();
     expect(section('rounds')).toBeNull();
-    expect(links(page().querySelector('.match-list__header'))).toEqual([]);
+    expect(page().querySelector('.match-list__header .match-list__actions')).toBeNull();
+  });
+
+  const tools = (): Element | null =>
+    page().querySelector('.match-list__header .match-list__tools');
+
+  it.each([
+    ['with games', [matchRow()]],
+    ['with nothing played', []],
+  ])('has Head-to-Head and Compare Rounds (outlined) in the header %s', async (_, matches) => {
+    await open(matches, []);
+    expect(links(tools())).toEqual([
+      ['Head-to-Head', '/teams/head-to-head'],
+      ['Compare Rounds', '/rounds/compare'],
+    ]);
+    for (const a of [...(tools()?.querySelectorAll('a') ?? [])]) {
+      expect(a.getAttribute('mat-stroked-button')).not.toBeNull();
+    }
+  });
+
+  it.each([
+    ['Head-to-Head', '/teams/head-to-head'],
+    ['Compare Rounds', '/rounds/compare'],
+  ])('opens %s at %s from the header', async (label, url) => {
+    await open([matchRow()], [roundRow()]);
+    const a = [...(tools()?.querySelectorAll<HTMLAnchorElement>('a') ?? [])].find(
+      (el) => text(el) === label,
+    );
+    a?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe(url);
+    releaseMatchesLoads();
+    releaseTeamsLoads();
   });
 
   const paginator = (name: 'matches' | 'rounds'): HTMLElement | null =>

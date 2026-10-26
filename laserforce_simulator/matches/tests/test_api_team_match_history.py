@@ -224,10 +224,15 @@ class TestShape(_HistoryTestCase):
             {
                 "id": game_round.pk,
                 "opponent": {"id": self.foe.pk, "name": "Foe"},
+                "result": "won",
                 "team_points": 4000,
                 "opponent_points": 3000,
                 "date_played": "2026-03-01T12:00:00Z",
             },
+        )
+        # Django's Single Round cards badge Won / Lost / Tie as well.
+        self.assertEqual(
+            [r["result"] for r in data["single_rounds"]], ["tie", "lost", "won"]
         )
         blue_side = data["single_rounds"][1]
         self.assertEqual(

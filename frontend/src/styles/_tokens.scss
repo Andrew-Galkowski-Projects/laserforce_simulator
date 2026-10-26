@@ -51,6 +51,11 @@
   --lf-rating-fair: #d29a12;
   --lf-rating-poor: #c8373d;
 
+  // Compare Rounds' Points Over Time (ANG-06-9): one colour per shared Team (at most two). Not
+  // Side colours, since a shared Team may play Red in one Round and Blue in the other.
+  --lf-chart-1: #0b7a75;
+  --lf-chart-2: #b45309;
+
   // The map editor's canvas (ANG-06h): the Django editor's colours, alpha included, since they
   // paint over the processed (black-and-white) map image.
   --lf-map-floor: rgb(255 255 255 / 0.08);
@@ -125,6 +130,10 @@
     --lf-rating-good: oklch(0.66 0.16 258);
     --lf-rating-fair: oklch(0.8 0.15 85);
     --lf-rating-poor: oklch(0.65 0.2 25);
+
+    // Compare Rounds' Points Over Time: one colour per shared Team.
+    --lf-chart-1: oklch(0.78 0.13 190);
+    --lf-chart-2: oklch(0.8 0.16 65);
 
     // The map editor's canvas: the image stays black-and-white, so these only shift a little.
     --lf-map-floor: rgb(200 205 215 / 0.12);
