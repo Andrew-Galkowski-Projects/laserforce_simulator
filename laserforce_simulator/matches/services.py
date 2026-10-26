@@ -444,6 +444,8 @@ def _build_detail_list(
                 "score_str": f"{team_a_total} - {team_b_total}",
                 "winner_name": winner_name,
                 "detail_url": reverse("match_detail", args=[match_id]),
+                "match_id": match_id,
+                "round_id": None,
                 "is_simulated": m["is_simulated"],
             }
         )
@@ -466,6 +468,8 @@ def _build_detail_list(
                 "score_str": f"{a} - {b}",
                 "winner_name": winner_name,
                 "detail_url": reverse("game_round_detail", args=[r["round_id"]]),
+                "match_id": None,
+                "round_id": r["round_id"],
                 "is_simulated": r["is_simulated"],
             }
         )

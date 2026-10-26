@@ -115,6 +115,18 @@ HX-03 / HX-04 head-to-head, HX-01 career and HX-02 benchmark endpoints live on t
 (`/api/teams/head-to-head/`, `/api/players/head-to-head/`, `/api/players/<id>/career/`,
 `/api/players/benchmarks/`) but their builders are in `matches/services.py` / `teams/services.py` —
 see **ANG-01b** below, `teams/CLAUDE.md` (Services) and `docs/agents/teams/api.md`.
+Team head-to-head `detail_list` rows also carry `match_id` / `round_id` (each null on the other
+kind, ANG-06-9) so the SPA links by id instead of `detail_url`.
+
+**Team match history (ANG-06-9).** `GET /api/teams/<id>/history/` is a detail action on
+`TeamViewSet` (`get_object()` ⇒ cross-Account 404) over `build_team_match_history(team, user,
+scopes)` in `matches/team_match_history.py`, which the HTML `team_match_history` view calls too.
+Both surfaces drop another Account's Matches / Rounds (`owned_match_q` / `owned_game_round_q`).
+`scope` is repeated: absent ⇒ every scope, present ⇒ that selection, `?scope=` ⇒ none; unknown keys
+(`freeform`, `t<tournament id>` are the valid ones) are ignored. `team_match_history_payload` turns
+the builder's model rows into the `data` shape (`team`, `scope_options[{key,label,selected}]`,
+`show_scope_filter`, `has_any_games`, `stats`, `role_columns`, `roster`, `opponents`, `matches`,
+`single_rounds`; both lists newest first). Tests: `matches/tests/test_api_team_match_history.py`.
 
 `MatchFilterSet` / `GameRoundFilterSet` / `GameEventFilterSet` live in `matches/filters.py`. The
 `events` action resolves the round with `get_object()` (cross-Account ⇒ 404) and validates the

@@ -22,6 +22,10 @@ from laserforce_simulator.api.viewsets import ListOnlyFilterMixin
 from matches.api_forms import PlayerH2HParamsForm, TeamH2HParamsForm
 from matches.api_refs import player_ref, team_ref
 from matches.services import build_player_h2h, build_team_h2h
+from matches.team_match_history import (
+    build_team_match_history,
+    team_match_history_payload,
+)
 from teams.api_forms import BenchmarkParamsForm
 from teams.filters import PlayerFilterSet, TeamFilterSet
 from teams.forms import (
@@ -264,6 +268,24 @@ class TeamViewSet(
                 "date_to": cleaned["to"],
                 **payload,
             }
+        )
+
+    @action(detail=True, methods=["get"], url_path="history", url_name="history")
+    def history(self, request: Request, pk: str | None = None) -> Response:
+        """ANG-06-9 Team match history, scoped to the caller's own games.
+
+        ``scope`` (repeated): absent selects every scope; present, its values
+        are the selection. Unknown keys (``""`` among them) are ignored, so a
+        bare ``?scope=`` selects none.
+        """
+        team = self.get_object()
+        scopes = None
+        if "scope" in request.query_params:
+            scopes = set(request.query_params.getlist("scope"))
+        return Response(
+            team_match_history_payload(
+                build_team_match_history(team, request.user, scopes)
+            )
         )
 
 
