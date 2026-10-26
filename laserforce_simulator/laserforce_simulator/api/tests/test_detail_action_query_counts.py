@@ -532,6 +532,44 @@ def _grow_pool(ctx: Ctx) -> None:
         )
 
 
+# --- teams/history: one owned Team, grown by Matches, Tournaments, Rounds ----
+
+
+def _team_history_world(user) -> Ctx:
+    ctx = _player_world(user)
+    _grow_team_history(ctx)
+    return ctx
+
+
+def _grow_team_history(ctx: Ctx) -> None:
+    """One more standalone Round (every slot played) and one more two-Round
+    Tournament Match against a new opponent: a new scope, opponent and roster
+    rows each step."""
+    _grow_player(ctx)
+    user = ctx["user"]
+    team: Team = ctx["team"]
+    opponent = _owned_team(user, "HistOpp")
+    match = Match.objects.create(team_red=team, team_blue=opponent, manager=user)
+    for round_number in (1, 2):
+        game_round = GameRound.objects.create(
+            match=match,
+            round_number=round_number,
+            team_red=team,
+            team_blue=opponent,
+            red_points=100,
+            blue_points=50,
+            is_completed=True,
+        )
+        for side, color in ((team, "red"), (opponent, "blue")):
+            for player in side.players.all():
+                _round_state(game_round, player, color)
+    tournament = Tournament.objects.create(name=f"Hist {next(_seq)}", manager=user)
+    node = BracketNode.objects.create(
+        tournament=tournament, bracket_round=1, position=0
+    )
+    SeriesMatch.objects.create(node=node, match=match, game_number=1)
+
+
 # --- the registry -------------------------------------------------------------
 
 # (route prefix on ``api_urls.router``, action ``url_name``[, variant]) ->
@@ -677,6 +715,12 @@ SCALERS: dict[tuple[str, ...], Scaler] = {
         _member_night_world,
         lambda ctx: f"/api/seasons/{ctx['season'].pk}/member-night/",
         _grow_member_night,
+    ),
+    # teams
+    ("teams", "history"): Scaler(
+        _team_history_world,
+        lambda ctx: f"/api/teams/{ctx['team'].pk}/history/",
+        _grow_team_history,
     ),
     # tournaments
     ("tournaments", "pool"): Scaler(
