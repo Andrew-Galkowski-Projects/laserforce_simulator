@@ -3,16 +3,20 @@ import { MatAnchor, MatButton } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
 import { Router, RouterLink } from '@angular/router';
 import { Observable, filter, switchMap } from 'rxjs';
-import { ApiError } from '../../api/api-client';
 import { Player } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
 import { AuthService } from '../../auth/auth.service';
+import { capitalise } from '../../players/shared/benchmark-format';
+import { apiMessage } from '../../shared/api-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
 import { injectNotify } from '../../shared/notify';
 import { PlayerNotFound } from '../shared/player-not-found';
 import { STAT_GROUPS } from '../shared/player-stats';
 import { loadRoutePlayer } from '../shared/route-player';
 import { loadRouteTeam } from '../shared/route-team';
+
+/** A failed action's message when the error is not an `ApiError` (Team detail's wording). */
+const FAILED = 'Something went wrong.';
 
 /** A Stat's colour tier, as Django's `player_detail.html` bands it (80+, 60+, 40+, below 40). */
 export type RatingTier = 'elite' | 'good' | 'fair' | 'poor';
@@ -85,9 +89,7 @@ export class PlayerDetail {
     return rows;
   });
 
-  protected readonly roles = computed(() =>
-    (this.player()?.preferred_roles ?? []).map((r) => r.charAt(0).toUpperCase() + r.slice(1)),
-  );
+  protected readonly roles = computed(() => (this.player()?.preferred_roles ?? []).map(capitalise));
 
   /** The five Stat groups with each Stat's value and tier. */
   protected readonly groups = computed(() => {
@@ -136,7 +138,8 @@ export class PlayerDetail {
           this.notify(`Player "${p.name}" removed from ${team.name}`);
           void this.router.navigate(['/teams', team.id]);
         },
-        error: (err: unknown) => this.notify(`Could not remove ${p.name}: ${reason(err)}`),
+        error: (err: unknown) =>
+          this.notify(`Could not remove ${p.name}: ${apiMessage(err, FAILED)}`),
       });
   }
 
@@ -144,11 +147,7 @@ export class PlayerDetail {
   private run(call: Observable<unknown>, done: string): void {
     call.subscribe({
       next: () => this.notify(done),
-      error: (err: unknown) => this.notify(reason(err)),
+      error: (err: unknown) => this.notify(apiMessage(err, FAILED)),
     });
   }
-}
-
-function reason(err: unknown): string {
-  return err instanceof ApiError ? err.message : 'Something went wrong.';
 }

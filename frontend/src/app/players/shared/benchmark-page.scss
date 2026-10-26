@@ -1,5 +1,6 @@
 // Shared by Career stats and Role Benchmarks: the page heading, the notices and the stat tables.
 @use '../../shared/alerts';
+@use '../../shared/badges';
 
 :host {
   display: block;
@@ -97,14 +98,7 @@ app-benchmark-filter {
 }
 
 .badge--you {
-  display: inline-block;
-  margin-left: 0.25rem;
-  padding: 0.1rem 0.45rem;
-  border-radius: var(--lf-radius);
-  background: var(--lf-accent);
-  color: var(--lf-bg);
-  font-size: 0.8rem;
-  font-weight: 700;
-  line-height: 1.4;
+  @include badges.you;
+
   vertical-align: middle;
 }

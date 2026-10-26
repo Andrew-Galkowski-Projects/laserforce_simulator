@@ -4,8 +4,10 @@ import { ActivatedRoute } from '@angular/router';
 import { EMPTY, catchError, switchMap } from 'rxjs';
 import { RoleBenchmarks as RoleBenchmarksBody } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
-import { BenchmarkFilter, benchmarkParams } from './benchmark-filter';
-import { capitalise, fixedOrDash } from './benchmark-format';
+import { apiMessage } from '../../shared/api-message';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
+import { BenchmarkFilter, benchmarkParams } from '../shared/benchmark-filter';
+import { capitalise, fixedOrDash } from '../shared/benchmark-format';
 
 /**
  * `/players/benchmarks`: the per-role benchmark distributions (ANG-06-8, `role_benchmarks.html`),
@@ -16,7 +18,7 @@ import { capitalise, fixedOrDash } from './benchmark-format';
   selector: 'app-role-benchmarks',
   imports: [BenchmarkFilter],
   templateUrl: './role-benchmarks.html',
-  styleUrl: './benchmark-page.scss',
+  styleUrl: '../shared/benchmark-page.scss',
 })
 export class RoleBenchmarks {
   protected readonly data = signal<RoleBenchmarksBody | null>(null);
@@ -45,7 +47,7 @@ export class RoleBenchmarks {
           this.loadError.set(null);
           return players.benchmarks(benchmarkParams(query)).pipe(
             catchError((error: unknown) => {
-              this.loadError.set(error instanceof Error ? error.message : String(error));
+              this.loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
               return EMPTY;
             }),
           );

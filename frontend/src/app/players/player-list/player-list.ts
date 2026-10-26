@@ -6,6 +6,8 @@ import { ApiError, Page } from '../../api/api-client';
 import { Player, PlayerStats } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
 import { AuthService } from '../../auth/auth.service';
+import { apiMessage } from '../../shared/api-message';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 
 type Dir = 'asc' | 'desc';
 
@@ -172,10 +174,6 @@ export class PlayerList {
       return;
     }
     this.result.set(null);
-    this.loadError.set(
-      error instanceof ApiError
-        ? `Could not load the Players. ${error.message}`
-        : 'Could not load the Players.',
-    );
+    this.loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
   }
 }

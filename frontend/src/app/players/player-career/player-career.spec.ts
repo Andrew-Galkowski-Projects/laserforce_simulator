@@ -161,6 +161,8 @@ describe('Career stats (/players/:id/stats)', () => {
       await open(career(), '/players/7/stats', { ...USER, self_insert: self });
       const badge = page().querySelector('h1 .badge--you');
       expect(text(badge)).toBe('You');
+      // I4: Team detail's badge classes, the base `badge` included.
+      expect(badge?.classList.contains('badge')).toBe(true);
       expect(text(page().querySelector('h1'))).toBe('Ace You — Comets');
     });
 

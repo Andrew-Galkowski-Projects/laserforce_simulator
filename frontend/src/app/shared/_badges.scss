@@ -1,0 +1,14 @@
+// The "You" badge after the signed-in Account's Self-insert Player name (Team detail, Players,
+// player detail, career stats: spec #372 I4).
+
+@mixin you {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--lf-radius);
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+}

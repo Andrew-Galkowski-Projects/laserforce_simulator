@@ -7,10 +7,12 @@ import { ApiError } from '../../api/api-client';
 import { CareerStatRow, CareerStats } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
 import { AuthService } from '../../auth/auth.service';
+import { apiMessage } from '../../shared/api-message';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 import { ChartTheme, LineChart, LineSeries } from '../../shared/line-chart';
 import { readToken } from '../../shared/read-token';
-import { BenchmarkFilter, benchmarkParams } from '../role-benchmarks/benchmark-filter';
-import { DASH, capitalise, fixed } from '../role-benchmarks/benchmark-format';
+import { BenchmarkFilter, benchmarkParams } from '../shared/benchmark-filter';
+import { DASH, capitalise, fixed } from '../shared/benchmark-format';
 
 /** The trend line's label and its y-axis title (Django's chart). */
 const TREND_LABEL = 'Avg points (rolling 10)';
@@ -18,13 +20,21 @@ const TREND_LABEL = 'Avg points (rolling 10)';
 /** Ticks to whole seconds plus "s" (the Django `div:2|floatformat:0` filter, TIME-01). */
 const seconds = (ticks: number): string => `${fixed(ticks / 2, 0)}s`;
 
-/** A per-role table row as shown: the Player value and the five benchmark cells. */
+/** The five benchmark cells of a per-role row, as shown; all a dash when there is no benchmark. */
+interface BenchmarkCells {
+  mean: string;
+  median: string;
+  delta: string;
+  percentile: string;
+  n: string;
+}
+
+/** A per-role table row as shown: the Player value and the benchmark cells. */
 interface StatCells {
   key: string;
   label: string;
   value: string;
-  /** Mean, Median, Δ, Percentile, n; all five a dash when the stat has no benchmark. */
-  benchmark: [string, string, string, string, string];
+  benchmark: BenchmarkCells;
 }
 
 /**
@@ -36,7 +46,7 @@ interface StatCells {
   selector: 'app-player-career',
   imports: [BenchmarkFilter, LineChart, MatAnchor, RouterLink],
   templateUrl: './player-career.html',
-  styleUrl: '../role-benchmarks/benchmark-page.scss',
+  styleUrl: '../shared/benchmark-page.scss',
 })
 export class PlayerCareer {
   private readonly auth = inject(AuthService);
@@ -113,7 +123,7 @@ export class PlayerCareer {
           return players.career(Number(params.get('id')), benchmarkParams(query)).pipe(
             catchError((error: unknown) => {
               if (error instanceof ApiError && error.status === 404) this.notFound.set(true);
-              else this.loadError.set(error instanceof Error ? error.message : String(error));
+              else this.loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
               return EMPTY;
             }),
           );
@@ -126,7 +136,13 @@ export class PlayerCareer {
   /** One stat row, formatted as `player_career_stats.html` does. */
   private cells(stat: CareerStatRow, c: CareerStats): StatCells {
     const b = stat.benchmark;
-    const dash = [DASH, DASH, DASH, DASH, DASH] as StatCells['benchmark'];
+    const dash: BenchmarkCells = {
+      mean: DASH,
+      median: DASH,
+      delta: DASH,
+      percentile: DASH,
+      n: DASH,
+    };
     if (!b) return { key: stat.key, label: stat.label, value: playerValue(stat), benchmark: dash };
     const accuracy = stat.key === 'avg_accuracy_pct';
     const benchmarkValue = (v: number | null): string =>
@@ -140,13 +156,13 @@ export class PlayerCareer {
       key: stat.key,
       label: stat.label,
       value: playerValue(stat),
-      benchmark: [
-        benchmarkValue(b.benchmark_mean),
-        benchmarkValue(b.benchmark_median),
-        deltaCell,
-        b.percentile === null ? '' : `p${b.percentile}`,
-        `n = ${b.n}`,
-      ],
+      benchmark: {
+        mean: benchmarkValue(b.benchmark_mean),
+        median: benchmarkValue(b.benchmark_median),
+        delta: deltaCell,
+        percentile: b.percentile === null ? '' : `p${b.percentile}`,
+        n: `n = ${b.n}`,
+      },
     };
   }
 }

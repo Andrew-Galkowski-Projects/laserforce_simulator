@@ -8,7 +8,7 @@
     <h1>
       {{ c.player.name }}
       @if (isSelf()) {
-        <span class="badge--you">You</span>
+        <span class="badge badge--you">You</span>
       }
       @if (c.player.team; as team) {
         <small class="muted">&#32;— {{ team.name }}</small>
@@ -71,9 +71,11 @@
                 <tr>
                   <td>{{ row.label }}</td>
                   <td>{{ row.value }}</td>
-                  @for (cell of row.benchmark; track $index) {
-                    <td>{{ cell }}</td>
-                  }
+                  <td>{{ row.benchmark.mean }}</td>
+                  <td>{{ row.benchmark.median }}</td>
+                  <td>{{ row.benchmark.delta }}</td>
+                  <td>{{ row.benchmark.percentile }}</td>
+                  <td>{{ row.benchmark.n }}</td>
                 </tr>
               }
             </tbody>

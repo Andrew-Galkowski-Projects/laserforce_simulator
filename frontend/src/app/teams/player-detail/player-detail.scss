@@ -1,4 +1,7 @@
 // Player detail (ANG-06-8a): `--lf-*` tokens only, no colour literals (ADR-0043).
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
 :host {
   display: block;
   color: var(--lf-text);
@@ -42,11 +45,7 @@ h2 {
 }
 
 .player__error {
-  margin: 0 0 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid var(--mat-sys-error);
-  border-radius: var(--lf-radius);
-  color: var(--mat-sys-error);
+  @include alerts.error;
 }
 
 /*
@@ -140,12 +139,8 @@ h2 {
   background: color-mix(in srgb, var(--lf-accent) 15%, transparent);
 }
 
-/* Team detail's "You" badge (I4). */
 .badge--you {
-  margin-left: 0.25rem;
-  background: var(--lf-accent);
-  color: var(--lf-bg);
-  font-weight: 700;
+  @include badges.you;
 }
 
 .player__main {
