@@ -1,0 +1,126 @@
+@if (notFound()) {
+  <app-record-not-found noun="Round" />
+} @else {
+  <h1>Compare Rounds</h1>
+  <p class="cr-intro">
+    Pick two rounds that share at least one team to see a per-player stat delta and a
+    points-over-time overlay.
+  </p>
+
+  @if (error(); as message) {
+    <p class="cr-error" role="alert">{{ message }}</p>
+  }
+
+  <form class="cr-picker" [formGroup]="form" (ngSubmit)="compare()" novalidate>
+    <mat-form-field appearance="outline">
+      <mat-label>Round A</mat-label>
+      <select matNativeControl id="compare-select-a" name="round_a" formControlName="round_a">
+        <option value="">-- Select a round --</option>
+        @for (r of rounds(); track r.id) {
+          <option [value]="r.id">
+            #{{ r.id }} - {{ r.team_red_name }} vs {{ r.team_blue_name }}
+          </option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>Round B</mat-label>
+      <select matNativeControl id="compare-select-b" name="round_b" formControlName="round_b">
+        <option value="">-- Select a round --</option>
+        @for (r of rounds(); track r.id) {
+          <option [value]="r.id">
+            #{{ r.id }} - {{ r.team_red_name }} vs {{ r.team_blue_name }}
+          </option>
+        }
+      </select>
+    </mat-form-field>
+    <button mat-flat-button type="submit">Compare</button>
+  </form>
+
+  @if (comparison(); as c) {
+    <section class="cr-section" aria-label="Player Stat Deltas">
+      <h2>Player Stat Deltas</h2>
+      <p class="cr-sub">
+        Each cell shows Round A &rarr; Round B with the change (B &minus; A). Green = up, red =
+        down.
+      </p>
+      <div class="cr-scroll">
+        <table class="cr-table">
+          <thead>
+            <tr>
+              <th>Player</th>
+              <th>Side A</th>
+              <th>Role A</th>
+              <th>Side B</th>
+              <th>Role B</th>
+              @for (key of c.stat_keys; track key) {
+                <th>{{ key }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of rows(); track row.player_id) {
+              <tr>
+                <td class="cr-player">
+                  {{ row.name }}
+                  @if (row.isSelf) {
+                    <span class="badge badge--you">You</span>
+                  }
+                </td>
+                <td>
+                  @if (row.side_a; as side) {
+                    <span class="cr-side" [attr.data-lf-side]="side">{{ sideTag(side) }}</span>
+                  } @else {
+                    —
+                  }
+                </td>
+                <td>{{ row.role_a ? roleLabel(row.role_a) : '—' }}</td>
+                <td>
+                  @if (row.side_b; as side) {
+                    <span class="cr-side" [attr.data-lf-side]="side">{{ sideTag(side) }}</span>
+                  } @else {
+                    —
+                  }
+                </td>
+                <td>{{ row.role_b ? roleLabel(row.role_b) : '—' }}</td>
+                @for (cell of row.shown; track $index) {
+                  <td
+                    class="delta"
+                    [class.delta--up]="cell.mark === 'up'"
+                    [class.delta--down]="cell.mark === 'down'"
+                    [class.delta--muted]="cell.mark === 'muted'"
+                  >
+                    @if (cell.value === null) {
+                      —
+                    } @else {
+                      <span class="delta__value">{{ cell.value }} </span>
+                      @if (cell.change !== null) {
+                        <small class="delta__change">{{ cell.change }}</small>
+                      }
+                    }
+                  </td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="cr-section" aria-label="Points Over Time">
+      <h2>Points Over Time</h2>
+      <p class="cr-sub">Solid = Round A, dashed = Round B. One color pair per shared team.</p>
+      <div class="cr-chart">
+        <app-line-chart
+          title="Points Over Time"
+          [datasets]="series()"
+          [maxSec]="maxSec()"
+          [theme]="theme()"
+          xAxis="clock"
+          xTitle="Time"
+          yTitle="Cumulative points"
+        />
+      </div>
+    </section>
+  }
+}
