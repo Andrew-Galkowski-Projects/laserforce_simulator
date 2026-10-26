@@ -1,0 +1,131 @@
+@if (notFound()) {
+  <app-team-not-found />
+} @else {
+  <h1>Head-to-Head Record</h1>
+  <p class="h2h-intro">
+    Pick two teams to see their full head-to-head history — record, score margin, survivor averages,
+    most impactful players, per-map breakdown, and the chronological match/round list.
+  </p>
+
+  @if (listError(); as message) {
+    <p class="h2h-error" role="alert">{{ message }}</p>
+  }
+  @if (error(); as message) {
+    <p class="h2h-error" role="alert">{{ message }}</p>
+  }
+
+  <form class="h2h-picker" [formGroup]="form" (ngSubmit)="compare()">
+    <mat-form-field appearance="outline" class="h2h-picker__wide">
+      <mat-label>Team A</mat-label>
+      <select matNativeControl name="team_a" formControlName="team_a">
+        <option value="">-- Select a team --</option>
+        @for (t of teams(); track t.id) {
+          <option [value]="t.id">{{ t.name }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline" class="h2h-picker__wide">
+      <mat-label>Team B</mat-label>
+      <select matNativeControl name="team_b" formControlName="team_b">
+        <option value="">-- Select a team --</option>
+        @for (t of teams(); track t.id) {
+          <option [value]="t.id">{{ t.name }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>Provenance</mat-label>
+      <select matNativeControl name="provenance" formControlName="provenance">
+        @for (o of provenanceOptions; track o.value) {
+          <option [value]="o.value">{{ o.label }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>From</mat-label>
+      <input matInput type="date" name="from" formControlName="from" />
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>To</mat-label>
+      <input matInput type="date" name="to" formControlName="to" />
+    </mat-form-field>
+    <button mat-flat-button type="submit">Compare</button>
+  </form>
+
+  @if (result(); as r) {
+    <h2>{{ r.team_a.name }} vs {{ r.team_b.name }}</h2>
+
+    @if (r.match_record.n === 0 && r.round_record.n === 0) {
+      <p class="h2h-notice" role="status">
+        No head-to-head games found between these two teams for the selected filters.
+      </p>
+    }
+
+    <div class="h2h-cards">
+      <app-h2h-card label="Match record (W-L-T)" [note]="plural(r.match_record.n, 'match', 'es')">
+        {{ record(r.match_record) }}
+      </app-h2h-card>
+      <app-h2h-card label="Round record (W-L-T)" [note]="plural(r.round_record.n, 'round')">
+        {{ record(r.round_record) }}
+      </app-h2h-card>
+      <app-h2h-card
+        label="Avg score margin (A − B)"
+        [note]="'over ' + plural(r.score_margin.n, 'round')"
+      >
+        {{ fixed(r.score_margin.mean_margin, 1) }}
+      </app-h2h-card>
+    </div>
+    <div class="h2h-cards">
+      <app-h2h-card [label]="'Avg survivors — ' + r.team_a.name">
+        {{ fixed(r.avg_survivors.team_a_avg, 2) }}
+      </app-h2h-card>
+      <app-h2h-card [label]="'Avg survivors — ' + r.team_b.name">
+        {{ fixed(r.avg_survivors.team_b_avg, 2) }}
+      </app-h2h-card>
+      @for (side of impactful(r); track $index) {
+        <app-h2h-card [label]="'Top impactful — ' + side.team" [note]="side.note">
+          @if (side.player; as p) {
+            <app-h2h-player-name [playerId]="p.player_id" [name]="p.name" />
+          } @else {
+            <span class="muted">{{ dash }}</span>
+          }
+        </app-h2h-card>
+      }
+    </div>
+
+    <app-h2h-map-table [rows]="r.per_map_breakdown" />
+    <app-h2h-charts [margin]="r.margin_series" [cumulative]="r.cumulative_wl_series" />
+
+    <h3>All H2H games</h3>
+    @if (r.detail_list.length > 0) {
+      <div class="h2h-scroll">
+        <table class="h2h-table h2h-games">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Type</th>
+              <th>Score (A − B)</th>
+              <th>Winner</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of r.detail_list; track $index) {
+              <tr>
+                <td>{{ row.date_played | date: 'yyyy-MM-dd HH:mm' }}</td>
+                <td>{{ row.label }}</td>
+                <td>{{ row.score_str }}</td>
+                <td>{{ row.winner_name }}</td>
+                <td>
+                  <a mat-stroked-button [routerLink]="gameLink(row)">View</a>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else {
+      <p class="h2h-empty">No games to list.</p>
+    }
+  }
+}

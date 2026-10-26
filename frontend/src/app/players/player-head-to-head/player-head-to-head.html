@@ -1,0 +1,173 @@
+@if (notFound()) {
+  <h1>Player not found</h1>
+  <p><a routerLink="/players">&larr; Back to Players</a></p>
+} @else {
+  <h1>Player Head-to-Head Record</h1>
+  <p class="h2h-intro">
+    Pick two players to see their full head-to-head history — round record, score margin, direct-tag
+    exchange, per-role and per-map breakdowns, and the chronological round list.
+  </p>
+
+  @if (listError(); as message) {
+    <p class="h2h-error" role="alert">{{ message }}</p>
+  }
+  @if (error(); as message) {
+    <p class="h2h-error" role="alert">{{ message }}</p>
+  }
+
+  <form class="h2h-picker" [formGroup]="form" (ngSubmit)="compare()">
+    <mat-form-field appearance="outline" class="h2h-picker__wide">
+      <mat-label>Player A</mat-label>
+      <select matNativeControl name="player_a" formControlName="player_a">
+        <option value="">-- Select a player --</option>
+        @for (p of players(); track p.id) {
+          <option [value]="p.id">{{ p.label }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline" class="h2h-picker__wide">
+      <mat-label>Player B</mat-label>
+      <select matNativeControl name="player_b" formControlName="player_b">
+        <option value="">-- Select a player --</option>
+        @for (p of players(); track p.id) {
+          <option [value]="p.id">{{ p.label }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>Role (both)</mat-label>
+      <select matNativeControl name="role" formControlName="role">
+        <option value="">Any</option>
+        @for (o of roleOptions; track o.value) {
+          <option [value]="o.value">{{ o.label }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>Provenance</mat-label>
+      <select matNativeControl name="provenance" formControlName="provenance">
+        @for (o of provenanceOptions; track o.value) {
+          <option [value]="o.value">{{ o.label }}</option>
+        }
+      </select>
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>From</mat-label>
+      <input matInput type="date" name="from" formControlName="from" />
+    </mat-form-field>
+    <mat-form-field appearance="outline">
+      <mat-label>To</mat-label>
+      <input matInput type="date" name="to" formControlName="to" />
+    </mat-form-field>
+    <button mat-flat-button type="submit">Compare</button>
+  </form>
+
+  @if (result(); as r) {
+    <h2>
+      <app-h2h-player-name [playerId]="r.player_a.id" [name]="r.player_a.name" />
+      vs
+      <app-h2h-player-name [playerId]="r.player_b.id" [name]="r.player_b.name" />
+    </h2>
+
+    @if (r.round_record.n === 0) {
+      <p class="h2h-notice" role="status">
+        No head-to-head rounds found between these two players for the selected filters.
+      </p>
+    }
+
+    <div class="h2h-cards">
+      <app-h2h-card label="Round record (W-L-T)" [note]="plural(r.round_record.n, 'round')">
+        {{ record(r.round_record) }}
+      </app-h2h-card>
+      <app-h2h-card
+        label="Avg score margin (A − B)"
+        [note]="'over ' + plural(r.score_margin.n, 'round')"
+      >
+        {{ fixed(r.score_margin.mean_margin, 1) }}
+      </app-h2h-card>
+      <app-h2h-card label="Tags A → B (avg / total)">
+        {{ fixed(r.tag_stats.avg_tags_a_to_b, 2) }} / {{ r.tag_stats.total_tags_a_to_b }}
+      </app-h2h-card>
+      <app-h2h-card label="Tags B → A (avg / total)">
+        {{ fixed(r.tag_stats.avg_tags_b_to_a, 2) }} / {{ r.tag_stats.total_tags_b_to_a }}
+      </app-h2h-card>
+    </div>
+
+    <h3>Per-role breakdown (Player A's role)</h3>
+    @if (r.per_role_breakdown.length > 0) {
+      <div class="h2h-scroll">
+        <table class="h2h-table h2h-role-table">
+          <thead>
+            <tr>
+              <th>Role</th>
+              <th>Games</th>
+              <th>W</th>
+              <th>L</th>
+              <th>T</th>
+              <th>Mean margin</th>
+              <th>Avg tags A→B</th>
+              <th>Avg tags B→A</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of r.per_role_breakdown; track row.role) {
+              <tr>
+                <td>{{ capitalise(row.role) }}</td>
+                <td>{{ row.games }}</td>
+                <td>{{ row.wins }}</td>
+                <td>{{ row.losses }}</td>
+                <td>{{ row.ties }}</td>
+                <td>{{ fixed(row.mean_margin, 1) }}</td>
+                <td>{{ fixed(row.avg_tags_a_to_b, 2) }}</td>
+                <td>{{ fixed(row.avg_tags_b_to_a, 2) }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else {
+      <p class="h2h-empty">No per-role data.</p>
+    }
+
+    <app-h2h-map-table [rows]="r.per_map_breakdown" />
+    <app-h2h-charts [margin]="r.margin_series" [cumulative]="r.cumulative_wl_series" />
+
+    <h3>All H2H rounds</h3>
+    @if (r.detail_list.length > 0) {
+      <div class="h2h-scroll">
+        <table class="h2h-table h2h-rounds">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Role A</th>
+              <th>Role B</th>
+              <th>Score (A − B)</th>
+              <th>Tags A→B</th>
+              <th>Tags B→A</th>
+              <th>Winner</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of r.detail_list; track row.round_id) {
+              <tr>
+                <td>{{ row.date_played | date: 'yyyy-MM-dd HH:mm' }}</td>
+                <td>{{ capitalise(row.role_a) }}</td>
+                <td>{{ capitalise(row.role_b) }}</td>
+                <td>{{ row.score_str }}</td>
+                <td>{{ row.tags_a_to_b }}</td>
+                <td>{{ row.tags_b_to_a }}</td>
+                <td>{{ row.winner_label }}</td>
+                <td>
+                  <a mat-stroked-button [routerLink]="['/rounds', row.round_id]">View</a>
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else {
+      <p class="h2h-empty">No rounds to list.</p>
+    }
+  }
+}

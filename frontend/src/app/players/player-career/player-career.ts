@@ -47,6 +47,13 @@ interface StatCells {
   imports: [BenchmarkFilter, LineChart, MatAnchor, RouterLink],
   templateUrl: './player-career.html',
   styleUrl: '../shared/benchmark-page.scss',
+  styles: `
+    .bp-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+    }
+  `,
 })
 export class PlayerCareer {
   private readonly auth = inject(AuthService);

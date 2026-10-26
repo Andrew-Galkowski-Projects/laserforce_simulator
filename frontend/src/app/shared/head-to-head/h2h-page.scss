@@ -1,0 +1,63 @@
+// The layout Team and Player head-to-head share: the picker, the record cards, the breakdown
+// tables and the two charts. Sized to the content width (~1070px at 1280px, ~560px at 768px).
+@use '../alerts';
+// The section rules (h3, the scrolling tables, the empty line) come with the module.
+@use 'h2h-section';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+h2 {
+  margin: 1.5rem 0 0.75rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.25rem;
+}
+
+.h2h-intro {
+  margin: 0 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+.h2h-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+
+  mat-form-field {
+    flex: 1 1 10rem;
+    min-width: 0;
+  }
+
+  .h2h-picker__wide {
+    flex: 2 1 14rem;
+  }
+}
+
+.h2h-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.h2h-notice {
+  @include alerts.notice;
+}
+
+.h2h-error {
+  @include alerts.error;
+}
+
+.muted {
+  color: var(--lf-text-muted);
+}
