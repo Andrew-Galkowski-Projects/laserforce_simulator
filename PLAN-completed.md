@@ -7126,6 +7126,31 @@ Missile log, movement heatmap, round report export. Replaces
  `RoundsService.report(id)` returns that, and Round detail saves `filename ?? 'round-<id>.pdf'`.
  Rejected: rebuilding the name client-side with a copy of `slugify` (drift).
 
+#### ANG-06-11 · [DONE] Enhanced setup / detail check
+
+**[DONE] Shipped (2026-10-26).** Items 3-4 already covered every field, value and link of
+enhanced_match_setup / enhanced_single_round_setup / enhanced_match_detail. The check found three
+gaps, all frontend: setup-form now shows Django's success flash as the notify.ts snackbar ('Match
+simulated! / Round complete! <winner> won!', 'Tie game.' on a tie, where Django says 'Tie won!');
+its Team and map pickers load every page through listAll instead of one 100-row page; and the dead
+templates/matches/match_detail.html (no view rendered it) is deleted. No API, model or ownership
+change.
+
+Confirm items 3-4 cover the `enhanced_*` templates and
+
+ `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`. Spec: #389.
+ Settled (owner, 2026-10-26 grill): `match-detail` already shows every value and link of
+ `enhanced_match_detail.html`, and `setup-form` every field, hint and error of both
+ `enhanced_*_setup.html`. `matches/match_detail.html` is dead: no view renders it. Three gaps,
+ one ticket, frontend only (no API, model, ownership or engine change):
+ (1) after a create, a `notify.ts` snackbar with Django's flash wording, "Match simulated!
+ <winner_name> won!" / "Round complete! <winner_name> won!", from the create response, and
+ "... Tie game." when `winner_name` is null (Django's flash reads "Tie won!"; it is left alone);
+ (2) the Team and map pickers load every page through `listAll`, not one 100-row page;
+ (3) delete the dead `match_detail.html` (no view or URL name, so the ANG-08 ruling does not
+ apply). Out of scope: heading text, the trophy / "Tie Game" header, "Basic Simulation" wording,
+ Round detail (item 4), and an error state for a failed picker load (existing behaviour).
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
