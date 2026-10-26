@@ -1,0 +1,110 @@
+// Shared by Career stats and Role Benchmarks: the page heading, the notices and the stat tables.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+h2,
+h3 {
+  margin: 1.5rem 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.1rem;
+}
+
+.bp-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+
+  h1 {
+    margin: 0;
+  }
+}
+
+.bp-sub {
+  margin: -0.5rem 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+app-benchmark-filter {
+  display: block;
+  margin: 1rem 0 0;
+}
+
+.career-trend {
+  height: 20rem;
+  margin-top: 1.5rem;
+}
+
+.muted {
+  color: var(--lf-text-muted);
+  font-weight: 400;
+}
+
+.bp-notice {
+  @include alerts.notice;
+}
+
+.bp-error {
+  @include alerts.error;
+}
+
+// I3: a table wider than the page scrolls inside its own card, never the page.
+.bp-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.bp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--lf-font-numeric);
+  white-space: nowrap;
+
+  th,
+  td {
+    padding: 0.4rem 0.75rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: right;
+  }
+
+  th:first-child,
+  td:first-child {
+    text-align: left;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+.badge--you {
+  display: inline-block;
+  margin-left: 0.25rem;
+  padding: 0.1rem 0.45rem;
+  border-radius: var(--lf-radius);
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.4;
+  vertical-align: middle;
+}
