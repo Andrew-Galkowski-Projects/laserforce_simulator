@@ -1,0 +1,71 @@
+<h1>Players</h1>
+
+@if (loadError(); as message) {
+  <p class="players__error" role="alert">{{ message }}</p>
+} @else if (result(); as r) {
+  <p class="muted">{{ r.meta.count }} player{{ r.meta.count === 1 ? '' : 's' }} total</p>
+
+  @if (r.meta.count === 0) {
+    <p class="muted">No players yet.</p>
+  } @else {
+    <p class="players__size">
+      <label for="player-list-per-page">Show:</label>
+      <select id="player-list-per-page" (change)="setPageSize($event)">
+        @for (size of pageSizes; track size) {
+          <option [value]="size" [selected]="size === state().perPage">{{ size }}</option>
+        }
+      </select>
+      <span class="muted">per page</span>
+    </p>
+
+    <div class="players__scroll">
+      <table class="players__table">
+        <thead>
+          <tr>
+            @for (c of columns; track c.label) {
+              <th scope="col">
+                @if (c.sort) {
+                  <a [routerLink]="[]" [queryParams]="sortParams(c)">{{ c.label }}{{ arrow(c) }}</a>
+                } @else {
+                  {{ c.label }}
+                }
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (p of r.items; track p.id) {
+            <tr>
+              <td>
+                <a [routerLink]="['/players', p.id, 'stats']">{{ p.name }}</a>
+                @if (p.id === selfId()) {
+                  <span class="badge badge--you">You</span>
+                }
+              </td>
+              <td>
+                <a [routerLink]="['/teams', p.team]">{{ p.team_name }}</a>
+              </td>
+              <td>{{ p.preferred_roles.join(', ') }}</td>
+              <td>{{ overall(p) }}</td>
+              @for (c of columns.slice(4); track c.label) {
+                <td>{{ cell(p, c) }}</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    @if (r.meta.total_pages > 1) {
+      <nav class="players__pager" aria-label="Players pages">
+        @if (r.meta.page > 1) {
+          <a [routerLink]="[]" [queryParams]="pageParams(r.meta.page - 1)">Previous</a>
+        }
+        <span>Page {{ r.meta.page }} of {{ r.meta.total_pages }}</span>
+        @if (r.meta.page < r.meta.total_pages) {
+          <a [routerLink]="[]" [queryParams]="pageParams(r.meta.page + 1)">Next</a>
+        }
+      </nav>
+    }
+  }
+}
