@@ -1,8 +1,9 @@
 """Seed throwaway data for a browser check, and remove it again.
 
-Two Accounts: A owns four valid Teams, a simulated sandbox Match, a map-less
-Single Round, a full-fidelity Single Round on a generated, fully configured
-``ArenaMap`` ("Browser Check Arena") and an unfinished Match (round 1 only,
+Two Accounts: A owns four valid Teams, a simulated sandbox Match, two
+full-fidelity Single Rounds between the same Teams (one map-less, one on a
+generated, fully configured ``ArenaMap``, "Browser Check Arena") and an
+unfinished Match (round 1 only,
 like a League Match mid-Season); B owns nothing, for cross-Account checks.
 ``--league`` also gives A "Browser Check League" (career mode, finance on):
 two completed Seasons and one active Season, every played Round with player
@@ -192,10 +193,14 @@ class Command(BaseCommand):
         red, blue, third, fourth = Team.objects.filter(manager=a).order_by("id")[:4]
 
         match = create_sandbox_match(red, blue, "friendly", arena_map=None, user=a)
-        game_round = create_sandbox_round(third, fourth, arena_map=None, user=a)
-        arena_map = create_browser_check_map()
         # A sandbox Round persists at "scores"; the GEN-01 lazy upgrade replays
-        # it off its seed to "full" (movement events) for Playback / heatmap.
+        # it off its seed to "full". Both Single Rounds get events, so Compare
+        # Rounds has a points chart on both sides; the mapped one also feeds
+        # Playback's map and the heatmap.
+        game_round = BatchSimulator().ensure_fidelity(
+            create_sandbox_round(third, fourth, arena_map=None, user=a), "full"
+        )
+        arena_map = create_browser_check_map()
         mapped_round = BatchSimulator().ensure_fidelity(
             create_sandbox_round(third, fourth, arena_map=arena_map, user=a), "full"
         )

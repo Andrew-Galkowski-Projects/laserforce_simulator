@@ -27,3 +27,9 @@ body {
   margin: 0;
   height: 100%;
 }
+
+// Links take the theme accent, not the browser's blue / purple (ANG-06-9's roster links). A
+// component that wants another colour sets it on its own selector, which wins over this one.
+a {
+  color: var(--lf-accent);
+}
