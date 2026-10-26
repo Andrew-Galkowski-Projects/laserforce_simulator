@@ -354,6 +354,13 @@ _Avoid_: frame (a **Tick** is the time unit; a snapshot is the state at one).
 **Batch run**:
 Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied. Applies **Side alternation** so per-team aggregates are not biased by map-side advantage; aggregate keys are **team-position keyed** (`red_*` = the team passed as the `team_red` argument, whichever **Side** it played), with a separate side-advantage breakdown for the raw red/blue-side signal.
 
+**Average game**:
+A **Batch run** game whose score difference is among the 10 closest to the batch's mean difference. Identified by its *(RNG seed, orientation)* pair, so Save games can **Replay** it as a persisted **Round**.
+
+**Highlight game**:
+A **Batch run** game whose score difference is among the 10 furthest from the batch's mean difference: the most lopsided or unusual games. Replayed and persisted the same way as an **Average game**.
+_Avoid_: "outlier game" in UI text (the code's `outlier` key is the same thing).
+
 ### Async execution
 
 **Job**:
