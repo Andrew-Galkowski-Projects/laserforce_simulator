@@ -139,7 +139,7 @@
         <h2>Single Rounds</h2>
         @for (r of h.single_rounds; track r.id) {
           <article class="th-card th-game">
-            <h3>vs {{ r.opponent.name }}</h3>
+            <h3>vs {{ r.opponent.name }} <app-result-chip [result]="results[r.result]" /></h3>
             <p>
               <strong>Score:</strong> {{ r.team_points }} - {{ r.opponent_points }}<br />
               <small class="muted">{{ r.date_played | date: 'MMM d, y HH:mm' }}</small>

@@ -69,6 +69,7 @@ function singleRow(fields: Partial<HistorySingleRoundRow> = {}): HistorySingleRo
   return {
     id: 77,
     opponent: { id: 5, name: 'Owls' },
+    result: 'won',
     team_points: 5120,
     opponent_points: 4880,
     date_played: PLAYED,
@@ -452,9 +453,25 @@ describe('Team match history (/teams/:id/history)', () => {
     const cards = (): string[] =>
       [...section('Single Rounds').querySelectorAll('article')].map((c) => text(c));
 
-    it('shows each Single Round: vs opponent, score and date', async () => {
+    it('shows each Single Round: vs opponent, result, score and date', async () => {
       await open();
-      expect(cards()).toEqual(['vs Owls Score: 5120 - 4880 Oct 5, 2026 14:30 View Details']);
+      expect(cards()).toEqual(['vs Owls Won Score: 5120 - 4880 Oct 5, 2026 14:30 View Details']);
+    });
+
+    it('badges Won, Lost and Tie', async () => {
+      await open(
+        history({
+          single_rounds: [
+            singleRow({ id: 1, result: 'won' }),
+            singleRow({ id: 2, result: 'lost' }),
+            singleRow({ id: 3, result: 'tie' }),
+          ],
+        }),
+      );
+      const badges = [...section('Single Rounds').querySelectorAll('article app-result-chip')].map(
+        (b) => text(b),
+      );
+      expect(badges).toEqual(['Won', 'Lost', 'Tie']);
     });
 
     it('opens the Round with View Details (INV-5)', async () => {

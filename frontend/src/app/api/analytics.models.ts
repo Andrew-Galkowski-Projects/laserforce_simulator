@@ -269,10 +269,11 @@ export interface HistoryMatchRow {
   is_completed: boolean;
 }
 
-/** One standalone Round row, from the Team's point of view. */
+/** One standalone Round row, from the Team's point of view. A null winner is a `tie`. */
 export interface HistorySingleRoundRow {
   id: number;
   opponent: TeamRef;
+  result: 'won' | 'lost' | 'tie';
   team_points: number;
   opponent_points: number;
   date_played: string;
