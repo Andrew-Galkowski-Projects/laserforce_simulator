@@ -313,6 +313,11 @@ the API `not_eligible` error both import it, so the text is identical on both su
 Anonymous calls to everything except register are an enveloped 401 `not_authenticated`. The HTML
 `/accounts/` views are unchanged. Tests: `accounts/tests/test_api_accounts.py`.
 
+**Angular screens (ANG-06 item 7).** The SPA's `/register`, `/account/password` and the Shell
+account menu (My player / Unlink Self-insert) call these endpoints through `AuthService`; see
+[`frontend/CLAUDE.md`](../../frontend/CLAUDE.md). The Django `/accounts/` templates stay until
+ANG-08, and the admin's invite "Sign-up link" still points at Django's `/accounts/register/`.
+
 **CSRF.** DRF's `SessionAuthentication` enforces CSRF only for an *authenticated* session. An
 anonymous register POST therefore needs no token, but a logged-in browser caller (the ANG-04 client)
 must send the CSRF token on every unsafe method -- **including register**. `APIClient` does not

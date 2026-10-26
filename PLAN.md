@@ -85,36 +85,7 @@ Every component uses the theme chosen in ANG-04b.
 Items 7-20 (planned 2026-10-25, owner-approved). The API behind every one already exists (ANG-01),
 so each is frontend parity work like 1-6, with its own grill. Order is by dependency, then complexity.
 
-7. **Accounts screens** — register, password change (+ done), self-insert link / unlink. `/login`
-   already exists. Replaces `accounts/*`. Spec: #368
-   Grill (owner, 2026-10-25) — frontend only, no backend / ownership / model / simulation change:
-   - **Self-insert split:** item 7 adds `AuthService.linkSelfInsert(playerId)` /
-     `unlinkSelfInsert()` (both set `currentUser` from the response so "You" badges refresh), plus
-     *My player* and *Unlink Self-insert* in the account menu. The *This is me* / *Unlink* buttons
-     land on player detail in item 8; until then *My player* links to that Player's Team detail.
-   - **Routes:** `/register` outside the Shell, guarded like `/login` (signed-in ⇒ `/teams`),
-     invite prefilled from `?invite=<code>`; `/account/password` inside the Shell. No "done" route.
-   - **After register:** call `login(email, password)` and go to `/teams`; if that sign-in fails,
-     go to `/login` with "Account created. Please sign in."
-   - **Password change:** stay on the page, inline "Your password has been changed." notice, form
-     reset; stays signed in. Refresh-token revocation stays deferred.
-   - **Account menu:** the toolbar email becomes a `mat-menu`: *My player* and *Unlink Self-insert*
-     (only when `self_insert` is set), *Change password*, *Sign out*.
-   - **Cross-links:** `/login` → "Create an account"; `/register` → "Already have an account? Sign in".
-   - **Validation:** every field `required` with a `mat-error`; password rules and mismatch are
-     server-only, mapped by `applyApiErrors` (control names = Django field names); non-field errors
-     in a `role="alert"` line.
-   - **Admin invite link** keeps pointing at Django `/accounts/register/` until ANG-08.
-   - **Out:** password reset, invite management, refresh-token revocation, Account deletion,
-     profile fields.
-   - **Unlink from the menu:** no confirm; snackbar "Self-insert unlinked." (failure ⇒
-     `GENERIC_ERROR_MESSAGE`). `teams/shared/notify.ts` moves to `app/shared/notify.ts`.
-   - **Narrow toolbar:** email truncated with a `title`; below 600px an icon button
-     `aria-label="Account"`.
-   - **Seam / size:** `AuthService` (`linkSelfInsert`, `unlinkSelfInsert`,
-     `changePassword(body): Observable<void>`) tested with `HttpTestingController`; `Register`
-     (`app/register/`), `PasswordChange` (`app/account/password-change/`) and the Shell menu each get
-     a Vitest spec. One ticket.
+7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **Player pages** — player list (`/players/`), player detail, player delete, career stats, role
    benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
    `player_career_stats`, `role_benchmarks`.

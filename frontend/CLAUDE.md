@@ -1,9 +1,9 @@
 # frontend/ -- the Angular SPA (ANG-04)
 
 The Phase 8 replacement for the Django templates. The stack is fixed by
-[ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has a sign-in page, the ADR-0043
-layout-B shell (header with the signed-in email and Sign out, a Teams sidebar that is a drawer
-below 768px) behind `authGuard`, the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
+[ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has the sign-in and invite-only register
+pages, the ADR-0043 layout-B shell (header with the account menu, a Teams sidebar that is a drawer
+below 768px) behind `authGuard`, Change password (ANG-06 item 7), the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
 Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
 ANG-06e-g: Event log, Playback, Charts) and the Maps area (ANG-06h: map list and editor), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
@@ -78,19 +78,29 @@ src/
     app.ts                the root: a bare <router-outlet> (/login renders without the shell)
     app-title.ts          APP_TITLE, shared by the header and the route titles
     app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
-    app.routes.ts         'login' (signedOutGuard, lazy) | '' -> lazy Shell behind authGuard:
-                          '' -> /teams, 'teams' -> lazy teams/teams.routes.ts,
+    app.routes.ts         'login' + 'register' (signedOutGuard, lazy) | '' -> lazy Shell behind
+                          authGuard: '' -> /teams, 'account/password', 'teams' -> lazy
+                          teams/teams.routes.ts,
                           'matches' / 'rounds' -> lazy matches/matches.routes.ts
                           (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk), 'maps' -> lazy
                           maps/maps.routes.ts | '**' -> ''
-    shell/                layout B: header (title, email, Sign out) + mat-sidenav (side >= 768px,
-                          over drawer below); toolbar colours via mat.toolbar-overrides
-    login/                sign-in form; returnUrl honoured only when it is an in-app path
+    shell/                layout B: header (title, the "Account" menu: My player / Unlink
+                          Self-insert when linked, Change password, Sign out; the email, or its
+                          initial below 600px) + mat-sidenav (side >= 768px, over drawer below);
+                          toolbar colours via mat.toolbar-overrides
+    login/                sign-in form; returnUrl honoured only when it is an in-app path;
+                          LoginNavigationState / REGISTERED_STATE ("Account created" notice)
+    register/             invite-only sign-up (ANG-06 item 7): invite from ?invite=, register
+                          then login, /login + REGISTERED_STATE if that sign-in fails
+    account/              password-change/ (/account/password: inline notice, resetForm, stays
+                          signed in)
     shared/               cross-feature helpers: save-blob.ts (saveBlob: a Blob as a named
                           download; roster-import's template CSV, round-detail's Export PDF),
                           confirm-dialog.ts (ConfirmDialog), form-errors.ts (applyApiErrors,
                           GENERIC_ERROR_MESSAGE), read-token.ts (readToken: a --lf-* value for
-                          canvas)
+                          canvas), notify.ts (injectNotify: the "Close" snackbar),
+                          auth-card.scss (the signed-out card: login + register),
+                          _alerts.scss (notice / error box mixins)
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
                           team-create, team-detail, team-edit, team-slots, player-add,
                           player-edit, team-generate, roster-import (import-errors.ts:
@@ -102,7 +112,7 @@ src/
                           loadError), route-player.ts (loadRoutePlayer: the :playerId Player,
                           404 or player.team !== :id -> notFound, else loadError),
                           player-not-found.ts (back to /teams/:id),
-                          notify.ts (injectNotify: the "Close" snackbar), team-not-found.ts,
+                          team-not-found.ts,
                           team-name-form.ts, team-page.scss,
                           team-form.scss; testing/teams-loads.ts (releaseTeamsLoads, specs only)
     matches/              matches.routes.ts: /matches (match-list: Match History, two server-paged
@@ -141,7 +151,7 @@ src/
                           (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
-                          auth.guard.ts (authGuard, signedOutGuard),
+                          auth.guard.ts (authGuard, signedOutGuard, HOME_URL),
                           auth.tokens.ts (TOKEN_PATH, SKIP_AUTH_REFRESH), user.ts
     theme/                theme-tokens.ts (LF_TOKENS) + theme.spec.ts
 ```
@@ -203,7 +213,10 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
 - **Auth:**
   - `AuthService` keeps the access token **in memory only**. It provides `login`, `logout`,
     `register` (which does not sign in), the `currentUser` / `isSignedIn` signals, a single-flight
-    `refresh()`, and `restoreSession()`.
+    `refresh()`, and `restoreSession()`. ANG-06 item 7 added `changePassword` (204; the token and
+    `currentUser` stay), `linkSelfInsert(playerId)` (the returned Account becomes `currentUser`;
+    its caller is item 8's player detail) and `unlinkSelfInsert()` (clears `self_insert` on
+    `currentUser` only after the 204).
   - `authInterceptor` adds `Bearer` to `apiBaseUrl` calls except `token/*`, and sets
     `withCredentials` only on `token/*`, where the refresh cookie's `Path=/api/token/` applies.
   - On a 401 it does one shared refresh and replays the request once. A failed refresh, or a second

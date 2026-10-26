@@ -6933,6 +6933,52 @@ on port 8000. Add `nginx.conf` and update `docker-compose.yml` with the `nginx` 
   `/` or redirecting `/` to `/app/` (ANG-08), new SPA screens (ANG-06 League / Tournament /
   Accounts items), HTTP/2, `ng serve` behind nginx in dev (dev stays direct CORS, ADR-0042).
 
+#### ANG-06-7 · [DONE] Accounts screens
+
+**[DONE] Shipped (2026-10-25).** Angular /register (invite prefilled from ?invite=, register then
+sign in, /login with 'Account created. Please sign in.' if that sign-in fails), /account/password
+(inline confirmation, form reset, stays signed in) and a Shell account menu (My player and Unlink
+Self-insert when linked, Change password, Sign out; the email initial below 600px). AuthService
+gained changePassword, linkSelfInsert (for item 8's This is me button) and unlinkSelfInsert;
+notify.ts moved to app/shared; Login and Register share shared/auth-card.scss. Two owner-accepted
+deviations from spec #368: a network failure reads 'Could not reach the server.' (ApiClient's
+message, as on every Angular form), and the narrow account button shows the email initial rather
+than an icon glyph (no icon font). The browser check found Material's one-line subscript overlapping
+the next field under a long hint or password-rule error; every field uses subscriptSizing dynamic.
+Frontend only: no backend, model or ownership change.
+
+Register, password change (+ done), self-insert link / unlink. `/login`
+
+already exists. Replaces `accounts/*`. Spec: #368
+Grill (owner, 2026-10-25) — frontend only, no backend / ownership / model / simulation change:
+- **Self-insert split:** item 7 adds `AuthService.linkSelfInsert(playerId)` /
+  `unlinkSelfInsert()` (both set `currentUser` from the response so "You" badges refresh), plus
+  *My player* and *Unlink Self-insert* in the account menu. The *This is me* / *Unlink* buttons
+  land on player detail in item 8; until then *My player* links to that Player's Team detail.
+- **Routes:** `/register` outside the Shell, guarded like `/login` (signed-in ⇒ `/teams`),
+  invite prefilled from `?invite=<code>`; `/account/password` inside the Shell. No "done" route.
+- **After register:** call `login(email, password)` and go to `/teams`; if that sign-in fails,
+  go to `/login` with "Account created. Please sign in."
+- **Password change:** stay on the page, inline "Your password has been changed." notice, form
+  reset; stays signed in. Refresh-token revocation stays deferred.
+- **Account menu:** the toolbar email becomes a `mat-menu`: *My player* and *Unlink Self-insert*
+  (only when `self_insert` is set), *Change password*, *Sign out*.
+- **Cross-links:** `/login` → "Create an account"; `/register` → "Already have an account? Sign in".
+- **Validation:** every field `required` with a `mat-error`; password rules and mismatch are
+  server-only, mapped by `applyApiErrors` (control names = Django field names); non-field errors
+  in a `role="alert"` line.
+- **Admin invite link** keeps pointing at Django `/accounts/register/` until ANG-08.
+- **Out:** password reset, invite management, refresh-token revocation, Account deletion,
+  profile fields.
+- **Unlink from the menu:** no confirm; snackbar "Self-insert unlinked." (failure ⇒
+  `GENERIC_ERROR_MESSAGE`). `teams/shared/notify.ts` moves to `app/shared/notify.ts`.
+- **Narrow toolbar:** email truncated with a `title`; below 600px an icon button
+  `aria-label="Account"`.
+- **Seam / size:** `AuthService` (`linkSelfInsert`, `unlinkSelfInsert`,
+  `changePassword(body): Observable<void>`) tested with `HttpTestingController`; `Register`
+  (`app/register/`), `PasswordChange` (`app/account/password-change/`) and the Shell menu each get
+  a Vitest spec. One ticket.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
