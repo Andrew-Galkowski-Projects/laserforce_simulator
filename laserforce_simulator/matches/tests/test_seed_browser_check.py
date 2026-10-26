@@ -167,6 +167,22 @@ class SeedBrowserCheckMapTests(ClassTempMediaMixin, TestCase):
             self.assertTrue(team["a"], team["team_name"])
             self.assertTrue(team["b"], team["team_name"])
 
+    def test_missile_log_has_one_friendly_fire_row_beside_ordinary_ones(
+        self,
+    ) -> None:
+        # A simulated Round rarely fires a missile at a teammate, so the seed
+        # marks one: the Missile log check needs its tinted row (ANG-06-10 retro).
+        game_round = self._mapped_round()
+        api = APIClient()
+        api.force_login(game_round.manager)
+
+        response = api.get(f"/api/rounds/{game_round.pk}/missile-log/")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        flags = [row["friendly_fire"] for row in response.json()["data"]["rows"]]
+        self.assertEqual(flags.count(True), 1, flags)
+        self.assertIn(False, flags)
+
     def test_playback_api_returns_a_map_for_the_mapped_round(self) -> None:
         game_round = self._mapped_round()
         api = APIClient()
