@@ -10,6 +10,8 @@ import {
   GameRound,
   GameRoundListItem,
   PlayerRoundState,
+  RoundHeatmap,
+  RoundMissileLog,
   TimelineEventType,
 } from './rounds.models';
 import { RoundsService } from './rounds.service';
@@ -306,6 +308,50 @@ describe('RoundsService', () => {
     const err = (await result) as ApiError;
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(404);
+  });
+
+  it('GETs the Missile log and returns it unwrapped', async () => {
+    const body: RoundMissileLog = {
+      round_id: 21,
+      fired: 1,
+      hit: 1,
+      efficiency: 100,
+      rows: [
+        {
+          timestamp: 125,
+          timestamp_mmss: '01:02',
+          actor_role: 'commander',
+          target_role: 'heavy',
+          result: 'hit',
+          friendly_fire: false,
+          description: 'Ace missiled Bob',
+          points: 500,
+          row_class: 'missile-row',
+        },
+      ],
+    };
+    const result = firstValueFrom(rounds.missileLog(21));
+    const req = http.expectOne(`${BASE}/rounds/21/missile-log/`);
+    expect(req.request.method).toBe('GET');
+    req.flush({ data: body, meta: {} });
+    expect(await result).toEqual(body);
+  });
+
+  it('GETs the Movement heatmap and returns it unwrapped', async () => {
+    const body: RoundHeatmap = {
+      round_id: 21,
+      has_map: true,
+      arena_map: { id: 7, name: 'Warehouse' },
+      zone_size: 20,
+      processed_image_url: '/maps/7/processed-image/',
+      cell_occupancy_json: { '11': { '2,3': 40 } },
+      player_roster: [{ id: 11, name: 'Ace', role: 'commander', team_color: 'red' }],
+    };
+    const result = firstValueFrom(rounds.heatmap(21));
+    const req = http.expectOne(`${BASE}/rounds/21/heatmap/`);
+    expect(req.request.method).toBe('GET');
+    req.flush({ data: body, meta: {} });
+    expect(await result).toEqual(body);
   });
 
   it('surfaces a cross-Account timeline as ApiError 404', async () => {

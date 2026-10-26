@@ -206,6 +206,17 @@ describe('Round detail (/rounds/:id)', () => {
       expect(text(charts?.previousElementSibling)).toBe('Playback');
     });
 
+    it("links to the Round's Missile log and Heatmap, right after Charts", async () => {
+      await open(round());
+      const links = [...page().querySelectorAll('a')];
+      const missileLog = links.find((a) => text(a) === 'Missile log');
+      const heatmap = links.find((a) => text(a) === 'Heatmap');
+      expect(missileLog?.getAttribute('href')).toBe('/rounds/9/missile-log');
+      expect(text(missileLog?.previousElementSibling)).toBe('Charts');
+      expect(heatmap?.getAttribute('href')).toBe('/rounds/9/heatmap');
+      expect(text(heatmap?.previousElementSibling)).toBe('Missile log');
+    });
+
     it('links "{team} History" for both Teams', async () => {
       await open(round());
       const history = [...page().querySelectorAll('a')]

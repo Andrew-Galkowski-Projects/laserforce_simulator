@@ -34,6 +34,8 @@ import { TeamHeadToHead } from './teams/team-head-to-head/team-head-to-head';
 import { TeamHistory } from './teams/team-history/team-history';
 import { PlayerHeadToHead } from './players/player-head-to-head/player-head-to-head';
 import { CompareRounds } from './matches/compare-rounds/compare-rounds';
+import { MissileLog } from './matches/missile-log/missile-log';
+import { RoundHeatmap } from './matches/round-heatmap/round-heatmap';
 
 describe('app routes', () => {
   let http: HttpTestingController;
@@ -273,6 +275,30 @@ describe('app routes', () => {
       await harness.navigateByUrl('/teams/3/history?scope=freeform&scope=t2&applied=1');
       expect(routerUrl()).toBe('/teams/3/history?scope=freeform&scope=t2&applied=1');
       expect(harness.fixture.debugElement.query(By.directive(TeamHistory))).not.toBeNull();
+    });
+  });
+
+  describe('signed in, Round extras (ANG-06-10)', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    // These specs check routing only. Drop whatever the two screens load, so ANG-06-10's
+    // screen tickets never edit this file.
+    afterEach(() => {
+      http.match(() => true);
+    });
+
+    it.each([
+      ['/rounds/9/missile-log', MissileLog, 'Missile Log - Laserforce Simulator'],
+      ['/rounds/9/heatmap', RoundHeatmap, 'Movement Heatmap - Laserforce Simulator'],
+    ])('resolves %s to its screen, not Round detail', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(RoundDetail))).toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
     });
   });
 

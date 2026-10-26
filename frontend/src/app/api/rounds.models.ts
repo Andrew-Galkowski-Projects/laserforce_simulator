@@ -2,6 +2,7 @@
 // matches/serializers.py and matches/forms.py send / bind them (no mapping layer).
 // Ticks: 1 tick = 0.5 s, a round is 0-1800; 1801 means "survived".
 import { ListParams } from './api-client';
+import { CellKey } from './maps.models';
 import { Role } from './players.models';
 
 /** The physical Side a team or player played (`team_color`). */
@@ -310,6 +311,56 @@ export interface RoundPlayback {
   /** In `PlayerRoundState.id` order, as `RoundTimeline.players`. */
   players: PlaybackPlayer[];
   map: PlaybackMap | null;
+}
+
+/** One **Missiled event** row of the Missile log (`MissileRow`; roles only, no player names). */
+export interface MissileLogRow {
+  /** Ticks. */
+  timestamp: number;
+  /** The tick as `MM:SS`, formatted by the server. */
+  timestamp_mmss: string;
+  actor_role: string;
+  target_role: string;
+  /** `'hit'` or `'miss'`. */
+  result: string;
+  friendly_fire: boolean;
+  description: string;
+  points: number;
+  /** `'missile-row'`, plus `' friendly-fire'` on a Friendly-fire row. */
+  row_class: string;
+}
+
+/** `GET rounds/{id}/missile-log/`: the summary and every Missiled event in time order. */
+export interface RoundMissileLog {
+  round_id: number;
+  fired: number;
+  /** Friendly-fire hits included. */
+  hit: number;
+  /** `hit / fired * 100`, unrounded; 0 when nothing was fired. */
+  efficiency: number;
+  rows: MissileLogRow[];
+}
+
+/** One player of the heatmap's roster: red Side first, then by `(role, name)`. */
+export interface HeatmapRosterEntry {
+  id: number;
+  name: string;
+  role: string;
+  team_color: Side;
+}
+
+/** `GET rounds/{id}/heatmap/`: the Round's **Cell occupancy** per player, plus its map. */
+export interface RoundHeatmap {
+  round_id: number;
+  has_map: boolean;
+  /** Fetch the image from `maps/{id}/processed-image/`; `null` for a map-less Round. */
+  arena_map: { id: number; name: string } | null;
+  zone_size: number | null;
+  /** The session-only Django URL: never fetched by the SPA (use `arena_map.id`). */
+  processed_image_url: string | null;
+  /** Player id (as a string) -> `"r,c"` -> ticks; `{}` when nothing was recorded. */
+  cell_occupancy_json: Record<string, Record<CellKey, number>>;
+  player_roster: HeatmapRosterEntry[];
 }
 
 /**

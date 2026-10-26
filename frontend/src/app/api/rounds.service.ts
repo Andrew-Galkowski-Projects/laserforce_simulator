@@ -7,14 +7,16 @@ import {
   GameRound,
   GameRoundListItem,
   RoundInput,
+  RoundHeatmap,
   RoundListParams,
+  RoundMissileLog,
   RoundPlayback,
   RoundTimeline,
 } from './rounds.models';
 
 /**
  * `/api/rounds/`: list, detail, create, the report PDF, the paged event list, the
- * whole timeline and the Playback snapshots. No edit or delete.
+ * whole timeline, the Playback snapshots, the Missile log and the heatmap. No edit or delete.
  */
 @Injectable({ providedIn: 'root' })
 export class RoundsService {
@@ -51,5 +53,15 @@ export class RoundsService {
   /** The Round's **Playback snapshots** per player plus the beta map; full fidelity server-side. */
   playback(roundId: number): Observable<RoundPlayback> {
     return this.api.get<RoundPlayback>(`rounds/${roundId}/playback/`);
+  }
+
+  /** The Round's **Missile log**; the server upgrades the Round to combat fidelity. */
+  missileLog(roundId: number): Observable<RoundMissileLog> {
+    return this.api.get<RoundMissileLog>(`rounds/${roundId}/missile-log/`);
+  }
+
+  /** The Round's **Movement heatmap** data; full fidelity server-side. */
+  heatmap(roundId: number): Observable<RoundHeatmap> {
+    return this.api.get<RoundHeatmap>(`rounds/${roundId}/heatmap/`);
   }
 }
