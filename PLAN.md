@@ -86,31 +86,31 @@ Items 7-20 (planned 2026-10-25, owner-approved). The API behind every one alread
 so each is frontend parity work like 1-6, with its own grill. Order is by dependency, then complexity.
 
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
-8. **Player pages** — player list (`/players/`), player detail, player delete, career stats, role
+8. **Player pages (ANG-06-8)** — player list (`/players/`), player detail, player delete, career stats, role
    benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
    `player_career_stats`, `role_benchmarks`.
-9. **Head-to-head & history** — team H2H, player H2H, team match history, compare rounds. Replaces
+9. **Head-to-head & history (ANG-06-9)** — team H2H, player H2H, team match history, compare rounds. Replaces
    `matches/head_to_head`, `player_head_to_head`, `team_history`, `compare_rounds`.
-10. **Round extras** — missile log, movement heatmap, round report export. Replaces
+10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces
     `matches/missile_log`, `movement_heatmap`.
-11. **Enhanced setup / detail check** — confirm items 3-4 cover the `enhanced_*` templates and
+11. **Enhanced setup / detail check (ANG-06-11)** — confirm items 3-4 cover the `enhanced_*` templates and
     `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`.
-12. **Batch simulate** — form, status polling, save games. Replaces `matches/batch_simulate`.
-13a. **Tournaments: list, create, participant pool** — pool add-existing / generate / import /
+12. **Batch simulate (ANG-06-12)** — form, status polling, save games. Replaces `matches/batch_simulate`.
+13a. **Tournaments: list, create, participant pool (ANG-06-13a)** — pool add-existing / generate / import /
     remove, participant import. Replaces `tournament_list`, `tournament_create`.
-13b. **Tournament detail** — draw + draw edit, reseed, lock, play next / all with status. Replaces
+13b. **Tournament detail (ANG-06-13b)** — draw + draw edit, reseed, lock, play next / all with status. Replaces
     `tournament_detail`, `_tournament_round`.
-14. **League core** — list, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
+14. **League core (ANG-06-14)** — list, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
     history, new-team picker / reassign, next season, and the league sidebar in the Shell.
-15. **League stats** — leaders, player stats, player ratings, team stats, statistical feats, game
+15. **League stats (ANG-06-15)** — leaders, player stats, player ratings, team stats, statistical feats, game
     log, power rankings, playoffs.
-16. **League team & player** — team roster, schedule, team history, league player detail, free
+16. **League team & player (ANG-06-16)** — team roster, schedule, team history, league player detail, free
     agents, watch list (+ the watch flag).
-17. **League finances** — league and team finances.
-18. **Season screens** — dashboard, standings, schedule, awards, owner evaluation, conferences.
-19. **Season play loop** — play week / two months / until end / playoffs, status and cancel, the
+17. **League finances (ANG-06-17)** — league and team finances.
+18. **Season screens (ANG-06-18)** — dashboard, standings, schedule, awards, owner evaluation, conferences.
+19. **Season play loop (ANG-06-19)** — play week / two months / until end / playoffs, status and cancel, the
     live view, member nights. Replaces `seasons/play_week_live` and the play actions.
-20. **Landing & nav** — landing page, the Shell's Play / Tools / Help top-nav sections, and one
+20. **Landing & nav (ANG-06-20)** — landing page, the Shell's Play / Tools / Help top-nav sections, and one
     shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
     block, prospects, hall of fame) — no per-stub components. Replaces `core/landing`,
     `_partials/topnav_*`, `_placeholder`.
