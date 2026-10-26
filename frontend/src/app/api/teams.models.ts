@@ -41,6 +41,8 @@ export interface TeamListItem extends TeamBase {
 /** `TeamSerializer`: `GET teams/{id}/` and every Team write's response. */
 export interface Team extends TeamBase {
   players: Player[];
+  /** The managing Account's id, or `null` for an Unmanaged Team (ANG-06-8: *This is me*). */
+  manager: number | null;
 }
 
 /** `TeamForm` fields (create; PATCH sends any subset). */

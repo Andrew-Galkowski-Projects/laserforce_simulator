@@ -44,6 +44,13 @@
   --lf-ev-base: #467010;
   --lf-ev-movement: #706a62;
 
+  // Player detail's Stat bars (ANG-06-8a), by tier: 80+, 60+, 40+, below 40 (Django's
+  // success / primary / warning / danger). The value is always printed beside the bar.
+  --lf-rating-elite: #1f8a46;
+  --lf-rating-good: #2f62b0;
+  --lf-rating-fair: #d29a12;
+  --lf-rating-poor: #c8373d;
+
   // The map editor's canvas (ANG-06h): the Django editor's colours, alpha included, since they
   // paint over the processed (black-and-white) map image.
   --lf-map-floor: rgb(255 255 255 / 0.08);
@@ -112,6 +119,12 @@
     --lf-ev-locking: oklch(0.72 0.19 0);
     --lf-ev-base: oklch(0.8 0.18 128);
     --lf-ev-movement: oklch(0.66 0.03 60);
+
+    // Player detail's Stat bars, by tier (80+, 60+, 40+, below 40).
+    --lf-rating-elite: oklch(0.72 0.17 150);
+    --lf-rating-good: oklch(0.66 0.16 258);
+    --lf-rating-fair: oklch(0.8 0.15 85);
+    --lf-rating-poor: oklch(0.65 0.2 25);
 
     // The map editor's canvas: the image stays black-and-white, so these only shift a little.
     --lf-map-floor: rgb(200 205 215 / 0.12);

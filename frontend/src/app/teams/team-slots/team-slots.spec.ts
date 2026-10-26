@@ -37,6 +37,7 @@ const TEAM: Team = {
   slot_ammo: null,
   is_valid_roster: false,
   roster_errors: ['Missing Scout'],
+  manager: null,
   players: [player(11, 'Ace'), player(12, 'Bo'), player(13, 'Cy')],
 };
 

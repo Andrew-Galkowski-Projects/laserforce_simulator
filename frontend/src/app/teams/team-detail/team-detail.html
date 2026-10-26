@@ -59,7 +59,9 @@
                   </td>
                   @if (row.player; as p) {
                     <td>
-                      {{ p.name }}
+                      <a class="roster__name" [routerLink]="['/teams', t.id, 'players', p.id]">{{
+                        p.name
+                      }}</a>
                       @if (p.id === selfId()) {
                         <span class="badge badge--you">You</span>
                       }
@@ -104,7 +106,9 @@
               @for (p of bench(); track p.id) {
                 <tr>
                   <td>
-                    {{ p.name }}
+                    <a class="roster__name" [routerLink]="['/teams', t.id, 'players', p.id]">{{
+                      p.name
+                    }}</a>
                     @if (p.id === selfId()) {
                       <span class="badge badge--you">You</span>
                     }

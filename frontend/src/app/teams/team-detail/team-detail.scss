@@ -1,3 +1,5 @@
+@use '../../shared/badges';
+
 :host {
   display: block;
   color: var(--lf-text);
@@ -106,6 +108,11 @@ h2 {
   }
 }
 
+.roster__name {
+  color: inherit;
+  font-weight: 500;
+}
+
 .roster__actions > * + * {
   margin-left: 0.5rem;
 }
@@ -149,9 +156,7 @@ h2 {
 }
 
 .badge--you {
-  background: var(--lf-accent);
-  color: var(--lf-bg);
-  font-weight: 700;
+  @include badges.you;
 }
 
 .detail__side h2 {

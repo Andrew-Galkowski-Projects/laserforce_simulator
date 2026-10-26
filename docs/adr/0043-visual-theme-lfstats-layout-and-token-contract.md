@@ -78,6 +78,9 @@ colour, fonts, radius and glow from nothing else; no component holds a colour li
 - event types: `--lf-ev-elimination`, `--lf-ev-missile`, `--lf-ev-special`, `--lf-ev-nuke`,
   `--lf-ev-miss`, `--lf-ev-resupply`, `--lf-ev-tag`, and for the Event groups with no
   event-type token (ANG-06e) `--lf-ev-locking`, `--lf-ev-base`, `--lf-ev-movement`;
+- Stat rating tiers (ANG-06-8, player detail's bars at Django's 80 / 60 / 40 bands):
+  `--lf-rating-elite`, `--lf-rating-good`, `--lf-rating-fair`, `--lf-rating-poor`. They fill bars
+  and carry no text, so the contrast bar does not apply; the value always shows beside the bar;
 - fonts and shape (shared by both modes): `--lf-font-body`, `--lf-font-heading`,
   `--lf-font-numeric`, `--lf-radius`, `--lf-glow` (a shadow geometry used with a colour token).
 

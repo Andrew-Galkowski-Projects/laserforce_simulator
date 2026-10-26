@@ -86,9 +86,7 @@ Items 7-20 (planned 2026-10-25, owner-approved). The API behind every one alread
 so each is frontend parity work like 1-6, with its own grill. Order is by dependency, then complexity.
 
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
-8. **Player pages (ANG-06-8)** — player list (`/players/`), player detail, player delete, career stats, role
-   benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
-   `player_career_stats`, `role_benchmarks`.
+8. **[DONE] Player pages** (ANG-06-8, in `PLAN-completed.md`).
 9. **Head-to-head & history (ANG-06-9)** — team H2H, player H2H, team match history, compare rounds. Replaces
    `matches/head_to_head`, `player_head_to_head`, `team_history`, `compare_rounds`.
 10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces

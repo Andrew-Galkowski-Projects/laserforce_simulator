@@ -5,7 +5,7 @@ import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { authInterceptor } from '../auth/auth.interceptor';
 import { ApiError } from './api-client';
-import { Player } from './players.models';
+import { CareerStats, Player, RoleBenchmarks } from './players.models';
 import { PlayersService } from './players.service';
 import { PROFILE, STATS } from './testing/player-fixtures';
 
@@ -91,5 +91,76 @@ describe('PlayersService', () => {
     expect(req.request.method).toBe('DELETE');
     req.flush(null, { status: 204, statusText: 'No Content' });
     expect(await result).toBeUndefined();
+  });
+
+  const CAREER: CareerStats = {
+    player: { id: 11, name: 'Ace', team: { id: 3, name: 'Red Dragons' } },
+    total_rounds: 2,
+    has_rounds: true,
+    career: {
+      games: 2,
+      avg_points: 4522,
+      tag_ratio: 0.96,
+      avg_survival_ticks: 1238.5,
+      avg_accuracy_pct: 54.6,
+      avg_sp_earned: 37.5,
+    },
+    per_role: [],
+    per_role_with_benchmarks: [],
+    trend: [
+      [1, 2502],
+      [2, 4522],
+    ],
+    min_rounds: 3,
+    display: 'median',
+    stat_keys: ['points_scored'],
+  };
+
+  it('gets a Player career with the benchmark threshold and display', async () => {
+    const result = firstValueFrom(players.career(11, { threshold: 3, display: 'median' }));
+    const req = http.expectOne((r) => r.url === `${BASE}/players/11/career/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.get('threshold')).toBe('3');
+    expect(req.request.params.get('display')).toBe('median');
+    req.flush({ data: CAREER, meta: {} });
+    expect(await result).toEqual(CAREER);
+  });
+
+  it('leaves out the params it is not given, so the server defaults apply', async () => {
+    const result = firstValueFrom(players.career(11));
+    const req = http.expectOne((r) => r.url === `${BASE}/players/11/career/`);
+    expect(req.request.params.keys()).toEqual([]);
+    req.flush({ data: CAREER, meta: {} });
+    await result;
+  });
+
+  it('gets the role benchmarks with the threshold and display', async () => {
+    const body: RoleBenchmarks = {
+      min_rounds: 0,
+      display: 'mean',
+      roles: ['commander'],
+      stat_keys: ['points_scored'],
+      benchmarks: {
+        commander: [
+          {
+            stat: 'points_scored',
+            mean: 7661.9,
+            median: 7267,
+            p25: 6582,
+            p75: 7322,
+            p90: 9531.5,
+            n: 4,
+          },
+        ],
+      },
+      any_data: true,
+    };
+    const result = firstValueFrom(players.benchmarks({ threshold: 0, display: 'mean' }));
+    const req = http.expectOne((r) => r.url === `${BASE}/players/benchmarks/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.get('threshold')).toBe('0');
+    expect(req.request.params.get('display')).toBe('mean');
+    req.flush({ data: body, meta: {} });
+    expect(await result).toEqual(body);
   });
 });

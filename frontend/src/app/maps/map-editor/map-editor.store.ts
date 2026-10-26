@@ -20,7 +20,7 @@ import {
   ZoneType,
 } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
-import { apiMessage } from '../shared/api-message';
+import { apiMessage } from '../../shared/api-message';
 import { PixelPoint, cellKeys } from './grid';
 
 /** The Zone-size picker's options, exactly the Django editor's. */

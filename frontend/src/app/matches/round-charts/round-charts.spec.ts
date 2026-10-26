@@ -15,7 +15,7 @@ import { stubCanvasContext } from '../testing/fake-canvas';
 import { roundDetail } from '../testing/match-fixtures';
 import { playbackPlayer, playbackSnapshot, roundPlayback } from '../testing/playback-fixtures';
 import { timeline, timelineEvent } from '../testing/timeline-fixtures';
-import { LineChart } from './line-chart';
+import { LineChart } from '../../shared/line-chart';
 import { RoundCharts } from './round-charts';
 
 const BASE = environment.apiBaseUrl;

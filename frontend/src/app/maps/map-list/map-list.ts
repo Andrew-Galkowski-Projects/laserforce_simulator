@@ -11,7 +11,7 @@ import { ArenaMap } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
 import { applyApiErrors } from '../../shared/form-errors';
-import { apiMessage } from '../shared/api-message';
+import { apiMessage } from '../../shared/api-message';
 
 /** The API's page-size cap; the list follows further pages past it. */
 const PAGE_SIZE = 100;

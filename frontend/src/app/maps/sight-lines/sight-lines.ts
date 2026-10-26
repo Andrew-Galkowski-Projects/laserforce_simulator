@@ -14,7 +14,7 @@ import {
   paintGridLines,
   strokeCell,
 } from '../map-editor/map-paint';
-import { apiMessage } from '../shared/api-message';
+import { apiMessage } from '../../shared/api-message';
 import {
   bulkToggleSight,
   bulkToggleStrongSpots,

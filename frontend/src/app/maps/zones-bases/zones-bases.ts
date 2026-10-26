@@ -14,7 +14,7 @@ import {
   paintSpawns as paintSpawnCells,
   strokeCell,
 } from '../map-editor/map-paint';
-import { apiMessage } from '../shared/api-message';
+import { apiMessage } from '../../shared/api-message';
 import {
   SaveMessage,
   SpawnBrush,

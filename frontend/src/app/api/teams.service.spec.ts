@@ -38,6 +38,7 @@ const TEAM: Team = {
   ...SLOTS,
   is_valid_roster: false,
   roster_errors: ['missing Heavy'],
+  manager: null,
   players: [PLAYER],
 };
 

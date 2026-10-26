@@ -30,6 +30,7 @@ const TEAM: Team = {
   slot_ammo: null,
   is_valid_roster: false,
   roster_errors: ['Missing Commander'],
+  manager: null,
   players: [],
 };
 

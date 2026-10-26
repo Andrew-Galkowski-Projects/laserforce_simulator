@@ -73,3 +73,10 @@ all pass `manager_or_none(request)`.
 **`PlayerInlineSerializer`** — minimal player representation (id, name, preferred_roles) for use anywhere a full player is not needed.
 
 **`PlayerSerializer`** — all 19 stats; explicit field list guarding against accidental exposure of future model fields. **ANG-06b** added read-only `age`, `started_playing_age`, `total_games`, `home_site`, `height` and `overall_rating` (a `FloatField` over the `Player.overall_rating` property), so the Angular Edit Player screen can pre-fill; writes still bind `PlayerForm` (tests: `test_apis.py::TestPlayerProfileFields`). `potential`, `salary` and `games_unavailable` stay out.
+
+## ANG-06-8 serializer fields
+
+Two read-only fields for the Angular player pages (spec #372; tests `test_api_player_pages.py`):
+
+- **`PlayerSerializer.team_name`** — `CharField(source="team.name")`, so the Players list shows each row's Team ("Free Agents" included) without a Team lookup. `PlayerViewSet.get_queryset` already `select_related`s `team`; the nested players of `TeamSerializer` and the `me` Self-insert payload carry it too.
+- **`TeamSerializer.manager`** — the managing Account's id, or `null` for an Unmanaged Team (detail only; `TeamListSerializer` is unchanged). Player detail shows *This is me* only when it equals the signed-in Account. The value is visible only to Accounts that can already read the Team (own or Unmanaged).
