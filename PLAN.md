@@ -91,37 +91,7 @@ below (13b, 14, 16); the item's grill confirms it.
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **[DONE] Player pages** (ANG-06-8, in `PLAN-completed.md`).
 9. **[DONE] Head-to-head & history** (ANG-06-9, in `PLAN-completed.md`).
-10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces
-    `matches/missile_log`, `movement_heatmap`. The round report export already shipped with ANG-06d
-    (Round detail's Export PDF); this item only aligns its file name. Spec: #384
-
-    **Grill, round 1 (owner, 2026-10-26).** Settled facts: `GET /api/rounds/<id>/missile-log/` and
-    `/heatmap/` fully cover both templates and already 404 cross-Account (`owned_game_round_q`); no
-    model, migration or simulation change. The heatmap's `processed_image_url` is the session-only
-    Django URL, so the SPA loads the image with `MapsService.processedImage(arena_map.id)`.
-    Decisions:
-    - Export: save under the server's `Content-Disposition` file name
-      (`round-<id>-<red>-vs-<blue>.pdf`), falling back to `round-<id>.pdf`.
-    - Routes `/rounds/:id/missile-log` and `/rounds/:id/heatmap`, linked from Round detail's action
-      row beside Charts. Both link back to Round detail and the Event log; the Heatmap also links to
-      the Missile log.
-    - Missile log: teams title from `GET /api/rounds/<id>/`; Fired / Hit / Efficiency (1 dp + `%`);
-      table Time (MM:SS), Actor role, Target role, Result, Friendly fire yes/no, Description, Points,
-      with roles as CMD / HVY / SCT / AMO / MED (`role-label.ts`); friendly-fire rows carry a
-      `friendly-fire` class, coloured by a `--lf-*` token; empty text "No missiles fired this round.".
-    - Heatmap: a standalone component on the `playback-map` pattern (blob image, canvas overlay,
-      loading state, object URL revoked on destroy), reusing `maps/heatmap/heat-cells.ts` and the
-      theme heat tokens. Player / Role / Team Material selects, combined and filtered client-side
-      with no refetch. No map: "No map — heatmap unavailable." and no canvas. A filter with no
-      movement shows the bare map. Scales to the content width, keeping its aspect ratio.
-    - Out of scope: player names in the missile log, a heatmap legend or counts, Event log links to
-      these screens, removing any Django view (ANG-08).
-
-    **Grill, round 2 (owner, 2026-10-26).** The export file name comes from the server: settings add
-    `CORS_EXPOSE_HEADERS = ["Content-Disposition"]` (none was set, so a cross-origin SPA could not
-    read it), a new `ApiClient.getFile(path)` returns `{ blob, filename }` parsed from the header,
-    `RoundsService.report(id)` returns that, and Round detail saves `filename ?? 'round-<id>.pdf'`.
-    Rejected: rebuilding the name client-side with a copy of `slugify` (drift).
+10. **[DONE] Round extras** (ANG-06-10, in `PLAN-completed.md`).
 11. **Enhanced setup / detail check (ANG-06-11)** — confirm items 3-4 cover the `enhanced_*` templates and
     `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`.
 12. **Batch simulate (ANG-06-12)** — form, status polling, save games. Replaces `matches/batch_simulate`.
