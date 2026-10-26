@@ -87,39 +87,7 @@ so each is frontend parity work like 1-6, with its own grill. Order is by depend
 
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **[DONE] Player pages** (ANG-06-8, in `PLAN-completed.md`).
-9. **Head-to-head & history (ANG-06-9)** — team H2H, player H2H, team match history, compare rounds. Replaces
-   `matches/head_to_head`, `player_head_to_head`, `team_history`, `compare_rounds`.
-   Spec: #377
-   Settled (grill, owner, 2026-10-26):
-   - **Team match history API.** None existed (ANG-01 did not cover it). The view body moves into
-     a shared service, `build_team_match_history(team, user, scopes)`, called by the HTML view and a
-     new `GET /api/teams/<id>/history/?scope=freeform&scope=t<id>` (no `scope` = every scope). The
-     service filters the Team's Matches and Rounds by `owned_match_q` / `owned_game_round_q`, for
-     both surfaces (the view used to filter only the Team).
-   - **Team H2H rows gain ids.** `detail_list` rows add `match_id` / `round_id` (each null on the
-     other kind), additively; tests pinning the key set are updated.
-   - **The H2H corpus ownership gap stays out** (its own follow-up in Deferred Items).
-   - **Routes:** `/teams/head-to-head`, `/players/head-to-head`, `/teams/:id/history`,
-     `/rounds/compare`. Picks live in query params (deep-linkable), invalid values are dropped
-     client-side (the `benchmark-filter` pattern), submit navigates, the API's 400 message shows in
-     the shared error box above the picker, and a 404 id shows not-found. Compare keeps a one-sided
-     pick.
-   - **Entry points:** Team detail "Match History"; Team history "vs. {opp} — H2H" per opponent;
-     Player career "Head-to-head" (`?player_a=`); Match list "Head-to-Head" + "Compare Rounds";
-     Match detail and Round detail "{team} History". Tournament / League entry points come with
-     items 13b / 15 / 16.
-   - **Pickers** load every owned row page by page (`page_size=100`, `map-list`'s `listAll` moved to
-     a shared API helper); free-agent pool Teams stay hidden (API default).
-   - **Charts:** H2H margin and cumulative W−L reuse `app-line-chart` with `xAxis: 'count'` (straight
-     lines) and a dashed zero dataset, no component change. Compare's points chart uses `'clock'`,
-     solid A / dashed B, team colours from `--lf-*` tokens (a small chart palette in
-     `_tokens.scss` if none exists).
-   - **Team history:** the Wins / Losses doughnut is dropped (ADR-0045 is line-only); its numbers go
-     into the tiles as Match W-L-T, Round W-L-T and Total Games. The scope filter keeps Overall plus
-     one checkbox per scope, auto-applied, in `?scope=`, shown only with ≥ 2 scopes. Django's
-     "Tournament Matches" heading becomes "Matches".
-   - **Out of scope:** the H2H ownership fix, template removal (ANG-08), Tournament / League entry
-     points, a Shell top-nav entry (ANG-06-20), any stat beyond parity.
+9. **[DONE] Head-to-head & history** (ANG-06-9, in `PLAN-completed.md`).
 10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces
     `matches/missile_log`, `movement_heatmap`.
 11. **Enhanced setup / detail check (ANG-06-11)** — confirm items 3-4 cover the `enhanced_*` templates and

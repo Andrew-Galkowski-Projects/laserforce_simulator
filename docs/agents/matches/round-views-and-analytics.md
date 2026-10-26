@@ -334,3 +334,36 @@ before `:id`. It needs no endpoint of its own: it `forkJoin`s the Round, `/timel
   and a silent `ResizeObserver`, so a real `Chart` can be built and destroyed.
 - Out of scope (follow-ups): clicking a chart to seek Playback, a cursor synced with Playback,
   zoom / pan.
+
+## ANG-06-9 Head-to-head & history in Angular
+
+Spec #377. Four Angular screens port the HX-03 / HX-04 / Team match history / RV-01 templates
+(the Django ones stay live until ANG-08). Every pick lives in the URL query (deep-linkable); a bad
+value is dropped client-side so the server default applies; submit navigates; a 400 shows its
+message above the picker; a 404 shows the screen's not-found state.
+
+| Route | Component | API |
+|---|---|---|
+| `/teams/head-to-head?team_a=&team_b=&provenance=&from=&to=` | `teams/team-head-to-head/` | `teams/head-to-head/` |
+| `/players/head-to-head?player_a=&player_b=&role=&provenance=&from=&to=` | `players/player-head-to-head/` | `players/head-to-head/` |
+| `/teams/:id/history?scope=…&applied=1` | `teams/team-history/` | `teams/<id>/history/` (new, see `api.md`) |
+| `/rounds/compare?round_a=&round_b=` | `matches/compare-rounds/` | `rounds/compare/` |
+
+- **Shared:** `frontend/src/app/shared/head-to-head/` (the two H2H screens: `h2h-query.ts` URL
+  readers incl. `queryId`, record cards, per-map table, the two `app-line-chart` charts with
+  `xAxis: 'count'` and a dashed "Zero" dataset); `shared/not-found-or-error.ts`
+  (`notFoundOrError(notFound, error)`, the 404-or-message `catchError` tail of all four screens).
+- **Pickers** load every owned row with `listAll` (`page_size=100`). Team history's scope filter
+  keeps Django's `applied` marker: `scope` without `applied` is a fresh load (every scope).
+- **Team history** drops the Django doughnut (ADR-0045 is line-only); its numbers are the Match /
+  Round W-L-T tiles. "Tournament Matches" is now "Matches". An unfinished Match still counts and
+  shows as a Tie, as in Django.
+- **Compare Rounds** colours one shared Team per new token `--lf-chart-1` / `--lf-chart-2`
+  (solid = Round A, dashed = Round B); fractions show to 2 decimals; rows sort case-insensitively.
+- **Team H2H rows** carry `match_id` / `round_id` (ANG-06-9), so "View" links by id, never by
+  `detail_url`.
+- **Entry points:** Team detail "Match History"; Match / Round detail "{team} History"; Team
+  history "vs. {opp} — H2H"; Player career "Head-to-head" (`?player_a=`); Match list
+  "Head-to-Head" + "Compare Rounds". Tournament / League entry points come with ANG-06 13b / 15 / 16.
+- **Not changed:** the HX-03 / HX-04 corpora are still not ownership-filtered (PLAN.md Deferred
+  Items); a seeded Round with no events gives an empty points chart (the API series is empty).

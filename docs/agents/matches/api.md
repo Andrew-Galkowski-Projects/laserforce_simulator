@@ -126,7 +126,12 @@ Both surfaces drop another Account's Matches / Rounds (`owned_match_q` / `owned_
 (`freeform`, `t<tournament id>` are the valid ones) are ignored. `team_match_history_payload` turns
 the builder's model rows into the `data` shape (`team`, `scope_options[{key,label,selected}]`,
 `show_scope_filter`, `has_any_games`, `stats`, `role_columns`, `roster`, `opponents`, `matches`,
-`single_rounds`; both lists newest first). Tests: `matches/tests/test_api_team_match_history.py`.
+`single_rounds`; both lists newest first; every Match and Single Round row carries `result`
+`won` / `lost` / `tie`, a null winner being a tie). The builder returns a frozen
+`TeamMatchHistory` dataclass (`stats` a `HistoryStats`); the HTML view spreads its fields into
+the template context. The roster query `select_related`s `game_round` (`get_mvp` reads it): the
+`("teams", "history")` scaler in `test_detail_action_query_counts.py` pins the constant query
+count. Tests: `matches/tests/test_api_team_match_history.py`.
 
 `MatchFilterSet` / `GameRoundFilterSet` / `GameEventFilterSet` live in `matches/filters.py`. The
 `events` action resolves the round with `get_object()` (cross-Account ⇒ 404) and validates the

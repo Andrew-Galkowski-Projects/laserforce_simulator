@@ -105,11 +105,15 @@ src/
                           count x-axis; Round charts + career trend),
                           auth-card.scss (the signed-out card: login + register),
                           _alerts.scss (notice / error box mixins), _badges.scss (the
-                          "You" badge mixin)
+                          "You" badge mixin), not-found-or-error.ts (notFoundOrError: a
+                          404 sets notFound, anything else the apiMessage),
+                          head-to-head/ (ANG-06-9: h2h-query.ts URL readers incl. queryId,
+                          the cards, per-map table and charts both H2H screens share)
     players/              ANG-06-8, players.routes.ts (PLAYERS_ROUTES): /players (player-list:
                           server-sorted, -paged, URL state ?sort=&dir=&page=&per_page=),
                           /players/benchmarks (role-benchmarks), /players/:id/stats
-                          (player-career: totals, per-role benchmark tables, trend chart);
+                          (player-career: totals, per-role benchmark tables, trend chart),
+                          /players/head-to-head (player-head-to-head, ANG-06-9);
                           shared/: benchmark-filter.ts (the ?threshold=&display= form +
                           benchmarkParams), benchmark-format.ts, benchmark-page.scss;
                           testing/players-loads.ts (releasePlayersLoads, specs only)
@@ -117,6 +121,8 @@ src/
                           team-create, team-detail, team-edit, team-slots, player-add,
                           player-edit, player-detail (ANG-06-8: /teams/:id/players/:playerId,
                           rating-tier Stat bars, Delete, This is me / Unlink),
+                          team-head-to-head (/teams/head-to-head) and team-history
+                          (/teams/:id/history), both ANG-06-9,
                           team-generate, roster-import (import-errors.ts:
                           classifyImportErrors sorts a failed import's errors);
                           shared/: roster.ts (SLOTS, ROLE_LABELS, bench split),
@@ -141,7 +147,8 @@ src/
                           playback-map; from `rounds/:id/playback/` + the timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
                           (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;
-                          the chart itself is shared/line-chart.ts);
+                          the chart itself is shared/line-chart.ts), /rounds/compare
+                          (compare-rounds/: ANG-06-9, the stat-delta table + points chart);
                           shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
                           role-label.ts (roleLabel: CMD/HVY/...), side-tag.ts (sideTag: R / B),
                           event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
