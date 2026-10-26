@@ -346,7 +346,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    `python scripts/mutate.py <file> <mutations.json> -- <pytest args>` (JSON
    `[name, old, new]` triples in the scratchpad): it restores the file and
    prints which tests caught each one. A `SURVIVED` line is a test to write;
-   `BASELINE FAILED` (exit 2, nothing mutated) means a test is red on the
+   a `BROKEN` line (the run failed with no test named: it does not compile)
+   is a mutation to rewrite; `BASELINE FAILED` (exit 2, nothing mutated) means a test is red on the
    unchanged code: fix it first.
    Frontend code takes `--run -- npm --prefix frontend exec -- ng test
    --watch=false --include=<spec>` in place of the pytest args.
@@ -362,7 +363,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    League with two completed Seasons and an active one) and remove it
    with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Take a
-   screenshot of each changed screen at 1280px and at 768px (`resize_page`),
+   screenshot of each changed screen at 1280px and at 768px (`resize_page`);
+   shoot transient UI (a snackbar lasts 5 s) in the same turn it appears,
+   right after the script that waits for it (ANG-06-11),
    read it, and fix anything clipped or wrapped mid-word before review: specs
    assert text, so only the picture shows layout (ANG-06c's winner chips).
    After a style fix, read the changed property's computed value before

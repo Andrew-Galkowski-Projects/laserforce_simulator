@@ -31,10 +31,12 @@ while ($procs.ContainsKey($id) -and -not $self.ContainsKey($id)) {
     $id = [int]$procs[$id].ParentProcessId
 }
 
+# A command line may spell the worktree with forward slashes (`<worktree>/laserforce_simulator/
+# manage.py runserver`, as frontend/CLAUDE.md starts Django), so compare it with `/` as `\`.
 $targets = $procs.Values | Where-Object {
     -not $self.ContainsKey([int]$_.ProcessId) -and (
         ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root, 'OrdinalIgnoreCase')) -or
-        ($_.CommandLine -and $_.CommandLine.IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0)
+        ($_.CommandLine -and $_.CommandLine.Replace('/', '\').IndexOf($root, [StringComparison]::OrdinalIgnoreCase) -ge 0)
     )
 }
 

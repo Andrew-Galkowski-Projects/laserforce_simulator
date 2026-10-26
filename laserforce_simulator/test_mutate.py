@@ -59,6 +59,25 @@ class MutateTests(TestCase):
         self.assertEqual(outcome.status, "survived")
         self.assertEqual(outcome.failed, [])
 
+    def test_a_mutation_that_breaks_the_module_is_broken_not_caught(self) -> None:
+        # A collection error fails the run with no test named: no test caught a
+        # bug, the mutation never ran (ANG-06-11: an unimported `map` read "caught").
+        [outcome] = self._mutate(("syntax error", "return a + b", "return a +"))
+        self.assertEqual(outcome.status, "broken")
+        self.assertEqual(outcome.failed, [])
+
+    def test_main_prints_broken_and_exits_1(self) -> None:
+        mutations = self.root / "mutations.json"
+        mutations.write_text(
+            json.dumps([["syntax error", "return a + b", "return a +"]])
+        )
+        out = io.StringIO()
+        with contextlib.chdir(self.root), contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as caught:
+                mutate.main([str(self.target), str(mutations), "--", *_ARGS])
+        self.assertEqual(caught.exception.code, 1)
+        self.assertIn("BROKEN    syntax error", out.getvalue())
+
     def test_missing_and_ambiguous_patterns_are_reported_without_a_run(
         self,
     ) -> None:
@@ -153,11 +172,25 @@ class RunAnyCommandTests(TestCase):
         return out.getvalue()
 
     def test_runs_the_command_and_judges_by_its_exit_code(self) -> None:
-        check = "import sys, calc; sys.exit(calc.add(2, 3) != 5)"
+        # A caught mutation needs a named failing test as well as the non-zero exit
+        # (else it is broken), so the check reports one the way pytest does.
+        check = (
+            "import sys, calc\n"
+            "if calc.add(2, 3) != 5:\n"
+            "    print('FAILED check.py::test_add')\n"
+            "    sys.exit(1)"
+        )
         printed = self._main(sys.executable, "-c", check)
-        self.assertIn("caught    plus to minus", printed)
+        self.assertIn("caught    plus to minus: check.py::test_add", printed)
         self.assertIn("SURVIVED  no-op", printed)
         self.assertEqual(self.target.read_bytes(), _CALC)
+
+    def test_a_failing_command_that_names_no_test_is_broken(self) -> None:
+        # Vitest on a mutation that does not compile exits 1 with no FAIL line.
+        check = "import sys, calc; sys.exit(calc.add(2, 3) != 5)"
+        printed = self._main(sys.executable, "-c", check)
+        self.assertIn("BROKEN    plus to minus", printed)
+        self.assertNotIn("caught", printed)
 
     def test_a_command_that_fails_on_the_unchanged_file_exits_2(self) -> None:
         out = io.StringIO()
