@@ -345,7 +345,7 @@ export interface RoundMissileLog {
 export interface HeatmapRosterEntry {
   id: number;
   name: string;
-  role: string;
+  role: Role;
   team_color: Side;
 }
 

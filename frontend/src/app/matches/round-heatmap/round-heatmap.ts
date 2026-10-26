@@ -14,6 +14,7 @@ import { MatOption, MatSelect } from '@angular/material/select';
 import { RouterLink } from '@angular/router';
 import { EMPTY, catchError, switchMap, tap } from 'rxjs';
 import { MapsService } from '../../api/maps.service';
+import { Role } from '../../api/players.models';
 import { RoundHeatmap as RoundHeatmapData, Side } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
 import { heatCells, heatColour } from '../../maps/heatmap/heat-cells';
@@ -24,7 +25,7 @@ import { loadRouteRecord } from '../shared/route-record';
 import { HeatmapFilter, filteredOccupancy } from './heatmap-filter';
 
 /** The Role picker's options after "All", in ADR-0043 order. */
-const ROLES: { value: string; label: string }[] = [
+const ROLES: readonly { value: Role; label: string }[] = [
   { value: 'commander', label: 'Commander' },
   { value: 'heavy', label: 'Heavy' },
   { value: 'scout', label: 'Scout' },
@@ -33,7 +34,7 @@ const ROLES: { value: string; label: string }[] = [
 ];
 
 /** The Team picker's options. */
-const TEAMS: { value: Side | null; label: string }[] = [
+const TEAMS: readonly { value: Side | null; label: string }[] = [
   { value: null, label: 'Both' },
   { value: 'red', label: 'Red' },
   { value: 'blue', label: 'Blue' },

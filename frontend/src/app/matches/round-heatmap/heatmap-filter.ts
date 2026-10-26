@@ -1,12 +1,13 @@
 // The Movement heatmap's pure part: a Round's per-player Cell occupancy -> one summed map.
 import { CellKey } from '../../api/maps.models';
-import { RoundHeatmap } from '../../api/rounds.models';
+import { Role } from '../../api/players.models';
+import { RoundHeatmap, Side } from '../../api/rounds.models';
 
 /** The three pickers; `null` keeps everyone. */
 export interface HeatmapFilter {
   playerId: number | null;
-  role: string | null;
-  team: 'red' | 'blue' | null;
+  role: Role | null;
+  team: Side | null;
 }
 
 /**

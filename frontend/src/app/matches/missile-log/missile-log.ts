@@ -1,4 +1,4 @@
-import { ChangeDetectionStrategy, Component, computed, inject } from '@angular/core';
+import { Component, computed, inject } from '@angular/core';
 import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { MatAnchor } from '@angular/material/button';
 import { RouterLink } from '@angular/router';
@@ -26,7 +26,6 @@ export function efficiencyLabel(efficiency: number): string {
  */
 @Component({
   selector: 'app-missile-log',
-  changeDetection: ChangeDetectionStrategy.OnPush,
   imports: [MatAnchor, RecordNotFound, RouterLink],
   templateUrl: './missile-log.html',
   styleUrl: './missile-log.scss',
