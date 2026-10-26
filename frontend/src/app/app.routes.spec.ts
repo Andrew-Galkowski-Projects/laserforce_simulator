@@ -30,6 +30,10 @@ import { TeamEdit } from './teams/team-edit/team-edit';
 import { TeamGenerate } from './teams/team-generate/team-generate';
 import { TeamList } from './teams/team-list/team-list';
 import { TeamSlots } from './teams/team-slots/team-slots';
+import { TeamHeadToHead } from './teams/team-head-to-head/team-head-to-head';
+import { TeamHistory } from './teams/team-history/team-history';
+import { PlayerHeadToHead } from './players/player-head-to-head/player-head-to-head';
+import { CompareRounds } from './matches/compare-rounds/compare-rounds';
 
 describe('app routes', () => {
   let http: HttpTestingController;
@@ -228,6 +232,48 @@ describe('app routes', () => {
         expect(TestBed.inject(Title).getTitle()).toBe(title);
       },
     );
+  });
+
+  describe('signed in, analytics screens (ANG-06-9)', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    // These specs check routing only. Drop whatever the four screens (and their pickers) load,
+    // so ANG-06-9's screen tickets never edit this file.
+    afterEach(() => {
+      http.match(() => true);
+    });
+
+    it.each([
+      ['/teams/head-to-head', TeamHeadToHead, 'Team Head-to-Head - Laserforce Simulator'],
+      ['/teams/3/history', TeamHistory, 'Team Match History - Laserforce Simulator'],
+      ['/players/head-to-head', PlayerHeadToHead, 'Player Head-to-Head - Laserforce Simulator'],
+      ['/rounds/compare', CompareRounds, 'Compare Rounds - Laserforce Simulator'],
+    ])('resolves %s to its screen and page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
+
+    it.each([
+      ['/teams/head-to-head', TeamDetail],
+      ['/players/head-to-head', PlayerCareer],
+      ['/rounds/compare', RoundDetail],
+    ])('never reads the static segment of %s as an id', async (url, detail) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(harness.fixture.debugElement.query(By.directive(detail))).toBeNull();
+    });
+
+    it('keeps the query params on a deep link', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/teams/3/history?scope=freeform&scope=t2&applied=1');
+      expect(routerUrl()).toBe('/teams/3/history?scope=freeform&scope=t2&applied=1');
+      expect(harness.fixture.debugElement.query(By.directive(TeamHistory))).not.toBeNull();
+    });
   });
 
   describe('signed in, Maps area', () => {

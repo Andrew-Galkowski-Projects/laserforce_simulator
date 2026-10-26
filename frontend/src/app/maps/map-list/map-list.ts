@@ -6,15 +6,13 @@ import { MatDialog } from '@angular/material/dialog';
 import { MatError, MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { Router, RouterLink } from '@angular/router';
-import { EMPTY, Observable, expand, filter, reduce, switchMap } from 'rxjs';
+import { filter, switchMap } from 'rxjs';
+import { listAll } from '../../api/list-all';
 import { ArenaMap } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
 import { applyApiErrors } from '../../shared/form-errors';
 import { apiMessage } from '../../shared/api-message';
-
-/** The API's page-size cap; the list follows further pages past it. */
-const PAGE_SIZE = 100;
 
 /** `MapUploadForm.name`'s `max_length`. */
 const NAME_MAX_LENGTH = 100;
@@ -72,7 +70,8 @@ export class MapList {
     this.destroyRef.onDestroy(() => {
       for (const src of this.thumbs().values()) URL.revokeObjectURL(src);
     });
-    this.listAll()
+    // Every Arena map, oldest first, across every page.
+    listAll((page) => this.maps.list({ ...page, ordering: 'created_at' }))
       .pipe(takeUntilDestroyed(this.destroyRef))
       .subscribe({
         next: (maps) => {
@@ -81,17 +80,6 @@ export class MapList {
         },
         error: () => this.loadError.set(true),
       });
-  }
-
-  /** Every Arena map, oldest first: page 1, then each further page `meta.total_pages` names. */
-  private listAll(): Observable<ArenaMap[]> {
-    const params = { page_size: PAGE_SIZE, ordering: 'created_at' };
-    return this.maps.list(params).pipe(
-      expand(({ meta }) =>
-        meta.page < meta.total_pages ? this.maps.list({ ...params, page: meta.page + 1 }) : EMPTY,
-      ),
-      reduce((all, page) => [...all, ...page.items], [] as ArenaMap[]),
-    );
   }
 
   /** The message under a field: the server's, else the client-side check's, once touched. */

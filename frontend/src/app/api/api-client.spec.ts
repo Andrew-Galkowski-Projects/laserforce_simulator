@@ -54,6 +54,14 @@ describe('ApiClient', () => {
     expect(await result).toEqual(['x']);
   });
 
+  it('repeats a param once per value of an array', async () => {
+    const result = firstValueFrom(api.get<string[]>('things/', { scope: ['freeform', 't2'] }));
+    const req = http.expectOne((r) => r.url === `${BASE}/things/`);
+    expect(req.request.params.getAll('scope')).toEqual(['freeform', 't2']);
+    req.flush({ data: [], meta: {} });
+    await result;
+  });
+
   it('POSTs a JSON body and unwraps the created object', async () => {
     const result = firstValueFrom(api.post<{ id: number }>('teams/', { name: 'Red' }));
     const req = http.expectOne(`${BASE}/teams/`);

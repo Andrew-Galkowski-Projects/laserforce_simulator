@@ -75,6 +75,7 @@ Player is **404 on every read and write**, and the row is left unchanged.
 | PATCH `/api/players/<pk>/` | `partial_update` (`player-detail`) | `PlayerForm` over `merged_form_data` + `full_clean()`; `team` is not a form field (cannot move a Player) | 200 `PlayerSerializer` |
 | DELETE `/api/players/<pk>/` | `destroy` (`player-detail`) | — | **204, empty body** (slot FKs `SET_NULL`) |
 | GET `/api/teams/head-to-head/?team_a=&team_b=[&provenance=&from=&to=]` | `head_to_head` (`team-head-to-head`, ANG-01b) | `TeamH2HParamsForm` (`matches/api_forms.py`) | 200 `{team_a, team_b, provenance, date_from, date_to, match_record, round_record, score_margin, avg_survivors, top_impactful, per_map_breakdown, detail_list, margin_series, cumulative_wl_series}` via `matches.services.build_team_h2h` |
+| GET `/api/teams/<pk>/history/[?scope=…]` | `history` (`team-history`, ANG-06-9) | — (`scope` repeated: absent = every scope, `?scope=` = none, unknown keys ignored) | 200 Team match history via `matches.team_match_history` (owned games only); see `docs/agents/matches/api.md` |
 | GET `/api/players/head-to-head/?player_a=&player_b=[&role=&provenance=&from=&to=]` | `head_to_head` (`player-head-to-head`, ANG-01b) | `PlayerH2HParamsForm` (`matches/api_forms.py`) | 200 `{player_a, player_b, role, provenance, date_from, date_to, round_record, score_margin, tag_stats, per_role_breakdown, per_map_breakdown, detail_list, margin_series, cumulative_wl_series}` via `matches.services.build_player_h2h`; empty corpus ⇒ zeroed aggregates |
 | GET `/api/players/<pk>/career/[?threshold=&display=]` | `career` (`player-career`, ANG-01b) | `BenchmarkParamsForm` (`teams/api_forms.py`) | 200 `{player, total_rounds, has_rounds, career, per_role, trend, min_rounds, display, stat_keys, per_role_with_benchmarks}` via `build_career_stats` |
 | GET `/api/players/benchmarks/[?threshold=&display=]` | `benchmarks` (`player-benchmarks`, ANG-01b) | `BenchmarkParamsForm` | 200 `{min_rounds, display, roles, stat_keys, benchmarks, any_data}` via `build_role_benchmarks(..., user=request.user)` (the template-only `benchmarks_by_role` is dropped); **UXP-14:** scoped to the caller's own + Unmanaged Rounds |
@@ -130,6 +131,7 @@ serializers: `docs/agents/teams/api.md`.
 /api/teams/import/             → POST (multipart): LG-00b roster import
 /api/teams/import/template/    → GET: roster template CSV (raw, not enveloped)
 /api/teams/head-to-head/       → GET: ANG-01b HX-03 team head-to-head ("team-head-to-head")
+/api/teams/<id>/history/       → GET: ANG-06-9 Team match history ("team-history")
 /api/players/                  → PlayerViewSet (list, detail, PATCH, DELETE)
 /api/players/head-to-head/     → GET: ANG-01b HX-04 player head-to-head ("player-head-to-head")
 /api/players/<id>/career/      → GET: ANG-01b HX-01 career stats ("player-career")

@@ -151,6 +151,12 @@ describe('Career stats (/players/:id/stats)', () => {
       expect(link?.getAttribute('href')).toBe('/players/benchmarks');
     });
 
+    it('links "Head-to-head" to a comparison with this Player as Player A', async () => {
+      await open();
+      const link = [...page().querySelectorAll('a')].find((a) => text(a) === 'Head-to-head');
+      expect(link?.getAttribute('href')).toBe('/players/head-to-head?player_a=7');
+    });
+
     it('leaves out the Team part for a Player with no Team', async () => {
       await open(career({ player: { id: 7, name: 'Ace', team: null } }));
       expect(text(page().querySelector('h1'))).toBe('Ace');

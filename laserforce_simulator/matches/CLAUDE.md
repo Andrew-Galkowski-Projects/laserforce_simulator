@@ -44,6 +44,7 @@ derives ownership from its parent (see `accounts-ownership.md`).
 Shared by the HTML views and the API; services must not import the view modules that import them.
 
 - `matches/services.py` (ANG-01b) — sandbox Match/Round creation, batch-team resolution, round / head-to-head analytics builders.
+- `matches/team_match_history.py` (ANG-06-9) — `build_team_match_history` (a frozen `TeamMatchHistory`, owned games only) + `team_match_history_payload`; shared by the HTML `team_match_history` view and `/api/teams/<id>/history/`.
 - `matches/league_services.py` (ANG-01d-1) — League create / next-season rollover / reassign / teardown, League + Season read builders (dashboard, history, standings, schedule, awards, owner evaluation), Conference replace. Moved helpers are re-exported from `league_views.py`: patch `matches.league_services.*`, not `league_views`.
 - `matches/league_play_services.py` (ANG-01d-2) — the League play loop and single active play run, shared by the HTML play views and the `/api/seasons/` play endpoints.
 - `matches/league_screen_services.py` (ANG-01e) — the builders for all 15 League screens, enrolment, the per-Account `WatchedPlayer` watch list, team finances; shared by `league_screens/*` and `/api/leagues/<id>/…`. Patch `matches.league_screen_services.*`.
@@ -81,7 +82,7 @@ Paths below are relative to the repo root.
 - REST API: endpoints, serializer fields and filters for matches, rounds (scoreboard), leagues, league screens and tournaments; round actions and analytics; CORS; JWT auth and token endpoints; the full API conventions — `docs/agents/matches/api.md`
 - URL table (`/matches/`, `/api/`) — `docs/agents/matches/urls.md`
 - Celery, batch jobs, Job status, polling JSON (API-03), task connection cleanup + close-in-transaction test guard (CI-01) — `docs/agents/matches/async-celery.md`
-- Round pages, Round scoreboard builder (`round_scoreboard`), Event log timeline API (`round_timeline`, ANG-06e), Playback snapshots + API (`matches/playback.py`, ANG-06f), Angular event charts + Chart overlays (ANG-06g), event log windowing, playback map, heatmap, round compare, highlights, PDF report + charts (RV-03, RV-05), head-to-head — `docs/agents/matches/round-views-and-analytics.md`
+- Round pages, Round scoreboard builder (`round_scoreboard`), Event log timeline API (`round_timeline`, ANG-06e), Playback snapshots + API (`matches/playback.py`, ANG-06f), Angular event charts + Chart overlays (ANG-06g), event log windowing, playback map, heatmap, round compare, highlights, PDF report + charts (RV-03, RV-05), head-to-head, Angular head-to-head / Team match history / Compare Rounds screens (ANG-06-9) — `docs/agents/matches/round-views-and-analytics.md`
 - League / Season models, schedule, standings, create League, dashboards, play season, next season, League history, CAR-01, constant-query League reads + batched award sets (PERF-01), narrowed Team history Season scan (PERF-03) — `docs/agents/matches/league-foundation.md`
 - Topnav modes, `Play` dropdown, live stats + Stop, One Week (Live) — `docs/agents/matches/nav-and-play.md`
 - Season map modes, map pool, rotate_by_matchday (LG-01j, SUB-01) — `docs/agents/matches/map-modes.md`

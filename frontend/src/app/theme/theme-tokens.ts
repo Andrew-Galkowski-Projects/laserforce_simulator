@@ -82,6 +82,9 @@ export const LF_COLOUR_TOKENS = [
   '--lf-rating-good',
   '--lf-rating-fair',
   '--lf-rating-poor',
+  // Compare Rounds' Points Over Time (ANG-06-9): one colour per shared Team, in series order.
+  '--lf-chart-1',
+  '--lf-chart-2',
   ...LF_MAP_TOKENS,
 ] as const;
 

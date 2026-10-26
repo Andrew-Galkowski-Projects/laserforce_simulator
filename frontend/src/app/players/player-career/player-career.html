@@ -14,7 +14,15 @@
         <small class="muted">&#32;— {{ team.name }}</small>
       }
     </h1>
-    <a mat-stroked-button routerLink="/players/benchmarks">Role benchmarks</a>
+    <div class="bp-actions">
+      <a
+        mat-stroked-button
+        routerLink="/players/head-to-head"
+        [queryParams]="{ player_a: c.player.id }"
+        >Head-to-head</a
+      >
+      <a mat-stroked-button routerLink="/players/benchmarks">Role benchmarks</a>
+    </div>
   </div>
   <p>
     Total rounds: <strong>{{ c.total_rounds }}</strong>

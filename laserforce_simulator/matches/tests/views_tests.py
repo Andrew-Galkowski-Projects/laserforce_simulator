@@ -256,6 +256,36 @@ class TestTeamMatchHistoryScopeFilter:
 
 
 @pytest.mark.django_db
+class TestTeamMatchHistoryOwnership:
+    """ANG-06-9: another Account's games between two Unmanaged Teams never
+    appear on the HTML Team match history page."""
+
+    def test_other_accounts_match_and_round_absent(self):
+        from django.contrib.auth import get_user_model
+        from teams.models import Team
+
+        other = get_user_model().objects.create_user(
+            email="ang069-html-other@example.com", password="Str0ng-Passphrase-9"
+        )
+        team = Team.objects.create(name="Shared")
+        opp = Team.objects.create(name="Foe")
+        mine = Match.objects.create(
+            team_red=team, team_blue=opp, manager=get_shared_manager()
+        )
+        Match.objects.create(team_red=team, team_blue=opp, manager=other)
+        GameRound.objects.create(
+            team_red=team, team_blue=opp, round_number=1, manager=other
+        )
+        client = Client()
+        client.force_login(get_shared_manager())
+        response = client.get(
+            reverse("team_match_history", kwargs={"team_id": team.id})
+        )
+        assert [m.id for m in response.context["matches"]] == [mine.id]
+        assert list(response.context["detailed_rounds"]) == []
+
+
+@pytest.mark.django_db
 class TestCreateMatchView:
     def test_create_match_same_team_returns_form(self):
         """Submitting the same team for both sides must return the form (200), no Match created."""

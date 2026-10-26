@@ -14,6 +14,7 @@ import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { matchRow } from '../testing/match-fixtures';
 import { releaseMatchesLoads } from '../testing/matches-loads';
+import { releaseTeamsLoads } from '../../teams/testing/teams-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -247,6 +248,26 @@ describe('Match detail (/matches/:id)', () => {
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/matches');
     releaseMatchesLoads();
+  });
+
+  it('links "{team} History" for both Teams', async () => {
+    await open(matchRow());
+    const history = [...page().querySelectorAll('a')]
+      .filter((a) => text(a).endsWith('History'))
+      .map((a) => `${text(a)} -> ${a.getAttribute('href')}`);
+    expect(history).toEqual([
+      'Alpha History -> /teams/3/history',
+      'Bravo History -> /teams/4/history',
+    ]);
+  });
+
+  it("opens a Team's history from its link", async () => {
+    await open(matchRow());
+    const link = [...page().querySelectorAll('a')].find((a) => text(a) === 'Bravo History');
+    link?.click();
+    await harness.fixture.whenStable();
+    releaseTeamsLoads();
+    expect(routerUrl()).toBe('/teams/4/history');
   });
 
   it('shows "Match not found" with the back link on a 404', async () => {

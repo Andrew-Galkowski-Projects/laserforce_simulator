@@ -159,5 +159,8 @@ h1 {
 }
 
 .match-detail__back {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
   margin-top: 2rem;
 }

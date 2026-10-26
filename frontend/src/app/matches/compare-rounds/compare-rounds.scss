@@ -1,0 +1,123 @@
+// Compare Rounds (ANG-06-9, ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+h2 {
+  margin: 0 0 0.25rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.1rem;
+}
+
+.cr-intro,
+.cr-sub {
+  margin: 0 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+.cr-error {
+  @include alerts.error;
+}
+
+// Two selects and the button on one line from ~720px of content width; stacked below.
+.cr-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 1rem;
+  align-items: baseline;
+  margin-bottom: 1rem;
+
+  // Round A and B share a row (Compare wraps below), or take one each when the form is under
+  // 44rem, so a long "#id - red vs blue" label stays whole.
+  mat-form-field {
+    flex: 1 1 max(calc(50% - 0.5rem), min(100%, (44rem - 100%) * 999));
+    min-width: 0;
+  }
+}
+
+.cr-section {
+  margin-bottom: 2rem;
+}
+
+// The table has 17 columns: it scrolls sideways inside its own card, never the page.
+.cr-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.cr-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--lf-font-numeric);
+  white-space: nowrap;
+
+  th,
+  td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+.cr-player {
+  font-weight: 700;
+}
+
+.cr-side {
+  padding: 0 0.35rem;
+  border-radius: var(--lf-radius);
+  background: var(--side);
+  color: var(--lf-bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.delta__change {
+  display: block;
+  font-size: 0.8rem;
+}
+
+.delta--up {
+  background: color-mix(in srgb, var(--lf-rating-elite) 18%, transparent);
+}
+
+.delta--down {
+  background: color-mix(in srgb, var(--lf-rating-poor) 18%, transparent);
+}
+
+.delta--muted {
+  background: var(--lf-surface-alt);
+  color: var(--lf-text-muted);
+}
+
+.cr-chart {
+  height: 25rem;
+}
+
+.badge--you {
+  @include badges.you;
+
+  vertical-align: middle;
+}

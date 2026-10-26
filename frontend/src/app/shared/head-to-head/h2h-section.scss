@@ -1,0 +1,33 @@
+// A head-to-head section component's own styles (map table, charts).
+@use 'h2h-table';
+
+:host {
+  display: block;
+}
+
+h3 {
+  @include h2h-table.heading;
+}
+
+.h2h-scroll {
+  @include h2h-table.scroll;
+}
+
+.h2h-table {
+  @include h2h-table.table;
+}
+
+.h2h-empty {
+  @include h2h-table.empty;
+}
+
+.h2h-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+}
+
+.h2h-chart {
+  height: 20rem;
+  min-width: 0;
+}

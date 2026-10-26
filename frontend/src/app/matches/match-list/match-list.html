@@ -1,10 +1,16 @@
 <div class="match-list__header">
   <h1>Match History</h1>
-  @if (!nothingPlayed()) {
-    <div class="match-list__actions">
-      <ng-container *ngTemplateOutlet="newButtons" />
-    </div>
-  }
+  <div class="match-list__buttons">
+    @if (!nothingPlayed()) {
+      <div class="match-list__actions">
+        <ng-container *ngTemplateOutlet="newButtons" />
+      </div>
+    }
+    <nav class="match-list__tools" aria-label="Analytics">
+      <a mat-stroked-button routerLink="/teams/head-to-head">Head-to-Head</a>
+      <a mat-stroked-button routerLink="/rounds/compare">Compare Rounds</a>
+    </nav>
+  </div>
 </div>
 
 @if (nothingPlayed()) {

@@ -17,7 +17,7 @@ from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
-from matches.models import GameRound
+from matches.models import GameRound, Match
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
 from teams.models import Player, Team
@@ -138,6 +138,19 @@ class TestTeamH2H(_H2HTestCase):
         _saved_round(self.blue, self.red)
         data = self.h2h(team_a=self.red.pk, team_b=self.blue.pk).json()["data"]
         self.assertEqual(data["round_record"]["n"], 1)
+
+    def test_detail_rows_carry_match_and_round_ids(self) -> None:
+        """ANG-06-9: the SPA links a row by id, never by ``detail_url``."""
+        game_round = _saved_round(self.red, self.blue)
+        match = Match.objects.create(
+            team_red=self.red, team_blue=self.blue, is_completed=True
+        )
+        data = self.h2h(team_a=self.red.pk, team_b=self.blue.pk).json()["data"]
+        rows = {row["kind"]: row for row in data["detail_list"]}
+        self.assertEqual(rows["match"]["match_id"], match.pk)
+        self.assertIsNone(rows["match"]["round_id"])
+        self.assertEqual(rows["round"]["round_id"], game_round.pk)
+        self.assertIsNone(rows["round"]["match_id"])
 
     def test_provenance_and_dates_echoed(self) -> None:
         data = self.h2h(

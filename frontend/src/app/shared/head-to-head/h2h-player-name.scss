@@ -1,0 +1,7 @@
+@use '../badges';
+
+.badge--you {
+  @include badges.you;
+
+  vertical-align: middle;
+}

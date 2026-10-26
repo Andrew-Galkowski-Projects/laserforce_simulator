@@ -87,8 +87,7 @@ so each is frontend parity work like 1-6, with its own grill. Order is by depend
 
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **[DONE] Player pages** (ANG-06-8, in `PLAN-completed.md`).
-9. **Head-to-head & history (ANG-06-9)** — team H2H, player H2H, team match history, compare rounds. Replaces
-   `matches/head_to_head`, `player_head_to_head`, `team_history`, `compare_rounds`.
+9. **[DONE] Head-to-head & history** (ANG-06-9, in `PLAN-completed.md`).
 10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces
     `matches/missile_log`, `movement_heatmap`.
 11. **Enhanced setup / detail check (ANG-06-11)** — confirm items 3-4 cover the `enhanced_*` templates and

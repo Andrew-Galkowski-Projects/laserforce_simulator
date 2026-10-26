@@ -15,6 +15,7 @@ import { PROFILE, STATS } from '../../api/testing/player-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { User } from '../../auth/user';
+import { releaseTeamsLoads } from '../../teams/testing/teams-loads';
 import { roundDetail } from '../testing/match-fixtures';
 import { scoreboardRow, scoreboardSide } from '../testing/scoreboard-fixtures';
 
@@ -203,6 +204,34 @@ describe('Round detail (/rounds/:id)', () => {
       const charts = [...page().querySelectorAll('a')].find((a) => text(a) === 'Charts');
       expect(charts?.getAttribute('href')).toBe('/rounds/9/charts');
       expect(text(charts?.previousElementSibling)).toBe('Playback');
+    });
+
+    it('links "{team} History" for both Teams', async () => {
+      await open(round());
+      const history = [...page().querySelectorAll('a')]
+        .filter((a) => text(a).endsWith('History'))
+        .map((a) => `${text(a)} -> ${a.getAttribute('href')}`);
+      expect(history).toEqual([
+        'Comets History -> /teams/3/history',
+        'Vipers History -> /teams/4/history',
+      ]);
+    });
+
+    it('leaves out the history link of a Team that no longer exists', async () => {
+      await open(round({ team_red: null }));
+      const history = [...page().querySelectorAll('a')]
+        .filter((a) => text(a).endsWith('History'))
+        .map((a) => text(a));
+      expect(history).toEqual(['Vipers History']);
+    });
+
+    it("opens a Team's history from its link", async () => {
+      await open(round());
+      const link = [...page().querySelectorAll('a')].find((a) => text(a) === 'Comets History');
+      link?.click();
+      await harness.fixture.whenStable();
+      releaseTeamsLoads();
+      expect(TestBed.inject(Router).url).toBe('/teams/3/history');
     });
 
     it('subtitles a Match round "Match Round N – date", back to its Match', async () => {
