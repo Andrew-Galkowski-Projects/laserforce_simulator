@@ -38,6 +38,15 @@ class TestCorsOnApi(TestCase):
         self.assertEqual(response["Access-Control-Allow-Origin"], DEV_ORIGIN)
         self.assertEqual(response["Access-Control-Allow-Credentials"], "true")
 
+    def test_content_disposition_is_exposed_to_the_spa(self) -> None:
+        """ANG-06-10: the SPA reads the Round report's file name from
+        Content-Disposition, which a cross-origin response hides unless
+        exposed."""
+        response = self.api.get("/api/teams/", HTTP_ORIGIN=DEV_ORIGIN)
+        self.assertEqual(response.status_code, 200)
+        exposed = response.get("Access-Control-Expose-Headers", "")
+        self.assertIn("content-disposition", exposed.lower())
+
     def test_disallowed_origin_gets_no_allow_origin(self) -> None:
         response = self.api.get("/api/teams/", HTTP_ORIGIN=OTHER_ORIGIN)
         self.assertEqual(response.status_code, 200)

@@ -194,9 +194,9 @@ export class RoundDetail {
     this.exporting.set(true);
     this.exportError.set(null);
     this.rounds.report(id).subscribe({
-      next: (blob) => {
+      next: (file) => {
         this.exporting.set(false);
-        saveBlob(blob, `round-${id}.pdf`);
+        saveBlob(file.blob, file.filename ?? `round-${id}.pdf`);
       },
       error: () => {
         this.exporting.set(false);

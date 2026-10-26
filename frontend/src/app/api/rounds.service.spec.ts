@@ -181,14 +181,16 @@ describe('RoundsService', () => {
     expect(await result).toEqual(ROUND);
   });
 
-  it('downloads the Round report PDF as a Blob, no envelope unwrap', async () => {
+  it('downloads the Round report PDF with its server file name, no envelope unwrap', async () => {
     const result = firstValueFrom(rounds.report(21));
     const req = http.expectOne(`${BASE}/rounds/21/report/`);
     expect(req.request.method).toBe('GET');
     expect(req.request.responseType).toBe('blob');
     const pdf = new Blob(['%PDF-1.4'], { type: 'application/pdf' });
-    req.flush(pdf);
-    expect(await result).toBe(pdf);
+    req.flush(pdf, {
+      headers: { 'Content-Disposition': 'attachment; filename="round-21-Red-vs-Blue.pdf"' },
+    });
+    expect(await result).toEqual({ blob: pdf, filename: 'round-21-Red-vs-Blue.pdf' });
   });
 
   it("pages through a Round's events with filters", async () => {

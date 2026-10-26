@@ -4,7 +4,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { firstValueFrom } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { authInterceptor } from '../auth/auth.interceptor';
-import { ApiClient, ApiError } from './api-client';
+import { ApiClient, ApiError, DownloadedFile } from './api-client';
 import { signIn } from './testing/auth-fixtures';
 
 const BASE = environment.apiBaseUrl;
@@ -238,5 +238,71 @@ describe('ApiClient.getRaw', () => {
     expect(err).toBeInstanceOf(ApiError);
     expect(err.status).toBe(404);
     expect(err.errors.length).toBeGreaterThan(0);
+  });
+});
+
+/** ANG-06-10: a Blob download that also reports the server's file name. */
+describe('ApiClient.getFile', () => {
+  let api: ApiClient;
+  let http: HttpTestingController;
+  const PATH = 'rounds/7/report/';
+
+  beforeEach(async () => {
+    TestBed.configureTestingModule({
+      providers: [
+        provideHttpClient(withInterceptors([authInterceptor])),
+        provideHttpClientTesting(),
+      ],
+    });
+    api = TestBed.inject(ApiClient);
+    http = TestBed.inject(HttpTestingController);
+    await signIn();
+  });
+
+  afterEach(() => http.verify());
+
+  async function download(headers: Record<string, string>): Promise<DownloadedFile> {
+    const result = firstValueFrom(api.getFile(PATH));
+    http.expectOne(`${BASE}/${PATH}`).flush(new Blob(['%PDF']), { headers });
+    return result;
+  }
+
+  it('GETs a Blob with the bearer header and returns the body untouched', async () => {
+    const result = firstValueFrom(api.getFile(PATH));
+    const req = http.expectOne(`${BASE}/${PATH}`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.responseType).toBe('blob');
+    expect(req.request.headers.get('Authorization')).toBe('Bearer acc-1');
+    const pdf = new Blob(['%PDF'], { type: 'application/pdf' });
+    req.flush(pdf);
+    expect((await result).blob).toBe(pdf);
+  });
+
+  it('parses a quoted filename from Content-Disposition', async () => {
+    const file = await download({
+      'Content-Disposition': 'attachment; filename="round-7-Red-vs-Blue.pdf"',
+    });
+    expect(file.filename).toBe('round-7-Red-vs-Blue.pdf');
+  });
+
+  it('parses a bare filename from Content-Disposition', async () => {
+    const file = await download({ 'Content-Disposition': 'attachment; filename=round-7.pdf' });
+    expect(file.filename).toBe('round-7.pdf');
+  });
+
+  it('gives a null filename when the header is missing', async () => {
+    expect((await download({})).filename).toBeNull();
+  });
+
+  it('gives a null filename when the header has no filename parameter', async () => {
+    expect((await download({ 'Content-Disposition': 'attachment' })).filename).toBeNull();
+  });
+
+  it('maps a failure to ApiError', async () => {
+    const result = firstValueFrom(api.getFile(PATH)).catch((e: unknown) => e);
+    http.expectOne(`${BASE}/${PATH}`).flush(new Blob([]), { status: 404, statusText: 'Not Found' });
+    const err = (await result) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(404);
   });
 });

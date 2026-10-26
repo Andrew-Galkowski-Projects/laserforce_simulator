@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiClient, Page } from './api-client';
+import { ApiClient, DownloadedFile, Page } from './api-client';
 import {
   GameEvent,
   GameEventListParams,
@@ -35,9 +35,12 @@ export class RoundsService {
     return this.api.post<GameRound>('rounds/', body);
   }
 
-  /** The Round report PDF (raw, not enveloped; the server upgrades the Round to full fidelity). */
-  report(id: number): Observable<Blob> {
-    return this.api.getRaw(`rounds/${id}/report/`);
+  /**
+   * The Round report PDF (raw, not enveloped; the server upgrades the Round to full fidelity)
+   * with the server's file name, `round-<id>-<red>-vs-<blue>.pdf`.
+   */
+  report(id: number): Observable<DownloadedFile> {
+    return this.api.getFile(`rounds/${id}/report/`);
   }
 
   /** The Round's event log in `(timestamp, id)` order, filtered and paged. */
