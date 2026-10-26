@@ -165,7 +165,7 @@ p {
   font-size: 0.875rem;
 }
 
-// Two average tables side by side from 768px; stacked below.
+// Two average tables side by side with the cards; stacked below, so a Team name stays whole.
 .averages-row {
   display: grid;
   grid-template-columns: 1fr;
@@ -173,7 +173,7 @@ p {
   margin-bottom: 1.5rem;
 }
 
-@media (min-width: 768px) {
+@media (min-width: 900px) {
   .averages-row {
     grid-template-columns: 1fr 1fr;
   }
@@ -268,8 +268,9 @@ table {
   align-items: center;
   gap: 0.5rem;
 
+  // Wide enough for the floating "Highlight games" label.
   mat-form-field {
-    width: 11rem;
+    width: 13rem;
   }
 }
 

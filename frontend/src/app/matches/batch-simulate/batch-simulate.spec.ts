@@ -305,6 +305,12 @@ describe('Batch Simulate (/matches/batch)', () => {
       expect(results()).toBeNull();
     });
 
+    it("counts against the run's size while the job is still pending (total 0)", async () => {
+      await startRun();
+      await answer(runStatus({ completed: 0, total: 0 }));
+      expect(label()).toBe('Simulating game 0 of 10…');
+    });
+
     it('polls again 500 ms after each answer, painting the partial results live', async () => {
       await startRun();
       await answer(runStatus({ completed: 0 }));

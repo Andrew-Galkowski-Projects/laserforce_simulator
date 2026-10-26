@@ -249,7 +249,9 @@ export class BatchSimulate {
       this.fail(status.error ?? 'Unknown error.');
       return;
     }
-    this.progress.set({ completed: status.completed, total: status.total });
+    // A pending job reports `total: 0` until it starts: count against the run's size.
+    const total = status.total || (this.run()?.n ?? 0);
+    this.progress.set({ completed: status.completed, total });
     if (status.status === 'complete') {
       this.elapsed.set((Date.now() - this.startedAt) / 1000);
       this.phase.set('complete');
