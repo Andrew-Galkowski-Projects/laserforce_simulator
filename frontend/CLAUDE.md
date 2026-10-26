@@ -3,7 +3,8 @@
 The Phase 8 replacement for the Django templates. The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has the sign-in and invite-only register
 pages, the ADR-0043 layout-B shell (header with the account menu, a Teams sidebar that is a drawer
-below 768px) behind `authGuard`, Change password (ANG-06 item 7), the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b) and the
+below 768px) behind `authGuard`, Change password (ANG-06 item 7), the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b), the
+Players area (ANG-06-8: list, player detail, career stats, role benchmarks) and the
 Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
 ANG-06e-g: Event log, Playback, Charts) and the Maps area (ANG-06h: map list and editor), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
@@ -80,7 +81,7 @@ src/
     app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
     app.routes.ts         'login' + 'register' (signedOutGuard, lazy) | '' -> lazy Shell behind
                           authGuard: '' -> /teams, 'account/password', 'teams' -> lazy
-                          teams/teams.routes.ts,
+                          teams/teams.routes.ts, 'players' -> lazy players/players.routes.ts,
                           'matches' / 'rounds' -> lazy matches/matches.routes.ts
                           (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk), 'maps' -> lazy
                           maps/maps.routes.ts | '**' -> ''
@@ -99,11 +100,24 @@ src/
                           confirm-dialog.ts (ConfirmDialog), form-errors.ts (applyApiErrors,
                           GENERIC_ERROR_MESSAGE), read-token.ts (readToken: a --lf-* value for
                           canvas), notify.ts (injectNotify: the "Close" snackbar),
+                          api-message.ts (apiMessage: an ApiError's message or a fallback),
+                          line-chart.ts (app-line-chart over Chart.js, ADR-0045: clock or
+                          count x-axis; Round charts + career trend),
                           auth-card.scss (the signed-out card: login + register),
-                          _alerts.scss (notice / error box mixins)
+                          _alerts.scss (notice / error box mixins), _badges.scss (the
+                          "You" badge mixin)
+    players/              ANG-06-8, players.routes.ts (PLAYERS_ROUTES): /players (player-list:
+                          server-sorted, -paged, URL state ?sort=&dir=&page=&per_page=),
+                          /players/benchmarks (role-benchmarks), /players/:id/stats
+                          (player-career: totals, per-role benchmark tables, trend chart);
+                          shared/: benchmark-filter.ts (the ?threshold=&display= form +
+                          benchmarkParams), benchmark-format.ts, benchmark-page.scss;
+                          testing/players-loads.ts (releasePlayersLoads, specs only)
     teams/                teams.routes.ts (TEAMS_ROUTES) + one folder per screen: team-list,
                           team-create, team-detail, team-edit, team-slots, player-add,
-                          player-edit, team-generate, roster-import (import-errors.ts:
+                          player-edit, player-detail (ANG-06-8: /teams/:id/players/:playerId,
+                          rating-tier Stat bars, Delete, This is me / Unlink),
+                          team-generate, roster-import (import-errors.ts:
                           classifyImportErrors sorts a failed import's errors);
                           shared/: roster.ts (SLOTS, ROLE_LABELS, bench split),
                           player-stats.ts (STAT_GROUPS, STAT_KEYS, overallRating),
@@ -126,8 +140,8 @@ src/
                           snapshot-at.ts, playback-scoreboard, playback-feed, the beta
                           playback-map; from `rounds/:id/playback/` + the timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
-                          (pure data + OVERLAY_KINDS), line-chart.ts (app-line-chart over
-                          Chart.js, ADR-0045), chart-colors.ts, the RoundCharts page);
+                          (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;
+                          the chart itself is shared/line-chart.ts);
                           shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
                           role-label.ts (roleLabel: CMD/HVY/...), side-tag.ts (sideTag: R / B),
                           event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
@@ -144,7 +158,7 @@ src/
                           (the --lf-map-* tokens), grid.ts). One folder per mode, each with a pure
                           module beside its component: zones-bases/ (zones.ts), sight-lines/
                           (sight-edit.ts: 100-key batch split), heatmap/ (heat-cells.ts);
-                          shared/api-message.ts; testing/ (editor-fixtures incl. releaseModeLoads,
+                          testing/ (editor-fixtures incl. releaseModeLoads,
                           maps-loads). The Django editor template is the behavioural reference.
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
@@ -215,7 +229,7 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
     `register` (which does not sign in), the `currentUser` / `isSignedIn` signals, a single-flight
     `refresh()`, and `restoreSession()`. ANG-06 item 7 added `changePassword` (204; the token and
     `currentUser` stay), `linkSelfInsert(playerId)` (the returned Account becomes `currentUser`;
-    its caller is item 8's player detail) and `unlinkSelfInsert()` (clears `self_insert` on
+    called by player detail's This is me, ANG-06-8) and `unlinkSelfInsert()` (clears `self_insert` on
     `currentUser` only after the 204).
   - `authInterceptor` adds `Bearer` to `apiBaseUrl` calls except `token/*`, and sets
     `withCredentials` only on `token/*`, where the refresh cookie's `Path=/api/token/` applies.

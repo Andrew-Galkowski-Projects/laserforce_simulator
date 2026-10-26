@@ -6979,6 +6979,61 @@ Grill (owner, 2026-10-25) — frontend only, no backend / ownership / model / si
   (`app/register/`), `PasswordChange` (`app/account/password-change/`) and the Shell menu each get
   a Vitest spec. One ticket.
 
+#### ANG-06-8 · [DONE] Player pages
+
+**[DONE] Shipped (2026-10-25).** Angular /players (every visible Player incl. Free Agents; 22
+sortable columns, Preferred Roles not sortable as the API cannot order a JSON list; 10/25/50/100 per
+page; state in ?sort=&dir=&page=&per_page=; a page past the end returns to page 1 as Django's
+paginator does), /teams/:id/players/:playerId (Django's layout, Stat bars in four new --lf-rating-*
+tokens, Delete through ConfirmDialog with Django's text, This is me / Unlink), /players/:id/stats
+(totals, per-role benchmark tables, trend chart; Delta follows the Mean/Median toggle, a deliberate
+fix: Django always used the mean) and /players/benchmarks (both no-data notices verbatim). Two
+read-only API fields: PlayerSerializer.team_name and TeamSerializer.manager. Team detail's Player
+names link to player detail, My player opens it, and the sidebar has a Players entry. LineChart
+moved to app/shared (count x-axis for rounds); apiMessage moved to app/shared; one shared You-badge
+mixin. Built as two parallel tickets (#373, #374) on an orchestrator-prepared tip (routes with
+stubs, service methods, fixture fields). The browser check found player detail's card squeezed at
+768px (the sidebar takes ~208px); it stacks below 1100px.
+
+Player list (`/players/`), player detail, player delete, career stats, role
+
+benchmarks. Replaces `teams/player_list`, `player_detail`, `player_delete`,
+`player_career_stats`, `role_benchmarks`. Spec: #372
+Grill (owner, 2026-10-26) — no model / ownership / simulation change:
+- **Routes:** `/players` (list), `/players/benchmarks`, `/players/:id/stats` (career),
+  `/teams/:id/players/:playerId` (detail). No delete route: Delete on detail opens
+  `ConfirmDialog` (Django's warning text), then `DELETE`, snackbar
+  `Player "<name>" removed from <team>`, `/teams/:id`.
+- **API additions:** read-only `team_name` on `PlayerSerializer` (list rows) and read-only
+  `manager` (Account id or null) on `TeamSerializer` (*This is me* rule). The spec names every
+  test that pins either serializer's key set.
+- **Preferred roles** header is not sortable (the API cannot order a JSON list); the other 22
+  columns sort as in Django. Recorded deviation.
+- **List state in the URL:** `?sort=&dir=&page=&per_page=`, Django's names and defaults (`team`,
+  asc, 10; options 10/25/50/100); sort or page-size change resets to page 1; "N player(s)
+  total", Previous / "Page X of Y" / Next, ↑/↓ on the active column, empty state "No players yet."
+- **Sidebar:** a Players entry after Teams.
+- **Career chart:** the Chart.js `app-line-chart` (ADR-0045) moves from `matches/round-charts/`
+  to `app/shared/`; Django's labels and dashed line.
+- **Δ follows Display:** `delta_mean` or `delta_median` per the toggle (Django always used the
+  mean; `career-and-benchmarks.md` says it swaps). Deliberate fix.
+- **Filters in the URL:** `?threshold=&display=`; threshold input `min="0"` + `required`;
+  benchmarks keep raw stat keys and both no-data messages verbatim.
+- **Links:** list names → career stats; Team detail's Player names → player detail; detail has
+  Career stats / Edit / Delete and "← Team"; *My player* → player detail; the career page's
+  head-to-head link waits for ANG-06-9.
+- **Self-insert on detail:** *Unlink* when this Player is the Self-insert, else *This is me* when
+  `team.manager` is the Account, neither for an Unmanaged Team; snackbars with Django's flash text;
+  "You" badge on detail, list and career.
+- **Out:** head-to-head pages (ANG-06-9), League player detail (ANG-06-16), sorting by Preferred
+  roles, removing Django pages (ANG-08).
+- **Stat bars:** four new tokens `--lf-rating-elite/-good/-fair/-poor` (light + dark,
+  `LF_TOKENS`) at Django's 80 / 60 / 40 thresholds; the value always shows beside the bar.
+- **Tickets:** two in parallel, A (serializer fields, list, detail + delete + Self-insert, Team
+  detail links, *My player*, sidebar) and B (career, benchmarks, the chart move). The
+  orchestrator first lands `players.routes.ts` with stub routes, the `career()` / `benchmarks()`
+  service methods + types, and `team_name` on `Player` in every shared fixture.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

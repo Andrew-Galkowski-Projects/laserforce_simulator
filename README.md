@@ -145,9 +145,12 @@ Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](front
 [ADR-0042](docs/adr/0042-angular-frontend-stack.md)). So far it has a sign-in page, invite-only
 registration (`/register?invite=<code>`, signed in straight away) and Change password, an app shell (a
 header with an account menu — My player and Unlink Self-insert when linked, Change password, Sign out — and a
-Teams / Matches / Maps sidebar that becomes a drawer on small screens), the Teams
+Teams / Players / Matches / Maps sidebar that becomes a drawer on small screens), the Teams
 screens: list, detail (with Remove player), Create, Edit and Assign Slots, plus Add Player and Edit
-Player (the 19 Stats with a live Overall rating), and the Matches screens: Match History (your Matches
+Player (the 19 Stats with a live Overall rating), the Players screens: the sortable, paged Players
+list, player detail (the profile and colour-tiered Stat bars, Delete, and "This is me" to link your
+Self-insert), a Player's career stats (totals, per-role tables against the role benchmarks with a
+Mean / Median toggle, and a points trend chart) and Role Benchmarks, and the Matches screens: Match History (your Matches
 and Single Rounds, paged), New Match and New Single Round (simulate and open the result), and the Match and Round pages: a Match Summary per Round, and
 each Round's per-player scoreboard (sortable, with MVP scores and a PDF export) and its Event log (every event, colour-coded and filterable by type and player, with the round's Highlights), and its Playback (watch the round unfold: play / step / 1-8x speed, live per-Side scoreboards, a newest-first event feed and a beta map), and its Charts (Shots, Lives, Points and SP over time per player, with Side totals and Elimination / Special / Nuke overlays, built with Chart.js), and the Maps screens: the Arena map list (upload, delete, configured badge) and the map editor (Zones & Bases, Sight Lines and the multi-round Heatmap, asking before it discards unsaved edits). They sit on the typed API services and
 the JWT sign-in / silent-refresh flow. The Django pages stay live until ANG-08; until then the Docker stacks serve the
