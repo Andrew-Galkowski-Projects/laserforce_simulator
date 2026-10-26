@@ -168,8 +168,10 @@ Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 
 Follow `to-tickets` on the spec. Vertical tracer-bullet slices (model,
 service, view/endpoint, tests), each sized for one fresh session: estimated
-tokens / 150k is the ticket count. A task small enough for one session gets
-one ticket. Don't pad.
+tokens / 150k is the ticket count. A ported Angular screen with its spec costs
+about 100k tokens (ANG-06-8: four screens, ~424k across two tickets), so count
+screens before dividing. A task small enough for one session gets one ticket.
+Don't pad.
 
 Create each ticket as a sub-issue of the spec with native blocked-by edges,
 using the `gh api` fallbacks in `docs/agents/issue-tracker.md` (installed `gh`
@@ -205,7 +207,12 @@ each one's base before starting the next. Before starting tickets that run in
 parallel, prepare the integration tip yourself:
 
 - Grep it for every helper two of them will need, and move each into a neutral
-  service module; every new action goes in its own ticket's file.
+  service module; every new action goes in its own ticket's file. Also list in
+  each ticket the existing shared UI helpers its screens need
+  (`shared/_alerts.scss`, `_badges.scss`, `api-message.ts`, `notify.ts`,
+  `confirm-dialog.ts`), and create any missing one on the integration tip
+  first, so agents reuse it instead of copying (ANG-06-8's badge, error box and
+  load-error code each came back twice).
 - For each new public seam method, grep what it calls (an `ApiClient` verb, a
   model method). Add anything missing to its shared module first, or the ticket
   that is barred from that file stops half-done (ANG-06a: `ApiClient.put`).
@@ -332,7 +339,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    screenshot of each changed screen at 1280px and at 768px (`resize_page`),
    read it, and fix anything clipped or wrapped mid-word before review: specs
    assert text, so only the picture shows layout (ANG-06c's winner chips).
-   Fix by reflowing (a second line, a stacked cell) so every field the spec's
+   After a style fix, read the changed property's computed value before
+   re-taking the screenshot: the dev server may not have reloaded it yet
+   (ANG-06-8). Fix by reflowing (a second line, a stacked cell) so every field the spec's
    user stories show stays on screen (ANG-06e first hid the names). Check
    from a second Account when ownership changed. An API-only task checks the
    endpoints in the browsable API or with the test client instead, and says
