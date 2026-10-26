@@ -265,21 +265,31 @@ describe('Team detail page', () => {
     );
   }
 
-  it('links Add Player, Assign Slots, Edit Team and Back to Teams, and nothing to unmigrated pages', async () => {
+  it('links Add Player, Assign Slots, Edit Team, Match History and Back to Teams, and nothing to unmigrated pages', async () => {
     await open();
     const links = actions();
     expect(links).toContain('Add Player -> /teams/7/players/new');
     expect(links).toContain('Assign Slots -> /teams/7/slots');
     expect(links).toContain('Edit Team -> /teams/7/edit');
+    expect(links).toContain('Match History -> /teams/7/history');
     expect(links).toContain('← Back to Teams -> /teams');
     expect(links.filter((l) => l.startsWith('Remove'))).toHaveLength(5);
     expect(links.filter((l) => l.startsWith('Edit ->'))).toHaveLength(5);
-    for (const label of ['View ->', 'Match History']) {
-      expect(links.some((l) => l.startsWith(label))).toBe(false);
-    }
-    // ANG-06-8a made each Player name a link to player detail (5 more): still one link per
-    // migrated page, none to an unmigrated one.
-    expect(links).toHaveLength(19);
+    expect(links.some((l) => l.startsWith('View ->'))).toBe(false);
+    // ANG-06-8a made each Player name a link to player detail (5 more), and ANG-06-9 added
+    // Match History: still one link per migrated page, none to an unmigrated one.
+    expect(links).toHaveLength(20);
+  });
+
+  it("opens Match History at the Team's /teams/7/history", async () => {
+    await open();
+    const link = [...page().querySelectorAll('a')].find(
+      (a) => a.textContent?.trim() === 'Match History',
+    );
+    link?.click();
+    await harness.fixture.whenStable();
+    releaseTeamsLoads();
+    expect(routerUrl()).toBe('/teams/7/history');
   });
 
   /** Each row's Player-name link href in the table under the heading `title`. */

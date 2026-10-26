@@ -1,0 +1,162 @@
+// Team match history (ANG-06-9). The page heading comes from ../shared/team-page.scss.
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
+h2 {
+  margin: 0 0 0.75rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.1rem;
+}
+
+h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.muted {
+  color: var(--lf-text-muted);
+  font-weight: 400;
+}
+
+.badge--you {
+  @include badges.you;
+}
+
+.th-error {
+  @include alerts.error;
+}
+
+.th-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+
+  h1 {
+    margin: 0;
+  }
+}
+
+.th-card {
+  margin-bottom: 1rem;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.th-scope {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  align-items: center;
+}
+
+.th-scope__title,
+.th-scope__opt--overall {
+  font-weight: 700;
+}
+
+.th-scope__opt {
+  display: inline-flex;
+  gap: 0.35rem;
+  align-items: center;
+  cursor: pointer;
+
+  input {
+    accent-color: var(--lf-accent);
+  }
+}
+
+// Three tiles in a row from the content width up; they wrap on a narrow content area.
+.th-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.th-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1rem;
+  border: 1px solid var(--lf-border);
+  border-top: 3px solid var(--lf-accent);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  strong {
+    font-family: var(--lf-font-numeric);
+    font-size: 1.6rem;
+  }
+
+  span {
+    color: var(--lf-text-muted);
+  }
+}
+
+.th-h2h {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+// The roster is wider than a 560px content area: it scrolls inside its own card, never the page.
+.th-scroll {
+  overflow-x: auto;
+}
+
+.th-roster {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--lf-font-numeric);
+  white-space: nowrap;
+
+  th,
+  td {
+    padding: 0.35rem 0.6rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: center;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+}
+
+.th-roster__name {
+  text-align: left !important;
+}
+
+.th-roster__group {
+  border-left: 1px solid var(--lf-border);
+}
+
+.th-merc {
+  color: var(--lf-rating-fair);
+}
+
+// Matches beside Single Rounds on a wide content area; stacked below ~720px of content.
+.th-lists {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(20rem, 1fr));
+  gap: 1rem;
+}
+
+.th-game p {
+  margin: 0 0 0.75rem;
+  line-height: 1.6;
+}
+
+.th-empty {
+  padding: 2rem 0;
+  text-align: center;
+
+  a {
+    margin: 0 0.25rem;
+  }
+}

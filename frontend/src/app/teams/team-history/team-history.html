@@ -1,0 +1,167 @@
+@if (notFound()) {
+  <app-team-not-found />
+} @else if (loadError(); as message) {
+  <p class="th-error" role="alert">{{ message }}</p>
+} @else if (history(); as h) {
+  <div class="th-head">
+    <h1>{{ h.team.name }} — Match History</h1>
+    <a mat-stroked-button [routerLink]="['/teams', h.team.id]">&larr; Back to Team</a>
+  </div>
+
+  @if (h.show_scope_filter) {
+    <div class="th-card th-scope" id="scope-filter">
+      <span class="th-scope__title">Show:</span>
+      <label class="th-scope__opt th-scope__opt--overall">
+        <input
+          type="checkbox"
+          [checked]="overall()"
+          (change)="toggleOverall($any($event.target).checked)"
+        />
+        Overall
+      </label>
+      @for (opt of h.scope_options; track opt.key) {
+        <label class="th-scope__opt">
+          <input
+            type="checkbox"
+            name="scope"
+            [value]="opt.key"
+            [checked]="opt.selected"
+            (change)="toggleScope(opt.key, $any($event.target).checked)"
+          />
+          {{ opt.label }}
+        </label>
+      }
+    </div>
+  }
+
+  <div class="th-tiles">
+    <div class="th-tile">
+      <strong>{{ h.stats.match_wins }}-{{ h.stats.match_losses }}-{{ h.stats.match_ties }}</strong>
+      <span>Match W-L-T</span>
+    </div>
+    <div class="th-tile">
+      <strong>{{ h.stats.round_wins }}-{{ h.stats.round_losses }}-{{ h.stats.round_ties }}</strong>
+      <span>Round W-L-T</span>
+    </div>
+    <div class="th-tile">
+      <strong>{{ h.stats.total_matches + h.stats.total_rounds }}</strong>
+      <span>Total Games</span>
+    </div>
+  </div>
+
+  @if (h.opponents.length > 0) {
+    <section class="th-card">
+      <h2>Head-to-Head</h2>
+      <div class="th-h2h" id="h2h-opponents-bar">
+        @for (opp of h.opponents; track opp.id) {
+          <a
+            mat-stroked-button
+            routerLink="/teams/head-to-head"
+            [queryParams]="{ team_a: h.team.id, team_b: opp.id }"
+            >vs. {{ opp.name }} — H2H</a
+          >
+        }
+      </div>
+    </section>
+  }
+
+  @if (h.roster.length > 0) {
+    <section class="th-card">
+      <h2>Roster</h2>
+      <div class="th-scroll">
+        <table class="th-roster" id="roster-table">
+          <thead>
+            <tr>
+              <th rowspan="2">Merc</th>
+              <th rowspan="2" class="th-roster__name">Player</th>
+              <th rowspan="2">Games Played</th>
+              @for (col of h.role_columns; track col.role) {
+                <th colspan="3" class="th-roster__group">{{ col.label }}</th>
+              }
+            </tr>
+            <tr>
+              @for (col of h.role_columns; track col.role) {
+                <th class="th-roster__group">Games</th>
+                <th>Avg. MVP</th>
+                <th>Avg. Score</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of h.roster; track row.player.id) {
+              <tr>
+                <td>
+                  @if (row.is_merc) {
+                    <span class="th-merc" title="Mercenary (not a rostered member)">&#9888;</span>
+                  }
+                </td>
+                <td class="th-roster__name">
+                  <a [routerLink]="['/players', row.player.id, 'stats']">{{ row.player.name }}</a>
+                  @if (row.player.id === selfId()) {
+                    <span class="badge badge--you">You</span>
+                  }
+                </td>
+                <td>{{ row.games_played }}</td>
+                @for (cell of row.roles; track cell.role) {
+                  <td class="th-roster__group" [class.muted]="cell.games === 0">
+                    {{ cell.games }}
+                  </td>
+                  <td [class.muted]="cell.games === 0">{{ avgMvp(cell) }}</td>
+                  <td [class.muted]="cell.games === 0">{{ avgScore(cell) }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+
+  @if (h.matches.length > 0 || h.single_rounds.length > 0) {
+    <div class="th-lists">
+      <section>
+        <h2>Matches</h2>
+        @for (m of h.matches; track m.id) {
+          <article class="th-card th-game">
+            <h3>vs {{ m.opponent.name }} <app-result-chip [result]="results[m.result]" /></h3>
+            <p>
+              <strong>Score:</strong> {{ m.team_points }} - {{ m.opponent_points }}<br />
+              <strong>Rounds:</strong> {{ m.team_rounds_won }} - {{ m.opponent_rounds_won }}<br />
+              <small class="muted">{{ m.date_played | date: 'MMM d, y HH:mm' }}</small>
+            </p>
+            <a mat-flat-button [routerLink]="['/matches', m.id]">View Details</a>
+          </article>
+        } @empty {
+          <p class="muted">No matches played yet.</p>
+        }
+      </section>
+      <section>
+        <h2>Single Rounds</h2>
+        @for (r of h.single_rounds; track r.id) {
+          <article class="th-card th-game">
+            <h3>vs {{ r.opponent.name }}</h3>
+            <p>
+              <strong>Score:</strong> {{ r.team_points }} - {{ r.opponent_points }}<br />
+              <small class="muted">{{ r.date_played | date: 'MMM d, y HH:mm' }}</small>
+            </p>
+            <a mat-flat-button [routerLink]="['/rounds', r.id]">View Details</a>
+          </article>
+        } @empty {
+          <p class="muted">No single rounds played yet.</p>
+        }
+      </section>
+    </div>
+  } @else if (h.has_any_games) {
+    <div class="th-empty">
+      <h2 class="muted">No games match the current filter</h2>
+      <p>Toggle <strong>Overall</strong> on (or pick a scope above) to see this team's games.</p>
+    </div>
+  } @else {
+    <div class="th-empty">
+      <h2 class="muted">No matches played yet</h2>
+      <p>This team hasn't participated in any matches or rounds.</p>
+      <a mat-flat-button routerLink="/matches/new">Create Match</a>
+      <a mat-stroked-button routerLink="/rounds/new">Create Single Round</a>
+    </div>
+  }
+}
