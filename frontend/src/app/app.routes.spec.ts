@@ -239,6 +239,12 @@ describe('app routes', () => {
       await signIn();
     });
 
+    // These specs check routing only. Drop whatever the four screens (and their pickers) load,
+    // so ANG-06-9's screen tickets never edit this file.
+    afterEach(() => {
+      http.match(() => true);
+    });
+
     it.each([
       ['/teams/head-to-head', TeamHeadToHead, 'Team Head-to-Head - Laserforce Simulator'],
       ['/teams/3/history', TeamHistory, 'Team Match History - Laserforce Simulator'],
