@@ -91,8 +91,7 @@ below (13b, 14, 16); the item's grill confirms it.
 7. **[DONE] Accounts screens** (ANG-06-7, in `PLAN-completed.md`).
 8. **[DONE] Player pages** (ANG-06-8, in `PLAN-completed.md`).
 9. **[DONE] Head-to-head & history** (ANG-06-9, in `PLAN-completed.md`).
-10. **Round extras (ANG-06-10)** — missile log, movement heatmap, round report export. Replaces
-    `matches/missile_log`, `movement_heatmap`.
+10. **[DONE] Round extras** (ANG-06-10, in `PLAN-completed.md`).
 11. **Enhanced setup / detail check (ANG-06-11)** — confirm items 3-4 cover the `enhanced_*` templates and
     `match_detail`; close any gap. Replaces `matches/enhanced_*`, `match_detail`.
 12. **Batch simulate (ANG-06-12)** — form, status polling, save games. Replaces `matches/batch_simulate`.

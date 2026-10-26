@@ -46,6 +46,12 @@ export interface RequestOptions {
   context?: HttpContext;
 }
 
+/** A downloaded body plus the server's file name for it, when it sent one. */
+export interface DownloadedFile {
+  blob: Blob;
+  filename: string | null;
+}
+
 interface Envelope<T, M = Record<string, unknown>> {
   data: T;
   meta: M;
@@ -68,6 +74,13 @@ function envelopeErrors(body: unknown): ApiErrorItem[] | null {
     return (body as { errors: ApiErrorItem[] }).errors;
   }
   return null;
+}
+
+/** The `filename` parameter of a `Content-Disposition` header, quoted or bare; else `null`. */
+function dispositionFilename(header: string | null): string | null {
+  const match = header?.match(/filename\s*=\s*(?:"([^"]*)"|([^;\s]+))/i);
+  if (!match) return null;
+  return match[1] ?? match[2];
 }
 
 /** Maps an HttpClient failure to an `ApiError`. */
@@ -166,6 +179,22 @@ export class ApiClient {
     return this.http
       .get(this.url(path), { responseType: 'blob', context: options.context })
       .pipe(apiErrors());
+  }
+
+  /**
+   * Like `getRaw`, plus the file name the server sent in `Content-Disposition`
+   * (`filename="x"` or `filename=x`); `null` when the header or parameter is missing.
+   */
+  getFile(path: string, options: RequestOptions = {}): Observable<DownloadedFile> {
+    return this.http
+      .get(this.url(path), { responseType: 'blob', observe: 'response', context: options.context })
+      .pipe(
+        map((res) => ({
+          blob: res.body as Blob,
+          filename: dispositionFilename(res.headers.get('Content-Disposition')),
+        })),
+        apiErrors(),
+      );
   }
 
   private url(path: string): string {

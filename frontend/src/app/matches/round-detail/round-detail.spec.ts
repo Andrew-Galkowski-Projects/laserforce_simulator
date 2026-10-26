@@ -206,6 +206,17 @@ describe('Round detail (/rounds/:id)', () => {
       expect(text(charts?.previousElementSibling)).toBe('Playback');
     });
 
+    it("links to the Round's Missile log and Heatmap, right after Charts", async () => {
+      await open(round());
+      const links = [...page().querySelectorAll('a')];
+      const missileLog = links.find((a) => text(a) === 'Missile log');
+      const heatmap = links.find((a) => text(a) === 'Heatmap');
+      expect(missileLog?.getAttribute('href')).toBe('/rounds/9/missile-log');
+      expect(text(missileLog?.previousElementSibling)).toBe('Charts');
+      expect(heatmap?.getAttribute('href')).toBe('/rounds/9/heatmap');
+      expect(text(heatmap?.previousElementSibling)).toBe('Missile log');
+    });
+
     it('links "{team} History" for both Teams', async () => {
       await open(round());
       const history = [...page().querySelectorAll('a')]
@@ -531,6 +542,42 @@ describe('Round detail (/rounds/:id)', () => {
         },
       };
     }
+
+    /** Clicks Export PDF, answers with `headers`, and returns the saved file names. */
+    async function exportWith(headers: Record<string, string>): Promise<string[]> {
+      const urls = stubObjectUrls();
+      const downloads: string[] = [];
+      const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (
+        this: HTMLAnchorElement,
+      ) {
+        downloads.push(this.download);
+      });
+      try {
+        button('Export PDF').click();
+        await harness.fixture.whenStable();
+        http
+          .expectOne(`${BASE}/rounds/9/report/`)
+          .flush(new Blob(['%PDF-1.4'], { type: 'application/pdf' }), { headers });
+        await harness.fixture.whenStable();
+        return downloads;
+      } finally {
+        click.mockRestore();
+        urls.restore();
+      }
+    }
+
+    it("saves the Round report under the server's Content-Disposition file name", async () => {
+      await open(round());
+      const downloads = await exportWith({
+        'Content-Disposition': 'attachment; filename="round-9-Red-vs-Blue.pdf"',
+      });
+      expect(downloads).toEqual(['round-9-Red-vs-Blue.pdf']);
+    });
+
+    it('falls back to round-<id>.pdf when the response carries no file name', async () => {
+      await open(round());
+      expect(await exportWith({})).toEqual(['round-9.pdf']);
+    });
 
     it('downloads the Round report as round-<id>.pdf, "Generating..." and disabled meanwhile', async () => {
       await open(round());

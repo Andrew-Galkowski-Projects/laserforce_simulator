@@ -1,0 +1,145 @@
+// Missile log, ADR-0043 layout B: contract tokens only, never a colour literal.
+@use '../../shared/alerts';
+
+:host {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  color: var(--lf-text);
+  font-family: var(--lf-font-body);
+}
+
+h1 {
+  margin: 0;
+  font: 700 1.5rem/1.2 var(--lf-font-heading);
+}
+
+.ml-error {
+  @include alerts.error;
+
+  margin: 0;
+}
+
+.ml-loading {
+  margin: 0;
+  color: var(--lf-text-muted);
+}
+
+.ml-pagehead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem 1rem;
+}
+
+.ml-kicker {
+  margin: 0.25rem 0;
+  color: var(--lf-text-muted);
+  font-size: 0.8rem;
+}
+
+.ml-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+// ---- Summary cards --------------------------------------------------------------------------
+.ml-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 10rem));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ml-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.6rem 0.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  &__value {
+    font: 700 1.25rem var(--lf-font-numeric);
+    font-variant-numeric: tabular-nums;
+  }
+
+  &__label {
+    color: var(--lf-text-muted);
+    font-size: 0.75rem;
+  }
+}
+
+// ---- Table ----------------------------------------------------------------------------------
+.ml-table-wrap {
+  container-type: inline-size;
+  overflow-x: auto;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.ml-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+
+  th,
+  td {
+    padding: 0.4rem 0.6rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+}
+
+// Narrow content (the 768px viewport leaves ~530px): tighter cells and wrapping headers, so all
+// seven columns, Points included, fit without a sideways scroll.
+@container (max-width: 640px) {
+  .ml-table {
+    th,
+    td {
+      padding: 0.4rem 0.35rem;
+    }
+
+    th {
+      white-space: normal;
+    }
+  }
+}
+
+.ml-num {
+  font-family: var(--lf-font-numeric);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+// A **Friendly fire** missile: tinted in the missile event colour, with a bar on its left edge.
+.ml-row.friendly-fire {
+  background: color-mix(in srgb, var(--lf-ev-missile) 14%, var(--lf-surface));
+
+  td:first-child {
+    box-shadow: inset 4px 0 0 var(--lf-ev-missile);
+  }
+}
+
+.ml-empty {
+  color: var(--lf-text-muted);
+  text-align: center;
+}

@@ -367,3 +367,32 @@ message above the picker; a 404 shows the screen's not-found state.
   "Head-to-Head" + "Compare Rounds". Tournament / League entry points come with ANG-06 13b / 15 / 16.
 - **Not changed:** the HX-03 / HX-04 corpora are still not ownership-filtered (PLAN.md Deferred
   Items); a seeded Round with no events gives an empty points chart (the API series is empty).
+
+## ANG-06-10 Round extras in Angular
+
+Spec #384. Two Angular screens port the RES-03 / RES-04 templates (the Django ones stay live until
+ANG-08), linked from Round detail's action row after Charts. Both load the Round with
+`loadRouteRecord('Round', …)` for the "<red> vs <blue>" heading (404 -> Round not-found, other ->
+"Could not load the Round."), then their payload; a failed payload shows its `apiMessage`.
+
+| Route | Component | API |
+|---|---|---|
+| `/rounds/:id/missile-log` | `matches/missile-log/` | `rounds/<id>/missile-log/` |
+| `/rounds/:id/heatmap` | `matches/round-heatmap/` | `rounds/<id>/heatmap/` + `maps/<id>/processed-image/` |
+
+- **Missile log:** Fired / Hit / Efficiency (`toFixed(1)` + `%`; the API sends `hit / fired *
+  100` unrounded), then Time, Actor, Target (`roleLabel`), Result, Friendly fire yes/no,
+  Description, Points. Friendly-fire rows get class `friendly-fire` from the `friendly_fire`
+  boolean (not the API's `row_class`), tinted from `--lf-ev-missile`. Below 640px of table width a
+  container query tightens the cells so all seven columns fit at a 768px viewport.
+- **Movement heatmap:** the `playback-map` pattern: the processed image as a Blob object URL
+  (revoked on destroy; never the session-only `processed_image_url`), a canvas at its natural size,
+  both scaled by CSS. Pure `filteredOccupancy(heatmap, filter)` (`heatmap-filter.ts`) sums the
+  occupancy of roster players passing Player / Role / Team (AND; a player id not on the roster is
+  ignored, unlike the Django script); `heatCells` / `heatColour` from `maps/heatmap/heat-cells.ts`
+  paint it with the `--lf-map-heat-*` tokens. A picker change redraws with no request. No map:
+  "No map — heatmap unavailable." and no image or canvas; null `zone_size` gives the bare map.
+- **Export file name:** Round detail's Export PDF saves under the server's `Content-Disposition`
+  name (`round-<id>-<red>-vs-<blue>.pdf`), via `ApiClient.getFile` and the
+  `CORS_EXPOSE_HEADERS` setting (see `api.md`, CORS), falling back to `round-<id>.pdf`.
+- **Not ported:** player names in Missile log rows (the API sends roles only), a heatmap legend.

@@ -669,13 +669,16 @@ cross-origin with cookies. Config only: `settings.py` plus `django-cors-headers`
   - `CORS_ALLOW_CREDENTIALS = True`. The session cookie is sent because `localhost:4200` and `:8000`
     are the same *site* under SameSite=Lax, and ANG-03's refresh cookie will need it too.
   - `CORS_URLS_REGEX = r"^/api/.*$"`, so HTML, admin and static responses never carry CORS headers.
+  - `CORS_EXPOSE_HEADERS = ["Content-Disposition"]` (ANG-06-10), so the cross-origin dev SPA can
+    read a download's file name (`ApiClient.getFile`, the Round report).
   - `CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)`. A session write from an untrusted origin is a
     403 `permission_denied` ("CSRF Failed: Origin checking failed").
 - **Preflight.** An anonymous `OPTIONS` to `/api/` is answered with 200 by `CorsMiddleware`. It never
   reaches the login redirect or DRF's 401 (403 before ANG-03).
 - **Tests.** `laserforce_simulator/api/tests/test_cors.py` uses a shared `override_settings` that pins
-  both lists. It covers six cases:
+  both lists. It covers seven cases:
   - allowed and disallowed origins;
+  - `Content-Disposition` in `Access-Control-Expose-Headers` (ANG-06-10);
   - the APPEND_SLASH redirect carrying CORS headers (mutation-checked: it fails with `CorsMiddleware`
     below `CommonMiddleware`);
   - a non-API path;

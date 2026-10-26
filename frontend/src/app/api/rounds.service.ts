@@ -1,20 +1,22 @@
 import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
-import { ApiClient, Page } from './api-client';
+import { ApiClient, DownloadedFile, Page } from './api-client';
 import {
   GameEvent,
   GameEventListParams,
   GameRound,
   GameRoundListItem,
   RoundInput,
+  RoundHeatmap,
   RoundListParams,
+  RoundMissileLog,
   RoundPlayback,
   RoundTimeline,
 } from './rounds.models';
 
 /**
  * `/api/rounds/`: list, detail, create, the report PDF, the paged event list, the
- * whole timeline and the Playback snapshots. No edit or delete.
+ * whole timeline, the Playback snapshots, the Missile log and the heatmap. No edit or delete.
  */
 @Injectable({ providedIn: 'root' })
 export class RoundsService {
@@ -33,9 +35,12 @@ export class RoundsService {
     return this.api.post<GameRound>('rounds/', body);
   }
 
-  /** The Round report PDF (raw, not enveloped; the server upgrades the Round to full fidelity). */
-  report(id: number): Observable<Blob> {
-    return this.api.getRaw(`rounds/${id}/report/`);
+  /**
+   * The Round report PDF (raw, not enveloped; the server upgrades the Round to full fidelity)
+   * with the server's file name, `round-<id>-<red>-vs-<blue>.pdf`.
+   */
+  report(id: number): Observable<DownloadedFile> {
+    return this.api.getFile(`rounds/${id}/report/`);
   }
 
   /** The Round's event log in `(timestamp, id)` order, filtered and paged. */
@@ -51,5 +56,15 @@ export class RoundsService {
   /** The Round's **Playback snapshots** per player plus the beta map; full fidelity server-side. */
   playback(roundId: number): Observable<RoundPlayback> {
     return this.api.get<RoundPlayback>(`rounds/${roundId}/playback/`);
+  }
+
+  /** The Round's **Missile log**; the server upgrades the Round to combat fidelity. */
+  missileLog(roundId: number): Observable<RoundMissileLog> {
+    return this.api.get<RoundMissileLog>(`rounds/${roundId}/missile-log/`);
+  }
+
+  /** The Round's **Movement heatmap** data; full fidelity server-side. */
+  heatmap(roundId: number): Observable<RoundHeatmap> {
+    return this.api.get<RoundHeatmap>(`rounds/${roundId}/heatmap/`);
   }
 }

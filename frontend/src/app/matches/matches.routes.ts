@@ -3,10 +3,12 @@ import { APP_TITLE } from '../app-title';
 import { CompareRounds } from './compare-rounds/compare-rounds';
 import { MatchDetail } from './match-detail/match-detail';
 import { MatchList } from './match-list/match-list';
+import { MissileLog } from './missile-log/missile-log';
 import { Playback } from './playback/playback';
 import { RoundCharts } from './round-charts/round-charts';
 import { RoundDetail } from './round-detail/round-detail';
 import { RoundEvents } from './round-events/round-events';
+import { RoundHeatmap } from './round-heatmap/round-heatmap';
 import { SetupForm } from './setup-form/setup-form';
 import { SetupKind } from './shared/setup-kind';
 
@@ -28,8 +30,9 @@ export const MATCHES_ROUTES: Routes = [
 /**
  * Single Rounds, lazily loaded under `/rounds` from this same module (one chunk for the area).
  * There is no `/rounds` list: Single Rounds are a section of Match History. `compare` (Compare
- * Rounds), `:id/events` (the Event log), `:id/playback` (Playback) and `:id/charts` (the event
- * charts) come before `:id`.
+ * Rounds), `:id/events` (the Event log), `:id/playback` (Playback), `:id/charts` (the event
+ * charts), `:id/missile-log` (the Missile log) and `:id/heatmap` (the Movement heatmap) come
+ * before `:id`.
  */
 export const ROUNDS_ROUTES: Routes = [
   {
@@ -42,5 +45,7 @@ export const ROUNDS_ROUTES: Routes = [
   { path: ':id/events', component: RoundEvents, title: `Event Log - ${APP_TITLE}` },
   { path: ':id/playback', component: Playback, title: `Playback - ${APP_TITLE}` },
   { path: ':id/charts', component: RoundCharts, title: `Charts - ${APP_TITLE}` },
+  { path: ':id/missile-log', component: MissileLog, title: `Missile Log - ${APP_TITLE}` },
+  { path: ':id/heatmap', component: RoundHeatmap, title: `Movement Heatmap - ${APP_TITLE}` },
   { path: ':id', component: RoundDetail, title: `Round - ${APP_TITLE}` },
 ];

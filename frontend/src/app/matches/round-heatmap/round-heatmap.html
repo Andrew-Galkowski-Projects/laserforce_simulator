@@ -1,0 +1,84 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Round" />
+} @else if (load.loadError(); as message) {
+  <p class="rh-error" role="alert">{{ message }}</p>
+} @else if (load.record(); as r) {
+  <div class="rh-pagehead">
+    <div>
+      <p class="rh-kicker">Heatmap</p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+    </div>
+    <div class="rh-actions">
+      <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'events']">Event log</a>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'missile-log']">Missile log</a>
+    </div>
+  </div>
+
+  @if (error(); as message) {
+    <p class="rh-error" role="alert">{{ message }}</p>
+  } @else if (heatmap(); as h) {
+    @if (!h.has_map) {
+      <p class="rh-notice">No map — heatmap unavailable.</p>
+    } @else {
+      <section class="rh-picker" aria-label="Heatmap filters">
+        <mat-form-field class="rh-picker__wide">
+          <mat-label>Player</mat-label>
+          <mat-select
+            canSelectNullableOptions
+            [value]="filter().playerId"
+            (selectionChange)="setFilter({ playerId: $event.value })"
+          >
+            <mat-option [value]="null">All players</mat-option>
+            @for (p of h.player_roster; track p.id) {
+              <mat-option [value]="p.id">{{ p.name }} ({{ p.team_color }} {{ p.role }})</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Role</mat-label>
+          <mat-select
+            canSelectNullableOptions
+            [value]="filter().role"
+            (selectionChange)="setFilter({ role: $event.value })"
+          >
+            <mat-option [value]="null">All</mat-option>
+            @for (role of roles; track role.value) {
+              <mat-option [value]="role.value">{{ role.label }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field>
+          <mat-label>Team</mat-label>
+          <mat-select
+            canSelectNullableOptions
+            [value]="filter().team"
+            (selectionChange)="setFilter({ team: $event.value })"
+          >
+            @for (team of teams; track team.label) {
+              <mat-option [value]="team.value">{{ team.label }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </section>
+
+      @if (imageUrl(); as src) {
+        <div class="rh-stage">
+          <img
+            #image
+            class="rh-image"
+            [src]="src"
+            [alt]="'Arena map ' + (h.arena_map?.name ?? '')"
+            (load)="loaded.set(true)"
+            (error)="imageFailed()"
+          />
+          <canvas #canvas class="rh-canvas" aria-hidden="true"></canvas>
+        </div>
+      } @else {
+        <p class="rh-loading" role="status">Loading the map…</p>
+      }
+    }
+  } @else {
+    <p class="rh-loading" role="status">Loading the heatmap…</p>
+  }
+}

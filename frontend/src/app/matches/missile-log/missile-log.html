@@ -1,0 +1,70 @@
+@if (load.notFound()) {
+  <app-record-not-found noun="Round" />
+} @else if (load.loadError(); as message) {
+  <p class="ml-error" role="alert">{{ message }}</p>
+} @else if (load.record(); as r) {
+  <div class="ml-pagehead">
+    <div>
+      <p class="ml-kicker">Missile log</p>
+      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+    </div>
+    <div class="ml-actions">
+      <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+      <a mat-stroked-button [routerLink]="['/rounds', r.id, 'events']">Event log</a>
+    </div>
+  </div>
+
+  @if (logError(); as message) {
+    <p class="ml-error" role="alert">{{ message }}</p>
+  } @else if (log(); as log) {
+    <ul class="ml-stats" aria-label="Missile summary">
+      <li class="ml-stat">
+        <span class="ml-stat__value">{{ log.fired }}</span>
+        <span class="ml-stat__label">Fired</span>
+      </li>
+      <li class="ml-stat">
+        <span class="ml-stat__value">{{ log.hit }}</span>
+        <span class="ml-stat__label">Hit</span>
+      </li>
+      <li class="ml-stat">
+        <span class="ml-stat__value">{{ efficiencyLabel(log.efficiency) }}</span>
+        <span class="ml-stat__label">Efficiency</span>
+      </li>
+    </ul>
+
+    <div class="ml-table-wrap">
+      <table class="ml-table">
+        <thead>
+          <tr>
+            <th scope="col">Time</th>
+            <th scope="col">Actor</th>
+            <th scope="col">Target</th>
+            <th scope="col">Result</th>
+            <th scope="col">Friendly fire</th>
+            <th scope="col">Description</th>
+            <th scope="col">Points</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of log.rows; track $index) {
+            <tr class="ml-row" [class.friendly-fire]="row.friendly_fire">
+              <td class="ml-num">{{ row.timestamp_mmss }}</td>
+              <td>{{ roleLabel(row.actor_role) }}</td>
+              <td>{{ roleLabel(row.target_role) }}</td>
+              <td>{{ row.result }}</td>
+              <td>{{ row.friendly_fire ? 'yes' : 'no' }}</td>
+              <td>{{ row.description }}</td>
+              <td class="ml-num">{{ row.points }}</td>
+            </tr>
+          } @empty {
+            <tr>
+              <td class="ml-empty" colspan="7">No missiles fired this round.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <p class="ml-loading" role="status">Loading the Missile log&hellip;</p>
+  }
+}

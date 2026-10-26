@@ -6,7 +6,7 @@ pages, the ADR-0043 layout-B shell (header with the account menu, a Teams sideba
 below 768px) behind `authGuard`, Change password (ANG-06 item 7), the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b), the
 Players area (ANG-06-8: list, player detail, career stats, role benchmarks) and the
 Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
-ANG-06e-g: Event log, Playback, Charts) and the Maps area (ANG-06h: map list and editor), on top of the client
+ANG-06e-g: Event log, Playback, Charts; ANG-06-10: Missile log, Movement heatmap) and the Maps area (ANG-06h: map list and editor), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -147,7 +147,10 @@ src/
                           playback-map; from `rounds/:id/playback/` + the timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
                           (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;
-                          the chart itself is shared/line-chart.ts), /rounds/compare
+                          the chart itself is shared/line-chart.ts), /rounds/:id/missile-log
+                          (missile-log/: ANG-06-10), /rounds/:id/heatmap (round-heatmap/:
+                          ANG-06-10, heatmap-filter.ts filteredOccupancy + the map canvas),
+                          /rounds/compare
                           (compare-rounds/: ANG-06-9, the stat-delta table + points chart);
                           shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
                           role-label.ts (roleLabel: CMD/HVY/...), side-tag.ts (sideTag: R / B),
@@ -219,8 +222,10 @@ colours in light mode, all-mono JetBrains Mono.
 Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-0041 (JWT).
 
 - **`ApiClient` is the only `HttpClient` user.** Components inject a resource service, never
-  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `put`, `delete`, `upload` (multipart) and `getRaw` (a Blob
-  with the bearer header and no envelope unwrap: the CSV template, ANG-06 2b). Each takes a
+  `HttpClient`. Methods: `get`, `list`, `post`, `patch`, `put`, `delete`, `upload` (multipart), `getRaw` (a Blob
+  with the bearer header and no envelope unwrap: the CSV template, ANG-06 2b) and `getFile`
+  (`getRaw` plus the `Content-Disposition` file name as `DownloadedFile`, `null` when absent: the
+  Round report, ANG-06-10). Each takes a
   path relative to `apiBaseUrl` (`'teams/'`, `'rounds/7/events/'`, trailing slash as the API routes
   it) and an optional `{ context }`.
 - **Envelope unwrapped once:** objects come back as `T`, lists as `Page<T>` (`items` plus `meta`:
