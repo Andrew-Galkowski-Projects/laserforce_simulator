@@ -34,10 +34,11 @@ export interface Page<T> {
   meta: PageMeta;
 }
 
+/** Query params; an array value repeats its key once per item (`?scope=a&scope=b`). */
 export interface ListParams {
   page?: number;
   page_size?: number;
-  [filter: string]: string | number | boolean | undefined;
+  [filter: string]: string | number | boolean | readonly string[] | undefined;
 }
 
 /** Per-request extras, e.g. an `HttpContext` read by the interceptors. */
@@ -53,7 +54,9 @@ interface Envelope<T, M = Record<string, unknown>> {
 function toHttpParams(params: ListParams = {}): HttpParams {
   let out = new HttpParams();
   for (const [key, value] of Object.entries(params)) {
-    if (value !== undefined) {
+    if (Array.isArray(value)) {
+      for (const item of value) out = out.append(key, item);
+    } else if (value !== undefined) {
       out = out.set(key, String(value));
     }
   }

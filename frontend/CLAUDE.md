@@ -218,7 +218,10 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   it) and an optional `{ context }`.
 - **Envelope unwrapped once:** objects come back as `T`, lists as `Page<T>` (`items` plus `meta`:
   `page`, `page_size`, `count`, `total_pages`), and a 204 as `undefined`. Undefined params are
-  dropped from the query.
+  dropped from the query; an array param repeats its key (`?scope=a&scope=b`).
+- **Every row of a list:** `listAll(fetchPage)` (`api/list-all.ts`) asks for page 1 at
+  `page_size=100`, follows `meta.total_pages`, and concatenates the pages; a failing page fails the
+  whole list. Pickers and `map-list` use it: `listAll((page) => this.maps.list({ ...page, ordering }))`.
 - **Every failure is an `ApiError`** (`status`, `errors: {code, message, field}[]`, never empty).
   Status 0 gives `network_error`; a non-envelope 5xx gives `server_error`. Cross-Account rows come
   back as 404, because ownership is filtered on the server.
@@ -227,6 +230,8 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   separate types (`GameRoundListItem` vs `GameRound`). Add a field when the serializer gains one.
 - **Services cover only what ANG-06's first screens need.** A League, Tournament or analytics
   service is added by the ANG-06 item that first uses it, as its own `<resource>.service.ts`.
+  `AnalyticsService` (ANG-06-9) reads team / player head-to-head, compare rounds and Team match
+  history (`teamHistory(id, scopes)`: `null` sends no `scope`, `[]` sends `scope=`).
 - **Auth:**
   - `AuthService` keeps the access token **in memory only**. It provides `login`, `logout`,
     `register` (which does not sign in), the `currentUser` / `isSignedIn` signals, a single-flight
