@@ -1,0 +1,52 @@
+<div class="tournament-list__header">
+  <h1>Tournaments</h1>
+  <a mat-flat-button routerLink="/tournaments/new">Create Tournament</a>
+</div>
+
+@let result = page();
+@if (result) {
+  @if (result.items.length === 0) {
+    <p class="tournament-list__empty" role="status">
+      No tournaments yet. Create one to get started.
+    </p>
+  } @else {
+    <mat-table [dataSource]="result.items" class="tournament-table">
+      <ng-container matColumnDef="name">
+        <mat-header-cell *matHeaderCellDef>Name</mat-header-cell>
+        <mat-cell *matCellDef="let t">
+          <a [routerLink]="['/tournaments', t.id]">{{ t.name }}</a>
+        </mat-cell>
+      </ng-container>
+      <ng-container matColumnDef="format">
+        <mat-header-cell *matHeaderCellDef>Format</mat-header-cell>
+        <mat-cell *matCellDef="let t">{{ t.format_label }}</mat-cell>
+      </ng-container>
+      <ng-container matColumnDef="state">
+        <mat-header-cell *matHeaderCellDef>State</mat-header-cell>
+        <mat-cell *matCellDef="let t">
+          <span class="tournament-state" [attr.data-state]="t.state">{{ stateLabel(t) }}</span>
+        </mat-cell>
+      </ng-container>
+      <ng-container matColumnDef="created">
+        <mat-header-cell *matHeaderCellDef>Created</mat-header-cell>
+        <mat-cell *matCellDef="let t" class="tournament-table__num">{{
+          t.created_at | date: 'yyyy-MM-dd HH:mm'
+        }}</mat-cell>
+      </ng-container>
+
+      <mat-header-row *matHeaderRowDef="columns" />
+      <mat-row *matRowDef="let t; columns: columns" />
+    </mat-table>
+
+    @if (result.meta.total_pages > 1) {
+      <mat-paginator
+        [length]="result.meta.count"
+        [pageSize]="result.meta.page_size"
+        [pageIndex]="result.meta.page - 1"
+        [hidePageSize]="true"
+        (page)="changePage($event)"
+        aria-label="Tournaments pages"
+      />
+    }
+  }
+}
