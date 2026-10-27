@@ -18,7 +18,7 @@ import { MatchesService } from '../../api/matches.service';
 import { RoundsService } from '../../api/rounds.service';
 import { TeamListItem } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { applyApiErrors } from '../../shared/form-errors';
+import { REQUIRED_MESSAGE, applyApiErrors } from '../../shared/form-errors';
 import { injectNotify } from '../../shared/notify';
 import { SetupKind } from '../shared/setup-kind';
 
@@ -27,9 +27,6 @@ const MATCH_TYPES: readonly { value: MatchType; label: string }[] = [
   { value: 'friendly', label: 'Friendly' },
   { value: 'tournament', label: 'Tournament' },
 ];
-
-/** Django's wording for a missing required field, as the API sends it for the other forms. */
-const REQUIRED_MESSAGE = 'This field is required.';
 
 /**
  * `/matches/new` and `/rounds/new`: one setup form, configured by the route's `data.kind`.

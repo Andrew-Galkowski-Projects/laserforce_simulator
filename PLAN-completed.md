@@ -7151,6 +7151,53 @@ Confirm items 3-4 cover the `enhanced_*` templates and
  apply). Out of scope: heading text, the trophy / "Tie Game" header, "Basic Simulation" wording,
  Round detail (item 4), and an error state for a failed picker load (existing behaviour).
 
+#### ANG-06-12 · [DONE] Batch simulate
+
+**[DONE] Shipped (2026-10-26).** The Angular Batch Simulate screen at /matches/batch (spec #393,
+ticket #394), linked from Match History's header, over the existing /api/simulate-batch/ endpoints
+with no backend change: a new BatchService, the SetupForm pickers plus a 10/50/100/500 count, live
+partial results polled every 500 ms (win-rate cards, averages, map-side advantage, a Chart.js score
+histogram), and Save games (1/5/10 Average or Highlight games, polled every 1.5 s, View Round
+links). Found on the way: a pending job's first poll reports total 0, so progress counts against the
+run's n; seeds are 64-bit, so the client only counts them; the histogram now puts negative scores in
+the first bin (the Django template lost them); resolveColor moved to shared/read-token and
+REQUIRED_MESSAGE to shared/form-errors.
+
+Form, status polling, save games. Replaces `matches/batch_simulate`.
+
+ Spec: #393 (ticket #394)
+ Grill (owner, 2026-10-26). No API gap: `POST /api/simulate-batch/`, `GET …/<job_id>/`,
+ `POST …/<job_id>/save/` and `GET …/save/<save_job_id>/` cover the screen; no backend ticket.
+ - Route `/matches/batch` (before `:id`), linked from a "Batch Simulate" button in Match
+   History's header. No sidebar change (item 20 owns nav).
+ - Form as Django: Red / Blue Team, Arena Map (empty = "No map (3-zone fallback)"), Number of
+   simulations select 10 / 50 / 100 / 500 (default 100). Same pickers and error handling as
+   `SetupForm`; same-team / roster errors stay server-side. No `master_seed` input.
+ - Run is disabled while a batch runs; a new run clears the previous results, chart and save
+   section; leaving the page stops all polling.
+ - Determinate progress "Simulating game X of Y…", partial results painted live every poll,
+   500 ms cadence; on complete "Complete in X.Xs" (browser-timed).
+ - A failed poll (job `error`, or a network error) shows the error, stops, and re-enables Run.
+   No auto-retry.
+ - Results in template order, layout B: three cards (Red win % + W/T/L, Ties, Blue win % +
+   W/T/L), two average tables (Score, Survivors), the Map-side advantage table (only when
+   n > 0), the score histogram, then Save games. `data-lf-side` on team containers; cards
+   stack below the content width. Heading "Results — N simulations".
+ - Histogram: a bar-chart component local to the batch folder plus a pure
+   `scoreHistogram(red, blue)` (5000-point bins, "0–5,000" labels, one series per team in
+   `--side` colours, axes "Score range" / "Number of simulations"). `line-chart` untouched.
+ - Save games: shown only when the batch is complete and has seeds. Two "1 / 5 / 10 games"
+   selects with "Save Average Game(s)" / "Save Highlight Game(s)"; polls every 1500 ms; on
+   success "Saved N game(s)." plus a "View Round <id>" link to `/rounds/:id` each. Both save
+   buttons are disabled while a save runs (no overlapping saves).
+ - Out of scope: job id in the URL (resume on reload), a `master_seed` input, tightening the
+   API's `n` range or simulation-ready map check, any nav change, removing the Django template
+   (ANG-08).
+ - Seam: a new `api/batch.service.ts` + `batch.models.ts` (`BatchService.start`, `status`,
+   `saveGames`, `saveStatus`); the screen is `matches/batch-simulate/` (`BatchSimulate`, plus
+   `score-histogram.ts` and `score-histogram-chart.ts`). One ticket. Glossary: **Average game**,
+   **Highlight game**.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

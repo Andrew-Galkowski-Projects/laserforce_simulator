@@ -211,22 +211,25 @@ describe('Match History (/matches)', () => {
   const links = (scope: Element | null | undefined): [string, string | null][] =>
     [...(scope?.querySelectorAll('a') ?? [])].map((a) => [text(a), a.getAttribute('href')]);
 
-  it('has New Match (primary) and New Single Round (outlined) in the header', async () => {
+  it('has New Match (primary), New Single Round and Batch Simulate (outlined) in the header', async () => {
     await open([matchRow()], [roundRow()]);
     const header = page().querySelector('.match-list__header');
     expect(text(header?.querySelector('h1'))).toBe('Match History');
     expect(links(header?.querySelector('.match-list__actions'))).toEqual([
       ['New Match', '/matches/new'],
       ['New Single Round', '/rounds/new'],
+      ['Batch Simulate', '/matches/batch'],
     ]);
-    const [newMatch, newRound] = [...(header?.querySelectorAll('a') ?? [])];
+    const [newMatch, newRound, batch] = [...(header?.querySelectorAll('a') ?? [])];
     expect(newMatch.getAttribute('mat-flat-button')).not.toBeNull();
     expect(newRound.getAttribute('mat-stroked-button')).not.toBeNull();
+    expect(batch.getAttribute('mat-stroked-button')).not.toBeNull();
   });
 
   it.each([
     ['New Match', '/matches/new'],
     ['New Single Round', '/rounds/new'],
+    ['Batch Simulate', '/matches/batch'],
   ])('opens %s at %s from the header', async (label, url) => {
     await open([matchRow()], [roundRow()]);
     const a = [...page().querySelectorAll<HTMLAnchorElement>('.match-list__header a')].find(
@@ -254,13 +257,14 @@ describe('Match History (/matches)', () => {
     expect(page().querySelector('.match-list__empty')).toBeNull();
   });
 
-  it('shows one centred "No matches played yet" state with both buttons when nothing is played', async () => {
+  it('shows one centred "No matches played yet" state with the new-game buttons when nothing is played', async () => {
     await open([], []);
     const empty = page().querySelector('.match-list__empty');
     expect(text(empty?.querySelector('h2'))).toBe('No matches played yet');
     expect(links(empty)).toEqual([
       ['New Match', '/matches/new'],
       ['New Single Round', '/rounds/new'],
+      ['Batch Simulate', '/matches/batch'],
     ]);
     expect(section('matches')).toBeNull();
     expect(section('rounds')).toBeNull();

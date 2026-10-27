@@ -1,5 +1,5 @@
 import { readToken } from '../../shared/read-token';
-import { playerColors, resolveColor, shade } from './chart-colors';
+import { playerColors, shade } from './chart-colors';
 import { ChartPlayer } from './event-charts';
 
 const player = (id: number, side: 'red' | 'blue'): ChartPlayer => ({
@@ -35,11 +35,5 @@ describe('chart colours', () => {
     expect(colors.get(1)).toBe('color-mix(in oklch, R 100%, T)');
     expect(colors.get(3)).toBe('color-mix(in oklch, R 55%, T)');
     expect(colors.get(2)).toBe('color-mix(in oklch, U 100%, T)');
-  });
-
-  it('returns a colour the browser cannot compute as given, and leaves no probe behind', () => {
-    const host = document.createElement('div');
-    expect(resolveColor('not-a-colour', host)).toBe('not-a-colour');
-    expect(host.childElementCount).toBe(0);
   });
 });

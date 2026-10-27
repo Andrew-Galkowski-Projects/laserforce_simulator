@@ -79,6 +79,36 @@ Both REST views **inherit `AllowAny` from the API-02 `REST_FRAMEWORK["DEFAULT_PE
 
 Seam contract: [`.claude/worktrees/api-03-seam-contract.md`](../../../.claude/worktrees/api-03-seam-contract.md).
 
+## ANG-06-12 Angular Batch Simulate screen
+
+`/matches/batch` in the SPA (spec #393) ports `batch_simulate.html` over the four existing
+`/api/simulate-batch/` endpoints; no backend change. Linked from Match History's header beside New
+Match / New Single Round.
+
+- **Seam:** `frontend/src/app/api/batch.service.ts` (`BatchService.start`, `status(jobId)`,
+  `saveGames(jobId, input)`, `saveStatus(saveJobId)`) + `batch.models.ts` (`BatchAggregate`,
+  `SideAdvantage`, `JobStatus`, `SaveGameType`). The status query params are not sent (they only
+  echo back).
+- **Run lifecycle** (`matches/batch-simulate/batch-simulate.ts`): idle → running → complete | error.
+  Run is disabled while running; a new run clears results, chart and save state; each poll is
+  scheduled 500 ms after the previous answer (never overlapping); polling stops on destroy and on
+  any terminal state. A pending job reports `total: 0`, so progress counts against the run's `n`
+  until a poll reports a total. A job `error` or a failed request stops with its message.
+- **Seeds are 64-bit** (beyond `Number.MAX_SAFE_INTEGER`): the client only counts `avg_seeds` /
+  `outlier_seeds` to decide whether Save games shows; the save body sends `game_type` + `n` and
+  the server reads the real seeds from the job result.
+- **Save games:** 1 / 5 / 10 Average (`avg`) or Highlight (`outlier`) games, polled every 1.5 s,
+  no overlapping saves, "Saved N Round(s)." plus a `/rounds/<id>` link each. A save after the 1 h
+  result TTL is refused 409 and shows the server's message.
+- **Histogram:** `scoreHistogram` (5,000-point bins over both Teams' range; a negative score
+  counts in the first bin) feeds `app-score-histogram`, a Chart.js bar chart (ADR-0045) whose
+  Side colours come from `--lf-side-*` at runtime and follow the OS colour scheme.
+- **Browser check:** dev Celery is not eager by default. `LF_CELERY_EAGER=1` runs the job inside
+  the POST (no live progress); for live progress run Redis plus a `--pool=solo` worker with the
+  same `CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND` as `runserver`.
+- **Out of scope:** the job id in the URL, a `master_seed` input, tightening the API's `n` /
+  map checks, nav changes, removing the Django template (ANG-08).
+
 ## CI-01 Connection cleanup and the close-in-transaction guard
 
 **No task closes its own DB connection.** Celery's Django worker fixup closes it after every

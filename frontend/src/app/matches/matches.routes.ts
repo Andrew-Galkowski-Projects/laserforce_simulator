@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import { APP_TITLE } from '../app-title';
+import { BatchSimulate } from './batch-simulate/batch-simulate';
 import { CompareRounds } from './compare-rounds/compare-rounds';
 import { MatchDetail } from './match-detail/match-detail';
 import { MatchList } from './match-list/match-list';
@@ -13,8 +14,8 @@ import { SetupForm } from './setup-form/setup-form';
 import { SetupKind } from './shared/setup-kind';
 
 /**
- * The Matches area, lazily loaded under `/matches` by `app.routes.ts`. `new` comes before `:id`
- * so it is never read as a Match id.
+ * The Matches area, lazily loaded under `/matches` by `app.routes.ts`. `new` and `batch` (Batch
+ * Simulate) come before `:id` so neither is read as a Match id.
  */
 export const MATCHES_ROUTES: Routes = [
   { path: '', component: MatchList, title: `Match History - ${APP_TITLE}` },
@@ -24,6 +25,7 @@ export const MATCHES_ROUTES: Routes = [
     data: { kind: 'match' satisfies SetupKind },
     title: `New Match - ${APP_TITLE}`,
   },
+  { path: 'batch', component: BatchSimulate, title: `Batch Simulate - ${APP_TITLE}` },
   { path: ':id', component: MatchDetail, title: `Match - ${APP_TITLE}` },
 ];
 

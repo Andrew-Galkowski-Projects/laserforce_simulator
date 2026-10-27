@@ -11,14 +11,11 @@ import { listAll } from '../../api/list-all';
 import { ArenaMap } from '../../api/maps.models';
 import { MapsService } from '../../api/maps.service';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
-import { applyApiErrors } from '../../shared/form-errors';
+import { REQUIRED_MESSAGE, applyApiErrors } from '../../shared/form-errors';
 import { apiMessage } from '../../shared/api-message';
 
 /** `MapUploadForm.name`'s `max_length`. */
 const NAME_MAX_LENGTH = 100;
-
-/** Django's field messages, so a client-side check reads the same as the server's. */
-const REQUIRED_MESSAGE = 'This field is required.';
 
 /**
  * `/maps`: one card per Arena map (thumbnail, name, size, Default and zone-config badges, Open

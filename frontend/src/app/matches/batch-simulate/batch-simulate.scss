@@ -1,0 +1,299 @@
+// Batch Simulate: the setup card (as New Match), then the live results, layout B.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+.intro {
+  margin: 0 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+.setup {
+  max-width: 48rem;
+  padding: 1.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+// Each Team picker takes half the row, and a full row when narrow ("Name pickers get room").
+.setup__row {
+  display: grid;
+  grid-template-columns: 1fr;
+  column-gap: 1rem;
+  row-gap: 0.5rem;
+}
+
+// Two-up only from 900px: at 768px the content area is ~560px, which clipped the
+// "Number of simulations" label and the "No map (3-zone fallback)" choice.
+@media (min-width: 900px) {
+  .setup__row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+// Each Team picker carries its Side: a 4px Side border, as on the layout B team strips.
+.setup [data-lf-side] {
+  padding-left: 0.75rem;
+  border-left: 4px solid var(--side);
+}
+
+.error {
+  @include alerts.error;
+}
+
+.setup__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+// ---- The run: progress, error, results ----
+
+.progress {
+  max-width: 48rem;
+  margin-top: 1.5rem;
+}
+
+.progress__label {
+  margin: 0.25rem 0 0;
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.run-error {
+  max-width: 48rem;
+  margin-top: 1.5rem;
+}
+
+.results {
+  margin-top: 1.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--lf-border);
+
+  h2 {
+    margin: 0 0 1rem;
+    font-family: var(--lf-font-heading);
+    font-size: 1.25rem;
+  }
+
+  h3 {
+    margin: 0 0 0.75rem;
+    font-family: var(--lf-font-heading);
+    font-size: 1rem;
+  }
+}
+
+// The R / B badge beside every Side colour, for colour-blind users.
+.side-badge {
+  padding: 0 0.35rem;
+  border-radius: var(--lf-radius);
+  background: var(--side);
+  color: var(--lf-bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+// Three cards in a row from the content width up; stacked below it.
+.cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (min-width: 900px) {
+  .cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  text-align: center;
+
+  &[data-lf-side] {
+    border-top: 4px solid var(--side);
+  }
+
+  .side-badge {
+    align-self: flex-start;
+  }
+}
+
+.card__value {
+  font-size: 2rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+
+  [data-lf-side] > & {
+    color: var(--side-text);
+  }
+}
+
+.card__caption {
+  color: var(--lf-text-muted);
+}
+
+.card__record {
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+// Two average tables side by side with the cards; stacked below, so a Team name stays whole.
+.averages-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+@media (min-width: 900px) {
+  .averages-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+  font-variant-numeric: tabular-nums;
+
+  caption {
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--lf-border);
+    border-bottom: none;
+    background: var(--lf-surface-alt);
+    font-weight: 700;
+    text-align: left;
+  }
+
+  th,
+  td {
+    padding: 0.4rem 0.75rem;
+    border-top: 1px solid var(--lf-border);
+    text-align: left;
+  }
+
+  th[scope='row'] {
+    font-weight: 400;
+  }
+
+  thead th {
+    color: var(--lf-text-muted);
+    font-size: 0.875rem;
+    font-weight: 500;
+  }
+
+  .num {
+    text-align: right;
+  }
+}
+
+.averages caption {
+  border-top: 4px solid var(--side);
+}
+
+.side-advantage-block {
+  margin-bottom: 1.5rem;
+}
+
+.side-advantage .side-name {
+  color: var(--side-text);
+  font-weight: 700;
+}
+
+.side-advantage__note {
+  margin: 0.5rem 0 0;
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.distribution {
+  margin-bottom: 1.5rem;
+}
+
+.distribution__chart {
+  height: 18rem;
+}
+
+// ---- Save games ----
+
+.save-games {
+  padding-top: 1rem;
+  border-top: 1px solid var(--lf-border);
+}
+
+.save-games__intro {
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.save-games__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+}
+
+.save-games__pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+
+  // Wide enough for the floating "Highlight games" label.
+  mat-form-field {
+    width: 13rem;
+  }
+}
+
+.save-status {
+  @include alerts.notice;
+
+  max-width: 48rem;
+  margin-top: 1rem;
+
+  p {
+    margin: 0;
+  }
+}
+
+.save-status--error {
+  @include alerts.error;
+}
+
+.save-status__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
