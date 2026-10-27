@@ -1,0 +1,43 @@
+<section class="participant-import">
+  <h2>Import Participants (CSV)</h2>
+  <p class="participant-import__hint">
+    Each new Team in the roster CSV joins the field; the whole field is then re-seeded.
+  </p>
+  <form (submit)="$event.preventDefault(); submit()" novalidate>
+    @for (message of alertErrors(); track $index) {
+      <p class="participant-import__alert" role="alert">{{ message }}</p>
+    }
+    <div class="participant-import__field">
+      <span class="participant-import__label" id="participant-import-label">Participants CSV</span>
+      <input
+        #csvInput
+        type="file"
+        name="csv_file"
+        accept=".csv,text/csv"
+        hidden
+        aria-labelledby="participant-import-label"
+        (change)="choose($event)"
+      />
+      <div class="participant-import__picker">
+        <button mat-stroked-button type="button" (click)="csvInput.click()">Choose CSV</button>
+        <span class="participant-import__filename">{{ file()?.name ?? 'No file chosen' }}</span>
+      </div>
+      @for (message of fileErrors(); track $index) {
+        <mat-error class="participant-import__error">{{ message }}</mat-error>
+      }
+      @if (rowErrors().length > 0) {
+        <ul class="participant-import__rows">
+          @for (message of rowErrors(); track $index) {
+            <li>{{ message }}</li>
+          }
+        </ul>
+      }
+    </div>
+    <div class="participant-import__actions">
+      <button mat-flat-button type="submit" [disabled]="busy() || !file()">
+        Import Participants
+      </button>
+      <button mat-button type="button" (click)="downloadTemplate()">Download a template CSV</button>
+    </div>
+  </form>
+</section>
