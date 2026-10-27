@@ -322,6 +322,8 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(rows().map((row) => cells(row)[0])).toEqual(['Ace', 'Abe', 'Cy']);
       const select = await playerSelect();
       expect(await select.getValueText()).toBe('');
+      // The added ids leave the options, so only the cleared control keeps Add from re-posting them.
+      expect(button('Add selected').disabled).toBe(true);
       await select.open();
       const options = await Promise.all((await select.getOptions()).map((o) => o.getText()));
       await select.close();
