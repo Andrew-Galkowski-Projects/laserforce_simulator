@@ -13,6 +13,7 @@ import { TournamentDetail as TournamentDetailData } from '../../api/tournaments.
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { tournamentDetail } from '../testing/detail-fixtures';
+import { releasePoolLoads } from '../testing/pool-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -80,6 +81,7 @@ describe('Tournament detail (/tournaments/:id)', () => {
     ['player_pool', 'Player pool', 'Preset teams'],
   ] as const)('labels a %s assembly "%s"', async (assembly, label, other) => {
     await open(tournamentDetail({ team_assembly: assembly, participants: [] }));
+    releasePoolLoads();
     expect(text(header())).toContain(label);
     expect(text(header())).not.toContain(other);
   });
@@ -171,6 +173,18 @@ describe('Tournament detail (/tournaments/:id)', () => {
 
   it('has no Participants table for a Player-pool Tournament, even once drawn', async () => {
     await open(tournamentDetail({ team_assembly: 'player_pool', is_drawn: true }));
+    releasePoolLoads();
     expect(page().querySelector('.tournament-participants')).toBeNull();
+  });
+
+  it('places the Player Pool section for a Player-pool Tournament only', async () => {
+    await open(tournamentDetail({ team_assembly: 'player_pool', participants: [], pool_size: 6 }));
+    releasePoolLoads();
+    expect(text(page().querySelector('app-tournament-pool h2'))).toBe('Player Pool (6)');
+  });
+
+  it('has no Player Pool section for a preset Tournament', async () => {
+    await open(tournamentDetail());
+    expect(page().querySelector('app-tournament-pool')).toBeNull();
   });
 });

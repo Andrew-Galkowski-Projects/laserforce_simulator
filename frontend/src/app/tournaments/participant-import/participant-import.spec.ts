@@ -16,6 +16,7 @@ import { TournamentDetail } from '../../api/tournaments.models';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { tournamentDetail } from '../testing/detail-fixtures';
+import { releasePoolLoads } from '../testing/pool-fixtures';
 
 const BASE = environment.apiBaseUrl;
 const IMPORT_URL = `${BASE}/tournaments/5/import-participants/`;
@@ -131,6 +132,8 @@ describe('Participant import (Tournament detail)', () => {
     'hides the import card for a %s Tournament',
     async (_label, overrides) => {
       await open(tournamentDetail(overrides));
+      // A Player-pool Tournament shows the Player Pool section instead, which loads its own data.
+      releasePoolLoads();
       expect(page().querySelector('h1')).not.toBeNull();
       expect(card()).toBeNull();
       expect(page().textContent).not.toContain('Import Participants');

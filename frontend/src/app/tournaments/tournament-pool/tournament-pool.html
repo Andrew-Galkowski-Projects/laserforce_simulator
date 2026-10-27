@@ -1,0 +1,191 @@
+<section class="tournament-pool">
+  <h2>Player Pool ({{ detail().pool_size }})</h2>
+  @if (sizeInvalid()) {
+    <p class="tournament-pool__warning" role="status">
+      The pool must be divisible by 6 and have at least 24 players (4+ teams) before you can draw.
+    </p>
+  }
+  @if (loadError(); as message) {
+    <p class="tournament-pool__alert" role="alert">{{ message }}</p>
+  }
+
+  @if (editable()) {
+    <div class="tournament-pool__cards">
+      <section class="tournament-pool__card">
+        <h3>Add existing players</h3>
+        <form [formGroup]="addForm" (ngSubmit)="add()" novalidate>
+          @for (message of addErrors(); track $index) {
+            <p class="tournament-pool__alert" role="alert">{{ message }}</p>
+          }
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Players</mat-label>
+            <mat-select formControlName="player_ids" multiple>
+              @for (player of addablePlayers(); track player.id) {
+                <mat-option [value]="player.id"
+                  >{{ player.name }} ({{ player.team_name }})</mat-option
+                >
+              }
+            </mat-select>
+            @if (addForm.controls.player_ids.getError('server'); as message) {
+              <mat-error>{{ message }}</mat-error>
+            }
+          </mat-form-field>
+          <div class="tournament-pool__actions">
+            <button
+              mat-flat-button
+              type="submit"
+              [disabled]="adding() || addForm.controls.player_ids.value.length === 0"
+            >
+              Add selected
+            </button>
+          </div>
+        </form>
+      </section>
+      <section class="tournament-pool__card">
+        <h3>Generate players</h3>
+        <form [formGroup]="generateForm" (ngSubmit)="generate()" novalidate>
+          @for (message of generateErrors(); track $index) {
+            <p class="tournament-pool__alert" role="alert">{{ message }}</p>
+          }
+          <div class="tournament-pool__numbers">
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>How many</mat-label>
+              <input
+                matInput
+                type="number"
+                name="count"
+                formControlName="count"
+                min="1"
+                max="1000"
+                required
+              />
+              @if (generateForm.controls.count.getError('server'); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>Mean</mat-label>
+              <input matInput type="number" name="mean" formControlName="mean" min="0" max="100" />
+              @if (generateForm.controls.mean.getError('server'); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>Std dev</mat-label>
+              <input
+                matInput
+                type="number"
+                name="std_dev"
+                formControlName="std_dev"
+                min="1"
+                max="40"
+              />
+              @if (generateForm.controls.std_dev.getError('server'); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+          </div>
+          <div class="tournament-pool__actions">
+            <button mat-flat-button type="submit" [disabled]="generating()">Generate</button>
+          </div>
+        </form>
+      </section>
+      <section class="tournament-pool__card">
+        <h3>Import players (CSV)</h3>
+        <form (submit)="$event.preventDefault(); importCsv()" novalidate>
+          @for (message of importErrors(); track $index) {
+            <p class="tournament-pool__alert" role="alert">{{ message }}</p>
+          }
+          <div class="tournament-pool__file">
+            <span class="tournament-pool__label" id="tournament-pool-import-label"
+              >Players CSV</span
+            >
+            <input
+              #csvInput
+              type="file"
+              name="csv_file"
+              accept=".csv,text/csv"
+              hidden
+              aria-labelledby="tournament-pool-import-label"
+              (change)="choose($event)"
+            />
+            <div class="tournament-pool__picker">
+              <button mat-stroked-button type="button" (click)="csvInput.click()">
+                Choose CSV
+              </button>
+              <span class="tournament-pool__filename">{{ file()?.name ?? 'No file chosen' }}</span>
+            </div>
+            @for (message of fileErrors(); track $index) {
+              <mat-error class="tournament-pool__file-error">{{ message }}</mat-error>
+            }
+            @if (rowErrors().length > 0) {
+              <ul class="tournament-pool__rows">
+                @for (message of rowErrors(); track $index) {
+                  <li>{{ message }}</li>
+                }
+              </ul>
+            }
+          </div>
+          <div class="tournament-pool__actions">
+            <button mat-flat-button type="submit" [disabled]="importing() || !file()">
+              Import players
+            </button>
+            <button mat-button type="button" (click)="downloadTemplate()">
+              Download a template CSV
+            </button>
+          </div>
+        </form>
+      </section>
+    </div>
+  }
+
+  @if (removeError(); as message) {
+    <p class="tournament-pool__alert tournament-pool__table-alert" role="alert">{{ message }}</p>
+  }
+  <div class="tournament-pool__scroll">
+    <table class="tournament-pool__table">
+      <thead>
+        <tr>
+          <th scope="col">Player</th>
+          <th scope="col">Tier</th>
+          <th scope="col">Drawn team</th>
+          @if (editable()) {
+            <th scope="col" aria-label="Actions"></th>
+          }
+        </tr>
+      </thead>
+      <tbody>
+        @for (entry of entries(); track entry.player.id) {
+          <tr>
+            <td>
+              @if (entry.player.team; as team) {
+                <a [routerLink]="['/teams', team.id, 'players', entry.player.id]">{{
+                  entry.player.name
+                }}</a>
+              } @else {
+                {{ entry.player.name }}
+              }
+              @if (entry.player.id === selfId()) {
+                <span class="badge badge--you">You</span>
+              }
+            </td>
+            <td>{{ entry.tier ?? '—' }}</td>
+            <td>{{ entry.drawn_team?.name ?? '—' }}</td>
+            @if (editable()) {
+              <td class="tournament-pool__remove">
+                <button
+                  mat-stroked-button
+                  type="button"
+                  [disabled]="removing()"
+                  (click)="remove(entry)"
+                >
+                  Remove
+                </button>
+              </td>
+            }
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>

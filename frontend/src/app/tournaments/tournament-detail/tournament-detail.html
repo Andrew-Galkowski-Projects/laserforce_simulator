@@ -50,11 +50,7 @@
     <app-participant-import [detail]="t" (changed)="reload()" />
   }
 
-  <!--
-    Pool slot (ANG-06-13a T4, #400): the Player Pool section goes here, as
-      @if (t.team_assembly === 'player_pool') {
-        <app-tournament-pool [detail]="t" (changed)="reload()" />
-      }
-    with TournamentPool added to this component's `imports`.
-  -->
+  @if (t.team_assembly === 'player_pool') {
+    <app-tournament-pool [detail]="t" (changed)="reload()" />
+  }
 }
