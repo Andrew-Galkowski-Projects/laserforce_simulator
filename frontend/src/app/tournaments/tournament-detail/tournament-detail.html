@@ -1,0 +1,60 @@
+@let t = detail();
+@if (notFound()) {
+  <h1>Tournament not found</h1>
+  <p><a mat-stroked-button routerLink="/tournaments">&larr; Back to Tournaments</a></p>
+} @else if (loadError(); as message) {
+  <p class="tournament-detail__error" role="alert">{{ message }}</p>
+} @else if (t) {
+  <header class="tournament-detail__header">
+    <h1>{{ t.name }}</h1>
+    <div class="tournament-detail__meta">
+      <span class="tournament-detail__format">{{ t.format_label }}</span>
+      <span class="tournament-state" [attr.data-state]="t.state">{{ stateLabels[t.state] }}</span>
+      <span class="tournament-detail__assembly">{{ assemblyLabels[t.team_assembly] }}</span>
+    </div>
+    @if (t.champion; as champion) {
+      <p class="tournament-detail__champion">
+        Champion: <a [routerLink]="['/teams', champion.id]">{{ champion.name }}</a>
+      </p>
+    }
+    @if (t.embedded) {
+      <p class="tournament-detail__league">In League: {{ t.season?.name }}</p>
+    }
+  </header>
+
+  @if (t.team_assembly === 'preset' && t.participants.length > 0) {
+    <section class="tournament-detail__section">
+      <h2>Participants</h2>
+      <table class="tournament-participants">
+        <thead>
+          <tr>
+            <th scope="col">Seed</th>
+            <th scope="col">Team</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (participant of t.participants; track participant.team.id) {
+            <tr>
+              <td class="tournament-participants__seed">{{ participant.seed }}</td>
+              <td>
+                <a [routerLink]="['/teams', participant.team.id]">{{ participant.team.name }}</a>
+              </td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </section>
+  }
+
+  @if (t.state === 'setup' && t.team_assembly === 'preset' && !t.embedded) {
+    <app-participant-import [detail]="t" (changed)="reload()" />
+  }
+
+  <!--
+    Pool slot (ANG-06-13a T4, #400): the Player Pool section goes here, as
+      @if (t.team_assembly === 'player_pool') {
+        <app-tournament-pool [detail]="t" (changed)="reload()" />
+      }
+    with TournamentPool added to this component's `imports`.
+  -->
+}
