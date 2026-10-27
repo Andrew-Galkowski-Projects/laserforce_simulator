@@ -39,7 +39,9 @@ form {
   row-gap: 0.5rem;
 }
 
-@media (min-width: 768px) {
+// Two-up only from 900px: at 768px the content area is ~560px, which clipped the
+// "Number of simulations" label and the "No map (3-zone fallback)" choice.
+@media (min-width: 900px) {
   .setup__row {
     grid-template-columns: 1fr 1fr;
   }
