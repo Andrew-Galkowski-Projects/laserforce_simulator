@@ -777,17 +777,13 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(removeButtons().every((b) => b.disabled)).toBe(true);
       removeButtons()[0].click();
       await stable();
-      http
-        .expectOne(removeUrl(21))
-        .flush(
-          {
-            errors: [
-              { code: 'not_found', message: 'That Player is not in the pool.', field: null },
-            ],
-            meta: {},
-          },
-          { status: 404, statusText: 'Not Found' },
-        );
+      http.expectOne(removeUrl(21)).flush(
+        {
+          errors: [{ code: 'not_found', message: 'That Player is not in the pool.', field: null }],
+          meta: {},
+        },
+        { status: 404, statusText: 'Not Found' },
+      );
       await stable();
       expect(removeButtons().every((b) => !b.disabled)).toBe(true);
     });
