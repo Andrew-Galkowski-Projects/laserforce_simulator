@@ -101,8 +101,9 @@ src/
     shared/               cross-feature helpers: save-blob.ts (saveBlob: a Blob as a named
                           download; roster-import's template CSV, round-detail's Export PDF),
                           confirm-dialog.ts (ConfirmDialog), form-errors.ts (applyApiErrors,
-                          GENERIC_ERROR_MESSAGE), read-token.ts (readToken: a --lf-* value for
-                          canvas), notify.ts (injectNotify: the "Close" snackbar),
+                          GENERIC_ERROR_MESSAGE, REQUIRED_MESSAGE), read-token.ts (readToken: a
+                          --lf-* value for canvas; resolveColor: a CSS colour as the browser
+                          computes it), notify.ts (injectNotify: the "Close" snackbar),
                           api-message.ts (apiMessage: an ApiError's message or a fallback),
                           line-chart.ts (app-line-chart over Chart.js, ADR-0045: clock or
                           count x-axis; Round charts + career trend),
@@ -143,7 +144,10 @@ src/
                           /rounds/new (setup-form, route data kind 'match' | 'round'; also uses
                           shared/form-errors; pickers via listAll; on success a notify.ts
                           "Match simulated! / Round complete! <winner> won!" or "Tie game.",
-                          ANG-06-11), /matches/:id + /rounds/:id (match-detail,
+                          ANG-06-11), /matches/batch (batch-simulate/: ANG-06-12, the
+                          BatchSimulate run / poll / save screen, score-histogram.ts
+                          scoreHistogram + score-histogram-chart.ts, a Chart.js bar chart;
+                          api/batch.service.ts), /matches/:id + /rounds/:id (match-detail,
                           round-detail: ANG-06d, layout B, from the Round API's `scoreboard`),
                           /rounds/:id/events (round-events: the Event log, ANG-06e, from
                           `rounds/:id/timeline/`; CDK virtual scroll, client-side filters),
@@ -162,7 +166,8 @@ src/
                           event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
                           "In progress"), result-chip, route-record.ts (loadRouteRecord),
                           record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,
-                          scoreboard-fixtures, timeline-fixtures, playback-fixtures, fake-canvas: a
+                          scoreboard-fixtures, timeline-fixtures, playback-fixtures,
+                          batch-fixtures, fake-canvas: a
                           no-op 2D context + ResizeObserver for Chart.js specs)
     maps/                 ANG-06h, maps.routes.ts: /maps (map-list: cards, upload, delete; follows
                           every page) and /maps/:id/editor (map-editor/: the shell with the Zone-size
@@ -177,7 +182,7 @@ src/
                           maps-loads). The Django editor template is the behavioural reference.
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
-                          (teams, players, matches, rounds, maps); testing/ holds shared spec fixtures
+                          (teams, players, matches, rounds, maps, batch); testing/ holds shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
                           auth.guard.ts (authGuard, signedOutGuard, HOME_URL),
