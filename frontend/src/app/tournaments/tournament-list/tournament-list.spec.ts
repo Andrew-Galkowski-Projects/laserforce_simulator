@@ -12,6 +12,7 @@ import { signIn } from '../../api/testing/auth-fixtures';
 import { Tournament } from '../../api/tournaments.models';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
+import { releaseTournamentsLoads } from '../testing/tournaments-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -179,6 +180,7 @@ describe('Tournament list (/tournaments)', () => {
     expect(create.getAttribute('href')).toBe('/tournaments/new');
     create.click();
     await harness.fixture.whenStable();
+    releaseTournamentsLoads();
     expect(routerUrl()).toBe('/tournaments/new');
   });
 
