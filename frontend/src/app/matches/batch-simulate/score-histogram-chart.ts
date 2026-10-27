@@ -20,8 +20,7 @@ import {
   LinearScale,
   Tooltip,
 } from 'chart.js';
-import { readToken } from '../../shared/read-token';
-import { resolveColor } from '../round-charts/chart-colors';
+import { readToken, resolveColor } from '../../shared/read-token';
 import { ScoreHistogram } from './score-histogram';
 
 // Only what a bar chart draws (ADR-0045): no `registerables`.

@@ -73,12 +73,15 @@ export interface BatchRunStatus {
   arena_map_id: number | null;
 }
 
-/** `POST simulate-batch/{job_id}/save/`: `avg` saves Average games, `outlier` Highlight games. */
+/** Which games a save replays: `avg` the Average games, `outlier` the Highlight games. */
+export type SaveGameType = 'avg' | 'outlier';
+
+/** `POST simulate-batch/{job_id}/save/`. */
 export interface SaveGamesInput {
   team_red: number;
   team_blue: number;
   arena_map: number | null;
-  game_type: 'avg' | 'outlier';
+  game_type: SaveGameType;
   /** 1 to 10. */
   n: number;
 }

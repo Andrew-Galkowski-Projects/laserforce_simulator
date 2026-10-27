@@ -12,7 +12,12 @@ import { MatProgressBar } from '@angular/material/progress-bar';
 import { MatOption, MatSelect } from '@angular/material/select';
 import { RouterLink } from '@angular/router';
 import { Subscription, timer } from 'rxjs';
-import { BatchAggregate, BatchRunStarted, BatchRunStatus } from '../../api/batch.models';
+import {
+  BatchAggregate,
+  BatchRunStarted,
+  BatchRunStatus,
+  SaveGameType,
+} from '../../api/batch.models';
 import { BatchService } from '../../api/batch.service';
 import { listAll } from '../../api/list-all';
 import { ArenaMap } from '../../api/maps.models';
@@ -20,7 +25,7 @@ import { MapsService } from '../../api/maps.service';
 import { TeamListItem } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
 import { apiMessage } from '../../shared/api-message';
-import { GENERIC_ERROR_MESSAGE, applyApiErrors } from '../../shared/form-errors';
+import { GENERIC_ERROR_MESSAGE, REQUIRED_MESSAGE, applyApiErrors } from '../../shared/form-errors';
 import { sideTag } from '../shared/side-tag';
 import { scoreHistogram } from './score-histogram';
 import { ScoreHistogramChart } from './score-histogram-chart';
@@ -48,9 +53,6 @@ interface SaveMessage {
   tone: 'info' | 'success' | 'error';
   text: string;
 }
-
-/** Django's wording for a missing required field, as the API sends it for the other forms. */
-const REQUIRED_MESSAGE = 'This field is required.';
 
 /**
  * `/matches/batch`: a Batch run of 10 to 500 in-memory games between two Teams, polled live, with
@@ -207,7 +209,7 @@ export class BatchSimulate {
   }
 
   /** Saves the picked number of Average (`avg`) or Highlight (`outlier`) games of the run. */
-  protected save(gameType: 'avg' | 'outlier'): void {
+  protected save(gameType: SaveGameType): void {
     const run = this.run();
     if (!run) return;
     const n = this.saveCounts.controls[gameType].value;
@@ -276,7 +278,7 @@ export class BatchSimulate {
           this.savedRounds.set(status.round_ids);
           this.saveMessage.set({
             tone: 'success',
-            text: `Saved ${status.round_ids.length} game(s).`,
+            text: `Saved ${status.round_ids.length} Round(s).`,
           });
           this.savePoll = null;
         } else if (status.status === 'error') {

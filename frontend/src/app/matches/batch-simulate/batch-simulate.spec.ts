@@ -14,7 +14,7 @@ import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { Chart } from 'chart.js';
-import { BatchRunStatus } from '../../api/batch.models';
+import { BatchRunStatus, SaveGamesStatus } from '../../api/batch.models';
 import { aggregate, runStatus, STARTED } from '../testing/batch-fixtures';
 import { stubCanvasContext } from '../testing/fake-canvas';
 import { pageEnvelope } from '../testing/match-fixtures';
@@ -493,11 +493,7 @@ describe('Batch Simulate (/matches/batch)', () => {
         await answer(runStatus({ status: 'complete', completed: 10, partial: agg }));
       }
 
-      async function answerSave(status: {
-        status: string;
-        error: string | null;
-        round_ids: number[];
-      }) {
+      async function answerSave(status: SaveGamesStatus): Promise<void> {
         http.expectOne(saveStatusUrl).flush({ data: status, meta: {} });
         await stable();
       }
@@ -588,7 +584,7 @@ describe('Batch Simulate (/matches/batch)', () => {
         http.expectNone(saveStatusUrl);
         await wait(1);
         await answerSave({ status: 'complete', error: null, round_ids: [5, 6] });
-        expect(text(page().querySelector('.save-status p'))).toBe('Saved 2 game(s).');
+        expect(text(page().querySelector('.save-status p'))).toBe('Saved 2 Round(s).');
         const links = [...page().querySelectorAll<HTMLAnchorElement>('.save-status a')];
         expect(links.map((a) => [text(a), a.getAttribute('href')])).toEqual([
           ['View Round 5', '/rounds/5'],

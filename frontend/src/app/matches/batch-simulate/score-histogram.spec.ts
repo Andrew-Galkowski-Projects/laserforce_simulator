@@ -29,6 +29,22 @@ describe('scoreHistogram', () => {
     expect(hist.blue).toEqual([0, 0, 0, 0, 1, 1]);
   });
 
+  it('counts a negative score (penalties) in the first bin', () => {
+    expect(scoreHistogram([-300, 6000], [2000])).toEqual({
+      labels: ['0–5,000', '5,000–10,000'],
+      red: [1, 1],
+      blue: [1, 0],
+    });
+  });
+
+  it('keeps one bin when every score is negative', () => {
+    expect(scoreHistogram([-6000], [-12000])).toEqual({
+      labels: ['0–5,000'],
+      red: [1],
+      blue: [1],
+    });
+  });
+
   it('bins one Team alone when the other has no scores', () => {
     expect(scoreHistogram([], [7000])).toEqual({
       labels: ['0–5,000', '5,000–10,000'],

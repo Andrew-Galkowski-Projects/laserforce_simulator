@@ -5,6 +5,9 @@ import { ApiError } from '../api/api-client';
 /** The alert-line message for a failure that is not an `ApiError` (network, timeout, a bug). */
 export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 
+/** Django's wording for a missing required field, shown for a control's own `required` error. */
+export const REQUIRED_MESSAGE = 'This field is required.';
+
 /**
  * Puts each envelope field error on the matching control (as its `server` error, marked
  * touched so `mat-error` shows it) and returns the messages no control owns, for the
