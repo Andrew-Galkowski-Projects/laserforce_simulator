@@ -6,7 +6,7 @@ import { RosterImportResult } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
 import { saveBlob } from '../../shared/save-blob';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
-import { classifyImportErrors } from './import-errors';
+import { classifyImportErrors } from '../../shared/import-errors';
 
 /** The filename the browser saves the server's template CSV under. */
 const TEMPLATE_FILENAME = 'roster_template.csv';

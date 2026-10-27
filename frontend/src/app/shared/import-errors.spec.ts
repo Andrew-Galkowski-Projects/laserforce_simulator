@@ -1,4 +1,4 @@
-import { ApiError } from '../../api/api-client';
+import { ApiError } from '../api/api-client';
 import { classifyImportErrors } from './import-errors';
 
 describe('classifyImportErrors', () => {

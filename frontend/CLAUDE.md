@@ -109,7 +109,9 @@ src/
                           count x-axis; Round charts + career trend),
                           auth-card.scss (the signed-out card: login + register),
                           _alerts.scss (notice / error box mixins), _badges.scss (the
-                          "You" badge mixin), not-found-or-error.ts (notFoundOrError: a
+                          "You" badge mixin), import-errors.ts (classifyImportErrors: a
+                          failed CSV import's errors as file / rows / alert; roster import,
+                          Tournament imports), not-found-or-error.ts (notFoundOrError: a
                           404 sets notFound, anything else the apiMessage),
                           head-to-head/ (ANG-06-9: h2h-query.ts URL readers incl. queryId,
                           the cards, per-map table and charts both H2H screens share)
@@ -127,8 +129,7 @@ src/
                           rating-tier Stat bars, Delete, This is me / Unlink),
                           team-head-to-head (/teams/head-to-head) and team-history
                           (/teams/:id/history), both ANG-06-9,
-                          team-generate, roster-import (import-errors.ts:
-                          classifyImportErrors sorts a failed import's errors);
+                          team-generate, roster-import;
                           shared/: roster.ts (SLOTS, ROLE_LABELS, bench split),
                           player-stats.ts (STAT_GROUPS, STAT_KEYS, overallRating),
                           player-form.ts + .html (app-player-form: Add / Edit Player),
