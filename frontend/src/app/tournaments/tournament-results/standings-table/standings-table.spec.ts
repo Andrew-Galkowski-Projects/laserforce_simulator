@@ -117,4 +117,12 @@ describe('StandingsTable', () => {
     expect(scroll?.querySelector('table')).not.toBeNull();
     expect(getComputedStyle(scroll as Element).overflowX).toBe('auto');
   });
+
+  it('keeps Team names whole: they wrap only between words and keep a minimum width', async () => {
+    // At 768px `overflow-wrap: anywhere` broke names letter by letter (browser check).
+    const el = await render(rows());
+    const team = getComputedStyle(el.querySelector('.standings__team') as Element);
+    expect(team.overflowWrap).not.toBe('anywhere');
+    expect(team.minWidth).toBe('128px'); // 8rem
+  });
 });

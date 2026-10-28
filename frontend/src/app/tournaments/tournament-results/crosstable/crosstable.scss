@@ -25,10 +25,12 @@
     vertical-align: top;
   }
 
+  // A name wraps only between words, and each column keeps room for a whole word, so a narrow
+  // page widens the table (and scrolls it) instead of breaking names letter by letter.
   th {
     font-weight: 500;
+    min-width: 7rem;
     max-width: 10rem;
-    overflow-wrap: anywhere;
   }
 
   td {

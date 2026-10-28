@@ -98,4 +98,12 @@ describe('Crosstable', () => {
     expect(scroll?.querySelector('table')).not.toBeNull();
     expect(getComputedStyle(scroll as Element).overflowX).toBe('auto');
   });
+
+  it('keeps Team names whole: headings wrap only between words and keep a minimum width', async () => {
+    // At 768px `overflow-wrap: anywhere` let the columns shrink to one letter (browser check).
+    const el = await render([{ team: RED, cells: [null] }]);
+    const head = getComputedStyle(el.querySelector('th[scope="row"]') as Element);
+    expect(head.overflowWrap).not.toBe('anywhere');
+    expect(head.minWidth).toBe('112px'); // 7rem
+  });
 });

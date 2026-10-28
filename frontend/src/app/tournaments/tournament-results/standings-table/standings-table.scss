@@ -31,11 +31,13 @@
     font-weight: 500;
   }
 
+  // The Team name wraps only between words and keeps room for a whole word, so a narrow page
+  // scrolls the table instead of breaking names letter by letter.
   th:nth-child(2),
   .standings__team {
     text-align: left;
     white-space: normal;
-    overflow-wrap: anywhere;
+    min-width: 8rem;
   }
 
   a {
