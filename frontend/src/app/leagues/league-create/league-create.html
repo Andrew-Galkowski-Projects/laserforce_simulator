@@ -1,0 +1,69 @@
+<h1>Create League</h1>
+<section class="create">
+  <p class="create__intro">
+    Pick a ready-made league template, name it, and choose how hard you want it to be. Need finer
+    control over phases, maps or finances?
+    <a routerLink="/leagues/new/advanced">Advanced…</a>
+  </p>
+  <form [formGroup]="form" (ngSubmit)="create()" novalidate>
+    @if (loadError(); as message) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+    @for (message of nonFieldErrors(); track $index) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>League template</mat-label>
+      <mat-select formControlName="template" required>
+        @for (template of templates() ?? []; track template.key) {
+          <mat-option [value]="template.key">{{ template.label }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint
+        >Each template sets the team count and the season's phase structure. Pick Advanced to build
+        your own.</mat-hint
+      >
+      @if (form.controls.template.hasError('required')) {
+        <mat-error>{{ requiredMessage }}</mat-error>
+      } @else if (form.controls.template.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>League name</mat-label>
+      <input
+        matInput
+        name="league_name"
+        formControlName="league_name"
+        maxlength="100"
+        autocomplete="off"
+        required
+      />
+      @if (form.controls.league_name.hasError('required')) {
+        <mat-error>{{ requiredMessage }}</mat-error>
+      } @else if (form.controls.league_name.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Difficulty</mat-label>
+      <mat-select formControlName="difficulty">
+        @for (choice of difficultyChoices; track choice.value) {
+          <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint>{{ difficultyHelp }}</mat-hint>
+      @if (form.controls.difficulty.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <div class="create__actions">
+      <button mat-flat-button type="submit" [disabled]="busy()">Create League</button>
+      <a mat-button routerLink="/leagues">Cancel</a>
+    </div>
+  </form>
+</section>

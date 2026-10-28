@@ -1,0 +1,275 @@
+<h1>Advanced — Create League</h1>
+<section class="create">
+  <p class="create__intro">
+    Full control over the new League: team count, stat distribution, difficulty, season phases, map
+    configuration, and finances.
+    <a routerLink="/leagues/new">Use a template instead</a>.
+  </p>
+  <form [formGroup]="form" (ngSubmit)="create()" novalidate>
+    @if (loadError(); as message) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>League name</mat-label>
+      <input
+        matInput
+        name="league_name"
+        formControlName="league_name"
+        maxlength="100"
+        autocomplete="off"
+        required
+      />
+      @if (form.controls.league_name.hasError('required')) {
+        <mat-error>{{ requiredMessage }}</mat-error>
+      } @else if (form.controls.league_name.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Your team name</mat-label>
+      <input
+        matInput
+        name="manager_team_name"
+        formControlName="manager_team_name"
+        maxlength="100"
+        autocomplete="off"
+      />
+      <mat-hint
+        >Optional. Name your own team — it becomes one of the generated teams and your career team.
+        Leave blank to keep its generated name.</mat-hint
+      >
+      @if (form.controls.manager_team_name.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Difficulty</mat-label>
+      <mat-select formControlName="difficulty">
+        @for (choice of difficultyChoices; track choice.value) {
+          <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint>{{ difficultyHelp }}</mat-hint>
+      @if (form.controls.difficulty.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <div class="create__row">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Season name</mat-label>
+        <input
+          matInput
+          name="season_name"
+          formControlName="season_name"
+          maxlength="100"
+          autocomplete="off"
+          required
+        />
+        @if (form.controls.season_name.hasError('required')) {
+          <mat-error>{{ requiredMessage }}</mat-error>
+        } @else if (form.controls.season_name.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Start date</mat-label>
+        <input matInput type="date" name="start_date" formControlName="start_date" required />
+        @if (form.controls.start_date.hasError('required')) {
+          <mat-error>{{ requiredMessage }}</mat-error>
+        } @else if (form.controls.start_date.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    <div class="create__row">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Number of teams</mat-label>
+        <mat-select formControlName="num_teams">
+          @for (choice of numTeamsChoices; track choice.value) {
+            <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+          }
+        </mat-select>
+        @if (form.controls.num_teams.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Conferences</mat-label>
+        <mat-select formControlName="number_of_conferences">
+          @for (choice of conferenceChoices; track choice.value) {
+            <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+          }
+        </mat-select>
+        <mat-hint
+          >Split the teams into separate regional leagues that each play their own round-robin and
+          standings. Pick a number to set them up after creating (needs at least 2 teams per
+          conference); leave "None" for a single flat league.</mat-hint
+        >
+        @if (form.controls.number_of_conferences.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    <div class="create__row">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Stat mean</mat-label>
+        <input
+          matInput
+          type="number"
+          name="mean"
+          formControlName="mean"
+          [min]="meanMin"
+          [max]="meanMax"
+          required
+        />
+        @if (form.controls.mean.hasError('required')) {
+          <mat-error>{{ requiredMessage }}</mat-error>
+        } @else if (form.controls.mean.hasError('min')) {
+          <mat-error>Ensure this value is greater than or equal to {{ meanMin }}.</mat-error>
+        } @else if (form.controls.mean.hasError('max')) {
+          <mat-error>Ensure this value is less than or equal to {{ meanMax }}.</mat-error>
+        } @else if (form.controls.mean.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Stat standard deviation</mat-label>
+        <input
+          matInput
+          type="number"
+          name="std_dev"
+          formControlName="std_dev"
+          [min]="stdDevMin"
+          [max]="stdDevMax"
+          required
+        />
+        @if (form.controls.std_dev.hasError('required')) {
+          <mat-error>{{ requiredMessage }}</mat-error>
+        } @else if (form.controls.std_dev.hasError('min')) {
+          <mat-error>Ensure this value is greater than or equal to {{ stdDevMin }}.</mat-error>
+        } @else if (form.controls.std_dev.hasError('max')) {
+          <mat-error>Ensure this value is less than or equal to {{ stdDevMax }}.</mat-error>
+        } @else if (form.controls.std_dev.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>League spread</mat-label>
+      <mat-select formControlName="league_spread">
+        @for (choice of spreadChoices; track choice.value) {
+          <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint
+        >How unequal the generated league is. Even draws every team from the same stat distribution;
+        Tiered and Steep ramp the teams from a strong projected favourite down to a weak projected
+        wooden spoon, keeping the league's average talent the same.</mat-hint
+      >
+      @if (form.controls.league_spread.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <fieldset class="create__group">
+      <legend>Season phases</legend>
+      <app-phase-composer [(rows)]="phaseRows" />
+      <p class="hint">
+        Add a "Member night" block for a casual, per-Site social play interlude (excluded from the
+        Standings).
+      </p>
+      @if (form.controls.phases.getError('server'); as message) {
+        <p class="error" role="alert" data-error-for="phases">{{ message }}</p>
+      }
+    </fieldset>
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Map mode</mat-label>
+      <mat-select formControlName="map_mode" required>
+        @for (choice of mapModeChoices; track choice.value) {
+          <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+        }
+      </mat-select>
+      <mat-hint
+        >Per-Season arena map configuration. Pick "3-zone fallback" to play every Round on the
+        legacy 3-zone model, "Single map" to use one fixed map every Round, or "Random per Round" to
+        draw a map per Round from the pool below.</mat-hint
+      >
+      @if (form.controls.map_mode.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    <div class="create__full">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic" class="picker-wide">
+        <mat-label>Map pool</mat-label>
+        <mat-select formControlName="map_pool" multiple>
+          @for (map of maps(); track map.id) {
+            <mat-option [value]="map.id">{{ map.name }}</mat-option>
+          }
+        </mat-select>
+        <mat-hint
+          >Pool must be empty for "3-zone fallback", contain exactly 1 map for "Single map", or
+          contain at least 1 map for "Random per Round".</mat-hint
+        >
+        @if (form.controls.map_pool.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+    </div>
+
+    <fieldset class="create__group">
+      <legend>Map rotation</legend>
+      <app-map-rotation-composer [maps]="maps()" [(ids)]="rotationIds" />
+      <p class="hint">
+        Author-ordered rotation, used when Map mode is "Rotate by matchday". A Round's map is
+        <code>rotation[matchday % len(rotation)]</code> — keyed on the matchday alone, fully
+        deterministic.
+      </p>
+      @if (form.controls.map_rotation.getError('server'); as message) {
+        <p class="error" role="alert" data-error-for="map_rotation">{{ message }}</p>
+      }
+    </fieldset>
+
+    <div class="create__check">
+      <mat-checkbox formControlName="finance_enabled">Enable team finances</mat-checkbox>
+      <p class="hint">
+        Turn on the per-team budget &amp; salary economy. Manager-set scouting / coaching /
+        facilities budgets, derived salaries, and a season-level profit that feeds the owner's money
+        mood.
+      </p>
+      @if (form.controls.finance_enabled.getError('server'); as message) {
+        <p class="error" role="alert" data-error-for="finance_enabled">{{ message }}</p>
+      }
+    </div>
+
+    <div class="create__check">
+      <mat-checkbox formControlName="challenge_fired_luxury_tax">Fire on luxury tax</mat-checkbox>
+      <p class="hint">
+        When on, the owner fires the manager outright any season the team pays the luxury tax —
+        independent of cumulative mood. Only takes effect with team finances enabled.
+      </p>
+      @if (form.controls.challenge_fired_luxury_tax.getError('server'); as message) {
+        <p class="error" role="alert" data-error-for="challenge_fired_luxury_tax">
+          {{ message }}
+        </p>
+      }
+    </div>
+
+    @for (message of nonFieldErrors(); track $index) {
+      <p class="error" role="alert" data-error-for="non_field">{{ message }}</p>
+    }
+
+    <div class="create__actions">
+      <button mat-flat-button type="submit" [disabled]="busy()">Create League</button>
+      <a mat-button routerLink="/leagues">Cancel</a>
+    </div>
+  </form>
+</section>

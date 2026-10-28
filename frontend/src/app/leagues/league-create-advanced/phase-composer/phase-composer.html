@@ -1,0 +1,102 @@
+@for (row of rows(); track $index; let i = $index) {
+  <div class="phase-row">
+    <div class="phase-row__fields">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Phase type</mat-label>
+        <mat-select [value]="row.type" (valueChange)="set(i, { type: $event })">
+          @for (choice of typeChoices; track choice.value) {
+            <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+          }
+        </mat-select>
+      </mat-form-field>
+
+      @if (row.type === 'round_robin') {
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Schedule format</mat-label>
+          <mat-select
+            [value]="row.scheduleFormat"
+            (valueChange)="set(i, { scheduleFormat: $event })"
+          >
+            @for (choice of scheduleChoices; track choice.value) {
+              <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      }
+
+      @if (row.type === 'tournament') {
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Tournament mode</mat-label>
+          <mat-select [value]="row.mode" (valueChange)="set(i, { mode: $event })">
+            @for (choice of modeChoices; track choice.value) {
+              <mat-option [value]="choice.value" [disabled]="choice.disabled">{{
+                choice.label
+              }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Tournament format</mat-label>
+          <mat-select [value]="row.format" (valueChange)="set(i, { format: $event })">
+            @for (choice of formatChoices; track choice.value) {
+              <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Tournament participant cut</mat-label>
+          <input
+            matInput
+            type="number"
+            min="0"
+            [name]="'phase_cut_' + i"
+            [value]="row.cut ?? ''"
+            (input)="set(i, { cut: numberOrNull($event) })"
+          />
+        </mat-form-field>
+        @if (showSeries(row)) {
+          @for (series of seriesFields; track series.value) {
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>{{ series.label }}</mat-label>
+              <mat-select
+                [value]="row[series.value]"
+                (valueChange)="setSeries(i, series.value, $event)"
+              >
+                @for (length of seriesChoices; track length) {
+                  <mat-option [value]="length">Best of {{ length }}</mat-option>
+                }
+              </mat-select>
+            </mat-form-field>
+          }
+        }
+        @if (row.format === 'round_robin_double_elim') {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Winners/Losers bracket advancers</mat-label>
+            <mat-select [value]="row.combo" (valueChange)="set(i, { combo: $event })">
+              @for (combo of comboChoices; track combo) {
+                <mat-option [value]="combo">{{ combo }}</mat-option>
+              }
+            </mat-select>
+          </mat-form-field>
+        }
+        @if (row.format === 'swiss') {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>Swiss rounds</mat-label>
+            <input
+              matInput
+              type="number"
+              min="0"
+              [name]="'phase_swiss_rounds_' + i"
+              [value]="row.swissRounds ?? ''"
+              (input)="set(i, { swissRounds: numberOrNull($event) })"
+            />
+          </mat-form-field>
+        }
+      }
+    </div>
+    <button mat-button type="button" class="phase-row__remove" (click)="remove(i)">
+      Remove block
+    </button>
+  </div>
+}
+<button mat-stroked-button type="button" (click)="add()">+ Add block</button>
