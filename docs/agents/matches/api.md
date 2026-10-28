@@ -584,8 +584,13 @@ guards (409), then the Form (400), then the service — views raise, never build
   round_robin / swiss / winners / losers / grand_final; nodes = the `node_payload` keys `position,
   team_a, team_b, seed_a, seed_b, is_bye, wins_a, wins_b, series_length, winner, games`),
   `rr_standings`, `swiss_standings` (`StandingsRow` fields + `team` ref), `stage`, `cut_labels`
-  (`{team_id: "wb" | "lb" | "out"}`, RR→DE seeding stage only), `pool_size`, `is_drawn`. PUT / PATCH /
-  DELETE ⇒ 405. Embedded Tournaments are readable, with their `season` ref.
+  (`{team_id: "wb" | "lb" | "out"}`, RR→DE seeding stage only), `pool_size`, `is_drawn`,
+  `rr_crosstable` and `can_play` (both ANG-06-13b). `rr_crosstable` is `[{team: ref, cells: [null |
+  {opponent_team_id, leg1, leg2}]}]` in Standings order, each leg `null | {team_score, opp_score,
+  match_team, match_opp, played, match_id}` from the row Team's side (leg 1 at `[a][b]`, leg 2 at
+  `[b][a]`, diagonal null), `[]` outside Round robin / RR→DE; its Series Matches are prefetched, so the
+  query count is flat in the field size. `can_play` = active and `find_next_playable_node()` finds a
+  node (`_can_play`, shared with the HTML context); `next_node` is not sent. PUT / PATCH / DELETE ⇒ 405. Embedded Tournaments are readable, with their `season` ref.
 - **Seeds / lock / import-participants** — 409 `tournament_embedded` / `tournament_not_setup` first.
   Seeds (`PUT`, JSON) and lock return 200 with the detail; a lock format-rule `ValidationError` (too few
   participants, RR→DE advancers above the field, an odd Swiss field) ⇒ 400 `invalid`, field null.

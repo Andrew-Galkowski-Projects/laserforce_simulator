@@ -10,18 +10,24 @@ codes and counts.
 
 from __future__ import annotations
 
+import random
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from django.db import connection
 from django.test.utils import CaptureQueriesContext
 
 from matches.models import (
+    Match,
     SeasonPhase,
     Tournament,
     TournamentParticipant,
     TournamentPlayerEntry,
 )
+from matches.simulation import BatchSimulator
+from matches.standings import match_score
 from matches.tests.league_api_fixtures import LeagueApiTestCase, make_league, make_teams
+from matches.tournament_engine import play_next_node
 from teams.models import Player, get_free_agents_team
 
 LIST_URL = "/api/tournaments/"
@@ -58,7 +64,22 @@ DETAIL_KEYS = TOURNAMENT_KEYS | {
     "cut_labels",
     "pool_size",
     "is_drawn",
+    "rr_crosstable",
+    "can_play",
 }
+
+LEG_KEYS = {
+    "team_score",
+    "opp_score",
+    "match_team",
+    "match_opp",
+    "played",
+    "match_id",
+}
+
+# Short simulated rounds keep a played Round robin fast (the
+# ``test_tournament_views`` precedent).
+_FAST_TICKS = 40
 
 NODE_KEYS = {
     "position",
@@ -368,6 +389,28 @@ class TournamentRetrieveTests(LeagueApiTestCase):
         self.assertEqual(data["pool_size"], 3)
         self.assertTrue(data["is_drawn"])
 
+    def test_can_play_is_false_in_setup(self) -> None:
+        t = _tournament("Setup", n_teams=4)
+        self.assertIs(self.get(t)["can_play"], False)
+
+    def test_can_play_is_true_when_active_with_a_ready_node(self) -> None:
+        t = _locked("Ready", 4)
+        self.assertEqual(t.state, "active")
+        self.assertIs(self.get(t)["can_play"], True)
+
+    def test_can_play_is_false_when_completed(self) -> None:
+        # The nodes are still playable, so only the state rule makes it false.
+        t = _locked("Done", 4)
+        Tournament.objects.filter(pk=t.pk).update(state="completed")
+        self.assertIs(self.get(t)["can_play"], False)
+
+    def test_can_play_is_false_when_active_with_no_ready_node(self) -> None:
+        # Every node's second slot is still waiting on an earlier result.
+        t = _locked("Waiting", 4)
+        t.nodes.update(team_b=None)
+        self.assertEqual(t.state, "active")
+        self.assertIs(self.get(t)["can_play"], False)
+
     def test_cross_account_is_404(self) -> None:
         t = _tournament("Foreign", manager=self.user_b)
         self.error(self.api.get(_detail_url(t.id)), 404, "not_found")
@@ -376,6 +419,137 @@ class TournamentRetrieveTests(LeagueApiTestCase):
         # ADR-0041: an anonymous /api/ request is 401 (was 403).
         t = _tournament("Anon")
         self.error(self.anon.get(_detail_url(t.id)), 401, "not_authenticated")
+
+
+def _play_all_rr(t: Tournament) -> None:
+    """Play every Round robin node with seeded, shortened sims."""
+    random.seed(42)
+    rr_total = t.nodes.filter(bracket_type="round_robin").count()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        for _ in range(rr_total):
+            play_next_node(t)
+    t.refresh_from_db()
+
+
+class TournamentCrosstableTests(LeagueApiTestCase):
+    """ANG-06-13b-3 -- ``rr_crosstable`` on the detail payload."""
+
+    def get(self, t: Tournament) -> dict:
+        return self.ok(self.api.get(_detail_url(t.id)))
+
+    def _side_score(self, match: Match, team_id: int) -> tuple[int, int, int, int]:
+        """(team points, opp points, team match score, opp match score)."""
+        red_ms, blue_ms = match_score(
+            match.red_rounds_won,
+            match.blue_rounds_won,
+            match.winner_id,
+            match.team_red_id,
+            match.team_blue_id,
+        )
+        if match.team_red_id == team_id:
+            return (
+                match.red_total_points,
+                match.blue_total_points,
+                red_ms,
+                blue_ms,
+            )
+        return (match.blue_total_points, match.red_total_points, blue_ms, red_ms)
+
+    def test_played_round_robin_crosstable_shape_and_leg_mapping(self) -> None:
+        t = _locked("RR Played", 4, format="round_robin")
+        _play_all_rr(t)
+        data = self.get(t)
+        crosstable = data["rr_crosstable"]
+
+        row_ids = [row["team"]["id"] for row in crosstable]
+        self.assertEqual(row_ids, [row["team_id"] for row in data["rr_standings"]])
+        self.assertEqual(set(crosstable[0]["team"]), {"id", "name"})
+
+        for i, row in enumerate(crosstable):
+            self.assertEqual(len(row["cells"]), 4)
+            self.assertIsNone(row["cells"][i])
+            for j, cell in enumerate(row["cells"]):
+                if i == j:
+                    continue
+                row_id, col_id = row_ids[i], row_ids[j]
+                self.assertEqual(cell["opponent_team_id"], col_id)
+                # Leg 1 (team_a = the lower id) sits at [a][b], leg 2 at [b][a].
+                if row_id < col_id:
+                    leg, other = cell["leg1"], cell["leg2"]
+                else:
+                    leg, other = cell["leg2"], cell["leg1"]
+                self.assertIsNone(other)
+                self.assertEqual(set(leg), LEG_KEYS)
+                self.assertTrue(leg["played"])
+                match = Match.objects.get(pk=leg["match_id"])
+                self.assertEqual(
+                    {match.team_red_id, match.team_blue_id}, {row_id, col_id}
+                )
+                # Seen from the row Team's side.
+                self.assertEqual(
+                    (
+                        leg["team_score"],
+                        leg["opp_score"],
+                        leg["match_team"],
+                        leg["match_opp"],
+                    ),
+                    self._side_score(match, row_id),
+                )
+
+    def test_unplayed_leg_is_not_played_with_null_scores(self) -> None:
+        data = self.get(_locked("RR Fresh", 4, format="round_robin"))
+        cell = data["rr_crosstable"][0]["cells"][1]
+        leg = cell["leg1"] or cell["leg2"]
+        self.assertEqual(
+            leg,
+            {
+                "team_score": None,
+                "opp_score": None,
+                "match_team": None,
+                "match_opp": None,
+                "played": False,
+                "match_id": None,
+            },
+        )
+
+    def test_rrde_carries_a_crosstable(self) -> None:
+        t = _locked(
+            "RRDE X",
+            6,
+            format="round_robin_double_elim",
+            wb_advancers=4,
+            lb_advancers=0,
+        )
+        self.assertEqual(len(self.get(t)["rr_crosstable"]), 6)
+
+    def test_crosstable_is_empty_for_other_formats(self) -> None:
+        cases = {
+            "single": _locked("SE X", 4),
+            "double": _locked("DE X", 4, format="double_elimination"),
+            "swiss": _locked("Swiss X", 4, format="swiss"),
+            "pool before draw": _tournament(
+                "Pool X",
+                format="round_robin_double_elim",
+                team_assembly="player_pool",
+            ),
+        }
+        for label, t in cases.items():
+            with self.subTest(label):
+                self.assertEqual(self.get(t)["rr_crosstable"], [])
+
+    def _detail_query_count(self, t: Tournament) -> int:
+        with CaptureQueriesContext(connection) as ctx:
+            self.get(t)
+        return len(ctx.captured_queries)
+
+    def test_detail_query_count_is_flat_across_field_sizes(self) -> None:
+        small = _locked("RR Q4", 4, format="round_robin")
+        _play_all_rr(small)
+        large = _locked("RR Q6", 6, format="round_robin")
+        _play_all_rr(large)
+        self.assertEqual(
+            self._detail_query_count(small), self._detail_query_count(large)
+        )
 
 
 class TournamentPoolTests(LeagueApiTestCase):

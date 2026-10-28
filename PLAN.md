@@ -95,9 +95,7 @@ below (13b, 14, 16); the item's grill confirms it.
 11. **[DONE] Enhanced setup / detail check** (ANG-06-11, in `PLAN-completed.md`).
 12. **[DONE] Batch simulate** (ANG-06-12, in `PLAN-completed.md`).
 13a. **[DONE] Tournaments: list, create, participant pool** (ANG-06-13a, in `PLAN-completed.md`).
-13b. **Tournament detail (ANG-06-13b)** — draw + draw edit, reseed, lock, play next / all with status. Replaces
-    `tournament_detail`, `_tournament_round`. API gap: `tournaments/<id>/` lacks the round-robin
-    crosstable (`rr_crosstable`) and `can_play` / `next_node` (`tournament_services/detail.py`).
+13b. **[DONE] Tournament detail** (ANG-06-13b, in `PLAN-completed.md`).
 14. **League core (ANG-06-14)** — list, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
     history, new-team picker / reassign, next season, and the league sidebar in the Shell. API gaps:
     the delete confirm's `delete_summary` counts (Seasons, Matches, Tournaments, Teams, Players) have
@@ -347,6 +345,11 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Revoke refresh tokens on password change** (ANG-03) — a password change keeps the Account's
   outstanding refresh tokens valid until they expire (7 days). Blacklisting every `OutstandingToken`
   for the Account on change is the fix; access tokens already expire within 15 minutes
+- **Play All 500 without Redis** (found in the ANG-06-13b browser check, 2026-10-28) — with no Redis,
+  `POST tournaments/<id>/play-all/` (and the HTML play-all) returns an unhandled 500: `apply_async`
+  raises redis `ConnectionError` from the result backend, and `enqueue_play_all` catches only kombu's
+  `OperationalError`, so the claim is never released and the 503 `broker_unavailable` never shows.
+  Catch the backend's connection error too (and check the batch / Season enqueues for the same gap)
 - **Custom domain** — deferred until the project grows; fly.dev subdomain is sufficient for now
 - **Serve the Angular SPA on Fly.io** (ANG-07 follow-up, ADR-0046) — ANG-07's nginx front door runs
   only in the two compose stacks. Fly runs one image per machine, so a sidecar doesn't map onto it;

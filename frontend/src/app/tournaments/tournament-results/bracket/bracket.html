@@ -1,0 +1,14 @@
+<div class="bracket">
+  @for (round of rounds(); track round.bracket_round; let i = $index, count = $count) {
+    <div class="bracket__round">
+      @if (headingLevel() === 3) {
+        <h3 class="bracket__round-name">{{ roundName()(i, count, round.bracket_round) }}</h3>
+      } @else {
+        <h4 class="bracket__round-name">{{ roundName()(i, count, round.bracket_round) }}</h4>
+      }
+      @for (node of round.nodes; track node.position) {
+        <app-node-card [node]="node" />
+      }
+    </div>
+  }
+</div>

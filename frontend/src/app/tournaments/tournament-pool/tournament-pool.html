@@ -204,4 +204,90 @@
       </tbody>
     </table>
   </div>
+
+  @if (editable()) {
+    <div class="tournament-pool__draw">
+      @if (drawError(); as message) {
+        <p class="tournament-pool__alert" role="alert">{{ message }}</p>
+      }
+      <div class="tournament-pool__actions">
+        <button
+          mat-flat-button
+          type="button"
+          [disabled]="drawing() || sizeInvalid()"
+          (click)="draw()"
+        >
+          {{ detail().is_drawn ? 'Re-roll draw' : 'Draw teams' }}
+        </button>
+      </div>
+    </div>
+  }
+
+  @if (detail().is_drawn) {
+    <section class="tournament-pool__drawn">
+      <h3>Drawn Teams</h3>
+      <div class="tournament-pool__drawn-teams">
+        @for (drawnTeam of drawnTeams(); track drawnTeam.team.id) {
+          <section class="tournament-pool__drawn-team">
+            <h4>{{ drawnTeam.team.name }}</h4>
+            <ul>
+              @for (entry of drawnTeam.entries; track entry.player.id) {
+                <li>
+                  <span class="tournament-pool__drawn-name">
+                    {{ entry.player.name }}
+                    @if (entry.player.id === selfId()) {
+                      <span class="badge badge--you">You</span>
+                    }
+                    <span class="tournament-pool__tier">Tier {{ entry.tier ?? '—' }}</span>
+                  </span>
+                  @if (editable()) {
+                    @let control = tierControls().get(entry.player.id);
+                    @if (control) {
+                      <form
+                        class="tournament-pool__tier-form"
+                        (submit)="$event.preventDefault(); setTier(entry)"
+                        novalidate
+                      >
+                        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                          <input
+                            matInput
+                            type="number"
+                            name="tier"
+                            [formControl]="control"
+                            min="1"
+                            max="6"
+                            required
+                            [attr.aria-label]="'Tier for ' + entry.player.name"
+                          />
+                          @if (control.hasError('required')) {
+                            <mat-error>{{ requiredMessage }}</mat-error>
+                          } @else if (control.hasError('min')) {
+                            <mat-error>Ensure this value is greater than or equal to 1.</mat-error>
+                          } @else if (control.hasError('max')) {
+                            <mat-error>Ensure this value is less than or equal to 6.</mat-error>
+                          }
+                        </mat-form-field>
+                        <button
+                          mat-stroked-button
+                          type="submit"
+                          [disabled]="tierSaving().has(entry.player.id)"
+                        >
+                          Set tier
+                        </button>
+                      </form>
+                      @if (tierErrors()[entry.player.id]; as message) {
+                        <p class="tournament-pool__alert tournament-pool__tier-alert" role="alert">
+                          {{ message }}
+                        </p>
+                      }
+                    }
+                  }
+                </li>
+              }
+            </ul>
+          </section>
+        }
+      </div>
+    </section>
+  }
 </section>

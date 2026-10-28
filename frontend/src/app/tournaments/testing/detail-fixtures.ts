@@ -34,9 +34,11 @@ export function tournamentDetail(overrides: Partial<TournamentDetail> = {}): Tou
     is_drawn: false,
     stage: 'setup',
     brackets: [],
-    rr_standings: null,
-    swiss_standings: null,
-    cut_labels: null,
+    rr_standings: [],
+    swiss_standings: [],
+    cut_labels: {},
+    rr_crosstable: [],
+    can_play: false,
     ...overrides,
   };
 }

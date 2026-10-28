@@ -36,8 +36,29 @@
   color: var(--lf-text-muted);
 }
 
-.tournament-detail__league {
+.tournament-detail__league,
+.tournament-detail__empty {
   @include alerts.notice;
+}
+
+// The RR->DE / Swiss stage: an outlined accent badge beside the State badge.
+.tournament-detail__stage {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--lf-accent);
+  border-radius: var(--lf-radius);
+  color: var(--lf-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+// The completed Tournament's champion, the first result a Manager sees.
+.tournament-detail__champion {
+  @include alerts.notice;
+
+  border-color: var(--lf-ev-resupply);
+  background: color-mix(in srgb, var(--lf-ev-resupply) 12%, transparent);
+  font-weight: 700;
 }
 
 .tournament-detail__error {

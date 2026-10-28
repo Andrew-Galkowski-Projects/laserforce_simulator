@@ -1,0 +1,73 @@
+@if (editable()) {
+  @if (showSeeding()) {
+    <section class="tournament-setup__seeding">
+      <h2>Seeding</h2>
+      <form [formGroup]="seedForm()" (ngSubmit)="saveSeeds()" novalidate>
+        @for (message of seedErrors(); track $index) {
+          <p class="tournament-setup__alert" role="alert">{{ message }}</p>
+        }
+        <div class="tournament-setup__scroll">
+          <table class="tournament-setup__table">
+            <thead>
+              <tr>
+                <th scope="col">Team</th>
+                <th scope="col">Bracket seed</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (participant of detail().participants; track participant.team.id) {
+                @let key = seedKey(participant.team.id);
+                @let control = seedForm().controls[key];
+                <tr>
+                  <td>
+                    <a [routerLink]="['/teams', participant.team.id, 'history']">{{
+                      participant.team.name
+                    }}</a>
+                  </td>
+                  <td>
+                    <mat-form-field
+                      appearance="outline"
+                      subscriptSizing="dynamic"
+                      class="tournament-setup__seed"
+                    >
+                      <input
+                        matInput
+                        type="number"
+                        [name]="key"
+                        [formControlName]="key"
+                        min="1"
+                        required
+                        [attr.aria-label]="'Bracket seed for ' + participant.team.name"
+                      />
+                      @if (control.hasError('required')) {
+                        <mat-error>{{ requiredMessage }}</mat-error>
+                      } @else if (control.hasError('min')) {
+                        <mat-error>Ensure this value is greater than or equal to 1.</mat-error>
+                      } @else if (control.getError('server'); as message) {
+                        <mat-error>{{ message }}</mat-error>
+                      }
+                    </mat-form-field>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+        <div class="tournament-setup__actions">
+          <button mat-stroked-button type="submit" [disabled]="saving()">Save Seeding</button>
+        </div>
+      </form>
+    </section>
+  }
+
+  <section class="tournament-setup__lock">
+    @if (lockError(); as message) {
+      <p class="tournament-setup__alert" role="alert">{{ message }}</p>
+    }
+    <div class="tournament-setup__actions">
+      <button mat-flat-button type="button" [disabled]="locking()" (click)="lock()">
+        Lock &amp; Build Bracket
+      </button>
+    </div>
+  </section>
+}

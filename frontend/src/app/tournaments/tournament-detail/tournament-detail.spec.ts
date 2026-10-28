@@ -100,6 +100,85 @@ describe('Tournament detail (/tournaments/:id)', () => {
     expect(page().textContent).not.toContain('Champion');
   });
 
+  it('shows no champion banner before the Tournament is completed', async () => {
+    await open(tournamentDetail({ state: 'active', champion: { id: 12, name: 'Blue Bolts' } }));
+    expect(champion()).toBeNull();
+    expect(page().textContent).not.toContain('Champion');
+  });
+
+  const stageBadge = (): HTMLElement | null => page().querySelector('.tournament-detail__stage');
+
+  it.each([
+    ['round_robin_double_elim', 'setup', 'Setup'],
+    ['round_robin_double_elim', 'seeding', 'Seeding stage'],
+    ['round_robin_double_elim', 'finals', 'Finals stage'],
+    ['round_robin_double_elim', 'completed', 'Completed'],
+    ['swiss', 'setup', 'Setup'],
+    ['swiss', 'swiss', 'Swiss stage'],
+    ['swiss', 'completed', 'Completed'],
+  ] as const)('labels a %s Tournament in stage %s "%s"', async (format, stage, label) => {
+    await open(tournamentDetail({ format, stage }));
+    expect(text(stageBadge())).toBe(label);
+    expect(header()?.contains(stageBadge())).toBe(true);
+  });
+
+  it.each(['single_elimination', 'double_elimination', 'round_robin'] as const)(
+    'shows no stage badge for a %s Tournament',
+    async (format) => {
+      await open(tournamentDetail({ format, stage: format }));
+      expect(stageBadge()).toBeNull();
+    },
+  );
+
+  const emptyNotice = (): HTMLElement | null => page().querySelector('.tournament-detail__empty');
+
+  it('notes "No participants in this tournament." without participants', async () => {
+    await open(tournamentDetail({ participants: [] }));
+    expect(text(emptyNotice())).toBe('No participants in this tournament.');
+  });
+
+  it('has no empty notice while there are participants', async () => {
+    await open(tournamentDetail());
+    expect(emptyNotice()).toBeNull();
+    expect(page().textContent).not.toContain('No participants');
+  });
+
+  it('shows the results section for the loaded Tournament', async () => {
+    await open(
+      tournamentDetail({
+        state: 'active',
+        brackets: [
+          {
+            bracket_type: 'winners',
+            rounds: [
+              {
+                bracket_round: 1,
+                nodes: [
+                  {
+                    position: 0,
+                    team_a: { id: 11, name: 'Red Raiders' },
+                    team_b: { id: 12, name: 'Blue Bolts' },
+                    seed_a: 1,
+                    seed_b: 2,
+                    is_bye: false,
+                    wins_a: 0,
+                    wins_b: 0,
+                    series_length: 1,
+                    winner: null,
+                    games: [],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    const results = page().querySelector('app-tournament-results');
+    expect(text(results?.querySelector('h2'))).toBe('Bracket');
+    expect(text(results?.querySelector('.bracket__round-name'))).toBe('Final');
+  });
+
   const leagueNote = (): HTMLElement | null => page().querySelector('.tournament-detail__league');
 
   it('notes "In League" with the Season name for an embedded Tournament', async () => {

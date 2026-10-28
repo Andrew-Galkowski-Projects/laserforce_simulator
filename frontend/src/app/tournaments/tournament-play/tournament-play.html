@@ -1,0 +1,30 @@
+@if (visible()) {
+  <section class="tournament-play">
+    <div class="tournament-play__actions">
+      <button
+        mat-flat-button
+        type="button"
+        [disabled]="!detail().can_play || busy()"
+        (click)="playNext()"
+      >
+        Play Next Match
+      </button>
+      <button mat-stroked-button type="button" [disabled]="busy()" (click)="playAll()">
+        Play All
+      </button>
+    </div>
+    @if (error(); as message) {
+      <p class="tournament-play__error" role="alert">{{ message }}</p>
+    }
+    @if (running()) {
+      <div class="tournament-play__progress">
+        <mat-progress-bar
+          [mode]="progress() === null ? 'indeterminate' : 'determinate'"
+          [value]="progressValue()"
+          aria-label="Play All progress"
+        ></mat-progress-bar>
+        <p class="tournament-play__label" role="status">{{ progressLabel() }}</p>
+      </div>
+    }
+  </section>
+}

@@ -848,4 +848,319 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(removeButtons().every((b) => !b.disabled)).toBe(true);
     });
   });
+
+  const DRAW_URL = `${BASE}/tournaments/5/draw/`;
+  const findButton = (label: string): HTMLButtonElement | null =>
+    [...(section()?.querySelectorAll<HTMLButtonElement>('button') ?? [])].find(
+      (b) => text(b) === label,
+    ) ?? null;
+  const drawArea = (): HTMLElement | null =>
+    section()?.querySelector<HTMLElement>('.tournament-pool__draw') ?? null;
+
+  /** Two drawn Teams, as the participants of a drawn Player-pool Tournament. */
+  const DRAWN_TEAMS = [
+    { team: { id: 61, name: 'Draw Team 1' }, seed: 1 },
+    { team: { id: 62, name: 'Draw Team 2' }, seed: 2 },
+  ];
+  const drawn = (overrides: Partial<TournamentDetail> = {}): TournamentDetail =>
+    poolTournament({ pool_size: 24, is_drawn: true, participants: DRAWN_TEAMS, ...overrides });
+  const T1 = { id: 61, name: 'Draw Team 1' };
+  const T2 = { id: 62, name: 'Draw Team 2' };
+  const DRAWN_ENTRIES = [
+    poolEntry(21, 'Ace', { tier: 1, drawn_team: T1 }),
+    poolEntry(22, 'Bea', { tier: 2, drawn_team: T2 }),
+    poolEntry(23, 'Cy', { tier: 3, drawn_team: T1 }),
+  ];
+
+  describe('Draw', () => {
+    it('offers "Draw teams" before the draw and "Re-roll draw" after it', async () => {
+      await openWith(poolTournament({ pool_size: 24 }));
+      expect(findButton('Draw teams')).not.toBeNull();
+      expect(findButton('Re-roll draw')).toBeNull();
+    });
+
+    it('offers "Re-roll draw" once drawn', async () => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      expect(findButton('Re-roll draw')).not.toBeNull();
+      expect(findButton('Draw teams')).toBeNull();
+    });
+
+    it.each([
+      [18, true],
+      [25, true],
+      [24, false],
+      [30, false],
+    ])('for a pool of %i, disabled is %s', async (size, disabled) => {
+      await openWith(poolTournament({ pool_size: size }));
+      expect(findButton('Draw teams')?.disabled).toBe(disabled);
+    });
+
+    it('POSTs draw, notifies "Teams drawn." and reloads the pool and detail', async () => {
+      await openWith(poolTournament({ pool_size: 24 }));
+      findButton('Draw teams')?.click();
+      await stable();
+      const req = http.expectOne(DRAW_URL);
+      expect(req.request.method).toBe('POST');
+      req.flush({ data: drawn(), meta: {} });
+      await stable();
+      expect(await snackMessage()).toBe('Teams drawn.');
+      await answerReload(drawn(), DRAWN_ENTRIES);
+      expect(rows().map((row) => cells(row)[2])).toEqual([
+        'Draw Team 1',
+        'Draw Team 2',
+        'Draw Team 1',
+      ]);
+      expect(findButton('Re-roll draw')).not.toBeNull();
+    });
+
+    it('notifies "Draw re-rolled." after a re-roll', async () => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      findButton('Re-roll draw')?.click();
+      await stable();
+      http.expectOne(DRAW_URL).flush({ data: drawn(), meta: {} });
+      await stable();
+      expect(await snackMessage()).toBe('Draw re-rolled.');
+      await answerReload(drawn(), DRAWN_ENTRIES);
+    });
+
+    it('shows a draw 400 (the rule message) in an error box', async () => {
+      await openWith(poolTournament({ pool_size: 24 }));
+      findButton('Draw teams')?.click();
+      await stable();
+      http.expectOne(DRAW_URL).flush(
+        {
+          errors: [{ code: 'invalid', message: 'Pool must be divisible by 6.', field: null }],
+          meta: {},
+        },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      await stable();
+      expect(text(drawArea()?.querySelector('[role="alert"]'))).toBe(
+        'Pool must be divisible by 6.',
+      );
+      expect(findButton('Draw teams')?.disabled).toBe(false);
+    });
+
+    it('disables the button in flight and clears its error when the next draw starts', async () => {
+      await openWith(poolTournament({ pool_size: 24 }));
+      findButton('Draw teams')?.click();
+      await stable();
+      expect(findButton('Draw teams')?.disabled).toBe(true);
+      http
+        .expectOne(DRAW_URL)
+        .flush(
+          { errors: [{ code: 'invalid', message: 'Nope.', field: null }], meta: {} },
+          { status: 400, statusText: 'Bad Request' },
+        );
+      await stable();
+      expect(text(drawArea()?.querySelector('[role="alert"]'))).toBe('Nope.');
+      findButton('Draw teams')?.click();
+      await stable();
+      expect(drawArea()?.querySelector('[role="alert"]')).toBeNull();
+      http
+        .expectOne(DRAW_URL)
+        .flush(
+          { errors: [{ code: 'invalid', message: 'Nope.', field: null }], meta: {} },
+          { status: 400, statusText: 'Bad Request' },
+        );
+      await stable();
+    });
+  });
+
+  describe('Drawn Teams', () => {
+    const teamCards = (): HTMLElement[] => [
+      ...(section()?.querySelectorAll<HTMLElement>('.tournament-pool__drawn-team') ?? []),
+    ];
+    const cardRows = (card: HTMLElement): HTMLElement[] => [
+      ...card.querySelectorAll<HTMLElement>('li'),
+    ];
+    const rowOf = (name: string): HTMLElement => {
+      const row = teamCards()
+        .flatMap(cardRows)
+        .find((li) => text(li.querySelector('.tournament-pool__drawn-name')).startsWith(name));
+      if (!row) throw new Error(`no drawn row for ${name}`);
+      return row;
+    };
+    const tierInput = (name: string): HTMLInputElement => {
+      const input = rowOf(name).querySelector<HTMLInputElement>('input[name="tier"]');
+      if (!input) throw new Error(`no tier input for ${name}`);
+      return input;
+    };
+    async function typeTier(name: string, value: string): Promise<void> {
+      const input = tierInput(name);
+      input.value = value;
+      input.dispatchEvent(new Event('input'));
+      await stable();
+    }
+    const setTier = (name: string): HTMLButtonElement => {
+      const found = [...rowOf(name).querySelectorAll('button')].find((b) => text(b) === 'Set tier');
+      if (!found) throw new Error(`no Set tier for ${name}`);
+      return found;
+    };
+    const entryUrl = (playerId: number): string =>
+      `${BASE}/tournaments/5/draw/entries/${playerId}/`;
+
+    it('is not shown before the draw', async () => {
+      await openWith(poolTournament({ pool_size: 24 }), [poolEntry(21, 'Ace')]);
+      expect(teamCards()).toEqual([]);
+      expect(text(section())).not.toContain('Drawn Teams');
+    });
+
+    it("orders the cards as the detail lists its participants (the server's seed order)", async () => {
+      await openWith(drawn({ participants: [...DRAWN_TEAMS].reverse() }), DRAWN_ENTRIES);
+      expect(teamCards().map((card) => text(card.querySelector('h4')))).toEqual([
+        'Draw Team 2',
+        'Draw Team 1',
+      ]);
+    });
+
+    it("lists one card per drawn Team with its Players' names, You badge and Tier", async () => {
+      const self = { ...SELF_INSERT, id: 23, name: 'Cy' };
+      await openWith(drawn(), DRAWN_ENTRIES, [], { ...USER, self_insert: self });
+      expect(text(section()?.querySelector('.tournament-pool__drawn h3'))).toBe('Drawn Teams');
+      expect(teamCards().map((card) => text(card.querySelector('h4')))).toEqual([
+        'Draw Team 1',
+        'Draw Team 2',
+      ]);
+      // The name is the row's first text; the badge and "Tier N" are their own elements.
+      expect(
+        teamCards().map((card) =>
+          cardRows(card).map((li) => [
+            li.querySelector('.tournament-pool__drawn-name')?.firstChild?.textContent?.trim(),
+            text(li.querySelector('.tournament-pool__tier')),
+          ]),
+        ),
+      ).toEqual([
+        [
+          ['Ace', 'Tier 1'],
+          ['Cy', 'Tier 3'],
+        ],
+        [['Bea', 'Tier 2']],
+      ]);
+      expect(rowOf('Ace').querySelector('.badge--you')).toBeNull();
+      expect(text(rowOf('Cy').querySelector('.badge--you'))).toBe('You');
+    });
+
+    it('has a Tier input (required, 1..6) holding the tier on every drawn row in setup', async () => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      const input = tierInput('Cy');
+      expect(input.type).toBe('number');
+      expect(input.value).toBe('3');
+      expect(input.hasAttribute('required')).toBe(true);
+      expect(input.getAttribute('min')).toBe('1');
+      expect(input.getAttribute('max')).toBe('6');
+      expect(
+        teamCards()
+          .flatMap(cardRows)
+          .every((li) => li.querySelector('input')),
+      ).toBe(true);
+    });
+
+    it('PATCHes {tier}, notifies and reloads the pool and detail', async () => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      await typeTier('Bea', '5');
+      setTier('Bea').click();
+      await stable();
+      const req = http.expectOne(entryUrl(22));
+      expect(req.request.method).toBe('PATCH');
+      expect(req.request.body).toEqual({ tier: 5 });
+      req.flush({ data: poolEntry(22, 'Bea', { tier: 5, drawn_team: T2 }), meta: {} });
+      await stable();
+      expect(await snackMessage()).toBe('Set Bea to Tier 5.');
+      const after = [
+        DRAWN_ENTRIES[0],
+        poolEntry(22, 'Bea', { tier: 5, drawn_team: T2 }),
+        DRAWN_ENTRIES[2],
+      ];
+      await answerReload(drawn(), after);
+      expect(text(rowOf('Bea').querySelector('.tournament-pool__tier'))).toBe('Tier 5');
+    });
+
+    it.each([
+      ['7', 'Ensure this value is less than or equal to 6.'],
+      ['0', 'Ensure this value is greater than or equal to 1.'],
+      ['', 'This field is required.'],
+    ])('keeps a tier of "%s" on the client with "%s", sending nothing', async (value, message) => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      await typeTier('Ace', value);
+      setTier('Ace').click();
+      await stable();
+      http.expectNone(entryUrl(21));
+      expect(text(rowOf('Ace').querySelector('mat-error'))).toBe(message);
+      expect(rowOf('Cy').querySelector('mat-error')).toBeNull();
+    });
+
+    it('shows a Set tier error on that row only', async () => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      setTier('Cy').click();
+      await stable();
+      http.expectOne(entryUrl(23)).flush(
+        {
+          errors: [
+            {
+              code: 'tournament_not_setup',
+              message: 'The Tournament is no longer in setup.',
+              field: null,
+            },
+          ],
+          meta: {},
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await stable();
+      expect(text(rowOf('Cy').querySelector('[role="alert"]'))).toBe(
+        'The Tournament is no longer in setup.',
+      );
+      expect(rowOf('Ace').querySelector('[role="alert"]')).toBeNull();
+      expect(rowOf('Bea').querySelector('[role="alert"]')).toBeNull();
+    });
+
+    it('disables Set tier in flight and clears its error when the next request starts', async () => {
+      await openWith(drawn(), DRAWN_ENTRIES);
+      setTier('Ace').click();
+      await stable();
+      expect(setTier('Ace').disabled).toBe(true);
+      setTier('Ace').click();
+      await stable();
+      http
+        .expectOne(entryUrl(21))
+        .flush(
+          { errors: [{ code: 'invalid', message: 'Bad tier.', field: 'tier' }], meta: {} },
+          { status: 400, statusText: 'Bad Request' },
+        );
+      await stable();
+      expect(setTier('Ace').disabled).toBe(false);
+      expect(text(rowOf('Ace').querySelector('[role="alert"]'))).toBe('Bad tier.');
+      setTier('Ace').click();
+      await stable();
+      expect(rowOf('Ace').querySelector('[role="alert"]')).toBeNull();
+      http
+        .expectOne(entryUrl(21))
+        .flush(
+          { errors: [{ code: 'invalid', message: 'Bad tier.', field: 'tier' }], meta: {} },
+          { status: 400, statusText: 'Bad Request' },
+        );
+      await stable();
+    });
+  });
+
+  describe('draw controls when not editable (INV-3)', () => {
+    it.each([
+      ['active', { state: 'active' }],
+      ['completed', { state: 'completed' }],
+      ['embedded', { embedded: true, season: { id: 3, name: 'Season 2026' } }],
+    ] as [string, Partial<TournamentDetail>][])(
+      'keeps the Drawn Teams cards but hides Draw, Tier and Set tier for a %s Tournament',
+      async (_label, overrides) => {
+        await openWith(drawn(overrides), DRAWN_ENTRIES, null);
+        expect(findButton('Re-roll draw')).toBeNull();
+        expect(findButton('Draw teams')).toBeNull();
+        expect(findButton('Set tier')).toBeNull();
+        expect(section()?.querySelector('input')).toBeNull();
+        expect(
+          [...(section()?.querySelectorAll('.tournament-pool__drawn-team') ?? [])].length,
+        ).toBe(2);
+      },
+    );
+  });
 });

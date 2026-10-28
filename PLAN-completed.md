@@ -7234,6 +7234,60 @@ Pool add-existing / generate / import /
  State badge, assembly mode, champion if any, an "In League" note naming the Season when embedded.
  (5) Create errors via `applyApiErrors` (`too_few_teams` on teams), non-field errors in an alert.
 
+#### ANG-06-13b · [DONE] Tournament detail
+
+**[DONE] Shipped (2026-10-28).** The SPA's /tournaments/:id now has every feature of the Django
+detail page: Seeding and Lock & Build Bracket (with a confirm), the Player-pool draw / re-roll and
+Set tier on the drawn Teams, Play Next Match (the Django played-message wording) and Play All polled
+live (1000 ms after each answer; a 409 play_in_progress resumes the live job; a failed poll keeps
+polling), and every format's results: single-elimination columns named Final / Semifinals /
+Quarterfinals / Round N, Winners / Losers / Grand Final, the Swiss rounds, the Round robin
+crosstable and the Standings with the RR->DE Cut column. Embedded Tournaments show no write
+controls. The detail API gained rr_crosstable and can_play only (next_node not exposed); the
+crosstable's Series Matches are now prefetched, so its query count is flat (this also helps the
+Django page). The browser check found the crosstable and Standings names breaking letter by letter
+at 768px (fixed: wrap between words with a minimum width) and a pre-existing Play All 500 without
+Redis (logged under Deferred Items).
+
+Draw + draw edit, reseed, lock, play next / all with status. Replaces
+
+ `tournament_detail`, `_tournament_round`. API gap: `tournaments/<id>/` lacks the round-robin
+ crosstable (`rr_crosstable`) and `can_play` / `next_node` (`tournament_services/detail.py`).
+ Spec: #403
+ Settled in the grill (owner, 2026-10-28):
+ - No ownership, model, migration or engine change; every route already uses `get_owned_or_404`.
+ - `GET tournaments/<id>/` gains `rr_crosstable` (built by `_build_rr_crosstable`):
+   `[{team: ref, cells: [null | {opponent_team_id, leg1, leg2}]}]`, each leg
+   `null | {team_score, opp_score, match_team, match_opp, played, match_id}`, `[]` without a
+   round robin. It also gains `can_play: bool` (active and a playable node exists); `next_node`
+   is not exposed. 13a's `unknown` types (`brackets`, standings, `cut_labels`) get real types.
+ - A Play All 409 `play_in_progress` resumes polling the job named in its `job:<id>` field; no
+   `active_play_job_id` field.
+ - Polling follows the Django page: every 1000 ms, each poll scheduled after the last answer;
+   "Starting..." then "Running... stage {completed} / {total}" with a progress bar; on
+   `complete` reload and notify; on `error` show the job error or "The Play All job failed. See
+   the server logs."; an HTTP failure on a status poll keeps polling; 503 shows the server's
+   message; polling stops when the screen closes.
+ - Play Next notifies the Django wording ("Played {label}: A w-w B." plus " {champion} win the
+   Tournament!"), the label built on the client ("Grand Final" or "[Losers ]Round N, Match
+   {position+1}"), then reloads.
+ - Embedded Tournaments hide every write control (lock, seeding, draw, Set tier, play).
+ - One shared bracket component (round columns of node cards, scrolling sideways) for every
+   format; single elimination names rounds Final / Semifinals / Quarterfinals / Round N, the
+   rest Round N. Node card: seed + team, Bye, BoN, series score, "Game k" lines linked to the
+   Match with "a-b match pts", "Winner: X". No layout prototype.
+ - Seeding: a number input per participant, "Save Seeding", `PUT seeds`, server 400s shown.
+ - Draw edit: Set tier (1-6) only; moving a Player between drawn Teams is out.
+ - "Lock & Build Bracket" asks through `ConfirmDialog`; Re-roll and Play All do not.
+ - Standings (RR, Swiss): Rank, Team, MP, W, L, T, Match Pts, RW, TS; RR->DE seeding stage adds a
+   WB / LB / Out text column plus a row tint.
+ - Team names link to `/teams/:id/history`, games and crosstable legs to `/matches/:id`; the
+   champion link stays `/teams/:id`.
+ - Header adds the stage badge (RR->DE and Swiss only), the "No participants in this
+   tournament." alert, and the champion banner only when `completed`.
+ - Out: cancel / delete, moving drawn Players, resume beyond the 409, streak / L5 columns,
+   removing the Django template (ANG-08).
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

@@ -8,17 +8,23 @@
   <header class="tournament-detail__header">
     <h1>{{ t.name }}</h1>
     <div class="tournament-detail__meta">
+      @if (stageLabel(t); as stage) {
+        <span class="tournament-detail__stage">{{ stage }}</span>
+      }
       <span class="tournament-detail__format">{{ t.format_label }}</span>
       <span class="tournament-state" [attr.data-state]="t.state">{{ stateLabels[t.state] }}</span>
       <span class="tournament-detail__assembly">{{ assemblyLabels[t.team_assembly] }}</span>
     </div>
-    @if (t.champion; as champion) {
+    @if (t.state === 'completed' && t.champion; as champion) {
       <p class="tournament-detail__champion">
         Champion: <a [routerLink]="['/teams', champion.id]">{{ champion.name }}</a>
       </p>
     }
     @if (t.embedded) {
       <p class="tournament-detail__league">In League: {{ t.season?.name }}</p>
+    }
+    @if (t.participants.length === 0) {
+      <p class="tournament-detail__empty">No participants in this tournament.</p>
     }
   </header>
 
@@ -53,4 +59,8 @@
   @if (t.team_assembly === 'player_pool') {
     <app-tournament-pool [detail]="t" (changed)="reload()" />
   }
+
+  <app-tournament-setup [detail]="t" (changed)="reload()" />
+  <app-tournament-play [detail]="t" (changed)="reload()" />
+  <app-tournament-results [detail]="t" />
 }
