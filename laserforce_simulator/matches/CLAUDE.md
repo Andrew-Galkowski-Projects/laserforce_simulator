@@ -88,7 +88,7 @@ Paths below are relative to the repo root.
 - Season map modes, map pool, rotate_by_matchday (LG-01j, SUB-01) — `docs/agents/matches/map-modes.md`
 - League sidebar screens, watch list, watch flag, standings form, League player page (LG-01z, LG-06f..h) — `docs/agents/matches/league-screens.md`
 - Delete League, League templates, difficulty, League spread (DEL-01, CRE-01, CRE-02) — `docs/agents/matches/league-lifecycle.md`
-- Single / double elimination, best-of-N Series, Series escalation, CSV import, play-all — `docs/agents/matches/tournaments-elimination.md`
+- Single / double elimination, best-of-N Series, Series escalation, CSV import, play-all, the Angular Tournament list / create / detail shell / Player pool screens (ANG-06-13a) — `docs/agents/matches/tournaments-elimination.md`
 - Round robin, RR → double elimination, Swiss, Player-pool draw / Random Draw — `docs/agents/matches/tournaments-rr-swiss-draw.md`
 - Season phases, phase composer, RR → playoff embed, multi-round-robin (Part2a..2c-2) — `docs/agents/matches/season-phases.md`
 - Double round robin, tournament_mode, mid-season tournaments, per-tournament config, finals formats, playoff pacing (Part2c-3a..f) — `docs/agents/matches/season-phases-part2c-3.md`
