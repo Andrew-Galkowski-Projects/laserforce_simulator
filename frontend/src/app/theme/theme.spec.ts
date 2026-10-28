@@ -291,6 +291,24 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
     });
   }
 
+  it("gives h1-h3 a line-height relative to their own size, not body's fixed 20px", () => {
+    // body's `font: var(--mat-sys-body-medium)` fixes line-height at 20px and headings inherit it,
+    // so a wrapped 28px heading overlapped itself (ANG-06-14 retro). jsdom drops var() values, so
+    // read the compiled rule rather than a heading's computed style.
+    applyStylesheet('light');
+    const lineHeightFor = (tag: string) =>
+      [...(styleElement?.sheet?.cssRules ?? [])]
+        .filter((rule): rule is CSSStyleRule => rule instanceof CSSStyleRule)
+        .filter((rule) => rule.selectorText.split(',').some((s) => s.trim() === tag))
+        .map((rule) => rule.style.getPropertyValue('line-height'))
+        .find((value) => value !== '');
+    for (const tag of ['h1', 'h2', 'h3']) {
+      const value = lineHeightFor(tag);
+      expect(value, tag).toMatch(/^\d+(\.\d+)?$/);
+      expect(Number(value), tag).toBeGreaterThanOrEqual(1);
+    }
+  });
+
   it('declares every colour token inside the dark block itself', () => {
     const dark = darkBlockDeclarations();
     expect(LF_COLOUR_TOKENS.filter((name) => !dark.has(name))).toEqual([]);

@@ -6,7 +6,7 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 - **Type hints on every public function signature.** Flag a public function that has none.
 - **One job per function.** Flag a function over ~25 lines that does two things and splits cleanly.
-- **Django idioms.** Prefer `get_object_or_404`, model methods over logic in views, and a `services.py` builder shared by the HTML view and the API (see `teams/services.py`, `matches/services.py`, `matches/league_services.py`, `core/services.py`). Flag raw SQL unless a comment justifies it.
+- **Django idioms.** Prefer `get_object_or_404`, model methods over logic in views, and a `services.py` builder shared by the HTML view and the API (see `teams/services.py`, `matches/services.py`, `matches/league_services.py`, `core/services.py`). A service returns model objects or dataclasses, and the API view turns them into refs (`history_seasons` returns Seasons, `_history_item` builds the refs); a service that builds the response dict is a finding. Flag raw SQL unless a comment justifies it.
 - **Querysets.** Flag a queryset evaluated inside a loop (N+1). Suggest `select_related` / `prefetch_related`. Flag a large list built where a slice or generator would do. Flag a queryset whose iteration order decides RNG draws, saved order or output order but has no explicit `order_by`: PostgreSQL row order moves after an UPDATE, while SQLite's id order hides it (CI-01's rollover develop bug).
 - **Dead code.** Unused imports, unreachable branches, commented-out blocks.
 - **Pythonic idioms.** Comprehensions for simple transforms, `any()` / `all()`, `zip()`, `enumerate()`. A `dataclass` or `NamedTuple` instead of a dict with fixed keys.
@@ -41,7 +41,9 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 - **Wrapping field text.** A `mat-form-field` with a `mat-hint` or a server error
   (`applyApiErrors`) sets `subscriptSizing="dynamic"`, so a wrapped line pushes the
   next field down instead of overlapping it (ANG-06 item 7's invite hint and password
-  rules).
+  rules). A grid or flex row of such fields sets `align-items: start`, so one field's long
+  hint leaves its neighbour's outline alone (ANG-06-14's Conferences hint stretched "Number
+  of teams").
 - **Name pickers get room.** A `mat-select` whose options are entity names ("Player
   (Team)", "#id - Red vs Blue") takes at least half the form's row, and a full row
   when the form is narrow, so the chosen label stays whole. Flag one that shares a
@@ -60,6 +62,7 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 - Each new public function has a happy-path test and an edge-case or failure test.
 - A bug fix has a regression test that fails without the fix.
+- A filter or guard that ANDs conditions gets one fixture per condition that fails only that condition (ANG-06-14's `simulation_ready` had a red-only map and no blue-only one, so dropping the red-base check survived).
 - Tests go through public seams with real in-memory objects or Django `TestCase`. Flag a test that only checks that a mock returned what it was told to return.
 - Simulation tests use a fixed seed or injected deterministic stats. Flag an exact point-total assertion on an unseeded run.
 - Test placement follows the root `CLAUDE.md` ("Test placement").
