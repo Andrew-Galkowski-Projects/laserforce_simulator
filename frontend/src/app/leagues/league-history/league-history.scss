@@ -1,0 +1,113 @@
+// League History (ADR-0043 layout B, hand-rolled table): `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
+:host {
+  display: block;
+  min-width: 0;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+}
+
+.league-history__empty {
+  @include alerts.notice;
+}
+
+.league-history__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+// Thirteen columns outgrow the page at any width: the table scrolls here, never the page.
+.league-history__scroll {
+  overflow-x: auto;
+}
+
+.league-history__table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+  font-size: 0.875rem;
+
+  th,
+  td {
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  .num {
+    text-align: right;
+    font-family: var(--lf-font-numeric);
+  }
+
+  // A Team or Player name wraps only between words and keeps room for a whole word, so a
+  // narrow page scrolls the table instead of breaking names letter by letter.
+  .name {
+    min-width: 8rem;
+    white-space: normal;
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+// The in-progress Season: the badge says so, the tint only repeats it.
+.league-history__in-progress {
+  background: color-mix(in srgb, var(--lf-rating-fair) 12%, transparent);
+}
+
+.league-history__badge {
+  @include badges.league-state;
+
+  --state: var(--lf-rating-fair);
+}
+
+.league-history__you {
+  @include badges.you;
+}
+
+.league-history__pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1rem;
+
+  select {
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+    color: var(--lf-text);
+    font: inherit;
+  }
+
+  nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    align-items: center;
+  }
+}
+
+.league-history__page {
+  font-family: var(--lf-font-numeric);
+}
