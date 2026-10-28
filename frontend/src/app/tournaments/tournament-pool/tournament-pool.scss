@@ -66,6 +66,8 @@
 .tournament-pool__numbers {
   display: flex;
   flex-wrap: wrap;
+  // A wrapped error under one field grows that field only, not its neighbours' outlines.
+  align-items: flex-start;
   gap: 0 0.75rem;
 
   mat-form-field {
