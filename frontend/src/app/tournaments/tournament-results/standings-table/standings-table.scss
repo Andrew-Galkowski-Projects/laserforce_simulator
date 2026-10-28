@@ -1,0 +1,63 @@
+// The Standings table (hand-rolled, ADR-0043): `--lf-*` tokens only, no colour literals.
+
+:host {
+  display: block;
+  min-width: 0;
+}
+
+// Ten columns can outgrow ~500px (768px): the table scrolls here, never the page.
+.standings {
+  overflow-x: auto;
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid var(--lf-border);
+    background: var(--lf-surface);
+    font-size: 0.875rem;
+  }
+
+  th,
+  td {
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: right;
+    font-family: var(--lf-font-numeric);
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  th:nth-child(2),
+  .standings__team {
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+// RR->DE cut markers: the tint repeats what the Cut column says, never the only signal.
+tr[data-cut] {
+  --cut: var(--lf-text-muted);
+
+  background: color-mix(in srgb, var(--cut) 12%, transparent);
+}
+
+tr[data-cut='wb'] {
+  --cut: var(--lf-ev-resupply);
+}
+
+tr[data-cut='lb'] {
+  --cut: var(--lf-rating-fair);
+}
+
+.standings__cut {
+  font-weight: 700;
+}

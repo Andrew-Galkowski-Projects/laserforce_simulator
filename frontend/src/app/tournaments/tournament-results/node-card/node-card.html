@@ -1,0 +1,45 @@
+@let n = node();
+<div class="node-card" [class.node-card--bye]="n.is_bye">
+  <div class="node-card__slot">
+    @if (n.seed_a) {
+      <span class="node-card__seed">[{{ n.seed_a }}]</span>&ngsp;
+    }
+    @if (n.team_a; as team) {
+      <a [routerLink]="['/teams', team.id, 'history']">{{ team.name }}</a>
+    } @else {
+      &mdash;
+    }
+  </div>
+  <div class="node-card__slot">
+    @if (n.seed_b) {
+      <span class="node-card__seed">[{{ n.seed_b }}]</span>&ngsp;
+    }
+    @if (n.team_b; as team) {
+      <a [routerLink]="['/teams', team.id, 'history']">{{ team.name }}</a>
+    } @else {
+      &mdash;
+    }
+  </div>
+  @if (n.is_bye) {
+    <div class="node-card__bye">Bye</div>
+  } @else {
+    <div class="node-card__series">
+      <span class="node-card__length">Bo{{ n.series_length }}</span>
+      <span class="node-card__score">{{ n.wins_a }}&ndash;{{ n.wins_b }}</span>
+    </div>
+    @for (game of n.games; track game.match_id) {
+      <div class="node-card__game">
+        <a [routerLink]="['/matches', game.match_id]">Game {{ game.game_number }}</a
+        >&ngsp;
+        <span class="node-card__match-pts"
+          >{{ game.score_a }}&ndash;{{ game.score_b }} match pts</span
+        >
+      </div>
+    }
+  }
+  @if (n.winner; as winner) {
+    <div class="node-card__winner">
+      Winner: <a [routerLink]="['/teams', winner.id, 'history']">{{ winner.name }}</a>
+    </div>
+  }
+</div>

@@ -1,0 +1,64 @@
+<ng-template #teamName let-team>
+  @if (team) {
+    <a [routerLink]="['/teams', team.id, 'history']">{{ team.name }}</a>
+  } @else {
+    &mdash;
+  }
+</ng-template>
+
+<ng-template #legLine let-leg>
+  @if (leg.played) {
+    <div class="crosstable__leg">
+      @if (leg.match_id) {
+        <a [routerLink]="['/matches', leg.match_id]"
+          >{{ leg.team_score }}&ndash;{{ leg.opp_score }}</a
+        >
+      } @else {
+        {{ leg.team_score }}&ndash;{{ leg.opp_score }}
+      }
+      <span
+        class="crosstable__match-score"
+        title="Match score: 2 per Round won + 2 for winning the Match (max 6)"
+        >&ngsp;({{ leg.match_team }}&ndash;{{ leg.match_opp }})</span
+      >
+    </div>
+  } @else {
+    <div class="crosstable__leg crosstable__leg--unplayed">&mdash;</div>
+  }
+</ng-template>
+
+<div class="crosstable">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col"></th>
+        @for (row of rows(); track $index) {
+          <th scope="col">
+            <ng-container *ngTemplateOutlet="teamName; context: { $implicit: row.team }" />
+          </th>
+        }
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows(); track $index) {
+        <tr>
+          <th scope="row">
+            <ng-container *ngTemplateOutlet="teamName; context: { $implicit: row.team }" />
+          </th>
+          @for (cell of row.cells; track $index) {
+            <td [class.crosstable__diagonal]="!cell">
+              @if (cell) {
+                @if (cell.leg1; as leg) {
+                  <ng-container *ngTemplateOutlet="legLine; context: { $implicit: leg }" />
+                }
+                @if (cell.leg2; as leg) {
+                  <ng-container *ngTemplateOutlet="legLine; context: { $implicit: leg }" />
+                }
+              }
+            </td>
+          }
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>

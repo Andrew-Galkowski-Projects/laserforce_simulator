@@ -218,7 +218,9 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     nodes = list(
         tournament.nodes.filter(bracket_type="round_robin")
         .select_related("team_a", "team_b")
-        .prefetch_related("series_matches")
+        # ANG-06-13b-3: ``_leg_dict`` reads ``series[0].match``; prefetching
+        # it keeps the crosstable's query count flat in the field size.
+        .prefetch_related("series_matches__match")
         .order_by("bracket_round", "position")
     )
 
@@ -524,6 +526,36 @@ def _standings_payload(rows: list, team_by_id: dict) -> list[dict]:
     ]
 
 
+def _crosstable_leg_payload(leg: dict | None) -> dict | None:
+    """A crosstable leg without the internal ``node_id``."""
+    if leg is None:
+        return None
+    return {key: value for key, value in leg.items() if key != "node_id"}
+
+
+def _crosstable_payload(crosstable: list) -> list[dict]:
+    """:func:`_build_rr_crosstable` output as refs: each row's Team becomes a
+    ``team_ref`` and each leg drops its ``node_id``."""
+    return [
+        {
+            "team": _team_ref_or_none(row["team"]),
+            "cells": [
+                (
+                    None
+                    if cell is None
+                    else {
+                        "opponent_team_id": cell["opponent_team_id"],
+                        "leg1": _crosstable_leg_payload(cell["leg1"]),
+                        "leg2": _crosstable_leg_payload(cell["leg2"]),
+                    }
+                )
+                for cell in row["cells"]
+            ],
+        }
+        for row in crosstable
+    ]
+
+
 def _embedded(tournament: Tournament) -> bool:
     """The list queryset's ``annotated_embedded`` when present, else
     :func:`is_embedded` (a lone instance, e.g. the detail)."""
@@ -587,7 +619,8 @@ def build_tournament_detail(tournament: Tournament) -> dict:
     :func:`tournament_fields` plus ``participants`` (``[{team, seed}]`` by
     seed), ``brackets``, ``rr_standings``, ``swiss_standings``, ``stage``,
     ``cut_labels`` (``{team_id (str): "wb" | "lb" | "out"}``, RR->DE seeding
-    stage only), ``pool_size`` and ``is_drawn``.
+    stage only), ``pool_size``, ``is_drawn`` and ``rr_crosstable`` (the
+    :func:`_build_rr_crosstable` grid as refs, ``[]`` outside RR / RR->DE).
     """
     participants = list(tournament.participants.select_related("team").order_by("seed"))
     team_by_id = {p.team_id: p.team for p in participants}
@@ -595,10 +628,12 @@ def build_tournament_detail(tournament: Tournament) -> dict:
     stage = _tournament_stage(tournament, has_finals)
 
     rr_standings: list[dict] = []
+    rr_crosstable: list[dict] = []
     cut_labels: dict[str, str] = {}
     if tournament.format in ("round_robin", "round_robin_double_elim"):
         rr_rows = tournament.round_robin_standings()
         rr_standings = _standings_payload(rr_rows, team_by_id)
+        rr_crosstable = _crosstable_payload(_build_rr_crosstable(tournament, rr_rows))
         if tournament.format == "round_robin_double_elim" and stage == "seeding":
             cut_labels = {
                 str(team_id): label
@@ -621,6 +656,7 @@ def build_tournament_detail(tournament: Tournament) -> dict:
         "cut_labels": cut_labels,
         "pool_size": entries.count(),
         "is_drawn": entries.filter(drawn_team__isnull=False).exists(),
+        "rr_crosstable": rr_crosstable,
     }
 
 

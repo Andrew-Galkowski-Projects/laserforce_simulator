@@ -1,0 +1,47 @@
+<div class="standings">
+  <table>
+    <thead>
+      <tr>
+        <th scope="col">Rank</th>
+        <th scope="col">Team</th>
+        <th scope="col" title="Matches played">MP</th>
+        <th scope="col" title="Match wins">W</th>
+        <th scope="col">L</th>
+        <th scope="col">T</th>
+        <th scope="col" title="Match score: +2 per round won, +2 for winning the match">
+          Match Pts
+        </th>
+        <th scope="col" title="Rounds won">RW</th>
+        <th scope="col" title="Total score">TS</th>
+        @if (showCut()) {
+          <th scope="col">Cut</th>
+        }
+      </tr>
+    </thead>
+    <tbody>
+      @for (row of rows(); track row.team_id) {
+        @let cut = cutLabels()[row.team_id];
+        <tr [attr.data-cut]="cut ?? null">
+          <td>{{ row.rank }}</td>
+          <td class="standings__team">
+            @if (row.team; as team) {
+              <a [routerLink]="['/teams', team.id, 'history']">{{ team.name }}</a>
+            } @else {
+              {{ row.team_id }}
+            }
+          </td>
+          <td>{{ row.matches_played }}</td>
+          <td>{{ row.wins }}</td>
+          <td>{{ row.losses }}</td>
+          <td>{{ row.ties }}</td>
+          <td>{{ row.league_points }}</td>
+          <td>{{ row.round_wins }}</td>
+          <td>{{ row.total_score }}</td>
+          @if (showCut()) {
+            <td class="standings__cut">{{ cut ? cutNames[cut] : '' }}</td>
+          }
+        </tr>
+      }
+    </tbody>
+  </table>
+</div>

@@ -1,0 +1,30 @@
+// A sub-bracket's round columns: `--lf-*` tokens only, no colour literals.
+
+:host {
+  display: block;
+  min-width: 0;
+}
+
+// Fixed-width columns side by side; a tree wider than the content area scrolls here, never the
+// page (at 768px the content area is ~500px wide).
+.bracket {
+  display: flex;
+  gap: 1rem;
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.bracket__round {
+  display: flex;
+  flex: 0 0 13rem;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.bracket__round-name {
+  margin: 0;
+  color: var(--lf-text-muted);
+  font-family: var(--lf-font-heading);
+  font-size: 0.875rem;
+  font-weight: 500;
+}

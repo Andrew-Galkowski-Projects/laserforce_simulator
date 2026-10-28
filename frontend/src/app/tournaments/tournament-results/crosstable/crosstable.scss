@@ -1,0 +1,55 @@
+// The Round robin crosstable (hand-rolled, ADR-0043): `--lf-*` tokens only, no colour literals.
+
+:host {
+  display: block;
+  min-width: 0;
+}
+
+// N columns of two legs each outgrow ~500px (768px) from 4 Teams: the table scrolls here, never
+// the page.
+.crosstable {
+  overflow-x: auto;
+
+  table {
+    border-collapse: collapse;
+    border: 1px solid var(--lf-border);
+    background: var(--lf-surface);
+    font-size: 0.875rem;
+  }
+
+  th,
+  td {
+    padding: 0.375rem 0.5rem;
+    border: 1px solid var(--lf-border);
+    text-align: left;
+    vertical-align: top;
+  }
+
+  th {
+    font-weight: 500;
+    max-width: 10rem;
+    overflow-wrap: anywhere;
+  }
+
+  td {
+    white-space: nowrap;
+    font-family: var(--lf-font-numeric);
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+.crosstable__diagonal {
+  background: var(--lf-surface-alt);
+}
+
+.crosstable__match-score,
+.crosstable__leg--unplayed {
+  color: var(--lf-text-muted);
+}
+
+.crosstable__match-score {
+  font-size: 0.8rem;
+}

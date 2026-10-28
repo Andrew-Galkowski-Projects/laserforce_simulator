@@ -1,0 +1,36 @@
+// The Tournament results sections: `--lf-*` tokens only, no colour literals.
+
+:host {
+  display: block;
+  min-width: 0;
+  color: var(--lf-text);
+}
+
+.tournament-results__section {
+  min-width: 0;
+  margin-bottom: 1.5rem;
+
+  h2 {
+    margin: 0 0 0.75rem;
+    font-family: var(--lf-font-heading);
+    font-size: 1.25rem;
+  }
+
+  h3 {
+    margin: 0 0 0.5rem;
+    font-family: var(--lf-font-heading);
+    font-size: 1rem;
+  }
+}
+
+.tournament-results__group,
+.tournament-results__swiss-round {
+  margin-bottom: 1rem;
+}
+
+// A Swiss round's pairings wrap onto the next line instead of widening the page.
+.tournament-results__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 0.5rem;
+}

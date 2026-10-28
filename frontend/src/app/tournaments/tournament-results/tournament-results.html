@@ -1,0 +1,72 @@
+@let d = detail();
+<ng-template #eliminationTree>
+  @for (section of eliminationSections(); track section.heading) {
+    <div class="tournament-results__group">
+      <h3>{{ section.heading }}</h3>
+      <app-bracket [rounds]="section.rounds" />
+    </div>
+  }
+</ng-template>
+
+@switch (d.format) {
+  @case ('single_elimination') {
+    @if (winnersRounds().length > 0) {
+      <section class="tournament-results__section">
+        <h2>Bracket</h2>
+        <app-bracket [rounds]="winnersRounds()" [roundName]="singleEliminationRoundName" />
+      </section>
+    }
+  }
+  @case ('double_elimination') {
+    @if (eliminationSections().length > 0) {
+      <section class="tournament-results__section">
+        <h2>Bracket</h2>
+        <ng-container *ngTemplateOutlet="eliminationTree" />
+      </section>
+    }
+  }
+  @case ('swiss') {
+    @if (swissRounds().length > 0) {
+      <section class="tournament-results__section">
+        <h2>Swiss Rounds</h2>
+        @for (round of swissRounds(); track round.bracket_round) {
+          <div class="tournament-results__swiss-round">
+            <h3>Round {{ round.bracket_round }}</h3>
+            <div class="tournament-results__cards">
+              @for (node of round.nodes; track node.position) {
+                <app-node-card [node]="node" />
+              }
+            </div>
+          </div>
+        }
+      </section>
+    }
+    @if (d.swiss_standings.length > 0) {
+      <section class="tournament-results__section">
+        <h2>Standings</h2>
+        <app-standings-table [rows]="d.swiss_standings" />
+      </section>
+    }
+  }
+  @default {
+    <!-- round_robin and round_robin_double_elim -->
+    @if (d.rr_crosstable.length > 0) {
+      <section class="tournament-results__section">
+        <h2>Crosstable</h2>
+        <app-crosstable [rows]="d.rr_crosstable" />
+      </section>
+    }
+    @if (d.rr_standings.length > 0) {
+      <section class="tournament-results__section">
+        <h2>Standings</h2>
+        <app-standings-table [rows]="d.rr_standings" [cutLabels]="d.cut_labels" />
+      </section>
+    }
+    @if (d.format === 'round_robin_double_elim' && eliminationSections().length > 0) {
+      <section class="tournament-results__section">
+        <h2>Finals Bracket</h2>
+        <ng-container *ngTemplateOutlet="eliminationTree" />
+      </section>
+    }
+  }
+}

@@ -7,6 +7,7 @@ import {
   TEAM_ASSEMBLY_LABELS,
   TOURNAMENT_STATE_LABELS,
   TournamentDetail as TournamentDetailData,
+  TournamentFormat,
 } from '../../api/tournaments.models';
 import { TournamentsService } from '../../api/tournaments.service';
 import { notFoundOrError } from '../../shared/not-found-or-error';
@@ -15,6 +16,17 @@ import { TournamentPlay } from '../tournament-play/tournament-play';
 import { TournamentPool } from '../tournament-pool/tournament-pool';
 import { TournamentResults } from '../tournament-results/tournament-results';
 import { TournamentSetup } from '../tournament-setup/tournament-setup';
+
+/** `_tournament_stage` values the stage badge names; any other stage reads "Setup", as in Django. */
+const STAGE_LABELS: Readonly<Record<string, string>> = {
+  seeding: 'Seeding stage',
+  finals: 'Finals stage',
+  swiss: 'Swiss stage',
+  completed: 'Completed',
+};
+
+/** The formats whose stages the header badges: RR->DE and Swiss. */
+const STAGED_FORMATS: readonly TournamentFormat[] = ['round_robin_double_elim', 'swiss'];
 
 /**
  * `/tournaments/:id`: the Tournament detail host (ANG-06-13a). It loads the detail and shows the
@@ -56,6 +68,14 @@ export class TournamentDetail {
         takeUntilDestroyed(inject(DestroyRef)),
       )
       .subscribe((loaded) => this.detail.set(loaded));
+  }
+
+  /** The RR->DE / Swiss stage badge's label, or null for a format without stages. */
+  protected stageLabel(detail: TournamentDetailData): string | null {
+    if (!STAGED_FORMATS.includes(detail.format)) {
+      return null;
+    }
+    return STAGE_LABELS[detail.stage] ?? 'Setup';
   }
 
   /** `GET tournaments/{id}/` again: a child section's `changed` output calls this. */
