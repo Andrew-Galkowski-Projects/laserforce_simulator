@@ -161,10 +161,11 @@ the team pickers without `required`, and review sent them back.
 A port or migration spec takes its behaviour from the source being ported
 (the template and its script), not from the app `CLAUDE.md` summary: ANG-06h's
 doc described a wall-height input the template never had. For each template
-card or table row, list every value it renders and name the API field behind
-it; a value with no field is a backend change in the spec (ANG-06-9's Single
-Round cards showed Won / Lost / Tie, and the spec's response shape had no
-`result`).
+card, table row and page heading, list every value it renders and name the API
+field behind it; a value with no field is a backend change in the spec
+(ANG-06-9's Single Round cards showed Won / Lost / Tie, and the spec's response
+shape had no `result`; ANG-06-14's History heading needed the League name, which
+the History endpoint lacks, so every page change re-fetched the League).
 
 When tickets will run in parallel, write each behaviour they share (input
 during a save, retry after a failed load, the dirty flag) once as a spec

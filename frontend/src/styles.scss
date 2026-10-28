@@ -28,6 +28,14 @@ body {
   height: 100%;
 }
 
+// body's `font` shorthand fixes line-height at 20px, which a larger heading would inherit and
+// overlap itself when it wraps (ANG-06-14). Headings scale their own.
+h1,
+h2,
+h3 {
+  line-height: 1.2;
+}
+
 // Links take the theme accent, not the browser's blue / purple (ANG-06-9's roster links). A
 // component that wants another colour sets it on its own selector, which wins over this one.
 a {
