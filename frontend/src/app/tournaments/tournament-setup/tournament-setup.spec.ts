@@ -20,7 +20,10 @@ const DETAIL_URL = `${BASE}/tournaments/5/`;
 const SEEDS_URL = `${BASE}/tournaments/5/seeds/`;
 const LOCK_URL = `${BASE}/tournaments/5/lock/`;
 
-/** A preset Tournament in setup with three participants, out of seed order on purpose. */
+/**
+ * A preset Tournament in setup with three participants. They are out of seed order on purpose:
+ * the server sends them by seed, so the section keeps the order it is given and never re-sorts.
+ */
 const preset = (overrides: Partial<TournamentDetail> = {}): TournamentDetail =>
   tournamentDetail({
     participants: [
@@ -119,15 +122,15 @@ describe('Tournament setup (Tournament detail)', () => {
   }
 
   describe('Seeding', () => {
-    it('lists each participant in seed order: the linked Team name and its seed input', async () => {
+    it("lists each participant in the detail's order (the server's seed order): the linked Team name and its seed input", async () => {
       await open();
       expect(text(seeding()?.querySelector('h2'))).toBe('Seeding');
       expect(seedRows().map((row) => text(row.querySelector('a')))).toEqual([
-        'Red Raiders',
         'Blue Bolts',
+        'Red Raiders',
         'Gold Guns',
       ]);
-      expect(seedRows()[0].querySelector('a')?.getAttribute('href')).toBe('/teams/11/history');
+      expect(seedRows()[1].querySelector('a')?.getAttribute('href')).toBe('/teams/11/history');
       const input = seedInput(12);
       expect(input.type).toBe('number');
       expect(input.value).toBe('2');
@@ -159,7 +162,8 @@ describe('Tournament setup (Tournament detail)', () => {
       button('Save Seeding').click();
       await stable();
       http.expectNone(SEEDS_URL);
-      expect(text(seedRows()[1].querySelector('mat-error'))).toBe(message);
+      // Team 12 (Blue Bolts) is the detail's first participant, so the first row.
+      expect(text(seedRows()[0].querySelector('mat-error'))).toBe(message);
     });
 
     it("shows a seeds 400 (not exactly 1..N) in the section's error box", async () => {

@@ -244,15 +244,16 @@ export class TournamentPool {
     });
   }
 
-  /** The Drawn Teams cards: each participant Team with its pool entries, in seed order. */
+  /**
+   * The Drawn Teams cards: each participant Team with its pool entries, in the detail's order
+   * (the server sends participants by seed).
+   */
   protected readonly drawnTeams = computed(() => {
     const entries = this.entries();
-    return [...this.detail().participants]
-      .sort((a, b) => a.seed - b.seed)
-      .map(({ team }) => ({
-        team,
-        entries: entries.filter((entry) => entry.drawn_team?.id === team.id),
-      }));
+    return this.detail().participants.map(({ team }) => ({
+      team,
+      entries: entries.filter((entry) => entry.drawn_team?.id === team.id),
+    }));
   });
 
   /** One Tier control per pool entry (player id -> control), rebuilt from each pool load. */

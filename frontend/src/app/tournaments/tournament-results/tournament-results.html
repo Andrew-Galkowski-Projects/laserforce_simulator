@@ -13,7 +13,11 @@
     @if (winnersRounds().length > 0) {
       <section class="tournament-results__section">
         <h2>Bracket</h2>
-        <app-bracket [rounds]="winnersRounds()" [roundName]="singleEliminationRoundName" />
+        <app-bracket
+          [rounds]="winnersRounds()"
+          [roundName]="singleEliminationRoundName"
+          [headingLevel]="3"
+        />
       </section>
     }
   }

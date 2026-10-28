@@ -15,7 +15,7 @@
               </tr>
             </thead>
             <tbody>
-              @for (participant of seeded(); track participant.team.id) {
+              @for (participant of detail().participants; track participant.team.id) {
                 @let key = seedKey(participant.team.id);
                 @let control = seedForm().controls[key];
                 <tr>

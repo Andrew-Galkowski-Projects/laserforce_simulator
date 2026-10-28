@@ -371,6 +371,12 @@ def _rrde_cut_labels(tournament: Tournament, rr_rows: list) -> dict:
     return labels
 
 
+def _can_play(tournament: Tournament, next_node: BracketNode | None) -> bool:
+    """Play Next is offered: the Tournament is active and a node is ready
+    (``next_node`` is :meth:`Tournament.find_next_playable_node`)."""
+    return tournament.state == "active" and next_node is not None
+
+
 def build_detail_context(
     tournament: Tournament, *, user: "AbstractBaseUser | AnonymousUser | None"
 ) -> dict:
@@ -439,7 +445,7 @@ def build_detail_context(
         "rounds": rounds,
         "next_node": next_node,
         "is_locked": tournament.is_locked,
-        "can_play": tournament.state == "active" and next_node is not None,
+        "can_play": _can_play(tournament, next_node),
         "import_form": RosterImportForm(),
         "import_row_errors": [],
         "rr_crosstable": rr_crosstable,
@@ -658,11 +664,8 @@ def build_tournament_detail(tournament: Tournament) -> dict:
         "pool_size": entries.count(),
         "is_drawn": entries.filter(drawn_team__isnull=False).exists(),
         "rr_crosstable": rr_crosstable,
-        # The same rule as ``build_detail_context``; ``next_node`` is not sent.
-        "can_play": (
-            tournament.state == "active"
-            and tournament.find_next_playable_node() is not None
-        ),
+        # ``next_node`` itself is not sent.
+        "can_play": _can_play(tournament, tournament.find_next_playable_node()),
     }
 
 

@@ -57,8 +57,8 @@ export class TournamentPlay {
   protected readonly progressLabel = computed(() => {
     const progress = this.progress();
     return progress === null
-      ? 'Starting...'
-      : `Running... stage ${progress.completed} / ${progress.total}`;
+      ? 'Starting…'
+      : `Running… stage ${progress.completed} / ${progress.total}`;
   });
 
   /** The bar's fill, 0 to 100. */

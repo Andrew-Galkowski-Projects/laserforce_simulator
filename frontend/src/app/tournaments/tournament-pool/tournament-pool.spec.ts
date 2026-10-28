@@ -1006,6 +1006,14 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(text(section())).not.toContain('Drawn Teams');
     });
 
+    it("orders the cards as the detail lists its participants (the server's seed order)", async () => {
+      await openWith(drawn({ participants: [...DRAWN_TEAMS].reverse() }), DRAWN_ENTRIES);
+      expect(teamCards().map((card) => text(card.querySelector('h4')))).toEqual([
+        'Draw Team 2',
+        'Draw Team 1',
+      ]);
+    });
+
     it("lists one card per drawn Team with its Players' names, You badge and Tier", async () => {
       const self = { ...SELF_INSERT, id: 23, name: 'Cy' };
       await openWith(drawn(), DRAWN_ENTRIES, [], { ...USER, self_insert: self });

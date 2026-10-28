@@ -280,15 +280,13 @@ describe('TournamentsService', () => {
 
   it('reports a bad Seeding as ApiError 400 on seeds', async () => {
     const result = firstValueFrom(tournaments.saveSeeds(4, {})).catch((e: unknown) => e);
-    http
-      .expectOne(`${BASE}/tournaments/4/seeds/`)
-      .flush(
-        {
-          errors: [{ code: 'required', message: 'This field is required.', field: 'seeds' }],
-          meta: {},
-        },
-        { status: 400, statusText: 'Bad Request' },
-      );
+    http.expectOne(`${BASE}/tournaments/4/seeds/`).flush(
+      {
+        errors: [{ code: 'required', message: 'This field is required.', field: 'seeds' }],
+        meta: {},
+      },
+      { status: 400, statusText: 'Bad Request' },
+    );
     const err = (await result) as ApiError;
     expect(err.status).toBe(400);
     expect(err.errors[0].field).toBe('seeds');

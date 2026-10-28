@@ -17,4 +17,9 @@ export class Bracket {
   readonly rounds = input.required<BracketRound[]>();
   /** Names each column; "Round N" unless the group says otherwise. */
   readonly roundName = input<RoundNamer>(roundNumberName);
+  /**
+   * The column headings' level: 4 under a sub-bracket's h3 (Winners / Losers / Grand Final), 3
+   * when the bracket sits straight under an h2 (single elimination), so no level is skipped.
+   */
+  readonly headingLevel = input<3 | 4>(4);
 }

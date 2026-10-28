@@ -30,6 +30,21 @@ describe('Bracket', () => {
     expect(columnNames(el)).toEqual(['Round 1', 'Round 2', 'Round 3']);
   });
 
+  it('heads each column h4 by default, under a sub-bracket h3', async () => {
+    const el = await render(bracketRounds(2));
+    expect(el.querySelectorAll('h4.bracket__round-name').length).toBe(2);
+  });
+
+  it('heads each column h3 when given level 3', async () => {
+    const fixture = TestBed.createComponent(Bracket);
+    fixture.componentRef.setInput('rounds', bracketRounds(2));
+    fixture.componentRef.setInput('headingLevel', 3);
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+    expect(el.querySelectorAll('h3.bracket__round-name').length).toBe(2);
+    expect(el.querySelectorAll('h4').length).toBe(0);
+  });
+
   it('names the columns with the given rule', async () => {
     const el = await render(bracketRounds(2), singleEliminationRoundName);
     expect(columnNames(el)).toEqual(['Semifinals', 'Final']);

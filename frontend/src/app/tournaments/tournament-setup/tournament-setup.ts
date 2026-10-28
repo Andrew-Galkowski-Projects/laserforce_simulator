@@ -6,7 +6,7 @@ import { MatError, MatFormField } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
 import { RouterLink } from '@angular/router';
 import { filter } from 'rxjs';
-import { TournamentDetail, TournamentParticipant } from '../../api/tournaments.models';
+import { TournamentDetail } from '../../api/tournaments.models';
 import { TournamentsService } from '../../api/tournaments.service';
 import { apiMessage } from '../../shared/api-message';
 import { ConfirmDialog, ConfirmDialogData } from '../../shared/confirm-dialog';
@@ -54,11 +54,6 @@ export class TournamentSetup {
     () => this.detail().state === 'setup' && !this.detail().embedded,
   );
 
-  /** The participants by seed, for the Seeding rows. */
-  protected readonly seeded = computed<TournamentParticipant[]>(() =>
-    [...this.detail().participants].sort((a, b) => a.seed - b.seed),
-  );
-
   protected readonly showSeeding = computed(
     () =>
       this.editable() &&
@@ -66,10 +61,13 @@ export class TournamentSetup {
       this.detail().participants.length > 0,
   );
 
-  /** One `seed_<team id>` control per participant, rebuilt from each loaded detail. */
+  /**
+   * One `seed_<team id>` control per participant, rebuilt from each loaded detail. The rows keep
+   * the detail's order: the server sends participants by seed.
+   */
   protected readonly seedForm = computed(() => {
     const controls: Record<string, FormControl<number | null>> = {};
-    for (const participant of this.seeded()) {
+    for (const participant of this.detail().participants) {
       controls[seedKey(participant.team.id)] = new FormControl<number | null>(participant.seed);
     }
     return new FormRecord(controls);
@@ -90,7 +88,7 @@ export class TournamentSetup {
       return;
     }
     const seeds: Record<number, number> = {};
-    for (const participant of this.seeded()) {
+    for (const participant of this.detail().participants) {
       seeds[participant.team.id] = form.controls[seedKey(participant.team.id)].value as number;
     }
     this.saving.set(true);

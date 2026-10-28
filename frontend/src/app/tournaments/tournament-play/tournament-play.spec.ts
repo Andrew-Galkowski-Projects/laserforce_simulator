@@ -240,23 +240,23 @@ describe('Tournament play (Tournament detail)', () => {
       await stable();
     }
 
-    it('reads "Starting..." with an indeterminate bar until the first status', async () => {
+    it('reads "Starting…" with an indeterminate bar until the first status', async () => {
       await pressPlayAll();
-      expect(label()).toBe('Starting...');
+      expect(label()).toBe('Starting…');
       expect(bar()?.getAttribute('mode')).toBe('indeterminate');
       http.expectOne(PLAY_ALL_URL).flush({
         data: { job_id: 'job-1', tournament_id: 5, status_url: '' },
         meta: {},
       });
       await stable();
-      expect(label()).toBe('Starting...');
+      expect(label()).toBe('Starting…');
       http.expectOne(jobUrl('job-1'));
     });
 
     it('shows the stage count with a determinate bar while running', async () => {
       await startRun();
       await answer(status({ completed: 1, total: 4 }));
-      expect(label()).toBe('Running... stage 1 / 4');
+      expect(label()).toBe('Running… stage 1 / 4');
       expect(bar()?.getAttribute('mode')).toBe('determinate');
       expect(bar()?.getAttribute('aria-valuenow')).toBe('25');
     });
@@ -268,7 +268,7 @@ describe('Tournament play (Tournament detail)', () => {
       http.expectNone(jobUrl('job-1'));
       await wait(1);
       await answer(status({ completed: 2 }));
-      expect(label()).toBe('Running... stage 2 / 3');
+      expect(label()).toBe('Running… stage 2 / 3');
       await wait(1000);
       http.expectOne(jobUrl('job-1'));
     });
@@ -317,13 +317,13 @@ describe('Tournament play (Tournament detail)', () => {
       http.expectOne(jobUrl('job-1')).error(new ProgressEvent('error'), { status: 0 });
       await stable();
       expect(errorBox()).toBeNull();
-      expect(label()).toBe('Running... stage 1 / 3');
+      expect(label()).toBe('Running… stage 1 / 3');
       expect(button('Play All').disabled).toBe(true);
       await wait(999);
       http.expectNone(jobUrl('job-1'));
       await wait(1);
       await answer(status({ completed: 2 }));
-      expect(label()).toBe('Running... stage 2 / 3');
+      expect(label()).toBe('Running… stage 2 / 3');
     });
 
     it('resumes the live run on a 409 play_in_progress, with no error', async () => {
@@ -336,9 +336,9 @@ describe('Tournament play (Tournament detail)', () => {
         });
       await stable();
       expect(errorBox()).toBeNull();
-      expect(label()).toBe('Starting...');
+      expect(label()).toBe('Starting…');
       await answer(status({ completed: 2, total: 5 }), 'live-7');
-      expect(label()).toBe('Running... stage 2 / 5');
+      expect(label()).toBe('Running… stage 2 / 5');
     });
 
     it('shows a 503 broker_unavailable message and stops', async () => {

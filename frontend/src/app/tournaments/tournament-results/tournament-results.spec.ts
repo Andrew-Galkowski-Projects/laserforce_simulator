@@ -53,6 +53,12 @@ describe('TournamentResults', () => {
       expect(columnNames(el)).toEqual(['Round 1', 'Quarterfinals', 'Semifinals', 'Final']);
     });
 
+    it('heads its columns h3, straight under the h2 "Bracket" (no skipped level)', async () => {
+      const el = await render(singleElim(2));
+      expect(all(el, 'h3')).toEqual(['Semifinals', 'Final']);
+      expect(all(el, 'h4')).toEqual([]);
+    });
+
     it('shows each node card with its Teams', async () => {
       const el = await render(singleElim(1));
       expect(text(el.querySelector('app-node-card'))).toContain('[1] Red Raiders');
