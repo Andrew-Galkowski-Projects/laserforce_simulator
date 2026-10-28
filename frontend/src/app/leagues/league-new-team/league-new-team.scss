@@ -1,0 +1,78 @@
+// The fired Manager's new-team picker (ADR-0043 layout B): `--lf-*` tokens only, no colour
+// literals.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  min-width: 0;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-family: var(--lf-font-heading);
+}
+
+.new-team__lead {
+  margin: 0 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+.new-team__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+
+  a {
+    color: inherit;
+  }
+}
+
+.new-team__scroll {
+  overflow-x: auto;
+  margin-bottom: 1rem;
+}
+
+.new-team__table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+  font-size: 0.875rem;
+
+  th,
+  td {
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  .num {
+    text-align: right;
+    font-family: var(--lf-font-numeric);
+  }
+
+  // A Team name wraps only between words and keeps room for a whole word.
+  .name {
+    min-width: 8rem;
+    white-space: normal;
+  }
+
+  input[type='radio'] {
+    accent-color: var(--lf-accent);
+  }
+
+  label {
+    cursor: pointer;
+  }
+}

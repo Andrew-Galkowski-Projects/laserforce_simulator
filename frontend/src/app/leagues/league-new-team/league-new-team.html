@@ -1,0 +1,69 @@
+@if (notFound()) {
+  <h1>League not found</h1>
+  <p><a mat-stroked-button routerLink="/leagues">&larr; Back to Leagues</a></p>
+} @else if (loadError(); as message) {
+  <div class="new-team__error" role="alert">
+    <span>{{ message }}</span>
+    <a [routerLink]="['/leagues', leagueId()]">Back to the dashboard</a>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (loaded(); as l) {
+  <div id="new-team-picker">
+    <h1>You've been fired — choose a new team</h1>
+    <p class="new-team__lead">
+      The Owner has let you go. You may take over one of the {{ l.candidates.length }} worst teams
+      from {{ l.latest_completed.name }} (your old team is not on the list).
+    </p>
+
+    @if (submitError(); as message) {
+      <div class="new-team__error" role="alert">
+        <span>{{ message }}</span>
+        <a [routerLink]="['/leagues', leagueId()]">Back to the dashboard</a>
+      </div>
+    }
+
+    <form id="new-team-form" (submit)="$event.preventDefault(); takeOver()">
+      <div class="new-team__scroll">
+        <table class="new-team__table">
+          <thead>
+            <tr>
+              <th></th>
+              <th class="num">Rank</th>
+              <th class="name">Team</th>
+              <th class="num">W-L-T</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of l.candidates; track row.team_id) {
+              <tr [id]="'new-team-option-' + row.team_id">
+                <td>
+                  <input
+                    type="radio"
+                    name="team_id"
+                    [id]="'new-team-radio-' + row.team_id"
+                    [value]="row.team_id"
+                    [checked]="row.team_id === chosen()"
+                    (change)="chosen.set(row.team_id)"
+                  />
+                </td>
+                <td class="num">{{ row.rank }}</td>
+                <td class="name">
+                  <label [for]="'new-team-radio-' + row.team_id">{{ row.team?.name }}</label>
+                </td>
+                <td class="num">{{ row.wins }}-{{ row.losses }}-{{ row.ties }}</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+      <button
+        id="new-team-submit"
+        mat-flat-button
+        type="submit"
+        [disabled]="busy() || chosen() === null"
+      >
+        Take Over This Team
+      </button>
+    </form>
+  </div>
+}
