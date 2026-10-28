@@ -1,7 +1,8 @@
 """ANG-01d-1 -- League lifecycle actions (seam contract section 6, #9-#11).
 
 * ``POST /api/leagues/<pk>/next-season/`` -- 201 ``SeasonSerializer`` of the new
-  draft Season; 409 ``season_in_progress`` (field ``season:<id>``) /
+  Season, started (UXP-18, ANG-06-14 B6) unless the previous Season had
+  Conferences or the start is refused (then draft); 409 ``season_in_progress`` (field ``season:<id>``) /
   ``no_completed_season`` / ``manager_fired``, none of which create a Season.
 * ``GET /api/leagues/<pk>/new-team-candidates/`` -- worst-first standings rows
   (<= 5, current team excluded); 409 ``not_career_league`` /
@@ -27,6 +28,7 @@ from matches.tests.league_api_fixtures import (
     STANDINGS_ROW_KEYS,
     LeagueApiTestCase,
     fired_evaluation,
+    make_conference,
     make_league,
     make_open_season,
     make_teams,
@@ -47,21 +49,45 @@ class TestNextSeason(LeagueApiTestCase):
     def post(self, league):
         return self.api.post(url(league.id, "next-season"), format="json")
 
-    def test_success_201_draft_season(self) -> None:
+    def test_success_201_active_season(self) -> None:
+        # UXP-18 (ANG-06-14 B6): like the HTML POST, the API rolls the next
+        # Season AND starts it, so the 201 body is an ACTIVE Season (it was a
+        # draft before ANG-06-14, which needed a separate Start Season call).
         league, season, teams = ranked_career_league("NsOk", 4, manager=self.user_a)
         response = self.post(league)
         data = self.ok(response, 201)
         self.assertEqual(set(data), SEASON_DETAIL_KEYS)
-        self.assertEqual(data["state"], "draft")
+        self.assertEqual(data["state"], "active")
         self.assertEqual(data["name"], "Season 2")
         self.assertEqual(data["league"], {"id": league.id, "name": league.name})
         self.assertEqual(sorted(data["team_ids"]), sorted(t.id for t in teams))
+        # The activation snapshot is written only by start_season.
+        self.assertEqual(data["starting_team_ids_json"], sorted(t.id for t in teams))
         self.assertNotIn("active_play_job_id", data)
         self.assertNotIn("play_cancel_requested", data)
         new = Season.objects.get(pk=data["id"])
-        self.assertEqual(new.state, "draft")
+        self.assertEqual(new.state, "active")
         self.assertEqual(league.seasons.count(), 2)
         self.assert_session_untouched()
+
+    def test_previous_conferences_keep_a_draft_season(self) -> None:
+        # UXP-18: the rollover carries no Conferences and they are editable
+        # only in draft, so a partitioned League gets a DRAFT to re-partition.
+        league, season, teams = ranked_career_league("NsConf", 4, manager=self.user_a)
+        make_conference(season, "East", 1, teams[:2])
+        make_conference(season, "West", 2, teams[2:])
+        data = self.ok(self.post(league), 201)
+        self.assertEqual(data["state"], "draft")
+        self.assertEqual(Season.objects.get(pk=data["id"]).state, "draft")
+
+    def test_refused_start_keeps_the_rolled_draft(self) -> None:
+        # A one-team snapshot cannot start (< 2 teams): the rolled draft stays.
+        league, _season, _teams = ranked_career_league(
+            "NsOne", 1, manager=self.user_a, mode="multiplayer"
+        )
+        data = self.ok(self.post(league), 201)
+        self.assertEqual(data["state"], "draft")
+        self.assertEqual(league.seasons.count(), 2)
 
     def test_season_in_progress_409(self) -> None:
         league, _season, teams = ranked_career_league("NsProg", 4, manager=self.user_a)

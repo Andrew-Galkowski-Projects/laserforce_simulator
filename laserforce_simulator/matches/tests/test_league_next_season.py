@@ -2962,3 +2962,98 @@ class TestUxp18NextSeasonStartsTheNewSeason(TestCase):
             response["Location"],
             reverse("manage_conferences", kwargs={"season_id": new_season.id}),
         )
+
+
+# ---------------------------------------------------------------------------
+# ANG-06-14 B6 — ``roll_and_start_next_season`` (shared by HTML + API)
+# ---------------------------------------------------------------------------
+
+from matches.league_play_services import (  # noqa: E402
+    NextSeasonResult,
+    roll_and_start_next_season,
+)
+from matches.league_services import (  # noqa: E402
+    ManagerFiredError,
+    NoCompletedSeasonError,
+    SeasonInProgressError,
+)
+
+
+class TestRollAndStartNextSeasonService(TestCase):
+    """The rollover then (UXP-18) the start, unless the previous Season had
+    Conferences (``needs_conferences``). A refused start leaves the draft."""
+
+    _setup = TestUxp18NextSeasonStartsTheNewSeason._setup
+
+    def test_rolls_and_starts_the_new_season(self) -> None:
+        league = self._setup(mode="league")
+        result = roll_and_start_next_season(league)
+        self.assertIsInstance(result, NextSeasonResult)
+        self.assertFalse(result.needs_conferences)
+        self.assertEqual(result.season.name, "Season 2")
+        result.season.refresh_from_db()
+        self.assertEqual(result.season.state, "active")
+
+    def test_refused_start_leaves_the_rolled_draft(self) -> None:
+        league = self._setup(mode="multiplayer", n_teams=1)
+        result = roll_and_start_next_season(league)
+        self.assertFalse(result.needs_conferences)
+        result.season.refresh_from_db()
+        self.assertEqual(result.season.state, "draft")
+        self.assertEqual(league.seasons.count(), 2)
+
+    def test_a_start_refused_after_saving_rolls_back_only_the_activation(
+        self,
+    ) -> None:
+        # The savepoint: a ValidationError raised AFTER ``start_season`` saved
+        # ``state="active"`` must undo the activation, never the rollover.
+        from django.core.exceptions import ValidationError
+
+        league = self._setup(mode="league")
+        with patch.object(
+            Season, "_ensure_worlds_phase", side_effect=ValidationError("boom")
+        ):
+            result = roll_and_start_next_season(league)
+        self.assertEqual(Season.objects.get(pk=result.season.pk).state, "draft")
+        self.assertEqual(league.seasons.count(), 2)
+
+    def test_previous_conferences_keep_the_draft(self) -> None:
+        league = self._setup(mode="league", n_teams=4)
+        prev = league.seasons.get(name="Season 1")
+        teams = list(prev.teams.order_by("id"))
+        for ordinal, members in ((1, teams[:2]), (2, teams[2:])):
+            conf = _Uxp18Conference.objects.create(
+                season=prev, name=f"C{ordinal}", ordinal=ordinal
+            )
+            conf.teams.add(*members)
+        result = roll_and_start_next_season(league)
+        self.assertTrue(result.needs_conferences)
+        result.season.refresh_from_db()
+        self.assertEqual(result.season.state, "draft")
+
+    def test_the_rollover_errors_propagate(self) -> None:
+        with self.assertRaises(NoCompletedSeasonError):
+            roll_and_start_next_season(_make_league("B6None"))
+        league = self._setup(mode="league")
+        roll_and_start_next_season(league)
+        with self.assertRaises(SeasonInProgressError):
+            roll_and_start_next_season(league)
+
+    def test_a_fired_manager_raises(self) -> None:
+        league = self._setup(mode="league")
+        prev = league.seasons.get(name="Season 1")
+        _Car02OwnerEvaluation.objects.create(
+            league=league,
+            season=prev,
+            team_managed=league.current_team,
+            wins_delta=-1.0,
+            playoffs_delta=-1.0,
+            wins_total=-3.0,
+            playoffs_total=-3.0,
+            verdict="fired",
+            hot_seat_level=2,
+            fired_reason="owner_mood",
+        )
+        with self.assertRaises(ManagerFiredError):
+            roll_and_start_next_season(league)
+        self.assertEqual(league.seasons.count(), 1)

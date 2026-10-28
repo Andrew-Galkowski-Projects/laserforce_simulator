@@ -20,7 +20,7 @@ tabs inside a League:
 
 Team via ``?team_id=`` (validated against the displayed Season's
 enrolment), defaulting to ``league.current_team`` then
-``_resolve_current_team_for_sidebar``. Follows the shared LG-01z view
+``league_services.sidebar_schedule_team``. Follows the shared LG-01z view
 contract (§2): GET-only, ``get_owned_or_404(League)``, session write,
 displayed-Season pick, sidebar links with ``sidebar_active="history_team"``,
 render ``leagues/team_history.html``. Empty-state when the League has no

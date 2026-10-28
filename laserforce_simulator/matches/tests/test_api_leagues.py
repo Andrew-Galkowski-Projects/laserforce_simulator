@@ -16,8 +16,9 @@ from datetime import date
 
 from django.urls import reverse
 
+from laserforce_simulator.testing import assert_owner_only
 from matches.league_templates import LEAGUE_TEMPLATES
-from matches.models import Conference, League, Season
+from matches.models import Conference, League, Match, Season
 from matches.tests.league_api_fixtures import (
     DELETE_NOT_CAREER_MSG,
     HISTORY_ROW_KEYS,
@@ -41,6 +42,7 @@ from matches.tests.league_api_fixtures import (
     make_teams,
     ranked_career_league,
 )
+from matches.tests.test_api_member_night import mn_season
 
 LIST = "/api/leagues/"
 
@@ -231,6 +233,123 @@ class TestLeagueDetail(LeagueApiTestCase):
         league = self.foreign_league("DelForeign")
         self.error(self.api.delete(detail(league.id)), 404, "not_found")
         self.assertTrue(League.objects.filter(pk=league.pk).exists())
+
+
+# ---------------------------------------------------------------------------
+# ANG-06-14 B2 -- delete-summary
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueDeleteSummary(LeagueApiTestCase):
+    def test_route_name(self) -> None:
+        self.assertEqual(
+            reverse("league-delete-summary", args=[7]),
+            "/api/leagues/7/delete-summary/",
+        )
+
+    def test_counts_what_delete_removes(self) -> None:
+        # 4 enrolled Teams (6 players each), a ranked single round robin
+        # (4 * 3 / 2 = 6 Matches), no embedded Tournament.
+        league, _season, _teams = ranked_career_league("DsOk", 4, manager=self.user_a)
+        data = self.ok(self.api.get(action(league.id, "delete-summary")))
+        self.assertEqual(
+            data,
+            {"seasons": 1, "matches": 6, "tournaments": 0, "teams": 4, "players": 24},
+        )
+        self.assertTrue(League.objects.filter(pk=league.pk).exists())
+        self.assert_session_untouched()
+
+    def test_non_career_is_409(self) -> None:
+        league = make_league("DsMp", manager=self.user_a, mode="multiplayer")
+        entry = self.error(
+            self.api.get(action(league.id, "delete-summary")), 409, "not_career_league"
+        )
+        self.assertEqual(entry["message"], DELETE_NOT_CAREER_MSG)
+
+    def test_owner_only(self) -> None:
+        league = make_league("DsOwn", manager=self.user_a)
+        assert_owner_only(
+            action(league.id, "delete-summary"), owner=self.user_a, other=self.user_b
+        )
+
+    def test_anonymous_is_401(self) -> None:
+        league = make_league("DsAnon", manager=self.user_a)
+        self.error(
+            self.anon.get(action(league.id, "delete-summary")),
+            401,
+            "not_authenticated",
+        )
+
+    def test_post_is_405(self) -> None:
+        league = make_league("DsPost", manager=self.user_a)
+        self.error(
+            self.api.post(action(league.id, "delete-summary"), {}, format="json"),
+            405,
+            "method_not_allowed",
+        )
+
+
+# ---------------------------------------------------------------------------
+# ANG-06-14 B4 -- nav
+# ---------------------------------------------------------------------------
+
+
+class TestLeagueNav(LeagueApiTestCase):
+    def get(self, league: League) -> dict:
+        data = self.ok(self.api.get(action(league.id, "nav")))
+        self.assertEqual(set(data), {"league", "displayed_season", "schedule_team"})
+        return data
+
+    def test_route_name(self) -> None:
+        self.assertEqual(reverse("league-nav", args=[7]), "/api/leagues/7/nav/")
+
+    def test_no_season_is_all_null(self) -> None:
+        league = make_league("NavNone", manager=self.user_a)
+        data = self.get(league)
+        self.assertEqual(
+            data["league"], {"id": league.id, "name": "NavNone", "mode": "league"}
+        )
+        self.assertIsNone(data["displayed_season"])
+        self.assertIsNone(data["schedule_team"])
+        self.assert_session_untouched()
+
+    def test_current_team_when_enrolled(self) -> None:
+        teams = make_teams("NavCur", 3)
+        league = make_league(
+            "NavCurL", manager=self.user_a, mode="multiplayer", current_team=teams[2]
+        )
+        draft = make_open_season(league, teams)
+        data = self.get(league)
+        self.assertEqual(data["league"]["mode"], "multiplayer")
+        self.assertEqual(data["displayed_season"], {"id": draft.id, "name": draft.name})
+        self.assertEqual(
+            data["schedule_team"], {"id": teams[2].id, "name": teams[2].name}
+        )
+
+    def test_first_enrolled_alphabetically_when_current_not_enrolled(self) -> None:
+        (outsider,) = make_teams("NavOut", 1)
+        bravo, alpha = make_teams("NavB", 1) + make_teams("NavA", 1)
+        league = make_league("NavAlpha", manager=self.user_a, current_team=outsider)
+        make_open_season(league, [bravo, alpha])
+        data = self.get(league)
+        self.assertEqual(data["schedule_team"], {"id": alpha.id, "name": alpha.name})
+
+    def test_season_without_teams_has_null_team(self) -> None:
+        league = make_league("NavEmpty", manager=self.user_a)
+        season = make_open_season(league, [])
+        data = self.get(league)
+        self.assertEqual(data["displayed_season"]["id"], season.id)
+        self.assertIsNone(data["schedule_team"])
+
+    def test_owner_only(self) -> None:
+        league = make_league("NavOwn", manager=self.user_a)
+        assert_owner_only(
+            action(league.id, "nav"), owner=self.user_a, other=self.user_b
+        )
+
+    def test_anonymous_is_401(self) -> None:
+        league = make_league("NavAnon", manager=self.user_a)
+        self.error(self.anon.get(action(league.id, "nav")), 401, "not_authenticated")
 
 
 # ---------------------------------------------------------------------------
@@ -448,6 +567,98 @@ class TestLeagueDashboard(LeagueApiTestCase):
         self.assertIsNotNone(data["next_fixture"])
         self.assertIn("matchday", data["next_fixture"])
         self.assertGreater(data["round_count_total"], 0)
+
+    # --- ANG-06-14 B5: the five League-only keys -----------------------
+
+    def test_career_league_mode_and_managed_team(self) -> None:
+        teams = make_teams("DashMg", 2)
+        league = make_league("DashMgL", manager=self.user_a, current_team=teams[1])
+        data = self.get(league)
+        self.assertEqual(data["mode"], "league")
+        self.assertEqual(
+            data["managed_team"], {"id": teams[1].id, "name": teams[1].name}
+        )
+
+    def test_non_career_league_has_no_managed_team(self) -> None:
+        teams = make_teams("DashMp", 2)
+        league = make_league(
+            "DashMpL", manager=self.user_a, mode="multiplayer", current_team=teams[0]
+        )
+        data = self.get(league)
+        self.assertEqual(data["mode"], "multiplayer")
+        self.assertIsNone(data["managed_team"])
+
+    def test_career_league_without_current_team_has_no_managed_team(self) -> None:
+        data = self.get(make_league("DashNoCur", manager=self.user_a))
+        self.assertIsNone(data["managed_team"])
+
+    def test_has_owner_evaluations_false_without_any(self) -> None:
+        data = self.get(make_league("DashNoEval", manager=self.user_a))
+        self.assertIs(data["has_owner_evaluations"], False)
+
+    def test_has_owner_evaluations_true_with_one(self) -> None:
+        league, _season, _teams = ranked_career_league(
+            "DashEval", 4, manager=self.user_a, fired=True
+        )
+        self.assertIs(self.get(league)["has_owner_evaluations"], True)
+
+    def test_member_night_progress_null_off_a_member_night(self) -> None:
+        teams = make_teams("DashNoMn", 4)
+        league = make_league("DashNoMnL", manager=self.user_a)
+        make_open_season(league, teams, state="active")
+        self.assertIsNone(self.get(league)["member_night_progress"])
+
+    def test_member_night_progress_counts_the_drawn_games(self) -> None:
+        league = make_league("DashMnL", manager=self.user_a)
+        season = mn_season(league, "DashMn")
+        phase = season.current_phase()
+        red, blue = make_teams("DashMnDraw", 2)
+        for completed in (True, False):
+            Match.objects.create(
+                team_red=red,
+                team_blue=blue,
+                season=season,
+                season_phase=phase,
+                is_completed=completed,
+            )
+        self.assertEqual(
+            self.get(league)["member_night_progress"], {"played": 1, "total": 2}
+        )
+
+    def test_manager_awaiting_reassignment_true_when_fired(self) -> None:
+        league, _season, _teams = ranked_career_league(
+            "DashFired", 4, manager=self.user_a, fired=True
+        )
+        self.assertIs(self.get(league)["manager_awaiting_reassignment"], True)
+
+    def test_manager_awaiting_reassignment_false_when_retained(self) -> None:
+        league, _season, _teams = ranked_career_league(
+            "DashKept", 4, manager=self.user_a
+        )
+        data = self.get(league)
+        self.assertEqual(data["season_mode"], "completed")
+        self.assertIs(data["manager_awaiting_reassignment"], False)
+
+    def test_manager_awaiting_reassignment_false_once_reassigned(self) -> None:
+        league, _season, teams = ranked_career_league(
+            "DashMoved", 4, manager=self.user_a, fired=True
+        )
+        league.current_team = teams[-1]
+        league.save(update_fields=["current_team"])
+        self.assertIs(self.get(league)["manager_awaiting_reassignment"], False)
+
+    def test_manager_awaiting_reassignment_false_for_non_career(self) -> None:
+        league, _season, _teams = ranked_career_league(
+            "DashMpFired", 4, manager=self.user_a, mode="multiplayer", fired=True
+        )
+        self.assertIs(self.get(league)["manager_awaiting_reassignment"], False)
+
+    def test_manager_awaiting_reassignment_false_while_season_open(self) -> None:
+        league, _season, teams = ranked_career_league(
+            "DashOpen", 4, manager=self.user_a, fired=True
+        )
+        make_open_season(league, teams, state="active")
+        self.assertIs(self.get(league)["manager_awaiting_reassignment"], False)
 
     def test_foreign_is_404(self) -> None:
         self.error(
