@@ -1,0 +1,75 @@
+// The Leagues list (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+.league-list__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+
+  h1 {
+    margin: 0;
+    font-family: var(--lf-font-heading);
+  }
+}
+
+h2 {
+  margin: 1.5rem 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.15rem;
+}
+
+.league-list__empty {
+  @include alerts.notice;
+}
+
+.league-list__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.league-table {
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  // A long name wraps (it is free text in a table that never scrolls); State and Delete stay
+  // on one line within the ~500px content area at 768px.
+  .mat-column-name {
+    flex: 1 1 8rem;
+    overflow-wrap: anywhere;
+  }
+
+  .mat-column-state {
+    flex: 0 0 11rem;
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+.league-table__state {
+  gap: 0.5rem;
+}
+
+.league-table__delete {
+  color: var(--mat-sys-error);
+}
+
+.league-state {
+  @include badges.league-state;
+}

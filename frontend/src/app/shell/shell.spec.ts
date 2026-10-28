@@ -6,6 +6,7 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
 import { SELF_INSERT, USER, signIn } from '../api/testing/auth-fixtures';
 import { User } from '../auth/user';
+import { releaseLeaguesLoads } from '../leagues/testing/leagues-loads';
 import { releaseMatchesLoads } from '../matches/testing/matches-loads';
 import { releaseMapsLoads } from '../maps/testing/maps-loads';
 import { releasePlayersLoads } from '../players/testing/players-loads';
@@ -64,6 +65,7 @@ describe('App shell (layout B)', () => {
     releaseMatchesLoads();
     releaseMapsLoads();
     releaseTournamentsLoads();
+    releaseLeaguesLoads();
     http.verify();
     delete (window as Partial<Window>).matchMedia;
   });
@@ -199,6 +201,21 @@ describe('App shell (layout B)', () => {
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/login');
     expect(shell().textContent).not.toContain('ann@example.com');
+  });
+
+  // ANG-06-14: Leagues comes first, before Teams (the spec, F3).
+  it('has a Leagues entry right before Teams that opens /leagues', async () => {
+    await open('/teams');
+    const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
+    const labels = links.map((a) => a.textContent?.trim());
+    expect(labels.indexOf('Leagues')).toBeGreaterThanOrEqual(0);
+    expect(labels.indexOf('Leagues')).toBe(labels.indexOf('Teams') - 1);
+    const link = links.find((a) => a.textContent?.trim() === 'Leagues');
+    expect(link?.getAttribute('href')).toBe('/leagues');
+    link?.click();
+    await harness.fixture.whenStable();
+    releaseLeaguesLoads();
+    expect(routerUrl()).toBe('/leagues');
   });
 
   it('has a Teams entry in the sidebar that opens /teams', async () => {

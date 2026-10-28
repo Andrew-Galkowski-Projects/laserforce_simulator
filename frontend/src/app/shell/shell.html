@@ -50,6 +50,13 @@
     <mat-nav-list>
       <a
         mat-list-item
+        routerLink="/leagues"
+        routerLinkActive="shell__link--active"
+        (click)="wide() || nav.close()"
+        >Leagues</a
+      >
+      <a
+        mat-list-item
         routerLink="/teams"
         routerLinkActive="shell__link--active"
         (click)="wide() || nav.close()"

@@ -1,0 +1,62 @@
+@if (notFound()) {
+  <h1>League not found</h1>
+  <p><a mat-stroked-button routerLink="/leagues">&larr; Back to Leagues</a></p>
+} @else if (loadError(); as message) {
+  <div class="league-layout__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else {
+  <div class="league-layout" [class.league-layout--wide]="wide()">
+    @if (!wide()) {
+      <button
+        mat-stroked-button
+        type="button"
+        class="league-layout__toggle"
+        aria-controls="league-nav"
+        [attr.aria-expanded]="menuOpen()"
+        (click)="toggleMenu()"
+      >
+        League menu
+      </button>
+    }
+    @if (nav(); as n) {
+      @if (wide() || menuOpen()) {
+        <nav id="league-nav" class="league-nav" aria-label="League">
+          <p class="league-nav__name">{{ n.league.name }}</p>
+          @for (group of groups; track group.section) {
+            @if (group.heading; as heading) {
+              <h2 class="league-nav__heading">{{ heading }}</h2>
+            }
+            <ul class="league-nav__list">
+              @for (entry of group.entries; track entry.key) {
+                <li>
+                  @if (entry.soon) {
+                    <app-soon-badge class="league-nav__link" [label]="entry.label" />
+                  } @else if (entry.link(n); as link) {
+                    <a
+                      class="league-nav__link"
+                      [routerLink]="link"
+                      routerLinkActive="league-nav__link--active"
+                      [routerLinkActiveOptions]="{ exact: true }"
+                      ariaCurrentWhenActive="page"
+                      >{{ entry.label }}</a
+                    >
+                  } @else {
+                    <!-- A live entry with no target yet (Django: no displayed Season). -->
+                    <span class="league-nav__link league-nav__link--off" aria-disabled="true">{{
+                      entry.label
+                    }}</span>
+                  }
+                </li>
+              }
+            </ul>
+          }
+        </nav>
+      }
+    }
+    <div class="league-layout__page">
+      <router-outlet />
+    </div>
+  </div>
+}

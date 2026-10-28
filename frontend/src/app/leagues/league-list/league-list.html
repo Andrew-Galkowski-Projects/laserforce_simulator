@@ -1,0 +1,52 @@
+<div class="league-list__header">
+  <h1>Leagues</h1>
+  <a mat-flat-button routerLink="/leagues/new">Create League</a>
+</div>
+
+@if (del.error(); as message) {
+  <p class="league-list__error" role="alert">{{ message }}</p>
+}
+
+@if (loadError(); as message) {
+  <div class="league-list__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="load()">Retry</button>
+  </div>
+} @else if (groups(); as all) {
+  @if (isEmpty(all)) {
+    <p class="league-list__empty" role="status">No Leagues yet.</p>
+  }
+  @for (group of all; track group.state) {
+    @if (group.leagues.length > 0) {
+      <h2>{{ group.heading }}</h2>
+      <mat-table [dataSource]="group.leagues" class="league-table" [attr.data-state]="group.state">
+        <ng-container matColumnDef="name">
+          <mat-header-cell *matHeaderCellDef>Name</mat-header-cell>
+          <mat-cell *matCellDef="let l">
+            <a [routerLink]="['/leagues', l.id]">{{ l.name }}</a>
+          </mat-cell>
+        </ng-container>
+        <ng-container matColumnDef="state">
+          <mat-header-cell *matHeaderCellDef>State</mat-header-cell>
+          <mat-cell *matCellDef="let l" class="league-table__state">
+            <span class="league-state" [attr.data-state]="l.state">{{ stateLabel(l) }}</span>
+            @if (canDelete(l)) {
+              <button
+                mat-button
+                type="button"
+                class="league-table__delete"
+                [disabled]="del.busy()"
+                (click)="remove(l)"
+              >
+                Delete
+              </button>
+            }
+          </mat-cell>
+        </ng-container>
+
+        <mat-header-row *matHeaderRowDef="columns" />
+        <mat-row *matRowDef="let l; columns: columns" />
+      </mat-table>
+    }
+  }
+}
