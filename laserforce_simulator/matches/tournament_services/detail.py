@@ -587,7 +587,8 @@ def build_tournament_detail(tournament: Tournament) -> dict:
     :func:`tournament_fields` plus ``participants`` (``[{team, seed}]`` by
     seed), ``brackets``, ``rr_standings``, ``swiss_standings``, ``stage``,
     ``cut_labels`` (``{team_id (str): "wb" | "lb" | "out"}``, RR->DE seeding
-    stage only), ``pool_size`` and ``is_drawn``.
+    stage only), ``pool_size``, ``is_drawn`` and ``can_play`` (active with a
+    playable node).
     """
     participants = list(tournament.participants.select_related("team").order_by("seed"))
     team_by_id = {p.team_id: p.team for p in participants}
@@ -621,6 +622,11 @@ def build_tournament_detail(tournament: Tournament) -> dict:
         "cut_labels": cut_labels,
         "pool_size": entries.count(),
         "is_drawn": entries.filter(drawn_team__isnull=False).exists(),
+        # The same rule as ``build_detail_context``; ``next_node`` is not sent.
+        "can_play": (
+            tournament.state == "active"
+            and tournament.find_next_playable_node() is not None
+        ),
     }
 
 

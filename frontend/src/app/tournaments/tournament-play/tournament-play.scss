@@ -1,0 +1,36 @@
+// The play section: `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+.tournament-play {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.tournament-play__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.tournament-play__error {
+  @include alerts.error;
+}
+
+.tournament-play__progress {
+  @include alerts.notice;
+
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tournament-play__label {
+  margin: 0;
+}
