@@ -4,7 +4,9 @@
 </div>
 
 @let result = page();
-@if (result) {
+@if (loadError(); as message) {
+  <p class="tournament-list__error" role="alert">{{ message }}</p>
+} @else if (result) {
   @if (result.items.length === 0) {
     <p class="tournament-list__empty" role="status">
       No tournaments yet. Create one to get started.

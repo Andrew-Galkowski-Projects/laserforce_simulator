@@ -35,6 +35,10 @@
             </mat-form-field>
           } @else {
             <p class="notice">No teams available. Generate new teams below instead.</p>
+            <!-- No picker to carry it, so the Teams error (too_few_teams) shows here. -->
+            @if (form.controls.teams.getError('server'); as message) {
+              <p class="error" role="alert">{{ message }}</p>
+            }
           }
         }
       </div>

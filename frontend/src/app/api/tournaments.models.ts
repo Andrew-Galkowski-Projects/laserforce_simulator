@@ -21,6 +21,12 @@ export const TOURNAMENT_STATE_LABELS: Readonly<Record<TournamentState, string>> 
 /** `Tournament.TEAM_ASSEMBLY_CHOICES` keys: chosen Teams, or a Player-pool draw. */
 export type TeamAssembly = 'preset' | 'player_pool';
 
+/** `Tournament.TEAM_ASSEMBLY_CHOICES` labels: the create picker and the detail header. */
+export const TEAM_ASSEMBLY_LABELS: Readonly<Record<TeamAssembly, string>> = {
+  preset: 'Preset teams',
+  player_pool: 'Player pool draw',
+};
+
 /** `Tournament.ROLE_ASSIGNMENT_CHOICES` keys (Player-pool draws only). */
 export type RoleAssignmentMode = 'random' | 'per_tier';
 

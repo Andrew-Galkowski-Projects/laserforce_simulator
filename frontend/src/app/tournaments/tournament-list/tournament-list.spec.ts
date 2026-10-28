@@ -208,6 +208,18 @@ describe('Tournament list (/tournaments)', () => {
     await harness.fixture.whenStable();
   });
 
+  it('shows a failed load in an alert, still offering Create Tournament', async () => {
+    await harness.navigateByUrl('/tournaments');
+    listRequest().flush(
+      { errors: [{ code: 'server_error', message: 'Database is down.', field: null }], meta: {} },
+      { status: 500, statusText: 'Server Error' },
+    );
+    await harness.fixture.whenStable();
+    expect(text(page().querySelector('[role="alert"]'))).toBe('Database is down.');
+    expect(page().textContent).not.toContain(EMPTY);
+    expect(link('Create Tournament').getAttribute('href')).toBe('/tournaments/new');
+  });
+
   const paginator = (): HTMLElement | null => page().querySelector('mat-paginator');
 
   it('shows no paginator when every Tournament fits on one page', async () => {

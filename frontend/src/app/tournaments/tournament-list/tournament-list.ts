@@ -8,6 +8,8 @@ import { RouterLink } from '@angular/router';
 import { Page } from '../../api/api-client';
 import { TOURNAMENT_STATE_LABELS, Tournament } from '../../api/tournaments.models';
 import { TournamentsService } from '../../api/tournaments.service';
+import { apiMessage } from '../../shared/api-message';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 
 /** Rows per page; a paginator appears only when there are more. */
 const PAGE_SIZE = 20;
@@ -27,6 +29,8 @@ export class TournamentList {
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly page = signal<Page<Tournament> | null>(null);
+  /** A failed page load; the table and the empty-state notice give way to it. */
+  protected readonly loadError = signal<string | null>(null);
   protected readonly columns = ['name', 'format', 'state', 'created'];
   constructor() {
     this.load();
@@ -45,6 +49,15 @@ export class TournamentList {
     this.tournaments
       .list({ page, page_size: PAGE_SIZE, ordering: '-id' })
       .pipe(takeUntilDestroyed(this.destroyRef))
-      .subscribe((result) => this.page.set(result));
+      .subscribe({
+        next: (result) => {
+          this.loadError.set(null);
+          this.page.set(result);
+        },
+        error: (error: unknown) => {
+          this.page.set(null);
+          this.loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
+        },
+      });
   }
 }

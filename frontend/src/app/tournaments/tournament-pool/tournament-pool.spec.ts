@@ -330,6 +330,19 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(options).toEqual(['Bea (Free Agents)']);
     });
 
+    it('says "Added 1 player." for a single Player', async () => {
+      await openWith(poolTournament(), [], PLAYERS);
+      await (await playerSelect()).clickOptions({ text: 'Bea (Free Agents)' });
+      button('Add selected').click();
+      await stable();
+      http
+        .expectOne(ADD_URL)
+        .flush({ data: [poolEntry(22, 'Bea')], meta: {} }, { status: 201, statusText: 'Created' });
+      await stable();
+      expect(await snackMessage()).toBe('Added 1 player.');
+      await answerReload(poolTournament({ pool_size: 1 }), [poolEntry(22, 'Bea')], PLAYERS);
+    });
+
     it('puts a player_ids error on the picker and keeps the selection', async () => {
       await openWith(poolTournament(), [], PLAYERS);
       await (await playerSelect()).clickOptions({ text: 'Bea (Free Agents)' });
@@ -452,10 +465,44 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(rows()).toHaveLength(6);
     });
 
+    it('says "Generated 1 player." for a single Player', async () => {
+      await openWith();
+      await type('count', '1');
+      button('Generate').click();
+      await stable();
+      http
+        .expectOne(GENERATE_URL)
+        .flush({ data: [poolEntry(101, 'Gen')], meta: {} }, { status: 201, statusText: 'Created' });
+      await stable();
+      expect(await snackMessage()).toBe('Generated 1 player.');
+      await answerReload(poolTournament({ pool_size: 1 }), [poolEntry(101, 'Gen')]);
+    });
+
     it.each([
       ['count', 'How many', '1001', 'Ensure this value is less than or equal to 1000.'],
+      ['count', 'How many', '0', 'Ensure this value is greater than or equal to 1.'],
+      ['count', 'How many', '', 'This field is required.'],
       ['mean', 'Mean', '101', 'Ensure this value is less than or equal to 100.'],
+      ['mean', 'Mean', '-1', 'Ensure this value is greater than or equal to 0.'],
+      ['std_dev', 'Std dev', '41', 'Ensure this value is less than or equal to 40.'],
       ['std_dev', 'Std dev', '0', 'Ensure this value is greater than or equal to 1.'],
+    ])(
+      'keeps %s "%s" = "%s" on the client with the Form message, sending nothing',
+      async (name, label, value, message) => {
+        await openWith();
+        await type(name, value);
+        button('Generate').click();
+        await stable();
+        http.expectNone(GENERATE_URL);
+        expect(await (await field(label)).getTextErrors()).toEqual([message]);
+        expect(numberInput(name).value).toBe(value);
+      },
+    );
+
+    it.each([
+      ['count', 'How many', '30', 'Too many players for this pool.'],
+      ['mean', 'Mean', '60', 'Mean is out of range.'],
+      ['std_dev', 'Std dev', '10', 'Std dev is out of range.'],
     ])(
       'puts a server %s error on "%s" and keeps the input',
       async (name, label, value, message) => {
@@ -466,7 +513,7 @@ describe('Tournament Player Pool (Tournament detail)', () => {
         http
           .expectOne(GENERATE_URL)
           .flush(
-            { errors: [{ code: 'max_value', message, field: name }], meta: {} },
+            { errors: [{ code: 'invalid', message, field: name }], meta: {} },
             { status: 400, statusText: 'Bad Request' },
           );
         await stable();
@@ -603,6 +650,19 @@ describe('Tournament Player Pool (Tournament detail)', () => {
       expect(text(section()?.querySelector('h2'))).toBe('Player Pool (2)');
       expect(rows().map((row) => cells(row)[0])).toEqual(['Ace', 'Bea']);
       expect(text(cardOf(IMPORT))).toContain('No file chosen');
+    });
+
+    it('says "Imported 1 player." for a single Player', async () => {
+      await openWith();
+      await choose(csv());
+      button('Import players').click();
+      await stable();
+      http
+        .expectOne(IMPORT_URL)
+        .flush({ data: [poolEntry(31, 'Ace')], meta: {} }, { status: 201, statusText: 'Created' });
+      await stable();
+      expect(await snackMessage()).toBe('Imported 1 player.');
+      await answerReload(poolTournament({ pool_size: 1 }), [poolEntry(31, 'Ace')]);
     });
 
     it('lists row errors as "Row N (column): message" and keeps the chosen file', async () => {

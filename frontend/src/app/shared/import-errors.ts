@@ -32,7 +32,10 @@ function formatRowError(field: string, message: string): string | null {
   return column ? `Row ${row} (${column}): ${message}` : `Row ${row}: ${message}`;
 }
 
-/** Classifies `error` (the failure of `TeamsService.importRoster`) for the Import Roster screen. */
+/**
+ * Classifies a failed roster-CSV upload (`TeamsService.importRoster`,
+ * `TournamentsService.importParticipants` / `importPool`); `CsvImport.upload` calls it.
+ */
 export function classifyImportErrors(error: unknown): ImportErrors {
   const result: ImportErrors = { file: [], rows: [], alert: [] };
   if (!(error instanceof ApiError)) {

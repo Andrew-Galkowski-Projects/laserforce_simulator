@@ -37,10 +37,12 @@
     started_playing_age, total_games, home_site, height. Stat columns are optional (default 50).
   </p>
   <p class="roster-import__template">
-    <button mat-button type="button" (click)="downloadTemplate()">Download a template CSV</button>
+    <button mat-button type="button" (click)="csv.downloadTemplate()">
+      Download a template CSV
+    </button>
   </p>
   <form class="roster-import__card" (submit)="$event.preventDefault(); submit()" novalidate>
-    @for (message of alertErrors(); track $index) {
+    @for (message of csv.alertErrors(); track $index) {
       <p class="team-form__error" role="alert">{{ message }}</p>
     }
     <div class="roster-import__field">
@@ -52,25 +54,25 @@
         accept=".csv,text/csv"
         hidden
         aria-labelledby="roster-import-label"
-        (change)="choose($event)"
+        (change)="csv.choose($event)"
       />
       <div class="roster-import__picker">
         <button mat-stroked-button type="button" (click)="csvInput.click()">Choose CSV</button>
-        <span class="roster-import__filename">{{ file()?.name ?? 'No file chosen' }}</span>
+        <span class="roster-import__filename">{{ csv.file()?.name ?? 'No file chosen' }}</span>
       </div>
-      @for (message of fileErrors(); track $index) {
+      @for (message of csv.fileErrors(); track $index) {
         <mat-error class="roster-import__error">{{ message }}</mat-error>
       }
-      @if (rowErrors().length > 0) {
+      @if (csv.rowErrors().length > 0) {
         <ul class="roster-import__rows">
-          @for (message of rowErrors(); track $index) {
+          @for (message of csv.rowErrors(); track $index) {
             <li>{{ message }}</li>
           }
         </ul>
       }
     </div>
     <div class="team-form__actions">
-      <button mat-flat-button type="submit" [disabled]="busy() || !file()">Import</button>
+      <button mat-flat-button type="submit" [disabled]="csv.busy() || !csv.file()">Import</button>
       <a mat-button routerLink="/teams">Cancel</a>
     </div>
   </form>

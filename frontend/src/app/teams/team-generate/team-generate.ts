@@ -9,7 +9,7 @@ import { RouterLink } from '@angular/router';
 import { distinctUntilChanged, map, skip, startWith } from 'rxjs';
 import { GenerationResult } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { applyApiErrors } from '../../shared/form-errors';
+import { applyApiErrors, clearServerErrors } from '../../shared/form-errors';
 
 interface Choice {
   value: string;
@@ -104,10 +104,7 @@ export class TeamGenerate {
   protected generate(): void {
     this.busy.set(true);
     this.nonFieldErrors.set([]);
-    // A control's `server` error only clears on a value change, so drop it here too.
-    for (const control of Object.values(this.form.controls)) {
-      if (control.hasError('server')) control.setErrors(null);
-    }
+    clearServerErrors(this.form);
     this.teams.generate(this.form.getRawValue()).subscribe({
       next: (result) => {
         this.busy.set(false);

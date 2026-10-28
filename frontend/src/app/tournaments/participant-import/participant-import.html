@@ -4,7 +4,7 @@
     Each new Team in the roster CSV joins the field; the whole field is then re-seeded.
   </p>
   <form (submit)="$event.preventDefault(); submit()" novalidate>
-    @for (message of alertErrors(); track $index) {
+    @for (message of csv.alertErrors(); track $index) {
       <p class="participant-import__alert" role="alert">{{ message }}</p>
     }
     <div class="participant-import__field">
@@ -16,28 +16,30 @@
         accept=".csv,text/csv"
         hidden
         aria-labelledby="participant-import-label"
-        (change)="choose($event)"
+        (change)="csv.choose($event)"
       />
       <div class="participant-import__picker">
         <button mat-stroked-button type="button" (click)="csvInput.click()">Choose CSV</button>
-        <span class="participant-import__filename">{{ file()?.name ?? 'No file chosen' }}</span>
+        <span class="participant-import__filename">{{ csv.file()?.name ?? 'No file chosen' }}</span>
       </div>
-      @for (message of fileErrors(); track $index) {
+      @for (message of csv.fileErrors(); track $index) {
         <mat-error class="participant-import__error">{{ message }}</mat-error>
       }
-      @if (rowErrors().length > 0) {
+      @if (csv.rowErrors().length > 0) {
         <ul class="participant-import__rows">
-          @for (message of rowErrors(); track $index) {
+          @for (message of csv.rowErrors(); track $index) {
             <li>{{ message }}</li>
           }
         </ul>
       }
     </div>
     <div class="participant-import__actions">
-      <button mat-flat-button type="submit" [disabled]="busy() || !file()">
+      <button mat-flat-button type="submit" [disabled]="csv.busy() || !csv.file()">
         Import Participants
       </button>
-      <button mat-button type="button" (click)="downloadTemplate()">Download a template CSV</button>
+      <button mat-button type="button" (click)="csv.downloadTemplate()">
+        Download a template CSV
+      </button>
     </div>
   </form>
 </section>

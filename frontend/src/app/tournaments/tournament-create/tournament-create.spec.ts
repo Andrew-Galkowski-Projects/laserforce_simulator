@@ -530,6 +530,23 @@ describe('Create Tournament (/tournaments/new)', () => {
       expect(routerUrl()).toBe('/tournaments/new');
     });
 
+    it('shows too_few_teams under the no-teams notice when there is no Team picker', async () => {
+      await open([team(5, 'Charlie', false)]);
+      await type('name', 'Autumn Cup');
+      await submit();
+      flushError(createRequest(), [
+        {
+          code: 'too_few_teams',
+          message: 'A tournament requires at least 4 teams.',
+          field: 'teams',
+        },
+      ]);
+      await stable();
+      expect(text(page().querySelector('[role="alert"]'))).toBe(
+        'A tournament requires at least 4 teams.',
+      );
+    });
+
     it('disables Create while in flight and keeps the input after a failure', async () => {
       await open();
       await type('name', 'Autumn Cup');

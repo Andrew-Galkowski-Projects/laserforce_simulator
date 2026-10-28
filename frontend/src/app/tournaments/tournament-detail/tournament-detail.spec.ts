@@ -77,8 +77,8 @@ describe('Tournament detail (/tournaments/:id)', () => {
   });
 
   it.each([
-    ['preset', 'Preset teams', 'Player pool'],
-    ['player_pool', 'Player pool', 'Preset teams'],
+    ['preset', 'Preset teams', 'Player pool draw'],
+    ['player_pool', 'Player pool draw', 'Preset teams'],
   ] as const)('labels a %s assembly "%s"', async (assembly, label, other) => {
     await open(tournamentDetail({ team_assembly: assembly, participants: [] }));
     releasePoolLoads();

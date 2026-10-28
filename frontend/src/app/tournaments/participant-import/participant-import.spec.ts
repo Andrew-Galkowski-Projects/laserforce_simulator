@@ -285,6 +285,28 @@ describe('Participant import (Tournament detail)', () => {
     expect(rowErrors()).toEqual([]);
   });
 
+  it('says "Imported 1 participant." for a single new Team', async () => {
+    const before = tournamentDetail();
+    await open(before);
+    await choose(csv());
+    button('Import Participants').click();
+    await harness.fixture.whenStable();
+    const after = tournamentDetail({
+      participants: [
+        ...before.participants,
+        { team: { id: 13, name: 'Green Giants' }, seed: before.participants.length + 1 },
+      ],
+    });
+    http
+      .expectOne(IMPORT_URL)
+      .flush({ data: after, meta: {} }, { status: 201, statusText: 'Created' });
+    await harness.fixture.whenStable();
+    const snackBar = await loader.getHarness(MatSnackBarHarness);
+    expect(await snackBar.getMessage()).toBe('Imported 1 participant.');
+    detailRequest().flush({ data: after, meta: {} });
+    await harness.fixture.whenStable();
+  });
+
   it('downloads the template CSV through the API and saves the blob', async () => {
     await open();
     const urls = stubObjectUrls();

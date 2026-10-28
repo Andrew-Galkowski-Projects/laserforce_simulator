@@ -1,6 +1,6 @@
 import { Component, DestroyRef, computed, inject, input, output, signal } from '@angular/core';
 import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
-import { FormGroup, NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
+import { FormControl, NonNullableFormBuilder, ReactiveFormsModule } from '@angular/forms';
 import { MatButton } from '@angular/material/button';
 import { MatError, MatFormField, MatLabel } from '@angular/material/form-field';
 import { MatInput } from '@angular/material/input';
@@ -10,29 +10,23 @@ import { Subject, catchError, combineLatest, of, startWith, switchMap } from 'rx
 import { listAll } from '../../api/list-all';
 import { Player } from '../../api/players.models';
 import { PlayersService } from '../../api/players.service';
-import { TeamsService } from '../../api/teams.service';
-import { PoolEntry, TournamentDetail } from '../../api/tournaments.models';
+import { PoolEntry, PoolGenerateInput, TournamentDetail } from '../../api/tournaments.models';
 import { TournamentsService } from '../../api/tournaments.service';
 import { AuthService } from '../../auth/auth.service';
 import { apiMessage } from '../../shared/api-message';
-import { GENERIC_ERROR_MESSAGE, applyApiErrors } from '../../shared/form-errors';
-import { classifyImportErrors } from '../../shared/import-errors';
+import { countOf } from '../../shared/count-of';
+import { CsvImport } from '../../shared/csv-import';
+import {
+  GENERIC_ERROR_MESSAGE,
+  REQUIRED_MESSAGE,
+  applyApiErrors,
+  clearServerErrors,
+} from '../../shared/form-errors';
 import { injectNotify } from '../../shared/notify';
-import { saveBlob } from '../../shared/save-blob';
-
-/** The filename the browser saves the server's roster template CSV under. */
-const TEMPLATE_FILENAME = 'roster_template.csv';
 
 /** A drawable pool: whole Teams of 6, at least 4 of them. */
 const PLAYERS_PER_TEAM = 6;
 const MIN_POOL = 24;
-
-/** A control's `server` error only clears on a value change, so a resubmit drops it here. */
-function clearServerErrors(form: FormGroup): void {
-  for (const control of Object.values(form.controls)) {
-    if (control.hasError('server')) control.setErrors(null);
-  }
-}
 
 /** What the section loads for: the Tournament, and whether the add-existing picker is shown. */
 interface LoadKey {
@@ -66,7 +60,6 @@ export class TournamentPool {
   private readonly tournaments = inject(TournamentsService);
   private readonly players = inject(PlayersService);
   private readonly auth = inject(AuthService);
-  private readonly teams = inject(TeamsService);
   private readonly fb = inject(NonNullableFormBuilder);
   private readonly notify = injectNotify();
 
@@ -158,7 +151,7 @@ export class TournamentPool {
       next: (added) => {
         this.adding.set(false);
         this.addForm.reset({ player_ids: [] });
-        this.wrote(`Added ${added.length} players.`);
+        this.wrote(`Added ${countOf(added.length, 'player')}.`);
       },
       error: (error: unknown) => {
         this.adding.set(false);
@@ -167,20 +160,35 @@ export class TournamentPool {
     });
   }
 
-  /** `PoolGenerateForm`: the template's defaults; the inputs carry the Form's bounds. */
-  protected readonly generateForm = this.fb.group({ count: [24], mean: [50], std_dev: [15] });
+  /**
+   * `PoolGenerateForm`: the template's defaults. The Form's bounds sit on the template's inputs,
+   * whose attribute validators also check them here.
+   */
+  protected readonly generateForm = this.fb.group({
+    count: new FormControl<number | null>(24),
+    mean: new FormControl<number | null>(50),
+    std_dev: new FormControl<number | null>(15),
+  });
   protected readonly generating = signal(false);
   protected readonly generateErrors = signal<string[]>([]);
+  protected readonly requiredMessage = REQUIRED_MESSAGE;
 
   protected generate(): void {
     if (this.generating()) return;
-    this.generating.set(true);
     this.generateErrors.set([]);
     clearServerErrors(this.generateForm);
-    this.tournaments.generatePool(this.detail().id, this.generateForm.getRawValue()).subscribe({
+    if (this.generateForm.invalid) {
+      this.generateForm.markAllAsTouched();
+      return;
+    }
+    this.generating.set(true);
+    // Valid, so `count` is a number; an emptied Mean / Std dev goes as null, which
+    // `PoolGenerateForm` (required=False) reads as its default.
+    const body = this.generateForm.getRawValue() as PoolGenerateInput;
+    this.tournaments.generatePool(this.detail().id, body).subscribe({
       next: (made) => {
         this.generating.set(false);
-        this.wrote(`Generated ${made.length} players.`);
+        this.wrote(`Generated ${countOf(made.length, 'player')}.`);
       },
       error: (error: unknown) => {
         this.generating.set(false);
@@ -189,53 +197,15 @@ export class TournamentPool {
     });
   }
 
-  /** The CSV picked through the hidden input; Import players needs one. */
-  protected readonly file = signal<File | null>(null);
-  protected readonly importing = signal(false);
-  /** A failed template download, or an import error no control owns. */
-  protected readonly importErrors = signal<string[]>([]);
-  /** `csv_file` errors, shown on the file control. */
-  protected readonly fileErrors = signal<string[]>([]);
-  /** Row errors, formatted ("Row N (column): ..."), in server order. */
-  protected readonly rowErrors = signal<string[]>([]);
-
-  /** Fetches the server's roster template CSV (behind the JWT, so not a plain link). */
-  protected downloadTemplate(): void {
-    this.importErrors.set([]);
-    this.teams.importTemplate().subscribe({
-      next: (blob) => saveBlob(blob, TEMPLATE_FILENAME),
-      error: (error: unknown) => this.importErrors.set([apiMessage(error, GENERIC_ERROR_MESSAGE)]),
-    });
-  }
-
-  /** The hidden input's `change`: keep the File and clear the input so the same name re-fires. */
-  protected choose(event: Event): void {
-    const input = event.target as HTMLInputElement;
-    this.file.set(input.files?.[0] ?? null);
-    input.value = '';
-  }
+  /** The Import players card: the file, template download, busy flag and error lists. */
+  protected readonly csv = new CsvImport();
 
   protected importCsv(): void {
-    const file = this.file();
-    if (!file || this.importing()) return;
-    this.importErrors.set([]);
-    this.fileErrors.set([]);
-    this.rowErrors.set([]);
-    this.importing.set(true);
-    this.tournaments.importPool(this.detail().id, file).subscribe({
-      next: (imported) => {
-        this.importing.set(false);
-        this.file.set(null);
-        this.wrote(`Imported ${imported.length} players.`);
-      },
-      error: (error: unknown) => {
-        this.importing.set(false);
-        const errors = classifyImportErrors(error);
-        this.fileErrors.set(errors.file);
-        this.rowErrors.set(errors.rows);
-        this.importErrors.set(errors.alert);
-      },
-    });
+    const id = this.detail().id;
+    this.csv.upload(
+      (file) => this.tournaments.importPool(id, file),
+      (imported) => this.wrote(`Imported ${countOf(imported.length, 'player')}.`),
+    );
   }
 
   /** True while a Remove is in flight: every Remove button waits for it. */

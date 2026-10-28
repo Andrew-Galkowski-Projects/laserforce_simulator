@@ -4,8 +4,8 @@ import { MatAnchor } from '@angular/material/button';
 import { ActivatedRoute, RouterLink } from '@angular/router';
 import { Subject, combineLatest, startWith, switchMap } from 'rxjs';
 import {
+  TEAM_ASSEMBLY_LABELS,
   TOURNAMENT_STATE_LABELS,
-  TeamAssembly,
   TournamentDetail as TournamentDetailData,
 } from '../../api/tournaments.models';
 import { TournamentsService } from '../../api/tournaments.service';
@@ -29,10 +29,7 @@ export class TournamentDetail {
   protected readonly notFound = signal(false);
   protected readonly loadError = signal<string | null>(null);
   protected readonly stateLabels = TOURNAMENT_STATE_LABELS;
-  protected readonly assemblyLabels: Readonly<Record<TeamAssembly, string>> = {
-    preset: 'Preset teams',
-    player_pool: 'Player pool',
-  };
+  protected readonly assemblyLabels = TEAM_ASSEMBLY_LABELS;
 
   private readonly reloads = new Subject<void>();
 

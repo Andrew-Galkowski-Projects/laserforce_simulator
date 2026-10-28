@@ -14,13 +14,14 @@ import {
   RoleAssignmentMode,
   RrdeCombo,
   SeriesLength,
+  TEAM_ASSEMBLY_LABELS,
   TeamAssembly,
   TournamentCreateInput,
   TournamentFormat,
 } from '../../api/tournaments.models';
 import { TournamentsService } from '../../api/tournaments.service';
 import { apiMessage } from '../../shared/api-message';
-import { GENERIC_ERROR_MESSAGE, applyApiErrors } from '../../shared/form-errors';
+import { GENERIC_ERROR_MESSAGE, applyApiErrors, clearServerErrors } from '../../shared/form-errors';
 
 interface Choice<T> {
   value: T;
@@ -36,11 +37,10 @@ const FORMAT_CHOICES: readonly Choice<TournamentFormat>[] = [
   { value: 'swiss', label: 'Swiss' },
 ];
 
-/** `Tournament.TEAM_ASSEMBLY_CHOICES`. */
-const ASSEMBLY_CHOICES: readonly Choice<TeamAssembly>[] = [
-  { value: 'preset', label: 'Preset teams' },
-  { value: 'player_pool', label: 'Player pool draw' },
-];
+/** `Tournament.TEAM_ASSEMBLY_CHOICES`, in select order. */
+const ASSEMBLY_CHOICES: readonly Choice<TeamAssembly>[] = (['preset', 'player_pool'] as const).map(
+  (value) => ({ value, label: TEAM_ASSEMBLY_LABELS[value] }),
+);
 
 /** `Tournament.ROLE_ASSIGNMENT_CHOICES`. */
 const ROLE_MODE_CHOICES: readonly Choice<RoleAssignmentMode>[] = [
@@ -80,6 +80,25 @@ const SERIES_FIELDS: readonly Choice<SeriesField>[] = [
 
 /** `TournamentCreateForm.generate_ppt`'s `min_value` (a full 6-player Roster). */
 const MIN_GENERATED_PLAYERS = 6;
+
+/** Which optional fields are shown: `tournamentCreateToggle` / `...AssemblyToggle`'s rules. */
+interface Visible {
+  /** Teams, Generate new teams and Players per generated team (Role assignment when false). */
+  preset: boolean;
+  swissRounds: boolean;
+  rrdeCombo: boolean;
+  series: boolean;
+}
+
+/** The one show / hide rule: the template and the control enable / disable both read it. */
+function visibleFields(format: TournamentFormat, assembly: TeamAssembly): Visible {
+  return {
+    preset: assembly === 'preset',
+    swissRounds: format === 'swiss',
+    rrdeCombo: format === 'round_robin_double_elim',
+    series: format !== 'round_robin' && format !== 'swiss',
+  };
+}
 
 /**
  * `/tournaments/new`: the Create Tournament form, porting `tournament_create.html` and
@@ -144,13 +163,11 @@ export class TournamentCreate {
     initialValue: this.form.controls.team_assembly.value,
   });
 
-  /** The show / hide rules of the template's `tournamentCreateToggle` / `...AssemblyToggle`. */
-  protected readonly showSwissRounds = computed(() => this.format() === 'swiss');
-  protected readonly showRrdeCombo = computed(() => this.format() === 'round_robin_double_elim');
-  protected readonly showSeries = computed(
-    () => this.format() !== 'round_robin' && this.format() !== 'swiss',
-  );
-  protected readonly playerPool = computed(() => this.assembly() === 'player_pool');
+  private readonly visible = computed(() => visibleFields(this.format(), this.assembly()));
+  protected readonly showSwissRounds = computed(() => this.visible().swissRounds);
+  protected readonly showRrdeCombo = computed(() => this.visible().rrdeCombo);
+  protected readonly showSeries = computed(() => this.visible().series);
+  protected readonly playerPool = computed(() => !this.visible().preset);
 
   /** The valid-roster Teams by name; null until loaded. */
   protected readonly teams = signal<TeamListItem[] | null>(null);
@@ -183,24 +200,20 @@ export class TournamentCreate {
     ])
       .pipe(takeUntilDestroyed())
       .subscribe(([format, assembly]) => {
-        const preset = assembly === 'preset';
-        const series = format !== 'round_robin' && format !== 'swiss';
-        this.toggle('teams', preset);
-        this.toggle('generate_count', preset);
-        this.toggle('generate_ppt', preset);
-        this.toggle('role_assignment_mode', !preset);
-        this.toggle('swiss_rounds', format === 'swiss');
-        this.toggle('rrde_combo', format === 'round_robin_double_elim');
-        for (const field of SERIES_FIELDS) this.toggle(field.value, series);
+        const visible = visibleFields(format, assembly);
+        this.toggle('teams', visible.preset);
+        this.toggle('generate_count', visible.preset);
+        this.toggle('generate_ppt', visible.preset);
+        this.toggle('role_assignment_mode', !visible.preset);
+        this.toggle('swiss_rounds', visible.swissRounds);
+        this.toggle('rrde_combo', visible.rrdeCombo);
+        for (const field of SERIES_FIELDS) this.toggle(field.value, visible.series);
       });
   }
 
   protected create(): void {
     this.nonFieldErrors.set([]);
-    // A control's `server` error only clears on a value change, so drop it here too.
-    for (const control of Object.values(this.form.controls)) {
-      if (control.hasError('server')) control.updateValueAndValidity();
-    }
+    clearServerErrors(this.form);
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;

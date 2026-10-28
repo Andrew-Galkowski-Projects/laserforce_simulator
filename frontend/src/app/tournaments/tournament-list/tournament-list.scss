@@ -25,6 +25,10 @@
   @include alerts.notice;
 }
 
+.tournament-list__error {
+  @include alerts.error;
+}
+
 .tournament-table {
   border: 1px solid var(--lf-border);
   border-radius: var(--lf-radius);
