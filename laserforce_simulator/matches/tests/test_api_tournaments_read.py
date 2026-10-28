@@ -65,6 +65,7 @@ DETAIL_KEYS = TOURNAMENT_KEYS | {
     "pool_size",
     "is_drawn",
     "rr_crosstable",
+    "can_play",
 }
 
 LEG_KEYS = {
@@ -387,6 +388,28 @@ class TournamentRetrieveTests(LeagueApiTestCase):
         self.assertEqual(data["format_label"], "Random Draw")
         self.assertEqual(data["pool_size"], 3)
         self.assertTrue(data["is_drawn"])
+
+    def test_can_play_is_false_in_setup(self) -> None:
+        t = _tournament("Setup", n_teams=4)
+        self.assertIs(self.get(t)["can_play"], False)
+
+    def test_can_play_is_true_when_active_with_a_ready_node(self) -> None:
+        t = _locked("Ready", 4)
+        self.assertEqual(t.state, "active")
+        self.assertIs(self.get(t)["can_play"], True)
+
+    def test_can_play_is_false_when_completed(self) -> None:
+        # The nodes are still playable, so only the state rule makes it false.
+        t = _locked("Done", 4)
+        Tournament.objects.filter(pk=t.pk).update(state="completed")
+        self.assertIs(self.get(t)["can_play"], False)
+
+    def test_can_play_is_false_when_active_with_no_ready_node(self) -> None:
+        # Every node's second slot is still waiting on an earlier result.
+        t = _locked("Waiting", 4)
+        t.nodes.update(team_b=None)
+        self.assertEqual(t.state, "active")
+        self.assertIs(self.get(t)["can_play"], False)
 
     def test_cross_account_is_404(self) -> None:
         t = _tournament("Foreign", manager=self.user_b)
