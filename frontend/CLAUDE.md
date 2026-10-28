@@ -306,10 +306,13 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`), right after the
   navigation and before any assertion: a failed assertion then can't leave them open too
   (ANG-06-11).
-- **Timer-driven code** (a play loop, a timed flash): fake only the timer you drive
-  (`vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })`), and only after the first
-  render, so zoneless `whenStable` keeps its real `setTimeout` / rAF. Call `vi.useRealTimers()` in
-  `afterEach`. Example: `matches/playback/playback.spec.ts`.
+- **Timer-driven code** (a play loop, a poll, a timed flash): fake only the timers you drive, and
+  only after the first render, so zoneless `whenStable` keeps its real `setTimeout`. A poll or loop
+  on rxjs `timer` / `setInterval` fakes `POLL_TIMERS` (`shared/testing/poll-timers.ts`): the
+  interval timers **and rAF**. Faking `setInterval` alone lets a frame requested meanwhile start
+  jsdom's frame loop on the fake interval, and every later spec in that worker that waits on a
+  frame hangs (ANG-06-13b: map-editor's canvas host timed out on CI after batch-simulate). Call
+  `vi.useRealTimers()` in `afterEach`. Example: `matches/playback/playback.spec.ts`.
 - **Live check without the owner's ports:**
   - Run Django with `CORS_ALLOWED_ORIGINS=http://localhost:4201 <python> <worktree>/laserforce_simulator/manage.py runserver 8001`.
     The absolute `manage.py` path lets `scripts/stop_worktree_servers.ps1` find the server: the

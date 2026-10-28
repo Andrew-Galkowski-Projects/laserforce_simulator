@@ -18,6 +18,7 @@ import { Playback } from './playback';
 import { PlaybackFeed } from './playback-feed/playback-feed';
 import { PlaybackMap } from './playback-map/playback-map';
 import { PlaybackScoreboard } from './playback-scoreboard/playback-scoreboard';
+import { POLL_TIMERS } from '../../shared/testing/poll-timers';
 
 const BASE = environment.apiBaseUrl;
 
@@ -251,11 +252,11 @@ describe('Playback (/rounds/:id/playback)', () => {
 
     describe('play loop', () => {
       /**
-       * Fakes only the interval timers, after the page has loaded: zoneless change detection
-       * and `whenStable` schedule on `setTimeout` / `requestAnimationFrame`, which stay real.
+       * Fakes the interval timers and rAF (`POLL_TIMERS`), after the page has loaded: zoneless
+       * change detection and `whenStable` still settle on the real `setTimeout`.
        */
       const fakeIntervals = (): void => {
-        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        vi.useFakeTimers({ toFake: POLL_TIMERS });
       };
       afterEach(() => {
         vi.useRealTimers();

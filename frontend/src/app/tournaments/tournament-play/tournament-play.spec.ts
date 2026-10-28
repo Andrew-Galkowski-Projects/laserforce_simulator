@@ -11,6 +11,7 @@ import { signIn } from '../../api/testing/auth-fixtures';
 import { PlayJobStatus, PlayNextResult, TournamentDetail } from '../../api/tournaments.models';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
+import { POLL_TIMERS } from '../../shared/testing/poll-timers';
 import { tournamentDetail } from '../testing/detail-fixtures';
 
 const BASE = environment.apiBaseUrl;
@@ -209,7 +210,7 @@ describe('Tournament play (Tournament detail)', () => {
     /** Opens the page, fakes the poll timer, presses Play All. */
     async function pressPlayAll(): Promise<void> {
       await open();
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
       button('Play All').click();
       await stable();
     }

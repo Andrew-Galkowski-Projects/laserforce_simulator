@@ -18,6 +18,7 @@ import { BatchRunStatus, SaveGamesStatus } from '../../api/batch.models';
 import { aggregate, runStatus, STARTED } from '../testing/batch-fixtures';
 import { stubCanvasContext } from '../testing/fake-canvas';
 import { pageEnvelope } from '../testing/match-fixtures';
+import { POLL_TIMERS } from '../../shared/testing/poll-timers';
 
 const BASE = environment.apiBaseUrl;
 
@@ -278,7 +279,7 @@ describe('Batch Simulate (/matches/batch)', () => {
     /** Opens the screen, presses Run with Alpha v Bravo, and answers the start (Batch run 10). */
     async function startRun(): Promise<void> {
       await open();
-      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
       await pickTeams();
       button('Run').click();
       await stable();
@@ -551,7 +552,7 @@ describe('Batch Simulate (/matches/batch)', () => {
 
       it("saves Highlight games with the run's map", async () => {
         await open();
-        vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+        vi.useFakeTimers({ toFake: POLL_TIMERS });
         await pickTeams();
         button('Run').click();
         await stable();
