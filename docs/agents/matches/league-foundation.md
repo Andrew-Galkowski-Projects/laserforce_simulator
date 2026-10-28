@@ -163,7 +163,7 @@ Write-surface POST endpoint that fills the previously-disabled LG-01c-locked `ac
 
 **Locked names.** URL path `POST /leagues/<int:league_id>/next-season/` (inserted AFTER LG-01c `<int:league_id>/` and BEFORE LG-01a `""` in `matches/league_urls.py`, final order `[create/, <int:league_id>/, <int:league_id>/next-season/, ""]`); URL name `next_season` (bare, no `app_name`); URL file edit `matches/league_urls.py` (single-line insert); view `matches.views.next_season` (`(request: HttpRequest, league_id: int) -> HttpResponse`, decorated `@transaction.atomic`, POST-only via `HttpResponseNotAllowed(["POST"])` as the first line of the body); redirect target on success URL name `season_dashboard` (LG-01c — `reverse("season_dashboard", args=[new_season.id])` → HTTP 302); redirect target for the active-Season guard URL name `season_dashboard` (`reverse("season_dashboard", args=[league.active_season.id])` → HTTP 302); 400 response `HttpResponseBadRequest("No completed Season in this League.")` (exact body literal); 405 response `HttpResponseNotAllowed(["POST"])` (first line of view body, before any ORM hit); 404 response `get_object_or_404(League, pk=league_id)` (after the 405 guard); active-Season check `league.active_season` (the LG-01 `@property`, NOT a re-implemented `.exclude(state="completed")` query); latest-completed query `league.seasons.filter(state="completed").order_by("-id").first()` (reverse accessor `seasons` from LG-01 `related_name`); templates MODIFIED `templates/leagues/dashboard.html` + `templates/seasons/dashboard.html` (LG-01c `{% else %}` split into `{% elif action_button_state == "start_next_season" %}` + `{% else %}` — `"start_next_season"` gets a real `<form>`, `"none"` keeps the `<button disabled>`); NEW DOM ids `league-dashboard-next-season-form` + `season-dashboard-next-season-form` (the `<form method="post">` elements' `id` attributes, only when `action_button_state == "start_next_season"`); preserved LG-01c DOM ids `league-dashboard-action-button` + `season-dashboard-action-button` (outer-wrapper `<span>` continues to wrap the form in all 4 branches, LG-01c-test backwards compatibility); preserved LG-01c attribute `data-action-state="{{ action_button_state }}"` (carried on the submit `<button type="submit">` inside the form, NOT on the outer wrapper); locked literals `name = f"Season {league.seasons.count() + 1}"` (`.count()` evaluated BEFORE the create), `state = "draft"` (explicit on `Season.objects.create(...)`), `start_date = date(latest_completed.start_date.year + 1, 1, 1)` (calendar-year jump, Jan 1 of next year), `schedule_format = latest_completed.schedule_format` (carry over verbatim from previous Season), submit-button label `"Start Next Season"` (matches the LG-01c `action_button_label`); locked 400-body literal `"No completed Season in this League."`; snapshot read `latest_completed.starting_team_ids_json or []` (defensive `or []`, LG-01 schedule generator precedent); team resolution `Team.objects.filter(id__in=team_ids)` (single `IN` query, missing ids silently dropped); M2M populate `new_season.teams.add(*teams_qs)` (bulk-add, no per-team `.save()`, LG-01b precedent); cross-app imports `from teams.models import Team` + `from datetime import date` + `from django.db import transaction` + `from django.shortcuts import redirect, get_object_or_404` + `from django.http import HttpResponseNotAllowed, HttpResponseBadRequest` + `from .models import League, Season` (all already imported at top of `matches/views.py` per LG-01 / LG-01b / LG-01c / LG-01d, defensive check + no-duplicate rule applies — `HttpResponseBadRequest` may need adding to the existing `from django.http import …` line if not present); context keys READ `league` / `season` / `action_button_state` / `action_button_label` (LG-01c); context keys NOT used `play_error` / `play_job_id` (LG-01d-added, LG-01e does NOT populate either — errors redirect or 400, never re-render; LG-01e is sync, no Celery); pure module touched (none — `matches/season_dashboard.py` is NOT edited); new pure functions (none — LG-01e adds zero pure functions); test files `matches/tests/test_league_next_season.py` (NEW) + `matches/tests/test_league_dashboard.py` (EXTENDED, append `TestLg01eDashboardWiring` only) + `matches/tests/test_season_dashboard_view.py` (EXTENDED, append `TestLg01eDashboardWiring` only); test classes `TestNextSeasonRouting` / `TestNextSeasonHappyPath` / `TestNextSeasonNameFormat` / `TestNextSeasonStartDate` / `TestNextSeasonScheduleFormatCarry` / `TestNextSeasonTeamsCopiedFromSnapshot` / `TestNextSeasonActiveSeasonGuard` / `TestNextSeasonNoCompletedGuard` / `TestNextSeasonAtomicity` (NEW file) + `TestLg01eDashboardWiring` (league dashboard EXTENDED file) + `TestLg01eDashboardWiring` (season dashboard EXTENDED file). Seam contract: [`.claude/worktrees/lg-01e-seam-contract.md`](../../../.claude/worktrees/lg-01e-seam-contract.md).
 
-### UXP-18 — Start Next Season also starts the Season (HTML only)
+### UXP-18 — Start Next Season also starts the Season (HTML and, since ANG-06-14, the API)
 
 The HTML `next_season` view now calls `league_play_services.start_season(new_season)` right after
 the shared `start_next_season(league)` rollover, so the confirming click (the owner-evaluation
@@ -177,9 +177,14 @@ the separate "Start Season" click is gone. Two cases keep the draft:
   commits (the activation has its own savepoint) and the view redirects to its dashboard, which is
   the pre-UXP-18 outcome.
 
-**Not changed:** the service `start_next_season` / `run_season_rollover` still return a draft, so
-`POST /api/leagues/<id>/next-season/` keeps its draft semantics (the SPA drives Start Season
-itself), and the fired-Manager `reassign_team` roll still lands on a draft.
+**ANG-06-14 moved both rules into a service.** `league_play_services.roll_and_start_next_season(league)
+-> NextSeasonResult(season, needs_conferences)` runs `start_next_season` (its three errors
+propagate), returns the draft with `needs_conferences=True` when the previous completed Season had
+Conferences, and otherwise starts it inside a savepoint, swallowing `ValidationError`. The caller
+owns the outer atomic. The HTML `next_season` view and `POST /api/leagues/<id>/next-season/` both
+call it, so the API's 201 is now an **active** Season too (draft only in the two cases above). The
+service `start_next_season` / `run_season_rollover` still return a draft, and the fired-Manager
+`reassign_team` roll still lands on a draft.
 
 ## LG-01f league history
 
@@ -280,3 +285,70 @@ the Team has a `teams` M2M link to (`Season.objects.filter(teams=team)`, `league
 - **Rejected:** a JSON `__contains` lookup on the snapshot raises `NotSupportedError` on SQLite.
 - **Tests:** `TestTeamHistorySeasonsNarrowedScan` in `matches/tests/test_team_history_query_counts.py`,
   including a call-through spy on `enrolled_team_ids` that must never see an unlinked Season.
+
+## ANG-06-14 League core in Angular
+
+Spec: GitHub issue #409 (tickets #410-#414). The SPA's `leagues/` feature ports the League list,
+create (template chooser + Advanced), delete, dashboard, History, the fired Manager's new-team
+picker, Start next Season and the League sidebar. The backend gaps it needed (delete-summary, nav,
+five dashboard keys, UXP-18 on the API, `?simulation_ready=`) are in `api.md`, **ANG-06-14 League
+core API gaps**. The Django templates stay until ANG-08. Frontend layout: `frontend/CLAUDE.md`.
+
+**Routes** (`leagues/leagues.routes.ts`, `LEAGUES_ROUTES`, lazy from the Shell at `leagues`; the
+Shell sidenav lists **Leagues** first):
+- `/leagues` — `league-list`: Active and Archived tables (`listAll` per `state`), name links to
+  the dashboard, a `league-state` badge (`shared/_badges.scss`), Delete on career rows, "No Leagues
+  yet." when empty, a "Create League" link.
+- `/leagues/new` — `league-create`: `template` (over `templates()`), `league_name` (required,
+  max 100), `difficulty` (easy / medium / hard, default medium, the Django help text in
+  `league-create/difficulty.ts`), an "Advanced..." link. 201 ⇒ `/leagues/<id>`; 400 through
+  `applyApiErrors`.
+- `/leagues/new/advanced` — `league-create-advanced`: every `CreateLeagueForm` field but
+  `visibility` and `schedule_format`, with the Form's limits and defaults. The phase composer
+  (`phase-composer/`) builds `phases` through the pure `phase-wire.ts` (the same wire string
+  `create_advanced.html`'s `serialize()` builds; table-tested); `map-rotation-composer/` joins
+  ordered ids into `map_rotation`. Map pool and rotation read `/api/maps/?simulation_ready=true`.
+- `/leagues/:id` — `LeagueLayout` (loads `nav(id)`; the League nav is a column from 768px and
+  collapses behind a "League menu" toggle below; 404 / load error via `notFoundOrError`) with
+  children `''` (`league-dashboard`), `history` (`league-history`) and `new-team`
+  (`league-new-team`).
+
+**League nav** (`leagues/league-nav.ts`): `LEAGUE_NAV_ENTRIES`, 23 entries in the Django sidebar's
+order (1 top + LEAGUE 6 + TEAM 4 + PLAYERS 6 + STATS 6). Live: Dashboard and History. The other 21
+render through `leagues/soon-badge` (`app-soon-badge`: a disabled `<span>` with a "Soon" badge,
+never an `<a>`) until ANG-06-15..20 turn them live. The dashboard ("View bracket", the Season name,
+"Manage Conferences", member-night "View results", "View all leaders") and History (Season name,
+Awards) use the same piece.
+
+**Dashboard.** Renders `dashboard.html`'s values from `/dashboard/`: "You" on the snippet row where
+`team_id === managed_team.id` and on leader rows whose `player_id` is the Account's Self-insert;
+leader names link to `/players/:id/stats`; "View past evaluations" (only with
+`has_owner_evaluations`) goes to `history`. Writes: **Start Season** (draft) ⇒
+`SeasonsService.start`, snackbar `{season} started — {n} Round(s) scheduled.` (`round_count_total`),
+reload; **Start next Season** (completed, not awaiting reassignment) ⇒ `nextSeason`, reload, a 409
+`manager_fired` navigates to `new-team`; **Choose new team** (`manager_awaiting_reassignment`) links
+to `new-team`.
+
+**Delete** (`leagues/league-delete.ts`, `LeagueDelete` + `canDeleteLeague`): shared by the list
+and the dashboard, offered only when `mode === 'league'`. It fetches `deleteSummary`, opens
+`ConfirmDialog` (`Delete "<name>"?`, the five counts through the dialog's new optional `details`
+list, "Delete permanently"), then DELETE, `League "<name>" deleted.` and `/leagues`.
+
+**History.** `history(id, page, pageSize)`, page size 10 / 25 / 50 / 100 (default 10, always sent),
+Prev / Next. The in-progress row (with an "In progress" badge) comes on page 1 only, the API's
+behaviour (not pinned per page). MVPs link to `/players/:id/stats` with "You".
+
+**New-team picker.** `newTeamCandidates` as a radio table (rank, team, W-L-T), first row checked;
+"Take Over This Team" ⇒ `reassignTeam`, 201 ⇒ `/leagues/:id`; the 409s show their message with a
+link back to the dashboard.
+
+**Services / models.** `api/leagues.service.ts` (`LeaguesService`: `list`, `get`, `templates`,
+`create`, `delete`, `deleteSummary`, `dashboard`, `nav`, `history`, `newTeamCandidates`,
+`reassignTeam`, `nextSeason`), `api/seasons.service.ts` (`SeasonsService.start`),
+`api/leagues.models.ts` (every League / Season type and label map),
+`MapListParams.simulation_ready`. Spec helpers: `leagues/testing/` (`league-fixtures`,
+`releaseLeaguesLoads`).
+
+**Out of scope.** The topnav Play menu and play controls (ANG-06-19/20), owner evaluation and
+Conferences screens (ANG-06-18), stats / team / finance screens (ANG-06-15..17), the session's
+`last_league_id`, template removal (ANG-08).

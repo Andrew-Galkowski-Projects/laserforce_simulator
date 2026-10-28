@@ -8,7 +8,9 @@ Players area (ANG-06-8: list, player detail, career stats, role benchmarks) and 
 Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
 ANG-06e-g: Event log, Playback, Charts; ANG-06-10: Missile log, Movement heatmap), the Maps area (ANG-06h: map list and editor) and the
 Tournaments area (ANG-06-13a: list, create, detail with participant import and the Player pool;
-ANG-06-13b: Seeding, lock, draw, play and every format's results), on top of the client
+ANG-06-13b: Seeding, lock, draw, play and every format's results) and the
+Leagues area (ANG-06-14: list, create + Advanced, delete, dashboard, History, new-team picker,
+the League nav with "Soon" entries), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -90,7 +92,8 @@ src/
                           'matches' / 'rounds' -> lazy matches/matches.routes.ts
                           (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk), 'maps' -> lazy
                           maps/maps.routes.ts, 'tournaments' -> lazy
-                          tournaments/tournaments.routes.ts | '**' -> ''
+                          tournaments/tournaments.routes.ts, 'leagues' -> lazy
+                          leagues/leagues.routes.ts | '**' -> ''
     shell/                layout B: header (title, the "Account" menu: My player / Unlink
                           Self-insert when linked, Change password, Sign out; the email, or its
                           initial below 600px) + mat-sidenav (side >= 768px, over drawer below);
@@ -103,7 +106,8 @@ src/
                           signed in)
     shared/               cross-feature helpers: save-blob.ts (saveBlob: a Blob as a named
                           download; csv-import's template CSV, round-detail's Export PDF),
-                          confirm-dialog.ts (ConfirmDialog), form-errors.ts (applyApiErrors,
+                          confirm-dialog.ts (ConfirmDialog; optional `details` lines under the
+                          message, ANG-06-14), form-errors.ts (applyApiErrors,
                           clearServerErrors: drop `server` errors before a resubmit, keeping
                           `required` / `min`; GENERIC_ERROR_MESSAGE, REQUIRED_MESSAGE),
                           count-of.ts (countOf: "1 player" / "2 players"), read-token.ts (readToken: a
@@ -114,8 +118,8 @@ src/
                           count x-axis; Round charts + career trend),
                           auth-card.scss (the signed-out card: login + register),
                           _alerts.scss (notice / error box mixins), _badges.scss (the
-                          "You" badge mixin; tournament-state, the State badge on a
-                          [data-state] element), import-errors.ts (classifyImportErrors: a
+                          "You" badge mixin; tournament-state and league-state (ANG-06-14), the
+                          State badge on a [data-state] element), import-errors.ts (classifyImportErrors: a
                           failed CSV import's errors as file / rows / alert), csv-import.ts
                           (CsvImport: one roster-CSV card's file, template download, busy flag
                           and the three error lists; `new CsvImport()` as a component field,
@@ -204,10 +208,26 @@ src/
                           node-card/, crosstable/, standings-table/, round-names.ts); pool-size.ts
                           (poolSizeInvalid); testing/ (detail-fixtures, pool-fixtures incl. releasePoolLoads,
                           tournaments-loads: releaseTournamentsLoads, specs only)
+    leagues/              ANG-06-14, leagues.routes.ts (LEAGUES_ROUTES): /leagues (league-list:
+                          Active + Archived tables, league-state badge, Delete), /leagues/new
+                          (league-create: template chooser; difficulty.ts), /leagues/new/advanced
+                          (league-create-advanced: every CreateLeagueForm field; phase-composer/
+                          over the pure phase-wire.ts, map-rotation-composer/; maps from
+                          ?simulation_ready=true), /leagues/:id (league-layout: LeagueLayout,
+                          the League nav beside a <router-outlet>, a "League menu" toggle below
+                          768px) with children '' (league-dashboard), history (league-history)
+                          and new-team (league-new-team). league-nav.ts (LEAGUE_NAV_ENTRIES:
+                          23 entries, Dashboard + History live), soon-badge/ (app-soon-badge:
+                          a not-yet-ported target as a disabled span, never an <a>),
+                          league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
+                          ConfirmDialog -> DELETE, shared by list + dashboard); testing/
+                          (league-fixtures, leagues-loads: releaseLeaguesLoads, specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps, batch, tournaments:
-                          TOURNAMENT_STATE_LABELS, TEAM_ASSEMBLY_LABELS); testing/ holds shared spec fixtures
+                          TOURNAMENT_STATE_LABELS, TEAM_ASSEMBLY_LABELS; leagues: LeaguesService,
+                          every League / Season model + label map; seasons: SeasonsService.start,
+                          ANG-06-14); testing/ holds shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
                           auth.guard.ts (authGuard, signedOutGuard, HOME_URL),

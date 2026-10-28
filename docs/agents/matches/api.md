@@ -91,8 +91,10 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `POST /api/leagues/` | `LeagueSerializer` + `draft_season`, `conference_ids` | **ANG-01d-1.** `template` key ⇒ `LeagueTemplateForm` path; else Advanced `CreateLeagueForm` ⇒ **201**, `manager` = requester |
 | `GET /api/leagues/templates/` | — (dataclass dicts) | **ANG-01d-1.** The 5 `LEAGUE_TEMPLATES`, not paginated |
 | `GET` / `DELETE /api/leagues/<id>/` | `LeagueSerializer` | **ANG-01d-1.** DELETE career-only (`teardown_league`) ⇒ 204; non-career ⇒ 409 `not_career_league` |
-| `GET /api/leagues/<id>/dashboard/` · `/history/` · `/teams/<team_id>/schedule/` | — (builder dicts) | **ANG-01d-1.** Reads; history paginated |
-| `POST /api/leagues/<id>/next-season/` · `/reassign-team/`; `GET /new-team-candidates/` | `SeasonSerializer` (POSTs) | **ANG-01d-1.** Rollover ⇒ 201; 409 conflict codes |
+| `GET /api/leagues/<id>/delete-summary/` | — (`league_delete_summary` dict) | **ANG-06-14.** `{seasons, matches, tournaments, teams, players}`, the counts `DELETE` would remove; non-career ⇒ 409 `not_career_league` |
+| `GET /api/leagues/<id>/nav/` | — (dict) | **ANG-06-14.** The League nav context: `{league: {id, name, mode}, displayed_season: ref \| null, schedule_team: ref \| null}` |
+| `GET /api/leagues/<id>/dashboard/` · `/history/` · `/teams/<team_id>/schedule/` | — (builder dicts) | **ANG-01d-1.** Reads; history paginated. **ANG-06-14:** the League dashboard gains `mode`, `managed_team`, `has_owner_evaluations`, `member_night_progress`, `manager_awaiting_reassignment` |
+| `POST /api/leagues/<id>/next-season/` · `/reassign-team/`; `GET /new-team-candidates/` | `SeasonSerializer` (POSTs) | **ANG-01d-1.** Rollover ⇒ 201; 409 conflict codes. **ANG-06-14:** next-season's 201 is an **active** Season (UXP-18), a draft only when the previous Season had Conferences or the start is refused |
 | `GET /api/seasons/` | `SeasonListSerializer` | **ANG-01d-1.** Filters (`SeasonFilterSet`): `league`, `state`. Ordering `start_date`, `created_at`, `id`; default / tiebreak `-id`. No POST / PUT / PATCH / DELETE (405) |
 | `GET /api/seasons/<id>/` | `SeasonSerializer` | **ANG-01d-1.** Nested `phases` / `conferences`; no play-state fields |
 | `GET /api/seasons/<id>/dashboard/` · `/standings/` · `/schedule/` · `/awards/` · `/owner-evaluation/` | — (builder dicts) | **ANG-01d-1.** Reads; standings takes `?sort=&dir=` |
@@ -339,14 +341,16 @@ team_ids}`); `active_play_job_id` / `play_cancel_requested` excluded (ANG-01d-2 
   `data = {league, displayed_season, season_mode, standings_snippet, next_fixture,
   round_count_completed, round_count_total, leaders_points, leaders_tags, leaders_ratio,
   map_config_label, playoff_tournament_id}`. **Season dashboard** = same keys minus `league`, plus
-  `season` + `league` refs. No play-control keys.
+  `season` + `league` refs. No play-control keys. (ANG-06-14 adds five League-dashboard-only keys,
+  see **ANG-06-14 League core API gaps** below.)
 - **History** — `history_seasons` → the in-progress Season (if any) then completed ones, paginated
   with `EnvelopePagination`; `build_history_row` runs **only on the page slice**; Team / winner
   instances flattened to refs. In-progress row appears once (page 1), not pinned per page.
 - **Team schedule** — `get_owned_or_404(Team, …, pk=team_id)` (no enrolment check, HTML parity); no
   displayed Season ⇒ 404.
 - **Next season** — `@transaction.atomic`; `start_next_season` exceptions ⇒ 409s; 201
-  `SeasonSerializer`. On a 409 the lazy ensure writes **roll back** (HTML commits them) — harmless,
+  `SeasonSerializer` (since ANG-06-14 through `roll_and_start_next_season`, so the Season is
+  started: see below). On a 409 the lazy ensure writes **roll back** (HTML commits them) — harmless,
   idempotent + deterministic.
 - **New-team candidates** — non-career ⇒ `not_career_league`; no completed ⇒ `no_completed_season`;
   `{latest_completed, candidates: [standings rows + team ref]}`. **Reassign** — `@transaction.atomic`:
@@ -731,3 +735,58 @@ The API accepts a JWT as well as the session. `djangorestframework-simplejwt` (`
   `ADR-0041` comment; the auth-order mutation (session first) turns four of them red.
 - **Out of scope.** The Angular interceptor (ANG-05), login throttling, revoking refresh tokens on
   password change (PLAN.md Deferred Items), HTML views on JWT, scheduling `flushexpiredtokens`.
+
+## ANG-06-14 League core API gaps
+
+Spec: GitHub issue #409 (ticket #410). The backend half of the Angular League core
+(`league-foundation.md`, **ANG-06-14**). No model, migration, engine or RNG change.
+
+**Services.**
+- `league_services.league_delete_summary(league) -> dict[str, int]` — `{seasons, matches,
+  tournaments, teams, players}`, built from `_league_teardown_targets` / `_league_match_q` (the
+  same targets `teardown_league` deletes). The HTML `league_delete` GET renders it instead of its
+  old inline dict.
+- `league_services.sidebar_schedule_team(league, displayed_season) -> Team | None` — the LG-01g
+  TEAM > Schedule chain (`current_team` if enrolled, else the alphabetically-first enrolled Team,
+  else `None`; `None` without a Season), moved verbatim from
+  `league_views._resolve_current_team_for_sidebar` (deleted). The Django sidebar
+  (`_build_league_sidebar_links`) and the nav endpoint both call it.
+- `league_services.managed_team_id(league) -> int | None` — UXP-08's rule (`current_team_id` in a
+  `mode="league"` League, else `None`), moved from `league_views._managed_team_id` (kept as an
+  alias there).
+- `league_services.dashboard_awaiting_reassignment(league, season_mode) -> bool` — true only for a
+  career League whose displayed Season is `completed` and whose
+  `manager_awaiting_reassignment(league, latest_completed_season(league))` holds. It runs the lazy
+  finance / owner-evaluation ensures, as the HTML new-team picker's GET does.
+- `league_play_services.roll_and_start_next_season(league) -> NextSeasonResult(season,
+  needs_conferences)` (frozen dataclass; in `league_play_services` because it already imports
+  `league_services`). UXP-18's two rules, shared by HTML and API: see `league-foundation.md`,
+  **UXP-18**. The caller owns the outer atomic.
+
+**Endpoints** (`LeagueViewSet`, `get_object()` ⇒ cross-Account 404, anonymous 401).
+- `GET /api/leagues/<id>/delete-summary/` (route `league-delete-summary`) — `data` =
+  `league_delete_summary`. Non-career ⇒ 409 `not_career_league` with the `DELETE` message
+  (`_DELETE_NOT_CAREER`).
+- `GET /api/leagues/<id>/nav/` (route `league-nav`) — `{league: {id, name, mode},
+  displayed_season: season_ref | null, schedule_team: ref | null}`; `displayed_season` =
+  `pick_displayed_season`, `schedule_team` = `sidebar_schedule_team`.
+- `GET /api/leagues/<id>/dashboard/` gains five keys, added in `LeagueViewSet.dashboard` only
+  (`_dashboard_payload`, the Season dashboard and `SEASON_DASHBOARD_KEYS` are unchanged): `mode`;
+  `managed_team` (`{id, name}` of `current_team` per `managed_team_id`, else null);
+  `has_owner_evaluations`; `member_night_progress` (`{played, total}` or null, from
+  `build_dashboard_context`); `manager_awaiting_reassignment` (`dashboard_awaiting_reassignment`).
+  **The GET therefore writes**: on a career League with a completed displayed Season it runs the
+  lazy owner-evaluation / finance ensures (computed before `has_owner_evaluations`).
+- `POST /api/leagues/<id>/next-season/` calls `roll_and_start_next_season`: the 201 body is an
+  **active** Season, a draft only when the previous completed Season had Conferences or the model
+  refuses the start. The three 409s are unchanged.
+- `GET /api/maps/?simulation_ready=true` — see `core/CLAUDE.md` (filter only, no serializer field).
+
+**Tests.** `matches/tests/test_api_leagues.py` (`TestLeagueDeleteSummary`, `TestLeagueNav`, the
+dashboard key tests; `LEAGUE_DASHBOARD_KEYS` in `league_api_fixtures.py` gains the five keys),
+`test_api_league_lifecycle.py` (`test_success_201_active_season`,
+`test_previous_conferences_keep_a_draft_season`, `test_refused_start_keeps_the_rolled_draft`),
+service tests in `test_league_delete.py`, `test_league_next_season.py`, `test_league_sidebar.py`,
+and `core/test_maps_api.py` (`simulation_ready`). The N+1 registry
+(`laserforce_simulator/api/tests/test_detail_action_query_counts.py`) gains `("leagues",
+"delete-summary")` and `("leagues", "nav")` scalers.

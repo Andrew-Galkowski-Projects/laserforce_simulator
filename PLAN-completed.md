@@ -7288,6 +7288,75 @@ Draw + draw edit, reseed, lock, play next / all with status. Replaces
  - Out: cancel / delete, moving drawn Players, resume beyond the 409, streak / L5 columns,
    removing the Django template (ANG-08).
 
+#### ANG-06-14 · [DONE] League core
+
+**[DONE] Shipped (2026-10-28).** Shipped the Angular Leagues area under /leagues: list (Active /
+Archived, league-state badge, Delete), the template chooser and Advanced create (phase composer over
+the pure phase-wire.ts, map-rotation composer), the delete confirm (ConfirmDialog with the five
+counts via its new optional details), the League dashboard (Start Season snackbar, Start next
+Season, Choose new team), History and the new-team picker, all under a LeagueLayout with the
+23-entry League nav; the Shell sidenav gains Leagues. Backend: GET /api/leagues/<id>/delete-summary/
+and /nav/ (league_delete_summary and sidebar_schedule_team, the latter moved from
+league_views._resolve_current_team_for_sidebar, which is deleted), five League-dashboard-only keys
+(managed_team_id moved into league_services), and /api/maps/?simulation_ready=true. Differences from
+the plan: UXP-18 moved into league_play_services.roll_and_start_next_season, so POST next-season/
+now auto-starts and returns an active Season (draft only after Conferences or a refused start), and
+the HTML view shares it; the dashboard GET now runs the lazy owner-evaluation / finance ensures for
+a career League with a completed Season (to compute manager_awaiting_reassignment); History keeps
+the API behaviour (in-progress row on page 1 only); every ANG-06-15..20 target renders as a disabled
+Soon placeholder (app-soon-badge) until its ticket lands. Spec #409, tickets #410-#414.
+
+List, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
+
+ history, new-team picker / reassign, next season, and the league sidebar in the Shell. API gaps:
+ the delete confirm's `delete_summary` counts (Seasons, Matches, Tournaments, Teams, Players) have
+ no endpoint, and `dashboard/` lacks `has_owner_evaluations` (the "View past evaluations" link).
+
+ Spec: #409
+
+ Settled (owner, grill 2026-10-28):
+ 1. **Delete summary:** new `GET /api/leagues/<id>/delete-summary/` -> `{seasons, matches,
+    tournaments, teams, players}`, from one service function the HTML view also uses; 409
+    `not_career_league` for a non-career League (as `DELETE`).
+ 2. **Dashboard payload** gains `has_owner_evaluations`, `member_night_progress` (`{played,total}`
+    or null), `managed_team` (`{id,name}` or null), `mode` and `manager_awaiting_reassignment`.
+ 3. **Sidebar data:** new `GET /api/leagues/<id>/nav/` -> `{league{id,name,mode},
+    displayed_season{id,name}|null, schedule_team{id,name}|null}`; the TEAM > Schedule rule moves
+    into a service the Django sidebar builder also uses. Angular owns labels, sections, order and
+    "Soon" placeholders as a static list.
+ 4. **Layout:** a `LeagueLayout` parent route for `/leagues/:id/...` renders a League nav column
+    beside the content (>= 768px) or behind a "League menu" toggle (narrower). The Shell's global
+    sidenav gains a **Leagues** link.
+ 5. **Not-yet-ported targets** (ANG-06-15..20 screens: Standings, Season dashboard, Conferences,
+    Awards, Leaders, Finances, ...) render disabled with a "Soon" badge; each later ticket enables
+    its own. Accepted cost: Conferences can't be assigned in Angular until ANG-06-18.
+ 6. **Next Season** lives on the League dashboard when the displayed Season is completed: "Start
+    next Season" button, or "Choose new team" (picker link) for a fired career Manager. UXP-18
+    auto-start (unless the previous Season had Conferences) moves into the service so
+    `POST next-season/` matches the HTML; tests pinning the draft result are updated honestly.
+    The dashboard reloads afterwards.
+ 7. **Start Season:** stay on the League dashboard, reload, snackbar
+    "{season} started — N Rounds scheduled." with N = returned `round_count_total` (spec verifies it
+    equals `len(scheduled_fixtures())`).
+ 8. **After create:** always the new League's dashboard (draft shows "Manage Conferences", Soon).
+ 9. **Advanced create:** full parity in its own ticket: every Form field except dormant
+    `visibility` and disabled `schedule_format`, the phase composer (same wire string) and the map
+    rotation composer. Map picker offers only Form-valid maps via a new server-side filter matching
+    `_maps_with_confirmed_config` (confirmed config + red and blue bases). Routes: `/leagues/new`
+    (template chooser), `/leagues/new/advanced`.
+ 10. **Delete UX:** no confirm route; "Delete" (list row and dashboard, career Leagues only) fetches
+     the summary, opens `ConfirmDialog` with the five counts and "Delete permanently"; on success
+     snackbar `League "X" deleted.` and back to the list.
+ 11. **History:** API behaviour accepted (in-progress row on page 1 only); page-size select
+     10/25/50/100, default 10, via `?page_size`. Season / Awards links Soon; MVPs link to
+     `/players/:id/stats` with the "You" badge.
+ 12. **Not ported:** the dead "View all leaders" link (becomes the League Leaders entry, Soon) and
+     the delete page's empty sidebar. "View past evaluations" keeps Django's target, League History.
+ 13. **Out of scope:** topnav Play menu / play controls (ANG-06-19/20), owner evaluation and the
+     Conferences screen (ANG-06-18), stats / team / finance screens (15/16/17), template removal
+     (ANG-08), the session's `last_league_id`, any model / migration change, any engine / RNG /
+     ordering change. Every new endpoint gets an `assert_owner_only` test and an N+1 registry entry.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

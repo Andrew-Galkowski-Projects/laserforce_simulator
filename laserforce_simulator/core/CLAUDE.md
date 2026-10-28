@@ -113,7 +113,10 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
   `has_confirmed_config = Exists(MapZoneConfig.objects.filter(arena_map=OuterRef("pk"), confirmed=True))`
   — true iff `latest_confirmed_config() is not None` — and (ANG-06h) `confirmed_zone_size`, a
   `Subquery` of the newest confirmed config's `zone_size` (`-created_at`, `-pk` tiebreak), null
-  without one. `list()` first calls `services.ensure_default_maps()`, so a fresh database lists the
+  without one. ANG-06-14 adds `simulation_ready`: the confirmed-config `Exists` **and** an
+  `Exists` red `MapBaseConfig` **and** a blue one, the same rule as
+  `matches.forms._maps_with_confirmed_config` (the League / Season map pickers). It is a filter
+  input only, never a serializer field. `list()` first calls `services.ensure_default_maps()`, so a fresh database lists the
   default maps through the API as it does through HTML `map_list`. Ordering `name` (default), `created_at`, `id`;
   tiebreak `id`. Class-level `parser_classes = [MultiPartParser, FormParser]` (for `create`); every
   JSON action sets `parser_classes=[JSONParser]` on its GET decorator, which also covers its
@@ -127,8 +130,9 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
   serializer context, else `null`), `is_default`, `img_width`, `img_height`, `created_at`,
   `has_confirmed_config`, `confirmed_zone_size` (ANG-06h; nullable int) (`image`,
   `has_confirmed_config` and `confirmed_zone_size` read-only).
-- **`ArenaMapFilterSet`**: `is_default` and `has_confirmed_config` (booleans — `true/false/1/0`;
-  junk values are ignored, not 400).
+- **`ArenaMapFilterSet`**: `is_default`, `has_confirmed_config` and (ANG-06-14)
+  `simulation_ready` (booleans — `true/false/1/0`; junk values are ignored, not 400). The Angular
+  League create pickers read `?simulation_ready=true` (`MapListParams.simulation_ready`).
 
 **Endpoints (ANG-01c)** — read `data` equals the HTML JSON byte for byte (one service); write
 endpoints return the **saved state** (the matching GET's `data`), never `{"status": "ok"}`.
