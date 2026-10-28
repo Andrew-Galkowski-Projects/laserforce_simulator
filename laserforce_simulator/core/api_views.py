@@ -22,7 +22,7 @@ from core.forms import (
     StrongSpotsForm,
     ZoneConfigForm,
 )
-from core.models import ArenaMap, MapZoneConfig
+from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
 from core.serializers import ArenaMapSerializer
 from laserforce_simulator.api.exceptions import (
     EnvelopeValidationError,
@@ -83,8 +83,15 @@ class ArenaMapViewSet(
         )
         # ANG-06h — `confirmed_zone_size` is `latest_confirmed_config().zone_size`
         # (newest confirmed row; pk breaks a created_at tie), null without one.
+        # ANG-06-14 B7 — `simulation_ready` mirrors
+        # `matches.forms._maps_with_confirmed_config`: a confirmed config AND a
+        # red base AND a blue base. Filter only; not a serializer field.
+        bases = MapBaseConfig.objects.filter(arena_map=OuterRef("pk"))
         return ArenaMap.objects.annotate(
             has_confirmed_config=Exists(confirmed),
+            simulation_ready=Exists(confirmed)
+            & Exists(bases.filter(base_type="red"))
+            & Exists(bases.filter(base_type="blue")),
             confirmed_zone_size=Subquery(
                 confirmed.order_by("-created_at", "-pk").values("zone_size")[:1]
             ),

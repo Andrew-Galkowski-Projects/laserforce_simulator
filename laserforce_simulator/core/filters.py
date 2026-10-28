@@ -12,7 +12,10 @@ class ArenaMapFilterSet(filters.FilterSet):
     # Filters the `has_confirmed_config` Exists annotation added by
     # `ArenaMapViewSet.get_queryset`.
     has_confirmed_config = filters.BooleanFilter(field_name="has_confirmed_config")
+    # ANG-06-14 B7 — filters the `simulation_ready` annotation (confirmed
+    # config + red base + blue base, the simulation map pickers' rule).
+    simulation_ready = filters.BooleanFilter(field_name="simulation_ready")
 
     class Meta:
         model = ArenaMap
-        fields = ["is_default", "has_confirmed_config"]
+        fields = ["is_default", "has_confirmed_config", "simulation_ready"]

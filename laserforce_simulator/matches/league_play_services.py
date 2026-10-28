@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from celery.result import AsyncResult
+from django.core.exceptions import ValidationError
 from django.db import transaction
 from kombu.exceptions import OperationalError
 
@@ -25,7 +26,12 @@ from matches import finance, injury, member_night
 from matches.development import STAT_FIELDS
 from matches.draw import ROLE_SLOTS
 from matches.job_status import celery_state_to_job_status
-from matches.league_services import _playoff_cursor_keys, is_career_league
+from matches.league_services import (
+    _playoff_cursor_keys,
+    is_career_league,
+    latest_completed_season,
+    start_next_season,
+)
 from matches.models import GameRound, League, Match, Season, SeasonPhase, Tournament
 from matches.season_dashboard import select_play_fixtures
 from matches.simulation import BatchSimulator
@@ -300,6 +306,42 @@ def start_season(season: Season) -> None:
             f"Only a draft Season can be started; got state={season.state!r}"
         )
     season.start_season()
+
+
+@dataclass(frozen=True)
+class NextSeasonResult:
+    """What Start next Season produced (ANG-06-14 B6).
+
+    ``needs_conferences`` is true when the previous completed Season had
+    Conferences: the rollover does not carry them and they are editable only
+    in draft, so ``season`` stays a draft for the Manager to re-partition.
+    """
+
+    season: Season
+    needs_conferences: bool
+
+
+def roll_and_start_next_season(league: League) -> NextSeasonResult:
+    """Roll the next Season and (UXP-18) start it.
+
+    Calls ``start_next_season``; its ``SeasonInProgressError`` /
+    ``NoCompletedSeasonError`` / ``ManagerFiredError`` propagate. When the
+    previous completed Season had Conferences the rolled Season stays a draft
+    (``needs_conferences=True``). Otherwise it is started inside its own
+    savepoint: a start the model refuses (e.g. fewer than 2 teams) rolls back
+    only the activation and leaves the rolled draft. The caller owns the
+    outer atomic block, so the lazy finance / owner-evaluation writes commit.
+    """
+    season = start_next_season(league)
+    previous = latest_completed_season(league)
+    if previous is not None and previous.conferences.exists():
+        return NextSeasonResult(season=season, needs_conferences=True)
+    try:
+        with transaction.atomic():
+            start_season(season)
+    except ValidationError:
+        season.refresh_from_db()
+    return NextSeasonResult(season=season, needs_conferences=False)
 
 
 def play_week(season: Season) -> None:

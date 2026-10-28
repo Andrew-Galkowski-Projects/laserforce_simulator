@@ -623,6 +623,18 @@ SCALERS: dict[tuple[str, ...], Scaler] = {
     ("leagues", "dashboard"): Scaler(
         _league_world, _league_url("dashboard"), _grow_league
     ),
+    # ANG-06-14 B2: the counts grow with every Team / Season / Match added.
+    ("leagues", "delete-summary"): Scaler(
+        _league_world, _league_url("delete-summary"), _grow_league
+    ),
+    # ANG-06-14 B4: grown Teams join the Seasons, so the scan for whether the
+    # current Team is enrolled reads more rows each step.
+    ("leagues", "nav"): Scaler(
+        _league_world,
+        _league_url("nav"),
+        _grow_league,
+        static_payload="the displayed Season and the enrolled current Team stay put",
+    ),
     ("leagues", "play-controls"): Scaler(
         _league_world,
         _league_url("play-controls"),
