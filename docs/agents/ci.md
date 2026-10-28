@@ -79,6 +79,25 @@ slowest of at least two runs. `--durations` adds each shard's predicted test tim
 (the committed file) against its measured artifact, with the files that drifted
 most: the first read when the shards look unbalanced (PERF-06).
 
+## Spec passes alone, fails in the suite
+
+The Angular test builder runs Vitest without per-file isolation: the specs a
+worker runs share one jsdom, in an order set by the worker count. A spec that
+leaves something behind (a fake timer, a started frame loop, a stub) breaks a
+later spec only when the two land in the same worker, so it shows at CI's 4
+vCPUs and not at a laptop's core count (ANG-06-13b: `map-editor`'s canvas host
+timed out after `batch-simulate`).
+
+1. Reproduce at 4 cores (PowerShell tool):
+   `$env:CI='true'; cmd /c start '""' /b /wait /affinity F npm --prefix frontend run test:ci`.
+2. Force one worker with a scratch `frontend/vitest-probe.config.mts` (never
+   committed): `defineConfig({ test: { testTimeout: 15000, maxWorkers: 1, fileParallelism: false } })`,
+   run as `npm --prefix frontend exec -- ng test --watch=false --runner-config=vitest-probe.config.mts`.
+3. Bisect by pairs: the failing spec's folder plus one other folder
+   (`--include=src/app/maps/**/*.spec.ts --include=src/app/matches/**/*.spec.ts`),
+   then halve the other folder until one spec makes the failing one red.
+4. Prove the fix red: `scripts/mutate.py` on the fix, with the pair as the run.
+
 ## Why sharding
 
 The 4-vCPU runner limits the suite, not coverage. Moving to Python 3.12 + sysmon

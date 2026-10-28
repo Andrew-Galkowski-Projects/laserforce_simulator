@@ -28,9 +28,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   - black: `python -m black laserforce_simulator` (target path as argument).
   - pytest / manage.py: the Django project and `pytest.ini` live in the nested
     `laserforce_simulator/laserforce_simulator/`. Invoke via the path —
-    `python laserforce_simulator/manage.py <cmd>` — or, when pytest config
-    discovery requires it, run the test tool from that nested dir as a last
-    resort (never `cd` before `git`).
+    `python laserforce_simulator/manage.py <cmd>`, and pytest with
+    `-c laserforce_simulator/pytest.ini --rootdir laserforce_simulator`. The
+    Bash hook (`scripts/guard_shell_writes.py`) refuses any `cd`.
 
 ## Windows Shell Conventions
 

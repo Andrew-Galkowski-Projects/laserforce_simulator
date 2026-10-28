@@ -1,4 +1,5 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { compile } from 'sass';
 import { PlaybackSnapshot, TimelinePlayer } from '../../../api/rounds.models';
@@ -312,12 +313,14 @@ describe('PlaybackScoreboard', () => {
     });
 
     it('animates the pulse, rainbow and flash only under prefers-reduced-motion: no-preference', () => {
-      const css = compile(
-        join(
-          process.cwd(),
-          'src/app/matches/playback/playback-scoreboard/playback-scoreboard.scss',
-        ),
-      ).css;
+      // The spec runs from `frontend/` (`npm run test:ci`) or from the repo root
+      // (`npm --prefix frontend exec -- ng test`), as theme.spec.ts allows for.
+      const scss = 'app/matches/playback/playback-scoreboard/playback-scoreboard.scss';
+      const file = [
+        join(process.cwd(), 'src', scss),
+        join(process.cwd(), 'frontend', 'src', scss),
+      ].find((path) => existsSync(path)) as string;
+      const css = compile(file).css;
       const opener = '@media (prefers-reduced-motion: no-preference)';
       const start = css.indexOf(opener);
       expect(start).toBeGreaterThan(-1);

@@ -61,6 +61,7 @@ Throwaway data for a browser check in a worktree's disposable database (ADR-0004
 ```bash
 python manage.py seed_browser_check          # Accounts browser-a / browser-b@example.com, password browser-check-pass
 python manage.py seed_browser_check --league # also seed Account A "Browser Check League"
+python manage.py seed_browser_check --tournaments # also seed Account A one Tournament per format and stage
 python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, the League and the map
 ```
 
@@ -97,3 +98,14 @@ unchanged. It does not call `league_services.teardown_league`: that one's orphan
 delete A's Teams (and their Single Rounds) before they are counted.
 A `--league` seed is refused while a League of that name exists. Without `--league` the seed is
 unchanged.
+
+**`--tournaments`** (for Tournament-screen checks, ANG-06-13b retro) also gives Account A seven
+sandbox Tournaments over newly generated Teams, built by `_browser_check_tournaments.py` through the
+API's own services (`create_tournament`, `lock_tournament`, `play_next`, the pool and `run_draw`):
+"BC Single Elim" (8 Teams, Bo3 Final, 5 Matches played, Play Next live), "BC Double Elim" (played
+out, champion), "BC Round Robin" (5 of 12 played), "BC RR to DE" (seeding stage, cut labels),
+"BC Swiss" (round 1 played, round 2 built), "BC Setup" (4 Teams, unlocked) and "BC Player Pool"
+(24 generated pool Players, drawn). Matches run one at a time with `play_next`, so no Celery broker
+is needed; the seed takes about 25 s. `--clean` deletes them first, with their Matches (found
+through their Series, not a manager) and the generated pool Players (on the global Free Agents
+Team), and reports `Tournaments: N` only when there were any.

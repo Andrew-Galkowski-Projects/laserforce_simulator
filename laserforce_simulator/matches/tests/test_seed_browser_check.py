@@ -8,6 +8,7 @@ database live in the ``*CleanTests`` classes and seed per test.
 """
 
 from io import StringIO
+from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import CommandError, call_command
@@ -16,8 +17,16 @@ from rest_framework.test import APIClient
 
 from core.map_test_fixtures import ClassTempMediaMixin, TempMediaMixin
 from core.models import ArenaMap
-from matches.models import GameRound, League, Match, PlayerRoundState, Season
+from matches.models import (
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    Season,
+    Tournament,
+)
 from matches.sim_helpers.map_loader import load_map_context
+from matches.simulation import BatchSimulator
 from teams.models import Player, Team
 
 _A = "browser-a@example.com"
@@ -325,3 +334,101 @@ class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
             _seed("--clean")
 
         self.assertFalse(League.objects.filter(name=_LEAGUE_NAME).exists())
+
+
+# Short Rounds: the Tournament seed plays real Matches (ANG-06-13b retro).
+_FAST_TICKS = 40
+
+
+def _seed_tournaments() -> str:
+    with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+        return _seed("--tournaments")
+
+
+class SeedBrowserCheckTournamentsTests(ClassTempMediaMixin, TestCase):
+    """``--tournaments``: one sandbox Tournament per format and stage, for A."""
+
+    output: str
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.output = _seed_tournaments()
+
+    def _detail(self, name: str) -> dict:
+        tournament = Tournament.objects.get(name=name)
+        response = _api_for_a().get(f"/api/tournaments/{tournament.pk}/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()["data"]
+
+    def test_every_tournament_belongs_to_account_a(self) -> None:
+        a = get_user_model().objects.get(email=_A)
+        names = set(Tournament.objects.values_list("name", flat=True))
+        self.assertEqual(names, set(_TOURNAMENT_NAMES))
+        self.assertFalse(Tournament.objects.exclude(manager=a).exists())
+
+    def test_each_tournament_sits_at_its_stage(self) -> None:
+        single = self._detail("BC Single Elim")
+        self.assertEqual(single["state"], "active")
+        self.assertTrue(single["can_play"])
+        self.assertTrue(
+            any(n["games"] for r in single["brackets"][0]["rounds"] for n in r["nodes"])
+        )
+
+        double = self._detail("BC Double Elim")
+        self.assertEqual(double["state"], "completed")
+        self.assertIsNotNone(double["champion"])
+
+        round_robin = self._detail("BC Round Robin")
+        self.assertEqual(round_robin["state"], "active")
+        self.assertTrue(round_robin["rr_crosstable"])
+
+        rrde = self._detail("BC RR to DE")
+        self.assertEqual(rrde["stage"], "seeding")
+        self.assertTrue(rrde["cut_labels"])
+
+        swiss = self._detail("BC Swiss")
+        self.assertEqual(swiss["stage"], "swiss")
+        self.assertEqual(len(swiss["brackets"][0]["rounds"]), 2)
+
+        setup = self._detail("BC Setup")
+        self.assertEqual(setup["state"], "setup")
+        self.assertEqual(len(setup["participants"]), 4)
+
+        pool = self._detail("BC Player Pool")
+        self.assertEqual(pool["state"], "setup")
+        self.assertTrue(pool["is_drawn"])
+        self.assertEqual(pool["pool_size"], 24)
+
+    def test_summary_names_each_tournament_id(self) -> None:
+        for name in _TOURNAMENT_NAMES:
+            pk = Tournament.objects.get(name=name).pk
+            self.assertIn(f"{pk} ({name})", self.output)
+
+
+_TOURNAMENT_NAMES = (
+    "BC Single Elim",
+    "BC Double Elim",
+    "BC Round Robin",
+    "BC RR to DE",
+    "BC Swiss",
+    "BC Setup",
+    "BC Player Pool",
+)
+
+
+class SeedBrowserCheckTournamentsCleanTests(TempMediaMixin, TestCase):
+    def test_clean_removes_the_tournaments_their_matches_and_pool_players(
+        self,
+    ) -> None:
+        _seed_tournaments()
+
+        with self.captureOnCommitCallbacks(execute=True):
+            output = _seed("--clean")
+
+        self.assertFalse(Tournament.objects.exists())
+        self.assertFalse(Match.objects.exists())
+        self.assertFalse(GameRound.objects.exists())
+        # The pool's generated Players sit on the global Free Agents Team.
+        self.assertFalse(Player.objects.exists())
+        self.assertFalse(Team.objects.exclude(name="Free Agents").exists())
+        self.assertIn(f"Tournaments: {len(_TOURNAMENT_NAMES)}", output)
