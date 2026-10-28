@@ -49,6 +49,13 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   `frontend/src/app/shared/head-to-head/h2h-page.scss` (ANG-06-9's H2H and Compare
   pickers clipped names at 1280px and 768px).
 
+- **Names in a scrolling table stay whole.** In a table that scrolls sideways, a
+  header or cell holding a name wraps only between words and sets a `min-width`
+  (a crosstable heading, a Standings Team). Flag `overflow-wrap: anywhere` on one:
+  the table then shrinks instead of scrolling, and at 768px names broke one
+  letter per line (ANG-06-13b's crosstable and Standings). It suits free text in
+  a card or alert.
+
 ## Tests
 
 - Each new public function has a happy-path test and an edge-case or failure test.

@@ -34,6 +34,21 @@ module.exports = defineConfig([
     },
   },
   {
+    files: ['**/*.spec.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          // ANG-06-13b: faking setInterval without rAF hung later canvas specs in the worker.
+          selector:
+            "CallExpression[callee.property.name='useFakeTimers'] Property[key.name='toFake'] > ArrayExpression:has(Literal[value='setInterval'])",
+          message:
+            'A poll / loop fakes POLL_TIMERS (shared/testing/poll-timers.ts): the interval timers and rAF together.',
+        },
+      ],
+    },
+  },
+  {
     files: ['**/*.html'],
     extends: [angular.configs.templateRecommended, angular.configs.templateAccessibility],
     rules: {},

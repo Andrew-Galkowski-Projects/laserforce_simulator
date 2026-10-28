@@ -8,7 +8,9 @@ like a League Match mid-Season); B owns nothing, for cross-Account checks.
 ``--league`` also gives A "Browser Check League" (career mode, finance on):
 two completed Seasons and one active Season, every played Round with player
 stats, hand-built by ``_browser_check_league`` (no simulator).
-``--clean`` deletes both Accounts, every row they own, the League and its
+``--tournaments`` also gives A one sandbox Tournament per format and stage
+(``_browser_check_tournaments``; Matches played with ``play_next``).
+``--clean`` deletes both Accounts, every row they own, the Tournaments, the League and its
 Matches, the map and its media files. For a worktree's disposable database
 (ADR-0004).
 """
@@ -34,6 +36,10 @@ from core.services import (
 from matches.management.commands._browser_check_league import (
     LEAGUE_NAME,
     seed_browser_check_league,
+)
+from matches.management.commands._browser_check_tournaments import (
+    delete_browser_check_tournaments,
+    seed_browser_check_tournaments,
 )
 from matches.models import GameRound, League, Match
 from matches.services import create_sandbox_match, create_sandbox_round
@@ -179,14 +185,19 @@ class Command(BaseCommand):
             action="store_true",
             help="also seed Account A a League (2 completed Seasons, 1 active)",
         )
+        parser.add_argument(
+            "--tournaments",
+            action="store_true",
+            help="also seed Account A one sandbox Tournament per format and stage",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         if options["clean"]:
             self._clean()
         else:
-            self._seed(league=options["league"])
+            self._seed(league=options["league"], tournaments=options["tournaments"])
 
-    def _seed(self, *, league: bool = False) -> None:
+    def _seed(self, *, league: bool = False, tournaments: bool = False) -> None:
         user_model = get_user_model()
         if (
             user_model.objects.filter(email__in=[EMAIL_A, EMAIL_B]).exists()
@@ -246,6 +257,12 @@ class Command(BaseCommand):
                 + ", ".join(str(s.pk) for s in seasons)
                 + " (completed, completed, active)"
             )
+        if tournaments:
+            seeded_tournaments = seed_browser_check_tournaments(a)
+            self.stdout.write(
+                "Tournaments "
+                + ", ".join(f"{t.pk} ({t.name})" for t in seeded_tournaments)
+            )
 
     @transaction.atomic
     def _clean(self) -> None:
@@ -264,6 +281,11 @@ class Command(BaseCommand):
         # Reported only when there was one, so a League-less clean prints the
         # same line as before --league existed.
         counts = {"Leagues": league_count} if league_count else {}
+        # The same for --tournaments: before the Matches and Teams below, since
+        # a Tournament's Matches and pool Players are not found by manager.
+        tournament_count = delete_browser_check_tournaments(users)
+        if tournament_count:
+            counts["Tournaments"] = tournament_count
         counts |= {
             "Single Rounds": _deleted(GameRound.objects.filter(manager__in=users)),
             "Matches": _deleted(Match.objects.filter(manager__in=users)),

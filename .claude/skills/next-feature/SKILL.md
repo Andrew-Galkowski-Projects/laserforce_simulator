@@ -189,7 +189,10 @@ Don't pad.
 
 Run every number an acceptance criterion names through the spec's rule before
 publishing the ticket: ANG-06-13a's #400 said the pool warning shows at 30, a
-valid pool size (a multiple of 6, at least 24).
+valid pool size (a multiple of 6, at least 24). Check every test recipe a
+ticket quotes (a fake-timer list, a fixture helper) against an existing spec
+that does the same: ANG-06-13b's #405 said to fake `setTimeout`, and rxjs
+`timer` polls on `setInterval`.
 
 Create each ticket as a sub-issue of the spec with native blocked-by edges,
 using the `gh api` fallbacks in `docs/agents/issue-tracker.md` (installed `gh`
@@ -290,8 +293,8 @@ Add these constraints to every implementer prompt:
   action exists, it is red, and its owner-gets-200 half keeps it from passing
   on a 404 for everyone. This is the ownership red, since a guard mutation
   is refused (Step 7).
-- Run only your own test files, with pytest run from the nested Django dir
-  (`laserforce_simulator/`). The full suite is the orchestrator's job. A ticket
+- Run only your own test files, with pytest given the nested Django dir's config
+  (`-c laserforce_simulator/pytest.ini --rootdir laserforce_simulator`). The full suite is the orchestrator's job. A ticket
   that touches `frontend/` also runs `npm --prefix frontend run build`. A new
   API endpoint also gets an entry in the N+1 registry and runs it:
   `laserforce_simulator/api/tests/test_detail_action_query_counts.py` (a
@@ -338,6 +341,12 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    failures and the count line) and, when `docker info` succeeds, on Postgres
    (`docker start lf-test-pg`, then `python scripts/run_suite.py --postgres`), plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
+   When `frontend/` changed, run `test:ci` as CI's 4-vCPU runner does, through the
+   PowerShell tool: `$env:CI='true'; cmd /c start '""' /b /wait /affinity F npm
+   --prefix frontend run test:ci`. The spec-to-worker layout decides which specs
+   share a jsdom, so a leak between specs shows only at CI's core count (ANG-06-13b
+   passed locally and failed CI twice). A spec that passes alone and fails there:
+   bisect with `docs/agents/ci.md` *Spec passes alone, fails in the suite*.
    Run every suite on its own, never in the background beside another: any
    `pytest -n auto` run (SQLite or Postgres) beside `test:ci` starves Vitest
    into false timeouts (ANG-06c, ANG-06d). **Python-free diff:** when
@@ -373,8 +382,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    Accounts, Teams, a Match, a Single Round, an unfinished Match, and a
    full-fidelity Single Round on the configured "Browser Check Arena" map for
    map features; add `--league` for League features: a career, finance-enabled
-   League with two completed Seasons and an active one) and remove it
-   with `--clean` when done.
+   League with two completed Seasons and an active one; `--tournaments` for
+   Tournament features: one sandbox Tournament per format and stage) and
+   remove it with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Take a
    screenshot of each changed screen at 1280px and at 768px (`resize_page`);
    shoot transient UI (a snackbar lasts 5 s) in the same turn it appears,

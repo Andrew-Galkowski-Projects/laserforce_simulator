@@ -1,6 +1,7 @@
-"""PreToolUse hook: send file writes to the Write / Edit tools.
+"""PreToolUse hook: send file writes to the Write / Edit tools, and refuse `cd`.
 
-A Bash call that writes a repo file through ``sed -i``, a heredoc, or a ``>``
+A Bash call that runs ``cd`` is refused: it moves the session's working directory
+for every later call (CLAUDE.md, *Tooling*). A Bash call that writes a repo file through ``sed -i``, a heredoc, or a ``>``
 redirect is refused (exit 2, the message goes back to the agent). Large heredocs
 fail with ``ENAMETOOLONG`` on Windows and PowerShell adds a BOM, so the project
 writes files with Write / Edit (CLAUDE.md, *Windows Shell Conventions*). Writes
@@ -21,6 +22,16 @@ MESSAGE = (
     "scratchpad or a temp directory are fine."
 )
 
+CD_MESSAGE = (
+    "Refused: no `cd` (CLAUDE.md, Tooling). A Bash cd moves the session's working "
+    "directory for every later call. Run from the current directory and pass paths "
+    "instead: `git ...` as is, `python laserforce_simulator/manage.py ...`, "
+    "`npm --prefix frontend ...`, pytest with `-c laserforce_simulator/pytest.ini "
+    "--rootdir laserforce_simulator`."
+)
+
+# `cd` as a command: at the start, or after `;`, `&&`, `||`, `|` or `(`.
+_CD = re.compile(r"(?:^|[;&|(])\s*cd(?:\s|$)")
 _SED_IN_PLACE = re.compile(r"\bsed\s+(?:-[A-Za-z]*i\S*|--in-place)\S*\s")
 _HEREDOC = re.compile(r"<<-?\s*['\"]?\w+")
 # A redirect target: `> path`, `>> path`, `tee path`, skipping fd redirects (2>&1).
@@ -37,6 +48,8 @@ def _is_scratch(path: str) -> bool:
 
 def refusal(command: str) -> str | None:
     """The refusal message for ``command``, or ``None`` when it may run."""
+    if _CD.search(command):
+        return CD_MESSAGE
     if _SED_IN_PLACE.search(command):
         targets = command.split()[-1:]
         if not all(_is_scratch(t) for t in targets):

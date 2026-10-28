@@ -47,6 +47,30 @@ class TestRefusesShellWritesToRepoFiles(TestCase):
         self.assertIsNotNone(guard.refusal("echo 'x = 1' > laserforce_simulator/a.py"))
 
 
+class TestRefusesCd(TestCase):
+    """CLAUDE.md, *Tooling*: a Bash `cd` moves the session's cwd for every later
+    call (ANG-06-13b: relative paths broke after one `cd laserforce_simulator`)."""
+
+    def test_refuses_a_cd_anywhere_in_the_command(self) -> None:
+        for command in (
+            "cd laserforce_simulator",
+            "cd /c/Users/me/repo/laserforce_simulator; grep -n x matches/models.py",
+            "git fetch && cd frontend && npm test",
+            "(cd frontend; npm ci)",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.refusal(command), guard.CD_MESSAGE)
+
+    def test_allows_cd_inside_a_word_or_string(self) -> None:
+        for command in (
+            "grep -rn 'abcd ' docs",
+            "echo 'then cd into it' | tail -1",
+            "python scripts/cdk_report.py",
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(guard.refusal(command))
+
+
 class TestAllowsEverydayCommands(TestCase):
     def test_allows_reads_and_stream_edits(self) -> None:
         for command in (
