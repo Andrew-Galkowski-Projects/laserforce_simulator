@@ -28,7 +28,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 
 from accounts.permissions import get_owned_or_404, manager_or_none, owned_queryset
-from teams.models import Player, Team
+from teams.models import Team
 from teams.views import _coerce_dir
 
 from . import league_play_services as play_services
@@ -80,7 +80,6 @@ from .league_templates import (
 from .models import (
     GameRound,
     League,
-    Match,
     Season,
 )
 
@@ -147,6 +146,8 @@ from .league_services import (  # noqa: F401 - re-exports
     history_seasons,
     is_career_league,
     latest_completed_season,
+    league_delete_summary,
+    managed_team_id,
     member_night_game_counts,
     pick_displayed_season,
     manager_awaiting_reassignment,
@@ -154,6 +155,7 @@ from .league_services import (  # noqa: F401 - re-exports
     replace_conferences,
     run_season_rollover,
     season_mode_for,
+    sidebar_schedule_team,
     start_next_season,
     teardown_league,
     template_to_form_data,
@@ -166,6 +168,7 @@ _is_career_league = is_career_league
 _run_season_rollover = run_season_rollover
 _eligible_new_teams = eligible_new_teams
 _teardown_league = teardown_league
+_managed_team_id = managed_team_id
 _build_dashboard_context = build_dashboard_context
 _pick_displayed_season = pick_displayed_season
 _compute_season_award_set = compute_season_award_set
@@ -330,16 +333,6 @@ def season_standings(request, season_id: int) -> HttpResponse:
         "managed_team_id": _managed_team_id(league),
     }
     return render(request, "seasons/standings.html", context)
-
-
-def _managed_team_id(league: League) -> int | None:
-    """UXP-08 — the Manager's Team id in a career (``mode="league"``) League.
-
-    ``None`` for sandbox / multiplayer Leagues or when no Team is managed.
-    """
-    if league.mode != "league":
-        return None
-    return league.current_team_id
 
 
 # ----------------------------------------------------------------------
@@ -858,36 +851,6 @@ def _coerce_team_id(raw: str | None, enrolled_ids: set[int]) -> int | None:
     return None
 
 
-def _resolve_current_team_for_sidebar(
-    league: League,
-    displayed_season: Season | None,
-) -> Team | None:
-    """LG-01g — pick the Team the TEAM > Schedule sidebar entry targets.
-
-    Resolution chain:
-        (a) ``league.current_team`` if that Team is enrolled in
-            ``displayed_season`` (defensive — admin may have removed
-            the Team from the Season's M2M between the auto-set and
-            this render).
-        (b) The alphabetically-first Team in ``displayed_season.teams``.
-        (c) ``None`` — no Team in Season; the sidebar entry stays
-            disabled.
-
-    Returns ``None`` immediately when ``displayed_season is None`` so
-    the league dashboard's no-Season fallback keeps the entry disabled.
-    """
-    if displayed_season is None:
-        return None
-    # Read current_team_id (the FK column) first to avoid an extra
-    # SELECT when the row isn't cached.
-    current_team_id = league.current_team_id
-    if current_team_id is not None:
-        in_season_ids = set(displayed_season.teams.values_list("id", flat=True))
-        if current_team_id in in_season_ids:
-            return league.current_team
-    return displayed_season.teams.order_by("name").first()
-
-
 # UXP-12 — sidebar keys whose route is a ``coming_soon_*`` placeholder.
 _PLACEHOLDER_SIDEBAR_KEYS = frozenset(
     {"trade", "trading_block", "prospects", "hall_of_fame"}
@@ -914,7 +877,7 @@ def _build_league_sidebar_links(
         * team.roster / team.finances_team / team.history_team ⇒
           their ``coming_soon_team_*`` placeholder routes (LG-01h).
         * team.schedule_team (LG-01g) ⇒ ``team_schedule`` for the
-          Team picked by ``_resolve_current_team_for_sidebar``; falls
+          Team picked by ``league_services.sidebar_schedule_team``; falls
           back to disabled when no Team is resolvable.
         * players.* and stats.* — all 12 placeholder ``coming_soon_*``
           routes (LG-01h).
@@ -930,7 +893,7 @@ def _build_league_sidebar_links(
         standings_url = None
         schedule_url = None
 
-    picked = _resolve_current_team_for_sidebar(league, displayed_season)
+    picked = sidebar_schedule_team(league, displayed_season)
     if picked is None:
         schedule_team_url: str | None = None
     else:
@@ -1888,22 +1851,12 @@ def league_delete(request: HttpRequest, league_id: int) -> HttpResponse:
         messages.success(request, f'League "{league_name}" deleted.')
         return redirect("league_list")
 
-    # GET — compute the delete summary via the same target helpers the teardown
-    # uses (as counts) and render the confirm page.
-    tournament_ids, candidate_team_ids = _league_teardown_targets(league)
-    delete_summary = {
-        "seasons": league.seasons.count(),
-        "matches": Match.objects.filter(_league_match_q(league, tournament_ids))
-        .distinct()
-        .count(),
-        "tournaments": len(tournament_ids),
-        "teams": len(candidate_team_ids),
-        "players": Player.objects.filter(team_id__in=candidate_team_ids).count(),
-    }
+    # GET — the delete summary comes from the service the API shares (built on
+    # the same target helpers the teardown uses) and renders the confirm page.
     return render(
         request,
         "leagues/league_confirm_delete.html",
-        {"league": league, "delete_summary": delete_summary},
+        {"league": league, "delete_summary": league_delete_summary(league)},
     )
 
 
@@ -1939,8 +1892,18 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
     # rollover live in ``start_next_season`` (shared with the API). The
     # exceptions are caught INSIDE this view's atomic block, so the lazy
     # finance / owner-evaluation writes commit exactly as before.
+    #
+    # UXP-18 — the confirming POST also starts the rolled Season, so the
+    # Manager lands on an ACTIVE dashboard instead of a draft one plus a
+    # separate "Start Season" click. One exception keeps the DRAFT step: the
+    # rollover carries no Conferences and they are editable only in draft, so
+    # a League whose previous Season was partitioned lands on Manage
+    # Conferences to re-partition first. A start that the model refuses
+    # (e.g. < 2 teams) leaves the rolled draft, the pre-UXP-18 outcome. Both
+    # rules live in ``roll_and_start_next_season`` (ANG-06-14 B6, shared with
+    # the API).
     try:
-        new_season = start_next_season(league)
+        result = play_services.roll_and_start_next_season(league)
     except SeasonInProgressError as exc:
         return redirect("season_dashboard", season_id=exc.season.id)
     except NoCompletedSeasonError:
@@ -1950,22 +1913,9 @@ def next_season(request: HttpRequest, league_id: int) -> HttpResponse:
         # cannot roll — they must pick a new team first.
         return redirect("new_team_picker", league_id=league.id)
 
-    # UXP-18 — the confirming POST also starts the rolled Season, so the
-    # Manager lands on an ACTIVE dashboard instead of a draft one plus a
-    # separate "Start Season" click. One exception keeps the DRAFT step: the
-    # rollover carries no Conferences and they are editable only in draft, so
-    # a League whose previous Season was partitioned lands on Manage
-    # Conferences to re-partition first. A start that the model refuses
-    # (e.g. < 2 teams) leaves the rolled draft, the pre-UXP-18 outcome; its own
-    # savepoint rolls back only the activation, never the rollover.
-    previous = latest_completed_season(league)
-    if previous is not None and previous.conferences.exists():
-        return redirect("manage_conferences", season_id=new_season.id)
-    try:
-        play_services.start_season(new_season)
-    except ValidationError:
-        pass
-    return redirect("season_dashboard", season_id=new_season.id)
+    if result.needs_conferences:
+        return redirect("manage_conferences", season_id=result.season.id)
+    return redirect("season_dashboard", season_id=result.season.id)
 
 
 def owner_evaluation(request: HttpRequest, season_id: int) -> HttpResponse:

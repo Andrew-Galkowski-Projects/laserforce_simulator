@@ -21,6 +21,7 @@ from django.urls import reverse
 
 from matches.models import League, Season
 from matches.tests.conftest import make_team_with_slots
+from matches.league_services import sidebar_schedule_team
 from matches.league_views import _build_league_sidebar_links
 
 # ---------------------------------------------------------------------------
@@ -777,3 +778,39 @@ class TestUxp07SidebarMobile(TestCase):
         # table, so .table-responsive never engages and the page scrolls.
         self.assertIn("min-width: 0", self.html)
         self.assertIn(".d-flex:has(> #league-sidebar) > main", self.html)
+
+
+# ---------------------------------------------------------------------------
+# ANG-06-14 B3 — ``sidebar_schedule_team`` (shared by the sidebar + /nav/)
+# ---------------------------------------------------------------------------
+
+
+class TestSidebarScheduleTeamService(TestCase):
+    """The TEAM > Schedule team: the current team if enrolled, else the
+    alphabetically-first enrolled team, else ``None``."""
+
+    def test_current_team_when_enrolled(self) -> None:
+        league = _make_league("SvcCur")
+        active = _make_active_season(league)
+        ta, _ = make_team_with_slots("SvcA")
+        tz, _ = make_team_with_slots("SvcZ")
+        active.teams.add(ta, tz)
+        league.current_team = tz
+        league.save()
+        self.assertEqual(sidebar_schedule_team(league, active), tz)
+
+    def test_first_alphabetical_when_current_not_enrolled(self) -> None:
+        league = _make_league("SvcOut")
+        draft = _make_draft_season(league)
+        tb, _ = make_team_with_slots("SvcB")
+        ta, _ = make_team_with_slots("SvcA2")
+        draft.teams.add(tb, ta)
+        outsider, _ = make_team_with_slots("SvcOutsider")
+        league.current_team = outsider
+        league.save()
+        self.assertEqual(sidebar_schedule_team(league, draft), ta)
+
+    def test_none_without_season_or_teams(self) -> None:
+        league = _make_league("SvcNone")
+        self.assertIsNone(sidebar_schedule_team(league, None))
+        self.assertIsNone(sidebar_schedule_team(league, _make_active_season(league)))

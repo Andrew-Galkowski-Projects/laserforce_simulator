@@ -1412,6 +1412,38 @@ def pick_displayed_season(league: League) -> Season | None:
     return league.seasons.filter(state="completed").order_by("-id").first()
 
 
+def sidebar_schedule_team(
+    league: League,
+    displayed_season: Season | None,
+) -> Team | None:
+    """LG-01g — pick the Team the TEAM > Schedule sidebar entry targets.
+
+    Resolution chain:
+        (a) ``league.current_team`` if that Team is enrolled in
+            ``displayed_season`` (defensive — admin may have removed
+            the Team from the Season's M2M between the auto-set and
+            this render).
+        (b) The alphabetically-first Team in ``displayed_season.teams``.
+        (c) ``None`` — no Team in Season; the sidebar entry stays
+            disabled.
+
+    Returns ``None`` immediately when ``displayed_season is None`` so
+    the league dashboard's no-Season fallback keeps the entry disabled.
+    Shared by the Django sidebar and ``GET /api/leagues/<id>/nav/``
+    (ANG-06-14 B3).
+    """
+    if displayed_season is None:
+        return None
+    # Read current_team_id (the FK column) first to avoid an extra
+    # SELECT when the row isn't cached.
+    current_team_id = league.current_team_id
+    if current_team_id is not None:
+        in_season_ids = set(displayed_season.teams.values_list("id", flat=True))
+        if current_team_id in in_season_ids:
+            return league.current_team
+    return displayed_season.teams.order_by("name").first()
+
+
 # The tournament formats whose champion is crowned through a terminal Bracket
 # node — only these source a Finals MVP. ``round_robin`` / ``swiss`` have no
 # single deciding Match, so they (and no-playoff Seasons) yield ``None``.
@@ -2087,6 +2119,25 @@ def _league_match_q(league: League, tournament_ids: list[int]) -> Q:
     )
 
 
+def league_delete_summary(league: League) -> dict[str, int]:
+    """DEL-01 / ANG-06-14 B1 — what deleting ``league`` removes, as counts.
+
+    Built from the same target helpers ``teardown_league`` uses, so the HTML
+    confirm page and ``GET /api/leagues/<id>/delete-summary/`` cannot drift
+    from the teardown. Keys: ``seasons, matches, tournaments, teams, players``.
+    """
+    tournament_ids, candidate_team_ids = _league_teardown_targets(league)
+    return {
+        "seasons": league.seasons.count(),
+        "matches": Match.objects.filter(_league_match_q(league, tournament_ids))
+        .distinct()
+        .count(),
+        "tournaments": len(tournament_ids),
+        "teams": len(candidate_team_ids),
+        "players": Player.objects.filter(team_id__in=candidate_team_ids).count(),
+    }
+
+
 def teardown_league(league: League) -> None:
     """DEL-01 — full teardown of all data a career League owns, by PK/FK
     identity (never by name), in one atomic block (ADR-0032)."""
@@ -2685,6 +2736,30 @@ def manager_awaiting_reassignment(league: League, latest_completed: Season) -> b
         and evaluation.verdict == "fired"
         and league.current_team_id == evaluation.team_managed_id
     )
+
+
+def managed_team_id(league: League) -> int | None:
+    """UXP-08 — the Manager's Team id in a career (``mode="league"``) League.
+
+    ``None`` for sandbox / multiplayer Leagues or when no Team is managed.
+    Shared by the HTML dashboard / standings and the API dashboard.
+    """
+    if league.mode != "league":
+        return None
+    return league.current_team_id
+
+
+def dashboard_awaiting_reassignment(league: League, season_mode: str) -> bool:
+    """ANG-06-14 B5 — whether the dashboard offers "Choose new team".
+
+    True only for a career League whose displayed Season is completed and whose
+    Manager was fired and has not reassigned. Runs the lazy finance /
+    owner-evaluation ensures (as the New-Team picker's GET does).
+    """
+    if not is_career_league(league) or season_mode != "completed":
+        return False
+    latest = latest_completed_season(league)
+    return latest is not None and manager_awaiting_reassignment(league, latest)
 
 
 def reassign_and_roll(league: League, team: Team, latest_completed: Season) -> Season:

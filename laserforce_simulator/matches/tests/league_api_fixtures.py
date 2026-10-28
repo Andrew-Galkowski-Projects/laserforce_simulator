@@ -171,7 +171,17 @@ DASHBOARD_BODY_KEYS = {
     "map_config_label",
     "playoff_tournament_id",
 }
-LEAGUE_DASHBOARD_KEYS = DASHBOARD_BODY_KEYS | {"league"}
+# ANG-06-14 B5 -- the League dashboard (only) also says the League's mode, the
+# managed team, whether owner evaluations exist, member-night progress and
+# whether a fired Manager awaits reassignment.
+LEAGUE_DASHBOARD_KEYS = DASHBOARD_BODY_KEYS | {
+    "league",
+    "mode",
+    "managed_team",
+    "has_owner_evaluations",
+    "member_night_progress",
+    "manager_awaiting_reassignment",
+}
 SEASON_DASHBOARD_KEYS = DASHBOARD_BODY_KEYS | {"season", "league"}
 # Play-control keys owned by ANG-01d-2 -- must never leak into the 01d-1 payload.
 PLAY_CONTROL_KEYS = {

@@ -1,0 +1,92 @@
+// The League layout (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+.league-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+// From 768px the nav is a column beside the page. The Shell's sidebar already takes ~208px,
+// so the column stays narrow (~10rem) to leave the page its width.
+.league-layout--wide {
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 1.25rem;
+}
+
+.league-layout__toggle {
+  align-self: flex-start;
+}
+
+.league-layout__page {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.league-layout__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.league-nav {
+  flex: 0 0 10rem;
+  padding: 0.5rem 0;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  font-size: 0.875rem;
+}
+
+.league-nav__name {
+  margin: 0 0.75rem 0.25rem;
+  font-family: var(--lf-font-heading);
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.league-nav__heading {
+  margin: 0.75rem 0.75rem 0.25rem;
+  color: var(--lf-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.league-nav__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.league-nav__link {
+  display: block;
+  padding: 0.2rem 0.75rem;
+  border-left: 3px solid transparent;
+}
+
+a.league-nav__link {
+  color: var(--lf-accent);
+  text-decoration: none;
+
+  &:hover,
+  &:focus-visible {
+    background: color-mix(in srgb, var(--lf-accent) 10%, transparent);
+  }
+}
+
+.league-nav__link--active {
+  border-left-color: var(--lf-accent);
+  background: color-mix(in srgb, var(--lf-accent) 14%, transparent);
+  font-weight: 700;
+}

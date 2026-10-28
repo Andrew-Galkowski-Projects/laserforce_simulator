@@ -63,17 +63,20 @@ from matches.league_services import (
     build_team_schedule,
     compute_season_award_sets,
     create_league_and_season,
+    dashboard_awaiting_reassignment,
     eligible_new_teams,
     ensure_owner_evaluation,
     history_seasons,
     is_career_league,
     latest_completed_season,
+    league_delete_summary,
+    managed_team_id,
     pick_displayed_season,
     manager_awaiting_reassignment,
     reassign_and_roll,
     replace_conferences,
     season_mode_for,
-    start_next_season,
+    sidebar_schedule_team,
     teardown_league,
     template_to_form_data,
 )
@@ -252,9 +255,16 @@ def _snippet_row(row_dict: dict, team: Team | None) -> dict:
     return {**row_dict, "team": _ref_or_none(team)}
 
 
-def _dashboard_payload(displayed_season: Season | None, season_mode: str) -> dict:
-    """The read-only dashboard body (no play-control keys — those are 01d-2)."""
-    body = build_dashboard_context(displayed_season, season_mode)
+def _dashboard_payload(
+    displayed_season: Season | None, season_mode: str, body: dict | None = None
+) -> dict:
+    """The read-only dashboard body (no play-control keys — those are 01d-2).
+
+    ``body`` is a ``build_dashboard_context`` result the caller already built
+    (the League dashboard reads more of it); built here when omitted.
+    """
+    if body is None:
+        body = build_dashboard_context(displayed_season, season_mode)
     return {
         "displayed_season": (
             season_ref(displayed_season) if displayed_season is not None else None
@@ -440,6 +450,38 @@ class LeagueViewSet(
             raise NotCareerLeague(_DELETE_NOT_CAREER)
         teardown_league(instance)
 
+    @action(
+        detail=True,
+        methods=["get"],
+        url_path="delete-summary",
+        url_name="delete-summary",
+    )
+    def delete_summary(self, request: Request, pk: str | None = None) -> Response:
+        """ANG-06-14 B2 — what ``DELETE`` would remove (career Leagues only)."""
+        league = self.get_object()
+        if not is_career_league(league):
+            raise NotCareerLeague(_DELETE_NOT_CAREER)
+        return Response(league_delete_summary(league))
+
+    @action(detail=True, methods=["get"], url_path="nav", url_name="nav")
+    def nav(self, request: Request, pk: str | None = None) -> Response:
+        """ANG-06-14 B4 — the League nav context (the Django sidebar's inputs)."""
+        league = self.get_object()
+        displayed_season = pick_displayed_season(league)
+        return Response(
+            {
+                "league": {"id": league.pk, "name": league.name, "mode": league.mode},
+                "displayed_season": (
+                    season_ref(displayed_season)
+                    if displayed_season is not None
+                    else None
+                ),
+                "schedule_team": _ref_or_none(
+                    sidebar_schedule_team(league, displayed_season)
+                ),
+            }
+        )
+
     @action(detail=False, methods=["get"], url_path="templates", url_name="templates")
     def league_templates(self, request: Request) -> Response:
         """The 5 curated create-League presets (not paginated)."""
@@ -447,12 +489,31 @@ class LeagueViewSet(
 
     @action(detail=True, methods=["get"], url_path="dashboard", url_name="dashboard")
     def dashboard(self, request: Request, pk: str | None = None) -> Response:
-        """The League dashboard body for its displayed Season."""
+        """The League dashboard body for its displayed Season.
+
+        ANG-06-14 B5 adds five League-only keys (the Season dashboard body is
+        unchanged): ``mode``, ``managed_team`` (career Leagues only, the
+        ``managed_team_id`` rule the HTML dashboard uses), ``has_owner_evaluations``,
+        ``member_night_progress`` and ``manager_awaiting_reassignment``.
+        """
         league = self.get_object()
         displayed_season = pick_displayed_season(league)
-        mode = season_mode_for(displayed_season)
+        season_mode = season_mode_for(displayed_season)
+        body = build_dashboard_context(displayed_season, season_mode)
+        # Runs the lazy finance / owner-evaluation ensures, so it precedes
+        # ``has_owner_evaluations``.
+        awaiting = dashboard_awaiting_reassignment(league, season_mode)
+        managed_team = league.current_team if managed_team_id(league) else None
         return Response(
-            {"league": league_ref(league), **_dashboard_payload(displayed_season, mode)}
+            {
+                "league": league_ref(league),
+                **_dashboard_payload(displayed_season, season_mode, body),
+                "mode": league.mode,
+                "managed_team": _ref_or_none(managed_team),
+                "has_owner_evaluations": league.owner_evaluations.exists(),
+                "member_night_progress": body["member_night_progress"],
+                "manager_awaiting_reassignment": awaiting,
+            }
         )
 
     @action(
@@ -521,10 +582,14 @@ class LeagueViewSet(
     )
     @transaction.atomic
     def next_season(self, request: Request, pk: str | None = None) -> Response:
-        """Start the next Season (verdict gate + rollover); 201 with it."""
+        """Start the next Season (verdict gate + rollover + UXP-18 start); 201.
+
+        The new Season is ACTIVE, or a draft when the previous Season had
+        Conferences or the model refused the start (ANG-06-14 B6).
+        """
         league = self.get_object()
         try:
-            new_season = start_next_season(league)
+            result = play_services.roll_and_start_next_season(league)
         except SeasonInProgressError as exc:
             raise SeasonInProgress(exc.season) from exc
         except NoCompletedSeasonError as exc:
@@ -532,7 +597,7 @@ class LeagueViewSet(
         except ManagerFiredError as exc:
             raise ManagerFired() from exc
         return Response(
-            SeasonSerializer(_season_detail(new_season)).data,
+            SeasonSerializer(_season_detail(result.season)).data,
             status=status.HTTP_201_CREATED,
         )
 

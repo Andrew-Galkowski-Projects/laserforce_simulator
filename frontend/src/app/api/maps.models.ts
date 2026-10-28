@@ -187,5 +187,7 @@ export interface MapHeatmap {
 export interface MapListParams extends ListParams {
   is_default?: boolean;
   has_confirmed_config?: boolean;
+  /** A confirmed config plus a red and a blue base: the maps a simulation accepts (ANG-06-14). */
+  simulation_ready?: boolean;
   ordering?: string;
 }

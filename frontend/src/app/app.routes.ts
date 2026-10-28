@@ -45,6 +45,10 @@ export const routes: Routes = [
           import('./tournaments/tournaments.routes').then((m) => m.TOURNAMENTS_ROUTES),
       },
       {
+        path: 'leagues',
+        loadChildren: () => import('./leagues/leagues.routes').then((m) => m.LEAGUES_ROUTES),
+      },
+      {
         path: 'players',
         loadChildren: () => import('./players/players.routes').then((m) => m.PLAYERS_ROUTES),
       },

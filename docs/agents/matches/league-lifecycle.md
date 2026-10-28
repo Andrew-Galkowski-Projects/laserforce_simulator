@@ -37,7 +37,10 @@ id with `request.session.pop("last_league_id", None)` (do NOT pin a deleted id â
 the `core.context_processors.league_nav` probe degrades gracefully but clearing
 is cleaner), and `redirect("league_list")` (302). On GET: build a `delete_summary`
 counts dict and `render("leagues/league_confirm_delete.html", {"league",
-"delete_summary"})`.
+"delete_summary"})`. Since ANG-06-14 the dict comes from
+`league_services.league_delete_summary(league)`, which
+`GET /api/leagues/<id>/delete-summary/` and the Angular delete confirm share (`api.md`,
+**ANG-06-14 League core API gaps**).
 
 **Teardown helper â€” `matches.league_views._teardown_league(league) -> None`.**
 Ordered, all inside ONE inline `with transaction.atomic():` (the atomic boundary

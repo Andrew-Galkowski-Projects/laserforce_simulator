@@ -1,0 +1,188 @@
+// The League dashboard (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+// Beside the League nav at 768px the page is narrow (well under ~500px), so the leader cards
+// wrap onto their own rows rather than sharing one.
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--lf-font-heading);
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+
+h2 {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--lf-border);
+  font-family: var(--lf-font-heading);
+  font-size: 1rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--lf-accent);
+}
+
+.dashboard__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.dashboard__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.dashboard__mode {
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--lf-accent);
+  border-radius: var(--lf-radius);
+  background: color-mix(in srgb, var(--lf-accent) 12%, transparent);
+  color: var(--lf-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+
+  &[data-mode='none'] {
+    border-color: var(--lf-text-muted);
+    background: transparent;
+    color: var(--lf-text-muted);
+  }
+}
+
+.dashboard__delete {
+  color: var(--mat-sys-error);
+}
+
+.dashboard__season,
+.dashboard__map-config,
+.dashboard__muted {
+  color: var(--lf-text-muted);
+}
+
+.dashboard__map-config {
+  font-size: 0.875rem;
+}
+
+.dashboard__write-error {
+  @include alerts.error;
+}
+
+.dashboard__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.dashboard__no-season {
+  @include alerts.notice;
+}
+
+.dashboard__start {
+  @include alerts.notice;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.75rem;
+
+  span {
+    flex: 1 1 14rem;
+  }
+}
+
+.dashboard__card {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  > p {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+  }
+}
+
+.dashboard__next-round > p {
+  padding: 0.25rem 0.75rem;
+
+  &:first-of-type {
+    padding-top: 0.5rem;
+  }
+
+  &:last-of-type {
+    padding-bottom: 0.5rem;
+  }
+}
+
+.dashboard__row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--lf-border);
+
+  &:first-child {
+    border-top: 0;
+  }
+
+  > span:first-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  > span:last-child {
+    white-space: nowrap;
+  }
+}
+
+.dashboard__row--you {
+  background: color-mix(in srgb, var(--lf-accent) 12%, transparent);
+}
+
+.dashboard__leader-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+
+  .dashboard__leaders {
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+}
+
+.dashboard__inline-soon {
+  margin-left: 0.5rem;
+}
+
+.you {
+  @include badges.you;
+}

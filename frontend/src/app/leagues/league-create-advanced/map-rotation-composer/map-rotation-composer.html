@@ -1,0 +1,14 @@
+@for (id of ids(); track $index; let i = $index) {
+  <div class="rotation-row">
+    <mat-form-field appearance="outline" subscriptSizing="dynamic" class="picker-wide">
+      <mat-label>Rotation map</mat-label>
+      <mat-select [value]="id" (valueChange)="set(i, $event)">
+        @for (map of maps(); track map.id) {
+          <mat-option [value]="map.id">{{ map.name }}</mat-option>
+        }
+      </mat-select>
+    </mat-form-field>
+    <button mat-button type="button" (click)="remove(i)">Remove map</button>
+  </div>
+}
+<button mat-stroked-button type="button" (click)="add()">+ Add map</button>

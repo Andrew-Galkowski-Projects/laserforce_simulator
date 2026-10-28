@@ -1,0 +1,43 @@
+// Create League (template chooser): one card, one field per row, as Create Tournament.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.5rem;
+}
+
+.create {
+  max-width: 40rem;
+  padding: 1.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.create__intro {
+  margin: 0 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.error {
+  @include alerts.error;
+}
+
+.create__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}

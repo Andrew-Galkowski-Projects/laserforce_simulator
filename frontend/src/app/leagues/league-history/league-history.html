@@ -1,0 +1,126 @@
+@if (notFound()) {
+  <h1>League not found</h1>
+  <p><a mat-stroked-button routerLink="/leagues">&larr; Back to Leagues</a></p>
+} @else if (loadError(); as message) {
+  <div class="league-history__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (loaded(); as l) {
+  <h1>{{ l.league.name }} — History</h1>
+
+  @if (l.history.meta.count === 0) {
+    <p id="league-history-empty-notice" class="league-history__empty" role="status">
+      No Seasons yet — start a new Season to populate the history table.
+    </p>
+  } @else {
+    <div class="league-history__scroll">
+      <table id="league-history-table" class="league-history__table">
+        <thead>
+          <tr>
+            <th>Season</th>
+            <th>Start date</th>
+            <th class="num">Teams enrolled</th>
+            <th class="num">Matches played</th>
+            <th class="name">Champion</th>
+            <th class="name">Runner-Up</th>
+            <th class="name">Tournament Champion</th>
+            <th class="name">1st place</th>
+            <th class="name">2nd place</th>
+            <th class="name">3rd place</th>
+            <th class="name">Season MVP</th>
+            <th class="name">Finals MVP</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of l.history.items; track row.season_id) {
+            <tr
+              [id]="
+                row.is_in_progress
+                  ? 'league-history-in-progress-row'
+                  : 'league-history-row-' + row.season_id
+              "
+              [class.league-history__in-progress]="row.is_in_progress"
+            >
+              <td class="name"><app-soon-badge [label]="row.season_name" /></td>
+              <td class="num">{{ row.start_date }}</td>
+              <td class="num">{{ row.teams_enrolled }}</td>
+              <td class="num">{{ row.matches_played }}</td>
+              <td class="name">
+                @if (row.is_in_progress) {
+                  <span class="league-history__badge">In progress</span>
+                } @else {
+                  {{ row.champion?.name ?? '—' }}
+                }
+              </td>
+              <td class="name">{{ row.runner_up?.name ?? '—' }}</td>
+              <td class="name">
+                {{ row.is_in_progress ? '—' : (row.tournament_champion?.name ?? '—') }}
+              </td>
+              @for (slot of [0, 1, 2]; track slot) {
+                <td class="name">{{ row.top_three[slot]?.name ?? '—' }}</td>
+              }
+              @for (mvp of [row.season_mvp, row.finals_mvp]; track $index) {
+                <td
+                  class="name"
+                  [id]="
+                    ($index === 0 ? 'league-history-season-mvp-' : 'league-history-finals-mvp-') +
+                    row.season_id
+                  "
+                >
+                  @if (mvp) {
+                    <a [routerLink]="['/players', mvp.player_id, 'stats']">{{ mvp.player_name }}</a>
+                    @if (isSelf(mvp)) {
+                      &ngsp;<span class="league-history__you">You</span>
+                    }
+                  } @else {
+                    —
+                  }
+                </td>
+              }
+              <td><app-soon-badge label="Awards" /></td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="league-history__pager">
+      <label for="league-history-per-page-select">Per page:</label>
+      <select
+        id="league-history-per-page-select"
+        [value]="pageSize()"
+        (change)="changeSize($any($event.target).value)"
+      >
+        @for (size of pageSizes; track size) {
+          <option [value]="size" [selected]="size === pageSize()">{{ size }}</option>
+        }
+      </select>
+
+      @if (l.history.meta.total_pages > 1) {
+        <nav id="league-history-pagination" aria-label="League history pagination">
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="l.history.meta.page <= 1"
+            (click)="goTo(l.history.meta.page - 1)"
+          >
+            Previous
+          </button>
+          <span class="league-history__page"
+            >Page {{ l.history.meta.page }} of {{ l.history.meta.total_pages }}</span
+          >
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="l.history.meta.page >= l.history.meta.total_pages"
+            (click)="goTo(l.history.meta.page + 1)"
+          >
+            Next
+          </button>
+        </nav>
+      }
+    </div>
+  }
+}

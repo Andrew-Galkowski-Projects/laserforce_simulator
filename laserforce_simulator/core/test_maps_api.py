@@ -26,7 +26,7 @@ from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
 from core.map_test_fixtures import TempMediaMixin, make_bare_map, make_image_map
-from core.models import ArenaMap, MapZoneConfig
+from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
 
 User = get_user_model()
 
@@ -189,6 +189,53 @@ class TestMapsFilters(_MapsTestCase):
         self.assertNotIn("Alpha Arena", names)
         self.assertIn("Bravo Arena", names)
         self.assertIn("Charlie Arena", names)
+
+    def test_simulation_ready_needs_confirmed_config_and_both_bases(self) -> None:
+        """ANG-06-14 B7 -- the ``_maps_with_confirmed_config`` rule: a confirmed
+        config AND a red base AND a blue base. A base without a confirmed config
+        (bravo) or a confirmed map missing a base does not count."""
+        for base_type in ("red", "blue"):
+            MapBaseConfig.objects.create(
+                arena_map=self.alpha, base_type=base_type, x_px=1, y_px=1
+            )
+            MapBaseConfig.objects.create(
+                arena_map=self.bravo, base_type=base_type, x_px=1, y_px=1
+            )
+        red_only = ArenaMap.objects.create(name="Delta Arena", image="")
+        MapZoneConfig.objects.create(
+            arena_map=red_only, zone_size=20, zone_data={}, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=red_only, base_type="red", x_px=1, y_px=1
+        )
+        blue_only = ArenaMap.objects.create(name="Echo Arena", image="")
+        MapZoneConfig.objects.create(
+            arena_map=blue_only, zone_size=20, zone_data={}, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=blue_only, base_type="blue", x_px=1, y_px=1
+        )
+        names = self.names({"simulation_ready": "true", "page_size": 100})
+        self.assertIn("Alpha Arena", names)
+        self.assertNotIn("Bravo Arena", names)
+        self.assertNotIn("Charlie Arena", names)
+        self.assertNotIn("Delta Arena", names)
+        self.assertNotIn("Echo Arena", names)
+        self.assertEqual(len(names), len(set(names)))
+
+    def test_simulation_ready_false_is_the_complement(self) -> None:
+        for base_type in ("red", "blue"):
+            MapBaseConfig.objects.create(
+                arena_map=self.alpha, base_type=base_type, x_px=1, y_px=1
+            )
+        names = self.names({"simulation_ready": "false", "page_size": 100})
+        self.assertNotIn("Alpha Arena", names)
+        self.assertIn("Bravo Arena", names)
+
+    def test_simulation_ready_adds_no_serializer_field(self) -> None:
+        row = self.api.get("/api/maps/", {"simulation_ready": "true"}).json()["data"]
+        for item in row:
+            self.assertEqual(set(item), _MAP_FIELDS)
 
     def test_unparseable_boolean_is_ignored(self) -> None:
         """BooleanWidget treats junk as absent — never a 400 on booleans."""

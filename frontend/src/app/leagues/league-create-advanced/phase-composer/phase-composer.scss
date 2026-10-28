@@ -1,0 +1,28 @@
+// One bordered block per Season phase; its fields two-up when the card is wide enough.
+:host {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.phase-row {
+  align-self: stretch;
+  padding: 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface-alt);
+}
+
+.phase-row__fields {
+  display: grid;
+  grid-template-columns: 1fr;
+  column-gap: 1rem;
+  row-gap: 0.5rem;
+}
+
+@media (min-width: 900px) {
+  .phase-row__fields {
+    grid-template-columns: 1fr 1fr;
+  }
+}

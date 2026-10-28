@@ -1,0 +1,19 @@
+// One row per rotation map: the picker takes the row ("Name pickers get room"), Remove after it.
+:host {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.rotation-row {
+  display: flex;
+  align-self: stretch;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.picker-wide {
+  flex: 1 1 auto;
+  min-width: 0;
+}

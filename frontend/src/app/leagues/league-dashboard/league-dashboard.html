@@ -1,0 +1,156 @@
+@if (notFound()) {
+  <h1>League not found</h1>
+  <p><a mat-stroked-button routerLink="/leagues">&larr; Back to Leagues</a></p>
+} @else if (loadError(); as message) {
+  <div class="dashboard__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (dash(); as d) {
+  <div class="dashboard__header">
+    <h1>{{ d.league.name }}</h1>
+    <div class="dashboard__actions">
+      <span class="dashboard__mode" [attr.data-mode]="d.season_mode">{{
+        modeLabel(d.season_mode)
+      }}</span>
+      @if (d.has_owner_evaluations) {
+        <a mat-button routerLink="history">View past evaluations</a>
+      }
+      @if (canDelete(d)) {
+        <button
+          mat-stroked-button
+          type="button"
+          class="dashboard__delete"
+          [disabled]="del.busy()"
+          (click)="remove(d)"
+        >
+          Delete League
+        </button>
+      }
+    </div>
+  </div>
+
+  @if (writeError() ?? del.error(); as message) {
+    <p class="dashboard__write-error" role="alert">{{ message }}</p>
+  }
+
+  @if (d.playoff_tournament_id !== null) {
+    <p class="dashboard__bracket"><app-soon-badge label="View bracket" /></p>
+  }
+
+  @if (d.displayed_season; as season) {
+    <p class="dashboard__season"><app-soon-badge [label]="season.name" /></p>
+  }
+
+  @if (d.managed_team; as team) {
+    <p class="dashboard__managed">
+      You manage <strong>{{ team.name }}</strong
+      >.
+    </p>
+  }
+
+  @if (d.season_mode === 'draft' && d.displayed_season; as season) {
+    <div class="dashboard__start">
+      <span
+        >This Season hasn't started yet. Start it to lock in the teams and schedule, then play games
+        from the Play menu.</span
+      >
+      <button mat-flat-button type="button" [disabled]="writing()" (click)="start(season.id)">
+        Start Season
+      </button>
+    </div>
+  }
+
+  @if (d.season_mode === 'completed') {
+    <p class="dashboard__next">
+      @if (d.manager_awaiting_reassignment) {
+        <a mat-flat-button routerLink="new-team">Choose new team</a>
+      } @else {
+        <button mat-flat-button type="button" [disabled]="writing()" (click)="nextSeason(d)">
+          Start next Season
+        </button>
+      }
+    </p>
+  }
+
+  @if (d.season_mode === 'none') {
+    <p class="dashboard__no-season" role="status">No Season exists for this League yet.</p>
+  }
+
+  <p class="dashboard__map-config">{{ d.map_config_label }}</p>
+
+  @if (d.season_mode === 'draft' && d.displayed_season) {
+    <p class="dashboard__conferences"><app-soon-badge label="Manage Conferences" /></p>
+  }
+
+  @if (d.season_mode !== 'none') {
+    <section class="dashboard__card dashboard__standings">
+      <h2>Top standings</h2>
+      <ul>
+        @for (row of d.standings_snippet; track row.team_id) {
+          @let you = isManaged(d, row.team_id);
+          <li class="dashboard__row" [class.dashboard__row--you]="you">
+            <span
+              >{{ row.rank }}. {{ row.team?.name ?? '(unknown)' }}
+              @if (you) {
+                <span class="you">You</span>
+              }
+            </span>
+            <span>{{ row.league_points }} pts</span>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+
+  @if (d.member_night_progress; as night) {
+    <section class="dashboard__card dashboard__member-night">
+      <p>
+        <strong>Member night:</strong> {{ night.played }} / {{ night.total }} games played
+        <app-soon-badge class="dashboard__inline-soon" label="View results" />
+      </p>
+    </section>
+  }
+
+  @if (d.season_mode === 'active' || d.season_mode === 'completed') {
+    <section class="dashboard__card dashboard__next-round">
+      <h2>Next round</h2>
+      @if (d.next_fixture; as fixture) {
+        <p>Matchday {{ fixture.matchday }} · Round {{ fixture.round_number }}</p>
+        <p>{{ fixture.team_a_name }} vs {{ fixture.team_b_name }}</p>
+        <p class="dashboard__muted">{{ fixture.date }}</p>
+      } @else {
+        <p>All fixtures played</p>
+      }
+    </section>
+
+    <section class="dashboard__card dashboard__round-count">
+      <p>
+        <strong>Rounds played:</strong> {{ d.round_count_completed }} / {{ d.round_count_total }}
+      </p>
+    </section>
+
+    <div class="dashboard__leader-cards">
+      @for (board of boards(d); track board.title) {
+        <section class="dashboard__card dashboard__leaders">
+          <h2>{{ board.title }}</h2>
+          <ul>
+            @for (row of board.rows; track row.player_id) {
+              <li class="dashboard__row">
+                <span
+                  ><a [routerLink]="['/players', row.player_id, 'stats']">{{ row.player_name }}</a>
+                  @if (row.player_id === selfId()) {
+                    <span class="you">You</span>
+                  }
+                </span>
+                <span>{{ row.value.toFixed(2) }}</span>
+              </li>
+            }
+          </ul>
+        </section>
+      }
+    </div>
+
+    <p class="dashboard__all-leaders"><app-soon-badge label="View all leaders" /></p>
+  }
+}

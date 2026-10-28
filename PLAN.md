@@ -96,10 +96,7 @@ below (13b, 14, 16); the item's grill confirms it.
 12. **[DONE] Batch simulate** (ANG-06-12, in `PLAN-completed.md`).
 13a. **[DONE] Tournaments: list, create, participant pool** (ANG-06-13a, in `PLAN-completed.md`).
 13b. **[DONE] Tournament detail** (ANG-06-13b, in `PLAN-completed.md`).
-14. **League core (ANG-06-14)** — list, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
-    history, new-team picker / reassign, next season, and the league sidebar in the Shell. API gaps:
-    the delete confirm's `delete_summary` counts (Seasons, Matches, Tournaments, Teams, Players) have
-    no endpoint, and `dashboard/` lacks `has_owner_evaluations` (the "View past evaluations" link).
+14. **[DONE] League core** (ANG-06-14, in `PLAN-completed.md`).
 15. **League stats (ANG-06-15)** — leaders, player stats, player ratings, team stats, statistical feats, game
     log, power rankings, playoffs.
 16. **League team & player (ANG-06-16)** — team roster, schedule, team history, league player detail, free
