@@ -124,8 +124,9 @@ export interface TournamentCreateInput {
 /** `PoolGenerateForm` fields for `POST tournaments/{id}/pool/generate/`. */
 export interface PoolGenerateInput {
   count: number;
-  mean: number;
-  std_dev: number;
+  /** null (or absent) takes the Form's default (`required=False`). */
+  mean: number | null;
+  std_dev: number | null;
 }
 
 /**

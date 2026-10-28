@@ -182,9 +182,9 @@ export class TournamentPool {
       return;
     }
     this.generating.set(true);
-    // Valid, so `count` is a number; an emptied Mean / Std dev goes as null, which
-    // `PoolGenerateForm` (required=False) reads as its default.
-    const body = this.generateForm.getRawValue() as PoolGenerateInput;
+    // Valid, so `count` (required) is a number; an emptied Mean / Std dev goes as null.
+    const { count, mean, std_dev } = this.generateForm.getRawValue();
+    const body: PoolGenerateInput = { count: count as number, mean, std_dev };
     this.tournaments.generatePool(this.detail().id, body).subscribe({
       next: (made) => {
         this.generating.set(false);
