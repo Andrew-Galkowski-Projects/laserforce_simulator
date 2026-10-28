@@ -38,6 +38,8 @@ form {
   grid-template-columns: 1fr;
   column-gap: 1rem;
   row-gap: 0.5rem;
+  // A neighbour's long hint must not stretch this field's outline.
+  align-items: start;
 }
 
 @media (min-width: 900px) {
