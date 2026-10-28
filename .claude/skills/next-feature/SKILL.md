@@ -187,6 +187,10 @@ mutation runs costs about 160k tokens (ANG-06-10: one screen per ticket, 157k
 and 170k), so count screens before dividing. A task small enough for one session gets one ticket.
 Don't pad.
 
+Run every number an acceptance criterion names through the spec's rule before
+publishing the ticket: ANG-06-13a's #400 said the pool warning shows at 30, a
+valid pool size (a multiple of 6, at least 24).
+
 Create each ticket as a sub-issue of the spec with native blocked-by edges,
 using the `gh api` fallbacks in `docs/agents/issue-tracker.md` (installed `gh`
 predates `--parent`).
@@ -230,7 +234,12 @@ parallel, prepare the integration tip yourself:
   (`shared/_alerts.scss`, `_badges.scss`, `api-message.ts`, `notify.ts`,
   `confirm-dialog.ts`), and create any missing one on the integration tip
   first, so agents reuse it instead of copying (ANG-06-8's badge, error box and
-  load-error code each came back twice).
+  load-error code each came back twice). When two tickets each need a card or
+  flow an existing screen already has (an import card, a picker with its load
+  error), extract the whole piece, its state included, not only its pure
+  functions: ANG-06-13a moved `classifyImportErrors` alone, both agents copied
+  roster-import's chooser, template download and error lists, and review paid
+  for a shared `CsvImport`.
 - For each new public seam method, grep what it calls (an `ApiClient` verb, a
   model method). Add anything missing to its shared module first, or the ticket
   that is barred from that file stops half-done (ANG-06a: `ApiClient.put`).
@@ -257,7 +266,11 @@ Merge each finished ticket branch yourself. Into the branch checked out in your
 worktree, use `git merge`. Into a branch checked out nowhere (a
 `prototype/<task>` branch), use `python scripts/merge_into_branch.py <target>
 <ticket branch>`. It fast-forwards when it can, otherwise writes the merge
-commit, and leaves the target alone on a conflict.
+commit, and leaves the target alone on a conflict. After each merge of a
+ticket that ran in parallel, run `npm --prefix frontend run test:ci` once
+(about 15 s, with no agent running Vitest), so a spec that opens a stub
+another ticket replaced fails at the merge that broke it: ANG-06-13a's list
+spec clicked into Create and left the real screen's Teams GET open.
 
 Add these constraints to every implementer prompt:
 
@@ -457,7 +470,8 @@ Then stop again: the owner reviews and says when to merge. PRs are
 is in `main` under a new hash (other PRs that merged meanwhile show up in an
 unscoped diff). Then, for every implementer and fix-pass worktree, stop its servers with
 `scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
-tool), `git worktree remove --force <path>`, and `git branch -D` its branch
+tool), `git worktree remove -f -f <path>` (a finished agent's lock outlives it,
+and one `--force` refuses a locked worktree), and `git branch -D` its branch
 and its `worktree-agent-*` branch. `python scripts/prune_agent_branches.py
 --delete` then clears any older agent branches already merged into
 `origin/main`, and lists every `agent-*` worktree still on disk with its

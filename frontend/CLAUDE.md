@@ -234,8 +234,9 @@ colours in light mode, all-mono JetBrains Mono.
   so no component needs local `--mat-sys-*` patches. Density is left at Material's default
   (a layout concern for ANG-06). Data screens (team strips, stat tables, the log) are hand-rolled.
 - **Layout breakpoints:** from 768px the Shell's sidebar sits beside the page (~208px), so the
-  content area is ~560px at 768px and ~1070px at 1280px. Size a multi-column layout by that content
-  width, not the viewport (ANG-06-8's player detail stacks below 1100px).
+  usable width inside the page padding is ~500px at 768px and ~1010px at 1280px (measured,
+  ANG-06-13a). Size a multi-column layout or a table's columns by that width, not the viewport
+  (ANG-06-8's player detail stacks below 1100px; ANG-06-13a's list overflowed on a 34rem row).
 - **Font:** JetBrains Mono is self-hosted by `@fontsource/jetbrains-mono` (400 / 500 / 700, in the
   `angular.json` `styles` list). Never add a Google Fonts link or other font CDN.
 - **Canvas** (Chart.js, the playback map) ignores CSS: pass it token values read at runtime,
