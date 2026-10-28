@@ -208,11 +208,19 @@ class TestMapsFilters(_MapsTestCase):
         MapBaseConfig.objects.create(
             arena_map=red_only, base_type="red", x_px=1, y_px=1
         )
+        blue_only = ArenaMap.objects.create(name="Echo Arena", image="")
+        MapZoneConfig.objects.create(
+            arena_map=blue_only, zone_size=20, zone_data={}, confirmed=True
+        )
+        MapBaseConfig.objects.create(
+            arena_map=blue_only, base_type="blue", x_px=1, y_px=1
+        )
         names = self.names({"simulation_ready": "true", "page_size": 100})
         self.assertIn("Alpha Arena", names)
         self.assertNotIn("Bravo Arena", names)
         self.assertNotIn("Charlie Arena", names)
         self.assertNotIn("Delta Arena", names)
+        self.assertNotIn("Echo Arena", names)
         self.assertEqual(len(names), len(set(names)))
 
     def test_simulation_ready_false_is_the_complement(self) -> None:
