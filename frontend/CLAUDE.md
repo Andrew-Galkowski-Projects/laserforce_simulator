@@ -7,7 +7,8 @@ below 768px) behind `authGuard`, Change password (ANG-06 item 7), the Teams feat
 Players area (ANG-06-8: list, player detail, career stats, role benchmarks) and the
 Matches area (ANG-06c: Match History, New Match / New Single Round; ANG-06d: Match and Round detail;
 ANG-06e-g: Event log, Playback, Charts; ANG-06-10: Missile log, Movement heatmap), the Maps area (ANG-06h: map list and editor) and the
-Tournaments area (ANG-06-13a: list, create, detail with participant import and the Player pool), on top of the client
+Tournaments area (ANG-06-13a: list, create, detail with participant import and the Player pool;
+ANG-06-13b: Seeding, lock, draw, play and every format's results), on top of the client
 layer from ANG-05: typed API services and the JWT sign-in / silent-refresh flow. See **API and
 auth** below.
 
@@ -195,9 +196,13 @@ src/
                           rules from one visibleFields predicate), /tournaments/:id
                           (tournament-detail: the host; loads the detail, each section a child
                           that emits `changed` to reload it). Sections: participant-import
-                          (preset, setup, sandbox: Import Participants CSV) and tournament-pool
-                          (Player pool: the table, add / generate / import cards, Remove);
-                          testing/ (detail-fixtures, pool-fixtures incl. releasePoolLoads,
+                          (preset, setup, sandbox: Import Participants CSV), tournament-pool
+                          (Player pool: the table, add / generate / import cards, Remove; ANG-06-13b:
+                          Draw / Re-roll, Drawn Teams + Set tier), tournament-setup (ANG-06-13b:
+                          Seeding, Lock & Build Bracket), tournament-play (Play Next + played-message,
+                          Play All polling) and tournament-results (per-format layout; bracket/,
+                          node-card/, crosstable/, standings-table/, round-names.ts); pool-size.ts
+                          (poolSizeInvalid); testing/ (detail-fixtures, pool-fixtures incl. releasePoolLoads,
                           tournaments-loads: releaseTournamentsLoads, specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource

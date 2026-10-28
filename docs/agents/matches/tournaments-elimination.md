@@ -901,8 +901,8 @@ Matches. The Django pages stay until ANG-08.
 
 - **Seam:** `frontend/src/app/api/tournaments.service.ts` (`list`, `get`, `create`, `pool`,
   `addPoolPlayers`, `removePoolPlayer`, `generatePool`, `importPool`, `importParticipants`) +
-  `tournaments.models.ts` (`Tournament`, `TournamentDetail`: the 13b fields `brackets`,
-  `rr_standings`, `swiss_standings`, `cut_labels` are typed `unknown`; `PoolEntry`,
+  `tournaments.models.ts` (`Tournament`, `TournamentDetail`: `brackets`, `rr_standings`,
+  `swiss_standings`, `cut_labels` were typed `unknown` until ANG-06-13b; `PoolEntry`,
   `TournamentCreateInput`, `PoolGenerateInput`, `TOURNAMENT_STATE_LABELS`, `TEAM_ASSEMBLY_LABELS`).
 - **Client-side derivations** (no API field): the State label, locked = `state !== 'setup'`, pool
   controls shown = not locked and not `embedded`, the "You" badge from `self_insert`.
@@ -917,10 +917,52 @@ Matches. The Django pages stay until ANG-08.
   emits `changed` to reload it. 13a has the header (State badge, assembly label, champion, an "In
   League" note), read-only Participants, `participant-import` (only setup + preset + sandbox, an
   owner-approved departure: the API refuses Player-pool) and `tournament-pool` (Player pool only).
-  ANG-06-13b adds draw / reseed / lock / play / crosstable as further sections.
+  ANG-06-13b added Seeding / lock / draw / play / results as further sections (below).
 - **Pool:** size warning unless a multiple of 6 and >= 24; the table loads every page; add-existing
   leaves out already-pooled Players (departure); Generate checks the Form's bounds on the client;
   Remove has no confirm. The three CSV cards (roster import, participant import, pool import) share
   `shared/csv-import.ts` (`CsvImport`).
 - **Out (logged):** generated / imported pool Players land on the global Free Agents team
   (ANG01f5-D1); pool import skips the slot-collision check (ANG01f5-D2).
+
+## ANG-06-13b Angular Tournament detail (Seeding, lock, draw, play, results)
+
+The rest of `tournament_detail.html` and `_tournament_round.html` in the SPA's `/tournaments/:id`
+(spec #403, tickets #404-#406). Parity means the same features, not the same look (ADR-0043). The
+Django page stays until ANG-08.
+
+- **API (the only backend change):** the detail payload gains `rr_crosstable` and `can_play`
+  (`api.md`, Tournaments). `_build_rr_crosstable` now prefetches `series_matches__match`, which also
+  removes one query per played node from the Django page.
+- **Seam:** `TournamentsService` gains `saveSeeds` (PUT `seeds/`), `lock`, `draw`, `editDrawEntry`
+  (PATCH `draw/entries/<pid>/`), `playNext`, `playAll` and `playJob` (GET `play-jobs/<id>/`).
+  `tournaments.models.ts` types `BracketGroup` / `BracketRound` / `BracketNode`,
+  `TournamentStandingsRow`, `CutLabel`, `CrosstableRow` / `CrosstableCell` / `CrosstableLeg`,
+  `PlayNextResult`, `PlayJobRef` and `PlayJobStatus` (reusing Batch's `JobStatus`).
+- **Host sections:** each emits `changed`, and the host reloads the detail (no section patches it).
+  Write controls are hidden when `embedded` or the state doesn't allow them.
+  - `tournament-setup`: Seeding (preset only, number inputs `required` / `min="1"`, PUT, server 400s in
+    an error box) and Lock & Build Bracket (asks through `ConfirmDialog`).
+  - `tournament-pool` (13a's) gains Draw teams / Re-roll draw (disabled by `poolSizeInvalid`, shared
+    in `tournaments/pool-size.ts`) and the Drawn Teams cards with a Set tier input (1-6) per Player.
+    It reuses the pool entries it already loads, so the host's load sends no extra GET.
+  - `tournament-play`: Play Next Match (disabled unless `can_play`; the snackbar is
+    `playedMessage`, the Django `_played_message` wording) and Play All. Play All polls
+    `play-jobs/<id>/` with `timer(1000)` after each answer. An HTTP failure on a poll schedules the
+    next poll, a 409 `play_in_progress` resumes the job named in its `job:<id>` field, and a 503
+    shows the server's message. It reads "Starting…" then "Running… stage c / t".
+  - `tournament-results`: the per-format layout. The shared `bracket` / `node-card` / `crosstable` /
+    `standings-table` components live under it. Single elimination names its columns Final /
+    Semifinals / Quarterfinals / Round N (`round-names.ts`) with h3 headings, and every other group
+    says "Round N" (h4 under its sub-bracket h3). RR->DE shows the Finals Bracket only once those groups
+    exist. The Standings add a Cut column (WB / LB / Out, plus a `data-cut` tint) only when
+    `cut_labels` is non-empty. The bracket and crosstable scroll sideways in their own box.
+  - Host header: the stage badge (RR->DE and Swiss only), "No participants in this tournament.", and
+    the champion banner only when `completed`.
+- **Server order:** participants arrive by seed, so Seeding rows and Drawn Teams keep the detail's
+  order and never re-sort.
+- **Out:** cancel / delete (neither surface has them), moving a Player between drawn Teams, resuming a
+  run after a reload beyond the 409, the streak / L5 Standings columns, and `next_node`.
+- **Known gap (pre-existing):** without Redis, Play All returns an unhandled 500 (a redis
+  `ConnectionError` from `apply_async`) instead of the 503 `broker_unavailable`, because
+  `enqueue_play_all` catches only kombu's `OperationalError`. It is logged in `PLAN.md`.
