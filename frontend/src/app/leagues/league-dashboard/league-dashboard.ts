@@ -51,6 +51,7 @@ export class LeagueDashboard {
   /** I3: the last failed write's message; the dashboard stays as it was. */
   protected readonly writeError = signal<string | null>(null);
   protected readonly del = new LeagueDelete();
+  protected readonly canDelete = canDeleteLeague;
   /** I4: the signed-in Account's Self-insert Player id, if linked. */
   protected readonly selfId = computed(() => this.auth.currentUser()?.self_insert?.id);
 
@@ -98,10 +99,6 @@ export class LeagueDashboard {
         return true;
       },
     );
-  }
-
-  protected canDelete(dash: Dashboard): boolean {
-    return canDeleteLeague(dash);
   }
 
   protected remove(dash: Dashboard): void {

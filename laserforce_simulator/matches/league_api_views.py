@@ -63,12 +63,14 @@ from matches.league_services import (
     build_team_schedule,
     compute_season_award_sets,
     create_league_and_season,
+    dashboard_awaiting_reassignment,
     eligible_new_teams,
     ensure_owner_evaluation,
     history_seasons,
     is_career_league,
     latest_completed_season,
     league_delete_summary,
+    managed_team_id,
     pick_displayed_season,
     manager_awaiting_reassignment,
     reassign_and_roll,
@@ -490,27 +492,18 @@ class LeagueViewSet(
         """The League dashboard body for its displayed Season.
 
         ANG-06-14 B5 adds five League-only keys (the Season dashboard body is
-        unchanged): ``mode``, ``managed_team`` (career Leagues only, the HTML
-        ``_managed_team_id`` rule), ``has_owner_evaluations``,
+        unchanged): ``mode``, ``managed_team`` (career Leagues only, the
+        ``managed_team_id`` rule the HTML dashboard uses), ``has_owner_evaluations``,
         ``member_night_progress`` and ``manager_awaiting_reassignment``.
         """
         league = self.get_object()
         displayed_season = pick_displayed_season(league)
         season_mode = season_mode_for(displayed_season)
         body = build_dashboard_context(displayed_season, season_mode)
-        awaiting = False
-        if is_career_league(league) and season_mode == "completed":
-            latest = latest_completed_season(league)
-            # Runs the lazy finance / owner-evaluation ensures (the picker's
-            # GET does the same), so it precedes ``has_owner_evaluations``.
-            awaiting = latest is not None and manager_awaiting_reassignment(
-                league, latest
-            )
-        managed_team = (
-            league.current_team
-            if league.mode == "league" and league.current_team_id is not None
-            else None
-        )
+        # Runs the lazy finance / owner-evaluation ensures, so it precedes
+        # ``has_owner_evaluations``.
+        awaiting = dashboard_awaiting_reassignment(league, season_mode)
+        managed_team = league.current_team if managed_team_id(league) else None
         return Response(
             {
                 "league": league_ref(league),

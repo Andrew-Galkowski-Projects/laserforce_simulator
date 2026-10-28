@@ -2738,6 +2738,30 @@ def manager_awaiting_reassignment(league: League, latest_completed: Season) -> b
     )
 
 
+def managed_team_id(league: League) -> int | None:
+    """UXP-08 — the Manager's Team id in a career (``mode="league"``) League.
+
+    ``None`` for sandbox / multiplayer Leagues or when no Team is managed.
+    Shared by the HTML dashboard / standings and the API dashboard.
+    """
+    if league.mode != "league":
+        return None
+    return league.current_team_id
+
+
+def dashboard_awaiting_reassignment(league: League, season_mode: str) -> bool:
+    """ANG-06-14 B5 — whether the dashboard offers "Choose new team".
+
+    True only for a career League whose displayed Season is completed and whose
+    Manager was fired and has not reassigned. Runs the lazy finance /
+    owner-evaluation ensures (as the New-Team picker's GET does).
+    """
+    if not is_career_league(league) or season_mode != "completed":
+        return False
+    latest = latest_completed_season(league)
+    return latest is not None and manager_awaiting_reassignment(league, latest)
+
+
 def reassign_and_roll(league: League, team: Team, latest_completed: Season) -> Season:
     """Point the Manager at ``team`` (a new tenure), then roll the Season.
 

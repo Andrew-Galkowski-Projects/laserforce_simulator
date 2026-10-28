@@ -147,6 +147,7 @@ from .league_services import (  # noqa: F401 - re-exports
     is_career_league,
     latest_completed_season,
     league_delete_summary,
+    managed_team_id,
     member_night_game_counts,
     pick_displayed_season,
     manager_awaiting_reassignment,
@@ -167,6 +168,7 @@ _is_career_league = is_career_league
 _run_season_rollover = run_season_rollover
 _eligible_new_teams = eligible_new_teams
 _teardown_league = teardown_league
+_managed_team_id = managed_team_id
 _build_dashboard_context = build_dashboard_context
 _pick_displayed_season = pick_displayed_season
 _compute_season_award_set = compute_season_award_set
@@ -331,16 +333,6 @@ def season_standings(request, season_id: int) -> HttpResponse:
         "managed_team_id": _managed_team_id(league),
     }
     return render(request, "seasons/standings.html", context)
-
-
-def _managed_team_id(league: League) -> int | None:
-    """UXP-08 — the Manager's Team id in a career (``mode="league"``) League.
-
-    ``None`` for sandbox / multiplayer Leagues or when no Team is managed.
-    """
-    if league.mode != "league":
-        return None
-    return league.current_team_id
 
 
 # ----------------------------------------------------------------------

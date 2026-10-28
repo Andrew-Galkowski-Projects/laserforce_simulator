@@ -42,11 +42,6 @@
                       ariaCurrentWhenActive="page"
                       >{{ entry.label }}</a
                     >
-                  } @else {
-                    <!-- A live entry with no target yet (Django: no displayed Season). -->
-                    <span class="league-nav__link league-nav__link--off" aria-disabled="true">{{
-                      entry.label
-                    }}</span>
                   }
                 </li>
               }
