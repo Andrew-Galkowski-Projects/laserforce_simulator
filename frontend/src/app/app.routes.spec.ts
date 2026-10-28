@@ -37,6 +37,9 @@ import { PlayerHeadToHead } from './players/player-head-to-head/player-head-to-h
 import { CompareRounds } from './matches/compare-rounds/compare-rounds';
 import { MissileLog } from './matches/missile-log/missile-log';
 import { RoundHeatmap } from './matches/round-heatmap/round-heatmap';
+import { TournamentCreate } from './tournaments/tournament-create/tournament-create';
+import { TournamentDetail } from './tournaments/tournament-detail/tournament-detail';
+import { TournamentList } from './tournaments/tournament-list/tournament-list';
 
 describe('app routes', () => {
   let http: HttpTestingController;
@@ -310,6 +313,47 @@ describe('app routes', () => {
       expect(harness.fixture.debugElement.query(By.directive(RoundDetail))).toBeNull();
       expect(TestBed.inject(Title).getTitle()).toBe(title);
     });
+  });
+
+  describe('signed in, Tournaments area (ANG-06-13a)', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    // These specs check routing only. Drop whatever the three screens load, so ANG-06-13a's
+    // create and detail tickets never edit this file.
+    afterEach(() => {
+      http.match(() => true);
+    });
+
+    it.each([
+      ['/tournaments', TournamentList, 'Tournaments - Laserforce Simulator'],
+      ['/tournaments/new', TournamentCreate, 'Create Tournament - Laserforce Simulator'],
+      ['/tournaments/4', TournamentDetail, 'Tournament - Laserforce Simulator'],
+    ])('resolves %s to its screen and page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
+
+    it('never reads /tournaments/new as a Tournament id', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/tournaments/new');
+      expect(harness.fixture.debugElement.query(By.directive(TournamentDetail))).toBeNull();
+    });
+  });
+
+  describe('signed out, Tournaments area', () => {
+    it.each(['/tournaments', '/tournaments/new', '/tournaments/4'])(
+      'sends %s to /login with a returnUrl',
+      async (url) => {
+        const harness = await RouterTestingHarness.create();
+        await harness.navigateByUrl(url);
+        expect(routerUrl()).toBe(`/login?returnUrl=${encodeURIComponent(url)}`);
+      },
+    );
   });
 
   describe('signed in, Maps area', () => {

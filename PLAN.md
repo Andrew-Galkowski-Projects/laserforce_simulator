@@ -94,8 +94,7 @@ below (13b, 14, 16); the item's grill confirms it.
 10. **[DONE] Round extras** (ANG-06-10, in `PLAN-completed.md`).
 11. **[DONE] Enhanced setup / detail check** (ANG-06-11, in `PLAN-completed.md`).
 12. **[DONE] Batch simulate** (ANG-06-12, in `PLAN-completed.md`).
-13a. **Tournaments: list, create, participant pool (ANG-06-13a)** — pool add-existing / generate / import /
-    remove, participant import. Replaces `tournament_list`, `tournament_create`.
+13a. **[DONE] Tournaments: list, create, participant pool** (ANG-06-13a, in `PLAN-completed.md`).
 13b. **Tournament detail (ANG-06-13b)** — draw + draw edit, reseed, lock, play next / all with status. Replaces
     `tournament_detail`, `_tournament_round`. API gap: `tournaments/<id>/` lacks the round-robin
     crosstable (`rr_crosstable`) and `can_play` / `next_node` (`tournament_services/detail.py`).

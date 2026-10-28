@@ -71,6 +71,13 @@
       >
       <a
         mat-list-item
+        routerLink="/tournaments"
+        routerLinkActive="shell__link--active"
+        (click)="wide() || nav.close()"
+        >Tournaments</a
+      >
+      <a
+        mat-list-item
         routerLink="/maps"
         routerLinkActive="shell__link--active"
         (click)="wide() || nav.close()"

@@ -9,6 +9,17 @@ export const GENERIC_ERROR_MESSAGE = 'Something went wrong. Please try again.';
 export const REQUIRED_MESSAGE = 'This field is required.';
 
 /**
+ * Drops each control's `server` error before a resubmit (it only clears on a value change
+ * otherwise). It re-runs the control's validators rather than `setErrors(null)`, so its own
+ * errors (`required`, `min`, ...) stay and still block the submit.
+ */
+export function clearServerErrors(form: FormGroup): void {
+  for (const control of Object.values(form.controls)) {
+    if (control.hasError('server')) control.updateValueAndValidity();
+  }
+}
+
+/**
  * Puts each envelope field error on the matching control (as its `server` error, marked
  * touched so `mat-error` shows it) and returns the messages no control owns, for the
  * alert above the form. A non-`ApiError` gives one generic message.

@@ -1,0 +1,85 @@
+// The "Import Participants (CSV)" card: `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+
+:host {
+  display: block;
+  margin-bottom: 1.5rem;
+}
+
+.participant-import {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 32rem;
+  padding: 1.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+
+  h2 {
+    margin: 0;
+    font-family: var(--lf-font-heading);
+    font-size: 1.125rem;
+  }
+
+  form {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+}
+
+.participant-import__hint {
+  margin: 0;
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.participant-import__alert {
+  @include alerts.error;
+}
+
+.participant-import__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.participant-import__label {
+  font-weight: 500;
+}
+
+.participant-import__picker {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.participant-import__filename {
+  color: var(--lf-text-muted);
+  overflow-wrap: anywhere;
+}
+
+// `mat-error` outside a `mat-form-field` carries no Material styles of its own.
+.participant-import__error {
+  display: block;
+  font-size: 0.875rem;
+  color: var(--mat-sys-error);
+}
+
+.participant-import__rows {
+  margin: 0;
+  padding: 0.75rem 0.75rem 0.75rem 2rem;
+  border: 1px solid var(--mat-sys-error);
+  border-radius: var(--lf-radius);
+  color: var(--mat-sys-error);
+  font-size: 0.875rem;
+}
+
+.participant-import__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}

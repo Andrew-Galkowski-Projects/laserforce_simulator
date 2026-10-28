@@ -18,7 +18,7 @@ import { MatchesService } from '../../api/matches.service';
 import { RoundsService } from '../../api/rounds.service';
 import { TeamListItem } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
-import { REQUIRED_MESSAGE, applyApiErrors } from '../../shared/form-errors';
+import { REQUIRED_MESSAGE, applyApiErrors, clearServerErrors } from '../../shared/form-errors';
 import { injectNotify } from '../../shared/notify';
 import { SetupKind } from '../shared/setup-kind';
 
@@ -99,11 +99,7 @@ export class SetupForm {
    */
   protected simulate(): void {
     this.nonFieldErrors.set([]);
-    // A control's `server` error only clears on a value change, so drop it here too
-    // (re-running the validators keeps `required`).
-    for (const control of Object.values(this.form.controls)) {
-      if (control.hasError('server')) control.updateValueAndValidity();
-    }
+    clearServerErrors(this.form);
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;

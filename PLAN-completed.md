@@ -7198,6 +7198,42 @@ Form, status polling, save games. Replaces `matches/batch_simulate`.
    `score-histogram.ts` and `score-histogram-chart.ts`). One ticket. Glossary: **Average game**,
    **Highlight game**.
 
+#### ANG-06-13a · [DONE] Tournaments: list, create, participant pool
+
+**[DONE] Shipped (2026-10-27).** Shipped as three Angular screens over the existing ANG-01f API, no
+backend change: /tournaments (paged list), /tournaments/new (show / hide rules from one predicate;
+Player pool switches to RR -> DE and hides Teams / generate) and /tournaments/:id as a shell
+(header, read-only Participants, participant import, Player Pool with add / generate / import /
+remove), plus a sidebar link. The review moved the three roster-CSV cards onto one shared CsvImport,
+added shared clearServerErrors (also used by Setup, Batch Simulate, Team Generate) and countOf, and
+unified the assembly label on Django's 'Player pool draw' (the spec said 'Player pool'). The browser
+check fixed the list's 768px overflow. 13b adds its sections to the detail shell.
+
+Pool add-existing / generate / import /
+
+ remove, participant import. Replaces `tournament_list`, `tournament_create`. Spec: #396
+ **Grill round 1 (owner, 2026-10-27):** no backend gap; the API covers list, create, detail, pool and
+ `import-participants`. State label, `is_locked` (`state != "setup"`) and the you-badge are derived
+ client-side. (1) The pool lives on the Django detail page, so 13a builds `/tournaments/:id` as a
+ shell: header plus the Player Pool section and the participant-import card; 13b adds draw / reseed /
+ lock / play / crosstable to the same component. (2) List is parity: paginated Name / Format / State /
+ Created, Create button, empty state; no filters, embedded tournaments stay listed. (3) Create is one
+ page with the template's show/hide rules (player_pool preselects RR->DE) and also hides teams /
+ generate for player_pool; success goes to detail. (4) Team picker = `listAll(teams)` filtered on
+ `is_valid_roster`, with the no-teams notice. (5) Add-existing picker = all owned players by name,
+ minus those already pooled. (6) Remove has no confirm; snackbar. (7) Locked or embedded: pool
+ controls hidden, table read-only; a stale 409 shows an `apiMessage` alert. (8) Sidebar gets a
+ Tournaments link after Matches. (9) Out: everything in 13b, Free Agents ownership gap (D1),
+ pool-import slot check (D2), list filters / sorting, Tournament delete.
+ **Grill round 2 (owner, 2026-10-27):** (1) Detail shows a read-only Participants table (Seed, Team
+ link) for preset tournaments; 13b adds reseed. (2) Participant-import card only in setup + preset +
+ not embedded, reusing `classifyImportErrors` and `TeamsService.importTemplate()`. (3) Pool section is
+ parity: "Player Pool (N)", invalid-size warning (N % 6 or N < 24), Add existing / Generate (24 / 50 /
+ 15) / Import CSV cards, table Player (you badge, player link) / Tier / Drawn team / Remove; pool
+ loaded with `listAll`; pool and detail reload after each write. (4) Header: name, `format_label`,
+ State badge, assembly mode, champion if any, an "In League" note naming the Season when embedded.
+ (5) Create errors via `applyApiErrors` (`too_few_teams` on teams), non-field errors in an alert.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

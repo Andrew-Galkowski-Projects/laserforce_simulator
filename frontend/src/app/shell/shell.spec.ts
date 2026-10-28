@@ -10,6 +10,7 @@ import { releaseMatchesLoads } from '../matches/testing/matches-loads';
 import { releaseMapsLoads } from '../maps/testing/maps-loads';
 import { releasePlayersLoads } from '../players/testing/players-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
+import { releaseTournamentsLoads } from '../tournaments/testing/tournaments-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
 
@@ -62,6 +63,7 @@ describe('App shell (layout B)', () => {
     releasePlayersLoads();
     releaseMatchesLoads();
     releaseMapsLoads();
+    releaseTournamentsLoads();
     http.verify();
     delete (window as Partial<Window>).matchMedia;
   });
@@ -231,11 +233,24 @@ describe('App shell (layout B)', () => {
     expect(routerUrl()).toBe('/matches');
   });
 
-  it('has a Maps entry right after Matches that opens /maps', async () => {
+  it('has a Tournaments entry right after Matches that opens /tournaments', async () => {
     await open('/teams');
     const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
     const labels = links.map((a) => a.textContent?.trim());
-    expect(labels.indexOf('Maps')).toBe(labels.indexOf('Matches') + 1);
+    expect(labels.indexOf('Tournaments')).toBe(labels.indexOf('Matches') + 1);
+    const link = links.find((a) => a.textContent?.trim() === 'Tournaments');
+    expect(link?.getAttribute('href')).toBe('/tournaments');
+    link?.click();
+    await harness.fixture.whenStable();
+    expect(routerUrl()).toBe('/tournaments');
+  });
+
+  // ANG-06-13a put Tournaments between Matches and Maps on purpose (the spec: "after Matches").
+  it('has a Maps entry right after Tournaments that opens /maps', async () => {
+    await open('/teams');
+    const links = [...(sidenav()?.querySelectorAll('a') ?? [])];
+    const labels = links.map((a) => a.textContent?.trim());
+    expect(labels.indexOf('Maps')).toBe(labels.indexOf('Tournaments') + 1);
     links.find((a) => a.textContent?.trim() === 'Maps')?.click();
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/maps');

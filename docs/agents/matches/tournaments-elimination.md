@@ -891,3 +891,36 @@ Tournament pages described above:
   `IntegrityError`.
 - **Detail page.** New `#tournament-format-label` badge (the derived label); the list shows the same
   label.
+
+## ANG-06-13a Angular Tournament list, create, detail shell and Player pool
+
+`/tournaments`, `/tournaments/new` and `/tournaments/:id` in the SPA (spec #396, tickets #397-#400)
+port `tournament_list.html`, `tournament_create.html` and the setup half of `tournament_detail.html`
+over the existing ANG-01f `/api/tournaments/` endpoints; no backend change. Sidebar link after
+Matches. The Django pages stay until ANG-08.
+
+- **Seam:** `frontend/src/app/api/tournaments.service.ts` (`list`, `get`, `create`, `pool`,
+  `addPoolPlayers`, `removePoolPlayer`, `generatePool`, `importPool`, `importParticipants`) +
+  `tournaments.models.ts` (`Tournament`, `TournamentDetail`: the 13b fields `brackets`,
+  `rr_standings`, `swiss_standings`, `cut_labels` are typed `unknown`; `PoolEntry`,
+  `TournamentCreateInput`, `PoolGenerateInput`, `TOURNAMENT_STATE_LABELS`, `TEAM_ASSEMBLY_LABELS`).
+- **Client-side derivations** (no API field): the State label, locked = `state !== 'setup'`, pool
+  controls shown = not locked and not `embedded`, the "You" badge from `self_insert`.
+- **List:** paginated Name / Format / State badge / Created, newest first, no filters; in-League
+  Tournaments stay listed; a failed load shows an alert.
+- **Create:** the template's show / hide rules from one `visibleFields(format, assembly)` predicate;
+  Player pool switches the format to RR -> DE and (an owner-approved departure) hides Teams and the
+  generate fields; hidden fields are disabled so they are left out of the body. The Team picker is
+  `listAll(teams)` filtered on `is_valid_roster`; with none, a `too_few_teams` error shows under the
+  no-teams notice.
+- **Detail** is a shell: the host loads `GET tournaments/:id/` and each section is a child that
+  emits `changed` to reload it. 13a has the header (State badge, assembly label, champion, an "In
+  League" note), read-only Participants, `participant-import` (only setup + preset + sandbox, an
+  owner-approved departure: the API refuses Player-pool) and `tournament-pool` (Player pool only).
+  ANG-06-13b adds draw / reseed / lock / play / crosstable as further sections.
+- **Pool:** size warning unless a multiple of 6 and >= 24; the table loads every page; add-existing
+  leaves out already-pooled Players (departure); Generate checks the Form's bounds on the client;
+  Remove has no confirm. The three CSV cards (roster import, participant import, pool import) share
+  `shared/csv-import.ts` (`CsvImport`).
+- **Out (logged):** generated / imported pool Players land on the global Free Agents team
+  (ANG01f5-D1); pool import skips the slot-collision check (ANG01f5-D2).

@@ -1,0 +1,81 @@
+// The Tournament list (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+@use '../../shared/alerts';
+@use '../../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+.tournament-list__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1.5rem;
+
+  h1 {
+    margin: 0;
+    font-family: var(--lf-font-heading);
+  }
+}
+
+.tournament-list__empty {
+  @include alerts.notice;
+}
+
+.tournament-list__error {
+  @include alerts.error;
+}
+
+.tournament-table {
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  overflow-x: auto;
+
+  // Sized for the ~500px content area at 768px with no horizontal scroll: a long name and
+  // Format ("Round robin → Double elimination") wrap, State stays on one line, and Created
+  // breaks between the date and the time.
+  .mat-column-name {
+    flex: 1 1 8rem;
+    overflow-wrap: anywhere;
+  }
+
+  .mat-column-format {
+    flex: 1 1 7rem;
+  }
+
+  .mat-column-state {
+    flex: 0 0 6.5rem;
+  }
+
+  // One line where it fits (12rem), else down to 7rem: the date over the time.
+  .mat-column-created {
+    flex: 0 1 12rem;
+    min-width: 7rem;
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+.tournament-table__num {
+  font-family: var(--lf-font-numeric);
+}
+
+// The date and the time each stay whole; a narrow Created column breaks only between them.
+.tournament-table__stamp {
+  white-space: nowrap;
+}
+
+.tournament-state {
+  @include badges.tournament-state;
+}
+
+mat-paginator {
+  margin-top: 0.5rem;
+  background: transparent;
+}

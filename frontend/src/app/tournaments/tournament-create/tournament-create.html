@@ -1,0 +1,184 @@
+<h1>Create Tournament</h1>
+<section class="create">
+  <form [formGroup]="form" (ngSubmit)="create()" novalidate>
+    @if (loadError(); as message) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+    @for (message of nonFieldErrors(); track $index) {
+      <p class="error" role="alert">{{ message }}</p>
+    }
+
+    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+      <mat-label>Tournament name</mat-label>
+      <input matInput name="name" formControlName="name" maxlength="100" required />
+      @if (form.controls.name.hasError('required')) {
+        <mat-error>Tournament name is required.</mat-error>
+      } @else if (form.controls.name.getError('server'); as message) {
+        <mat-error>{{ message }}</mat-error>
+      }
+    </mat-form-field>
+
+    @if (!playerPool()) {
+      <div class="create__row create__row--full">
+        @if (teams(); as teams) {
+          @if (teams.length > 0) {
+            <mat-form-field appearance="outline" subscriptSizing="dynamic" class="picker-wide">
+              <mat-label>Select existing teams</mat-label>
+              <mat-select formControlName="teams" multiple>
+                @for (team of teams; track team.id) {
+                  <mat-option [value]="team.id">{{ team.name }}</mat-option>
+                }
+              </mat-select>
+              @if (form.controls.teams.getError('server'); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+          } @else {
+            <p class="notice">No teams available. Generate new teams below instead.</p>
+            <!-- No picker to carry it, so the Teams error (too_few_teams) shows here. -->
+            @if (form.controls.teams.getError('server'); as message) {
+              <p class="error" role="alert">{{ message }}</p>
+            }
+          }
+        }
+      </div>
+      <div class="create__row">
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Generate new teams</mat-label>
+          <input
+            matInput
+            type="number"
+            name="generate_count"
+            formControlName="generate_count"
+            min="0"
+          />
+          @if (form.controls.generate_count.hasError('min')) {
+            <mat-error>Ensure this value is greater than or equal to 0.</mat-error>
+          } @else if (form.controls.generate_count.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Players per generated team</mat-label>
+          <input
+            matInput
+            type="number"
+            name="generate_ppt"
+            formControlName="generate_ppt"
+            [min]="minGeneratedPlayers"
+          />
+          @if (form.controls.generate_ppt.hasError('min')) {
+            <mat-error
+              >Ensure this value is greater than or equal to {{ minGeneratedPlayers }}.</mat-error
+            >
+          } @else if (form.controls.generate_ppt.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      </div>
+    }
+
+    <div class="create__row">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Team assembly</mat-label>
+        <mat-select formControlName="team_assembly">
+          @for (choice of assemblyChoices; track choice.value) {
+            <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+          }
+        </mat-select>
+        <mat-hint
+          >Player pool draw: register individual players to a pool, then draw tier-balanced teams on
+          the tournament page.</mat-hint
+        >
+        @if (form.controls.team_assembly.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+      @if (playerPool()) {
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Role assignment (per Round)</mat-label>
+          <mat-select formControlName="role_assignment_mode">
+            @for (choice of roleModeChoices; track choice.value) {
+              <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+            }
+          </mat-select>
+          @if (form.controls.role_assignment_mode.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      }
+    </div>
+
+    <div class="create__row">
+      <mat-form-field appearance="outline" subscriptSizing="dynamic">
+        <mat-label>Bracket format</mat-label>
+        <mat-select formControlName="format">
+          @for (choice of formatChoices; track choice.value) {
+            <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+          }
+        </mat-select>
+        @if (form.controls.format.getError('server'); as message) {
+          <mat-error>{{ message }}</mat-error>
+        }
+      </mat-form-field>
+      @if (showSwissRounds()) {
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Swiss rounds</mat-label>
+          <input
+            matInput
+            type="number"
+            name="swiss_rounds"
+            formControlName="swiss_rounds"
+            min="0"
+          />
+          <mat-hint>0 = auto</mat-hint>
+          @if (form.controls.swiss_rounds.hasError('min')) {
+            <mat-error>Ensure this value is greater than or equal to 0.</mat-error>
+          } @else if (form.controls.swiss_rounds.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      }
+      @if (showRrdeCombo()) {
+        <mat-form-field appearance="outline" subscriptSizing="dynamic">
+          <mat-label>Advancers (Winners / Losers bracket)</mat-label>
+          <mat-select formControlName="rrde_combo">
+            @for (choice of rrdeChoices; track choice.value) {
+              <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+            }
+          </mat-select>
+          <mat-hint
+            >Top RR-ranked teams seed the Winners bracket; the next seed the Losers
+            bracket.</mat-hint
+          >
+          @if (form.controls.rrde_combo.getError('server'); as message) {
+            <mat-error>{{ message }}</mat-error>
+          }
+        </mat-form-field>
+      }
+    </div>
+
+    @if (showSeries()) {
+      <div class="create__row">
+        @for (series of seriesFields; track series.value) {
+          <mat-form-field appearance="outline" subscriptSizing="dynamic">
+            <mat-label>{{ series.label }}</mat-label>
+            <mat-select [formControlName]="series.value">
+              @for (choice of seriesChoices; track choice.value) {
+                <mat-option [value]="choice.value">{{ choice.label }}</mat-option>
+              }
+            </mat-select>
+            @if (form.controls[series.value].getError('server'); as message) {
+              <mat-error>{{ message }}</mat-error>
+            }
+          </mat-form-field>
+        }
+      </div>
+    }
+
+    <div class="create__actions">
+      <button mat-flat-button type="submit" [disabled]="busy()">Create Tournament</button>
+      <a mat-button routerLink="/tournaments">Cancel</a>
+    </div>
+  </form>
+</section>

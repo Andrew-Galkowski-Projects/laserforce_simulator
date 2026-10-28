@@ -12,3 +12,26 @@
   font-weight: 700;
   line-height: 1.4;
 }
+
+// A Tournament's State badge (list, detail): on an element with `data-state` = setup / active /
+// completed. The label always shows, so the colour is never the only signal.
+@mixin tournament-state {
+  --state: var(--lf-accent);
+
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--state);
+  border-radius: var(--lf-radius);
+  background: color-mix(in srgb, var(--state) 12%, transparent);
+  color: var(--state);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+
+  &[data-state='active'] {
+    --state: var(--lf-ev-resupply);
+  }
+
+  &[data-state='completed'] {
+    --state: var(--lf-text-muted);
+  }
+}

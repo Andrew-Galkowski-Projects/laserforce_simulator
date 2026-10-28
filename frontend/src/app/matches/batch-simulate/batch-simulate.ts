@@ -25,7 +25,12 @@ import { MapsService } from '../../api/maps.service';
 import { TeamListItem } from '../../api/teams.models';
 import { TeamsService } from '../../api/teams.service';
 import { apiMessage } from '../../shared/api-message';
-import { GENERIC_ERROR_MESSAGE, REQUIRED_MESSAGE, applyApiErrors } from '../../shared/form-errors';
+import {
+  GENERIC_ERROR_MESSAGE,
+  REQUIRED_MESSAGE,
+  applyApiErrors,
+  clearServerErrors,
+} from '../../shared/form-errors';
 import { sideTag } from '../shared/side-tag';
 import { scoreHistogram } from './score-histogram';
 import { ScoreHistogramChart } from './score-histogram-chart';
@@ -183,10 +188,7 @@ export class BatchSimulate {
   /** Starts a Batch run. Only `required` is checked here; the matchup rules are the server's. */
   protected start(): void {
     this.nonFieldErrors.set([]);
-    // A control's `server` error only clears on a value change, so drop it here too.
-    for (const control of Object.values(this.form.controls)) {
-      if (control.hasError('server')) control.updateValueAndValidity();
-    }
+    clearServerErrors(this.form);
     if (this.form.invalid) {
       this.form.markAllAsTouched();
       return;
