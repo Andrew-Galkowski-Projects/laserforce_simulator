@@ -23,10 +23,7 @@ import {
   clearServerErrors,
 } from '../../shared/form-errors';
 import { injectNotify } from '../../shared/notify';
-
-/** A drawable pool: whole Teams of 6, at least 4 of them. */
-const PLAYERS_PER_TEAM = 6;
-const MIN_POOL = 24;
+import { poolSizeInvalid } from '../pool-size';
 
 /** What the section loads for: the Tournament, and whether the add-existing picker is shown. */
 interface LoadKey {
@@ -68,11 +65,7 @@ export class TournamentPool {
   /** Emitted after every successful write, so the host reloads the detail. */
   readonly changed = output<void>();
 
-  /** The Django page's draw rule: not a multiple of 6, or under 24. */
-  protected readonly sizeInvalid = computed(() => {
-    const size = this.detail().pool_size;
-    return size % PLAYERS_PER_TEAM !== 0 || size < MIN_POOL;
-  });
+  protected readonly sizeInvalid = computed(() => poolSizeInvalid(this.detail().pool_size));
 
   /** Pool controls (the cards and Remove): in setup, and not run by a League. */
   protected readonly editable = computed(

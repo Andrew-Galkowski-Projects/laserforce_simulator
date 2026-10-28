@@ -2,6 +2,9 @@ import { Injectable, inject } from '@angular/core';
 import { Observable } from 'rxjs';
 import { ApiClient, ListParams, Page } from './api-client';
 import {
+  PlayJobRef,
+  PlayJobStatus,
+  PlayNextResult,
   PoolEntry,
   PoolGenerateInput,
   Tournament,
@@ -11,8 +14,8 @@ import {
 } from './tournaments.models';
 
 /**
- * `/api/tournaments/` (ANG-01f): list, detail, create, the participant CSV import and the
- * Player pool (list, add, remove, generate, CSV import). Draw, lock and play are ANG-06-13b's.
+ * `/api/tournaments/` (ANG-01f): list, detail, create, the participant CSV import, the Player
+ * pool (list, add, remove, generate, CSV import), Seeding, lock, the draw and play.
  */
 @Injectable({ providedIn: 'root' })
 export class TournamentsService {
@@ -62,6 +65,43 @@ export class TournamentsService {
       `tournaments/${id}/import-participants/`,
       csvForm(file),
     );
+  }
+
+  /** Every participant's Bracket seed (Team id -> seed); the server requires exactly 1..N. */
+  saveSeeds(id: number, seeds: Record<number, number>): Observable<TournamentDetail> {
+    return this.api.put<TournamentDetail>(`tournaments/${id}/seeds/`, { seeds });
+  }
+
+  /** Lock & Build Bracket: setup -> active. A format rule failing is a 400 `invalid`. */
+  lock(id: number): Observable<TournamentDetail> {
+    return this.api.post<TournamentDetail>(`tournaments/${id}/lock/`, {});
+  }
+
+  /** Draw (or re-roll) the Player pool into Teams. A bad pool size is a 400 `invalid`. */
+  draw(id: number): Observable<TournamentDetail> {
+    return this.api.post<TournamentDetail>(`tournaments/${id}/draw/`, {});
+  }
+
+  /** Set a drawn Player's Tier (1-6). */
+  editDrawEntry(id: number, playerId: number, body: { tier: number }): Observable<PoolEntry> {
+    return this.api.patch<PoolEntry>(`tournaments/${id}/draw/entries/${playerId}/`, body);
+  }
+
+  /** Play the next ready Match synchronously. */
+  playNext(id: number): Observable<PlayNextResult> {
+    return this.api.post<PlayNextResult>(`tournaments/${id}/play-next/`, {});
+  }
+
+  /**
+   * Start the background run of every remaining Match. A run already going is a 409
+   * `play_in_progress` whose error `field` is `job:<id>`; a broker that's down is a 503.
+   */
+  playAll(id: number): Observable<PlayJobRef> {
+    return this.api.post<PlayJobRef>(`tournaments/${id}/play-all/`, {});
+  }
+
+  playJob(id: number, jobId: string): Observable<PlayJobStatus> {
+    return this.api.get<PlayJobStatus>(`tournaments/${id}/play-jobs/${jobId}/`);
   }
 }
 

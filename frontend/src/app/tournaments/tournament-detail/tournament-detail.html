@@ -53,4 +53,8 @@
   @if (t.team_assembly === 'player_pool') {
     <app-tournament-pool [detail]="t" (changed)="reload()" />
   }
+
+  <app-tournament-setup [detail]="t" (changed)="reload()" />
+  <app-tournament-play [detail]="t" (changed)="reload()" />
+  <app-tournament-results [detail]="t" />
 }

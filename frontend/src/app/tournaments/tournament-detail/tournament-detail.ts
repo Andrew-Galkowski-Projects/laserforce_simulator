@@ -11,7 +11,10 @@ import {
 import { TournamentsService } from '../../api/tournaments.service';
 import { notFoundOrError } from '../../shared/not-found-or-error';
 import { ParticipantImport } from '../participant-import/participant-import';
+import { TournamentPlay } from '../tournament-play/tournament-play';
 import { TournamentPool } from '../tournament-pool/tournament-pool';
+import { TournamentResults } from '../tournament-results/tournament-results';
+import { TournamentSetup } from '../tournament-setup/tournament-setup';
 
 /**
  * `/tournaments/:id`: the Tournament detail host (ANG-06-13a). It loads the detail and shows the
@@ -20,7 +23,15 @@ import { TournamentPool } from '../tournament-pool/tournament-pool';
  */
 @Component({
   selector: 'app-tournament-detail',
-  imports: [MatAnchor, ParticipantImport, RouterLink, TournamentPool],
+  imports: [
+    MatAnchor,
+    ParticipantImport,
+    RouterLink,
+    TournamentPlay,
+    TournamentPool,
+    TournamentResults,
+    TournamentSetup,
+  ],
   templateUrl: './tournament-detail.html',
   styleUrl: './tournament-detail.scss',
 })
