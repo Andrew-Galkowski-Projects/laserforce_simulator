@@ -34,8 +34,9 @@ interface LoadKey {
 /**
  * The Tournament detail's Player Pool section (ANG-06-13a T4): the pool table, the size warning
  * and, while the Tournament is in setup and not in a League, the add / generate / import cards and
- * Remove. After every write it reloads the pool and emits `changed`, so the host reloads the
- * detail (`pool_size`).
+ * Remove. ANG-06-13b-1 adds Draw teams / Re-roll draw and the Drawn Teams cards with Set tier,
+ * read from the same pool load. After every write it reloads the pool and emits `changed`, so the
+ * host reloads the detail (`pool_size`, `is_drawn`, the drawn participants).
  */
 @Component({
   selector: 'app-tournament-pool',
@@ -218,6 +219,88 @@ export class TournamentPool {
       error: (error: unknown) => {
         this.removing.set(false);
         this.removeError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
+      },
+    });
+  }
+
+  protected readonly drawing = signal(false);
+  protected readonly drawError = signal<string | null>(null);
+
+  /** Draw teams, or Re-roll draw once drawn: the host's reload brings the drawn Teams. */
+  protected draw(): void {
+    if (this.drawing() || this.sizeInvalid()) return;
+    const reroll = this.detail().is_drawn;
+    this.drawing.set(true);
+    this.drawError.set(null);
+    this.tournaments.draw(this.detail().id).subscribe({
+      next: () => {
+        this.drawing.set(false);
+        this.wrote(reroll ? 'Draw re-rolled.' : 'Teams drawn.');
+      },
+      error: (error: unknown) => {
+        this.drawing.set(false);
+        this.drawError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
+      },
+    });
+  }
+
+  /** The Drawn Teams cards: each participant Team with its pool entries, in seed order. */
+  protected readonly drawnTeams = computed(() => {
+    const entries = this.entries();
+    return [...this.detail().participants]
+      .sort((a, b) => a.seed - b.seed)
+      .map(({ team }) => ({
+        team,
+        entries: entries.filter((entry) => entry.drawn_team?.id === team.id),
+      }));
+  });
+
+  /** One Tier control per pool entry (player id -> control), rebuilt from each pool load. */
+  protected readonly tierControls = computed(() => {
+    const controls = new Map<number, FormControl<number | null>>();
+    for (const entry of this.entries()) {
+      controls.set(entry.player.id, new FormControl<number | null>(entry.tier));
+    }
+    return controls;
+  });
+
+  /** Player ids whose Set tier is in flight. */
+  protected readonly tierSaving = signal<ReadonlySet<number>>(new Set());
+  /** Player id -> that row's last Set tier error. */
+  protected readonly tierErrors = signal<Readonly<Record<number, string>>>({});
+
+  protected setTier(entry: PoolEntry): void {
+    const id = entry.player.id;
+    const control = this.tierControls().get(id);
+    if (!control || this.tierSaving().has(id)) return;
+    this.tierErrors.update((errors) => {
+      const next = { ...errors };
+      delete next[id];
+      return next;
+    });
+    if (control.invalid) {
+      control.markAsTouched();
+      return;
+    }
+    const tier = control.value as number;
+    this.tierSaving.update((ids) => new Set(ids).add(id));
+    const done = () =>
+      this.tierSaving.update((ids) => {
+        const next = new Set(ids);
+        next.delete(id);
+        return next;
+      });
+    this.tournaments.editDrawEntry(this.detail().id, id, { tier }).subscribe({
+      next: () => {
+        done();
+        this.wrote(`Set ${entry.player.name} to Tier ${tier}.`);
+      },
+      error: (error: unknown) => {
+        done();
+        this.tierErrors.update((errors) => ({
+          ...errors,
+          [id]: apiMessage(error, GENERIC_ERROR_MESSAGE),
+        }));
       },
     });
   }

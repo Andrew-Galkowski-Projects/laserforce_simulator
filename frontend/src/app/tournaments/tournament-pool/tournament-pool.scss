@@ -151,6 +151,85 @@
   white-space: nowrap;
 }
 
+.tournament-pool__draw {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.tournament-pool__drawn {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+
+  h3 {
+    margin: 0;
+    font-family: var(--lf-font-heading);
+    font-size: 1.1rem;
+  }
+}
+
+// The drawn Teams side by side while there is room, stacked on a narrow content area.
+.tournament-pool__drawn-teams {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
+  gap: 0.75rem;
+}
+
+.tournament-pool__drawn-team {
+  min-width: 0;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  h4 {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--lf-border);
+    font-family: var(--lf-font-heading);
+    font-size: 1rem;
+  }
+
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  li {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.25rem 0.75rem;
+    padding: 0.5rem 0.75rem;
+
+    & + li {
+      border-top: 1px solid var(--lf-border);
+    }
+  }
+}
+
+.tournament-pool__tier {
+  margin-left: 0.25rem;
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.tournament-pool__tier-form {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+
+  mat-form-field {
+    width: 6rem;
+  }
+}
+
+.tournament-pool__tier-alert {
+  flex-basis: 100%;
+}
+
 .badge--you {
   @include badges.you;
 }
