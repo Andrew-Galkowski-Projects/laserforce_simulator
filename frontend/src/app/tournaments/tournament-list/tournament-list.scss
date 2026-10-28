@@ -31,29 +31,26 @@
   background: var(--lf-surface);
   overflow-x: auto;
 
-  // Sized for the ~560px content area at 768px: a long name wraps, Format wraps
-  // ("Round robin → Double elimination"), State and Created stay on one line.
-  .mat-mdc-header-row,
-  .mat-mdc-row {
-    min-width: 34rem;
-  }
-
+  // Sized for the ~500px content area at 768px with no horizontal scroll: a long name and
+  // Format ("Round robin → Double elimination") wrap, State stays on one line, and Created
+  // breaks between the date and the time.
   .mat-column-name {
-    flex: 1 1 10rem;
+    flex: 1 1 8rem;
     overflow-wrap: anywhere;
   }
 
   .mat-column-format {
-    flex: 1 1 9rem;
+    flex: 1 1 7rem;
   }
 
   .mat-column-state {
-    flex: 0 0 7.5rem;
+    flex: 0 0 6.5rem;
   }
 
+  // One line where it fits (12rem), else down to 7rem: the date over the time.
   .mat-column-created {
-    flex: 0 0 9.5rem;
-    white-space: nowrap;
+    flex: 0 1 12rem;
+    min-width: 7rem;
   }
 
   a {
@@ -63,6 +60,11 @@
 
 .tournament-table__num {
   font-family: var(--lf-font-numeric);
+}
+
+// The date and the time each stay whole; a narrow Created column breaks only between them.
+.tournament-table__stamp {
+  white-space: nowrap;
 }
 
 .tournament-state {

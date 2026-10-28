@@ -29,9 +29,14 @@
       </ng-container>
       <ng-container matColumnDef="created">
         <mat-header-cell *matHeaderCellDef>Created</mat-header-cell>
-        <mat-cell *matCellDef="let t" class="tournament-table__num">{{
-          t.created_at | date: 'yyyy-MM-dd HH:mm'
-        }}</mat-cell>
+        <mat-cell *matCellDef="let t" class="tournament-table__num">
+          <span
+            ><span class="tournament-table__stamp">{{ t.created_at | date: 'yyyy-MM-dd' }}</span
+            >&ngsp;<span class="tournament-table__stamp">{{
+              t.created_at | date: 'HH:mm'
+            }}</span></span
+          >
+        </mat-cell>
       </ng-container>
 
       <mat-header-row *matHeaderRowDef="columns" />
