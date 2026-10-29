@@ -234,11 +234,16 @@ class WatchListGetTests(LeagueApiTestCase):
         _, meta = self.get()
         self.assertEqual(set(meta), PAGE_KEYS | {"season_scope"})
         self.assertEqual(meta["count"], 3)
+        # ANG-06-15: ``season_scope_meta`` adds each option's ``year``; the
+        # watch list is Season-scoped, so it gets it too. ``selected`` and the
+        # meta keys are unchanged, so the scope invariant still holds.
         self.assertEqual(
             meta["season_scope"],
             {
                 "selected": {"id": self.season.id, "name": self.season.name},
-                "options": [{"id": self.season.id, "name": self.season.name}],
+                "options": [
+                    {"id": self.season.id, "name": self.season.name, "year": 2025}
+                ],
             },
         )
 
