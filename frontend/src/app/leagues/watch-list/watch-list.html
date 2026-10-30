@@ -1,0 +1,85 @@
+<h1>{{ nav()?.league?.name }} — Watch List</h1>
+
+<p id="watch-list-help" class="watch-list-help">
+  This watch list is saved to your account for this League, so it follows you across browsers; each
+  League keeps its own list. Click the &#9733; flag on any player to add or remove them.
+</p>
+
+@if (scope(); as s) {
+  <div class="stats-filters">
+    <app-season-picker [scope]="s" (seasonChange)="pickSeason($event)" />
+    <app-rate-picker [rate]="query().rate" (rateChange)="pickRate($event)" />
+  </div>
+}
+
+@if (noSeason()) {
+  <p id="watch-list-empty-notice" class="stats-notice" role="status">
+    No Season in this League yet — start a Season to build a watch list.
+  </p>
+} @else if (loadError(); as message) {
+  <div class="stats-error watch-list-error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (nav() && result(); as r) {
+  @if (cleared() || r.meta.count === 0) {
+    <p id="watch-list-empty-notice" class="stats-notice" role="status">
+      Your watch list is empty — open any player table and click the &#9733; flag to start tracking
+      players.
+    </p>
+  } @else {
+    <div class="watch-list-bar">
+      <p id="watch-list-count" class="stats-count">{{ count(r.meta.count) }}</p>
+      <button mat-stroked-button type="button" (click)="removeAll()">Remove All</button>
+    </div>
+
+    <div class="stats-scroll">
+      <table id="watch-list-table" class="stats-table">
+        <thead>
+          <tr>
+            <th id="watch-list-th-name" scope="col" class="name">
+              <a [routerLink]="[]" [queryParams]="sortParams('name')">Name{{ arrow('name') }}</a>
+            </th>
+            <th id="watch-list-th-team" scope="col" class="name">
+              <a [routerLink]="[]" [queryParams]="sortParams('team')">Team{{ arrow('team') }}</a>
+            </th>
+            <th id="watch-list-th-games" scope="col" class="num">
+              <a [routerLink]="[]" [queryParams]="sortParams('games')">GP{{ arrow('games') }}</a>
+            </th>
+            @for (c of columns; track c.key) {
+              <th [id]="'watch-list-th-' + c.key" scope="col" class="num">
+                <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
+                  >{{ c.label }}{{ arrow(c.key) }}</a
+                >
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of r.items; track row.player.id) {
+            <tr [id]="'watch-list-row-' + row.player.id">
+              <td class="name">
+                <app-player-cell [player]="row.player" [watched]="row.watched" />
+              </td>
+              <td class="name">{{ row.team?.name ?? '—' }}</td>
+              <td class="num">{{ row.games }}</td>
+              @for (c of columns; track c.key) {
+                <td class="num">{{ cell(row, c) }}</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="stats-footer">
+      <app-per-page-picker [perPage]="query().perPage" (perPageChange)="pickPerPage($event)" />
+      <app-stats-paginator
+        label="Watch list pagination"
+        [page]="r.meta.page"
+        [totalPages]="r.meta.total_pages"
+        (pageChange)="pickPage($event)"
+      />
+    </div>
+  }
+}
