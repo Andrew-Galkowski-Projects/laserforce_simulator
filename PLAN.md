@@ -100,6 +100,29 @@ below (13b, 14, 16); the item's grill confirms it.
 15. **[DONE] League stats** (ANG-06-15, in `PLAN-completed.md`).
 16. **[DONE] League team & player** (ANG-06-16, in `PLAN-completed.md`).
 17. **League finances (ANG-06-17)** — league and team finances.
+
+    Spec: #439
+
+    Settled (owner, 2026-10-30 grill): replaces `leagues/league_finances.html` (`GET
+    leagues/<id>/finances/`) and `leagues/team_finances.html` (`GET` / `PATCH
+    leagues/<id>/teams/<team_id>/finances/`); no model, migration or engine change.
+    (1) Team Finances GET + PATCH return `meta.team_options` via `team_picker_response`.
+    (2) The full Team Finances payload gains `max_level` / `default_level`
+    (`finance.MAX_LEVEL` / `DEFAULT_LEVEL`). (3) `GET leagues/<id>/nav/` gains
+    `finance_enabled`; both screens decide disabled -> no Season -> no Team -> loaded in the
+    template's order, sending no request for the first two. (4) One shared `moneyK` (mirrors
+    `money_k`: `$7.2k` / `-$7.2k`) on both screens; the League table's bare `7.2k` changes.
+    (5) The editable form for `current_team`: four budget levels (int, required, 1..max_level,
+    each with its cost / level / neutral hint), Injury policy, Ticket price (required, >= 0,
+    step 0.5); PATCH sends all six; 400s onto fields via `applyApiErrors`, non-field / 409 in
+    an "Expense settings not saved:" box; success = `notify` "Expense settings saved." and the
+    view from the PATCH response. (6) Another Team: the same form disabled plus "Only your own
+    team's expense settings can be changed." (7) Hype tile: a hand-rolled `--lf-*` bar,
+    width hype x 100% clamped, value to 2 decimals. (8) No unsaved-edits guard; a save in
+    flight disables the form. (9) Out: Django view changes, charts, history sort / paging,
+    the money breakdown lines, live projections, Owner Evaluation (ANG-06-18). (10) Two
+    sequential tickets: T1 backend gaps + `moneyK` + League Finances + its nav entry live;
+    T2 Team Finances + its nav entry, blocked by T1.
 18. **Season screens (ANG-06-18)** — dashboard, standings, schedule, awards, owner evaluation, conferences.
 19. **Season play loop (ANG-06-19)** — play week / two months / until end / playoffs, status and cancel, the
     live view, member nights. Replaces `seasons/play_week_live` and the play actions.

@@ -651,6 +651,10 @@ _Avoid_: treating salary as a contract (no length, no negotiation, no released-p
 The sum of a **Team**'s active-roster **Player salary** values — the team's wage bill for a Season, the dominant **Season expense** and the input to the **Salary cap**, **Luxury tax**, and min-payroll penalty.
 _Avoid_: including released/former players (there are no contract obligations beyond the current roster — Payroll is just the active roster's salaries).
 
+**Hype**:
+A **Team**'s fan excitement under the **Finance subsystem**, a number from **0 to 1**. Winning raises it and losing lowers it, recomputed once per **Season** at the rollover from the Season's win rate. Hype drives attendance and so **Season revenue**. The figure a screen shows is the last settled Season's Hype, not a live in-Season value.
+_Avoid_: reading Hype as a per-**Round** or per-game value (it moves once per Season); expecting it to move during a Season (it updates only when the Season settles).
+
 **Season revenue** / **Season expenses** / **Season profit**:
 The per-(**Team**, **Season**) money rollup computed at the pre-season rollover. **Season revenue** is earned (ticket / TV / sponsor / merch lines, scaling off a season attendance driven by *winning* — the ZenGM **hype** loop — and the **facilities** **Budget level**, with the market population fixed). **Season expenses** are paid (**Payroll** + the three Budget dollar amounts + **Luxury tax** / min-payroll penalty). **Season profit** = revenue − expenses; it is the figure the **Money factor** compares against an expected profit.
 _Avoid_: computing these per **Round** / per game (they are per-Season, rolled up once at the rollover); reading **Season profit** as a stored running balance (it is the season's revenue minus expenses; a carried bank balance is a separate concept).
