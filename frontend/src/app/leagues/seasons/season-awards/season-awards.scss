@@ -1,0 +1,50 @@
+// Season Awards (spec #444): `--lf-*` tokens only, no colour literals.
+@use '../../stats-shared/stats-page';
+@use '../../../shared/badges';
+
+:host {
+  @include stats-page.host;
+}
+
+// The h1 with the "Standings" link beside it, as in `seasons/awards.html`.
+.season-awards__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+h1 {
+  @include stats-page.heading;
+
+  margin-bottom: 0;
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+}
+
+// I4: the badge's text is the cue, not a row tint.
+.you {
+  @include badges.you;
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}

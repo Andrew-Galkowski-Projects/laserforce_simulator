@@ -16,9 +16,8 @@ import { countOf } from '../../shared/count-of';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 import { notFoundOrError } from '../../shared/not-found-or-error';
 import { injectNotify } from '../../shared/notify';
-import { DashboardCards } from '../dashboard-cards/dashboard-cards';
+import { DashboardCards, DashboardLink } from '../dashboard-cards/dashboard-cards';
 import { LeagueDelete, canDeleteLeague } from '../league-delete';
-import { SoonBadge } from '../soon-badge/soon-badge';
 
 /**
  * `/leagues/:id` (spec #409 F10): the League dashboard, ported from `leagues/dashboard.html`.
@@ -26,7 +25,7 @@ import { SoonBadge } from '../soon-badge/soon-badge';
  */
 @Component({
   selector: 'app-league-dashboard',
-  imports: [DashboardCards, MatAnchor, MatButton, RouterLink, SoonBadge],
+  imports: [DashboardCards, MatAnchor, MatButton, RouterLink],
   templateUrl: './league-dashboard.html',
   styleUrl: './league-dashboard.scss',
 })
@@ -126,6 +125,16 @@ export class LeagueDashboard {
           if (!handled(failure)) this.writeError.set(apiMessage(failure, GENERIC_ERROR_MESSAGE));
         },
       });
+  }
+
+  /** Member-night "View results": the displayed Season's Schedule, at its member nights. */
+  protected resultsLink(dash: Dashboard): DashboardLink | null {
+    const season = dash.displayed_season;
+    if (season === null) return null;
+    return {
+      commands: ['/leagues', dash.league.id, 'seasons', season.id, 'schedule'],
+      fragment: 'member-nights',
+    };
   }
 
   protected modeLabel(mode: SeasonMode): string {
