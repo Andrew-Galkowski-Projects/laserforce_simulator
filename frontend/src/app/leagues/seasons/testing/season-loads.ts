@@ -33,10 +33,18 @@ export async function releaseSeasonLayout(
   await harness.fixture.whenStable();
 }
 
-/** Every Season screen's own GET (`seasons/{id}/<screen>/`), not the layout's Season GET. */
-const SCREEN_LOAD = new RegExp(
-  `^${BASE}/seasons/\\d+/(dashboard|standings|schedule|awards|owner-evaluation|conferences)/$`,
-);
+/**
+ * Every Season screen's own GETs, not the layout's Season GET: `seasons/{id}/<screen>/`, plus the
+ * side loads a screen makes beside it (Standings' `leagues/{id}/` for the managed Team, Manage
+ * Conferences' `maps/` for the rotation pickers).
+ */
+const SCREEN_LOADS = [
+  new RegExp(
+    `^${BASE}/seasons/\\d+/(dashboard|standings|schedule|awards|owner-evaluation|conferences)/$`,
+  ),
+  new RegExp(`^${BASE}/leagues/\\d+/$`),
+  new RegExp(`^${BASE}/maps/$`),
+];
 
 /**
  * Releases the Season screens' own GETs, leaving the layout's Season GET and any write for the
@@ -45,6 +53,6 @@ const SCREEN_LOAD = new RegExp(
  */
 export function releaseSeasonScreenLoads(): void {
   TestBed.inject(HttpTestingController).match(
-    (req) => req.method === 'GET' && SCREEN_LOAD.test(req.url),
+    (req) => req.method === 'GET' && SCREEN_LOADS.some((load) => load.test(req.url)),
   );
 }
