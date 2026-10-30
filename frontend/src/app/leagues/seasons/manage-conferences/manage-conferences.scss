@@ -1,0 +1,137 @@
+// Manage Conferences (ADR-0043): `--lf-*` tokens only, no colour literals.
+@use '../../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-family: var(--lf-font-heading);
+}
+
+h2 {
+  margin: 1rem 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.manage-conferences__intro,
+.manage-conferences__locked,
+.conference-row__help,
+.conference-card__rotation-label {
+  color: var(--lf-text-muted);
+}
+
+.manage-conferences__empty,
+.manage-conferences__flat {
+  @include alerts.notice;
+}
+
+.manage-conferences__load-error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.manage-conferences__errors {
+  @include alerts.error;
+
+  ul {
+    margin: 0;
+    padding-left: 1.25rem;
+  }
+}
+
+.conference-row,
+.conference-card {
+  max-width: 30rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.conference-row__name {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+
+  mat-form-field {
+    flex: 1 1 12rem;
+  }
+}
+
+.conference-row__help {
+  margin: 0.5rem 0 0;
+  font-size: 0.875rem;
+}
+
+.team-assignment__scroll {
+  max-width: 36rem;
+  overflow-x: auto;
+}
+
+.team-assignment {
+  width: 100%;
+  border-collapse: collapse;
+
+  th,
+  td {
+    padding: 0.25rem 0.5rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+  }
+
+  td:first-child {
+    white-space: nowrap;
+  }
+
+  select {
+    width: 100%;
+    min-width: 10rem;
+    padding: 0.25rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+    color: var(--lf-text);
+    font: inherit;
+  }
+}
+
+.manage-conferences__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.conference-card {
+  h2 {
+    margin-top: 0;
+  }
+
+  ul,
+  ol {
+    margin: 0 0 0.5rem;
+    padding-left: 1.25rem;
+  }
+}
+
+.conference-card__rotation-label,
+.conference-card__no-rotation {
+  margin: 0 0 0.25rem;
+  font-size: 0.875rem;
+}
+
+.manage-conferences__locked {
+  font-size: 0.875rem;
+}
