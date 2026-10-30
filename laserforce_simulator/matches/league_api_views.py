@@ -367,11 +367,16 @@ def _run_sync_play(play: Callable[[], _T]) -> _T:
 
 
 def _season_dashboard_body(season: Season) -> dict:
-    """The ``GET /api/seasons/<id>/dashboard/`` body for ``season``."""
+    """The ``GET /api/seasons/<id>/dashboard/`` body for ``season``.
+
+    ANG-06-18a adds ``member_night_progress`` (the League dashboard's key).
+    """
+    body = build_dashboard_context(season, season.state)
     return {
         "season": season_ref(season),
         "league": league_ref(season.league),
-        **_dashboard_payload(season, season.state),
+        **_dashboard_payload(season, season.state, body),
+        "member_night_progress": body["member_night_progress"],
     }
 
 

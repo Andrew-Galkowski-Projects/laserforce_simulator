@@ -163,6 +163,7 @@ export function seasonDashboard(overrides: Partial<SeasonDashboard> = {}): Seaso
     season: { id: 11, name: 'Season 1' },
     league: { id: 1, name: 'Metro League' },
     ...dashboardBody(),
+    member_night_progress: null,
     ...overrides,
   };
 }

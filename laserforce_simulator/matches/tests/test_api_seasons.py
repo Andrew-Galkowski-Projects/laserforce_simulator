@@ -16,7 +16,7 @@ from datetime import date
 
 from django.urls import reverse
 
-from matches.models import OwnerEvaluation, SeasonPhase
+from matches.models import Match, OwnerEvaluation, SeasonPhase
 from matches.tests.league_api_fixtures import (
     AWARDS_KEYS,
     CONFERENCE_SERIALIZER_KEYS,
@@ -42,6 +42,7 @@ from matches.tests.league_api_fixtures import (
     make_teams,
     ranked_career_league,
 )
+from matches.tests.test_api_member_night import mn_season
 
 LIST = "/api/seasons/"
 
@@ -221,6 +222,31 @@ class TestSeasonDashboard(LeagueApiTestCase):
         teams = make_teams("SdF", 2)
         season = make_completed_season(self.foreign_league("SdFL"), teams, ranked=False)
         self.error(self.api.get(action(season.id, "dashboard")), 404, "not_found")
+
+    # --- ANG-06-18a: member-night progress ------------------------------
+
+    def test_member_night_progress_null_off_a_member_night(self) -> None:
+        teams = make_teams("SdNoMn", 4)
+        league = make_league("SdNoMnL", manager=self.user_a)
+        season = make_open_season(league, teams, state="active")
+        data = self.ok(self.api.get(action(season.id, "dashboard")))
+        self.assertIsNone(data["member_night_progress"])
+
+    def test_member_night_progress_counts_the_drawn_games(self) -> None:
+        league = make_league("SdMnL", manager=self.user_a)
+        season = mn_season(league, "SdMn")
+        phase = season.current_phase()
+        red, blue = make_teams("SdMnDraw", 2)
+        for completed in (True, False):
+            Match.objects.create(
+                team_red=red,
+                team_blue=blue,
+                season=season,
+                season_phase=phase,
+                is_completed=completed,
+            )
+        data = self.ok(self.api.get(action(season.id, "dashboard")))
+        self.assertEqual(data["member_night_progress"], {"played": 1, "total": 2})
 
 
 # ---------------------------------------------------------------------------

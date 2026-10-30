@@ -1,0 +1,104 @@
+// The League / Season dashboards' shared body cards (ADR-0043 layout B): `--lf-*` tokens only,
+// no colour literals. Beside the League nav at 768px the page is narrow (well under ~500px), so
+// the leader cards wrap onto their own rows rather than sharing one.
+@use '../../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h2 {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--lf-border);
+  font-family: var(--lf-font-heading);
+  font-size: 1rem;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+a {
+  color: var(--lf-accent);
+}
+
+.dashboard__muted {
+  color: var(--lf-text-muted);
+}
+
+.dashboard__card {
+  margin-bottom: 0.75rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+
+  > p {
+    margin: 0;
+    padding: 0.5rem 0.75rem;
+  }
+}
+
+.dashboard__next-round > p {
+  padding: 0.25rem 0.75rem;
+
+  &:first-of-type {
+    padding-top: 0.5rem;
+  }
+
+  &:last-of-type {
+    padding-bottom: 0.5rem;
+  }
+}
+
+.dashboard__row {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  padding: 0.4rem 0.75rem;
+  border-top: 1px solid var(--lf-border);
+
+  &:first-child {
+    border-top: 0;
+  }
+
+  > span:first-child {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  > span:last-child {
+    white-space: nowrap;
+  }
+}
+
+.dashboard__row--you {
+  background: color-mix(in srgb, var(--lf-accent) 12%, transparent);
+}
+
+.dashboard__leader-cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 0.75rem;
+
+  .dashboard__leaders {
+    flex: 1 1 14rem;
+    min-width: 0;
+  }
+}
+
+.dashboard__inline-soon,
+.dashboard__inline-link {
+  margin-left: 0.5rem;
+}
+
+.you {
+  @include badges.you;
+}

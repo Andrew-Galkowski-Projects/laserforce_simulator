@@ -263,6 +263,8 @@ export interface LeagueDashboard extends DashboardBody {
 export interface SeasonDashboard extends DashboardBody {
   season: SeasonRef;
   league: LeagueRef;
+  /** ANG-06-18a: as the League dashboard's. */
+  member_night_progress: MemberNightProgress | null;
 }
 
 /** `AwardWinner`: a Season award's Player and the value that won it. */

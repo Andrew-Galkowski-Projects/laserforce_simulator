@@ -83,76 +83,10 @@
     <p class="dashboard__conferences"><app-soon-badge label="Manage Conferences" /></p>
   }
 
-  @if (d.season_mode !== 'none') {
-    <section class="dashboard__card dashboard__standings">
-      <h2>Top standings</h2>
-      <ul>
-        @for (row of d.standings_snippet; track row.team_id) {
-          @let you = isManaged(d, row.team_id);
-          <li class="dashboard__row" [class.dashboard__row--you]="you">
-            <span
-              >{{ row.rank }}. {{ row.team?.name ?? '(unknown)' }}
-              @if (you) {
-                <span class="you">You</span>
-              }
-            </span>
-            <span>{{ row.league_points }} pts</span>
-          </li>
-        }
-      </ul>
-    </section>
-  }
-
-  @if (d.member_night_progress; as night) {
-    <section class="dashboard__card dashboard__member-night">
-      <p>
-        <strong>Member night:</strong> {{ night.played }} / {{ night.total }} games played
-        <app-soon-badge class="dashboard__inline-soon" label="View results" />
-      </p>
-    </section>
-  }
-
-  @if (d.season_mode === 'active' || d.season_mode === 'completed') {
-    <section class="dashboard__card dashboard__next-round">
-      <h2>Next round</h2>
-      @if (d.next_fixture; as fixture) {
-        <p>Matchday {{ fixture.matchday }} · Round {{ fixture.round_number }}</p>
-        <p>{{ fixture.team_a_name }} vs {{ fixture.team_b_name }}</p>
-        <p class="dashboard__muted">{{ fixture.date }}</p>
-      } @else {
-        <p>All fixtures played</p>
-      }
-    </section>
-
-    <section class="dashboard__card dashboard__round-count">
-      <p>
-        <strong>Rounds played:</strong> {{ d.round_count_completed }} / {{ d.round_count_total }}
-      </p>
-    </section>
-
-    <div class="dashboard__leader-cards">
-      @for (board of boards(d); track board.title) {
-        <section class="dashboard__card dashboard__leaders">
-          <h2>{{ board.title }}</h2>
-          <ul>
-            @for (row of board.rows; track row.player_id) {
-              <li class="dashboard__row">
-                <span
-                  ><a [routerLink]="['/players', row.player_id, 'stats']">{{ row.player_name }}</a>
-                  @if (row.player_id === selfId()) {
-                    <span class="you">You</span>
-                  }
-                </span>
-                <span>{{ row.value.toFixed(2) }}</span>
-              </li>
-            }
-          </ul>
-        </section>
-      }
-    </div>
-
-    <p class="dashboard__all-leaders">
-      <a [routerLink]="['/leagues', d.league.id, 'stats', 'league-leaders']">View all leaders</a>
-    </p>
-  }
+  <app-dashboard-cards
+    [body]="d"
+    [managedTeamId]="d.managed_team?.id ?? null"
+    [memberNight]="d.member_night_progress"
+    [leadersLink]="{ commands: ['/leagues', d.league.id, 'stats', 'league-leaders'] }"
+  />
 }

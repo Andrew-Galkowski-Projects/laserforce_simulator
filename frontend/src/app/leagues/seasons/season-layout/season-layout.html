@@ -1,0 +1,11 @@
+@if (notFound() || mismatch()) {
+  <h1>Season not found</h1>
+  <p><a mat-stroked-button [routerLink]="['/leagues', leagueId()]">&larr; Back to League</a></p>
+} @else if (loadError(); as message) {
+  <div class="season-layout__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (ready()) {
+  <router-outlet />
+}

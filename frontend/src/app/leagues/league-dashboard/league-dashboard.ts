@@ -1,4 +1,4 @@
-import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatAnchor, MatButton } from '@angular/material/button';
 import { ActivatedRoute, Router, RouterLink } from '@angular/router';
@@ -6,38 +6,33 @@ import { Observable, Subject, combineLatest, finalize, startWith, switchMap, tap
 import { ApiError } from '../../api/api-client';
 import {
   LeagueDashboard as Dashboard,
-  LeaderRow,
   SEASON_MODE_LABELS,
   SeasonMode,
 } from '../../api/leagues.models';
 import { LeaguesService } from '../../api/leagues.service';
 import { SeasonsService } from '../../api/seasons.service';
-import { AuthService } from '../../auth/auth.service';
 import { apiMessage } from '../../shared/api-message';
 import { countOf } from '../../shared/count-of';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 import { notFoundOrError } from '../../shared/not-found-or-error';
 import { injectNotify } from '../../shared/notify';
+import { DashboardCards } from '../dashboard-cards/dashboard-cards';
 import { LeagueDelete, canDeleteLeague } from '../league-delete';
 import { SoonBadge } from '../soon-badge/soon-badge';
 
-/** One top-3 leader card. */
-interface LeaderBoard {
-  title: string;
-  rows: LeaderRow[];
-}
-
-/** `/leagues/:id` (spec #409 F10): the League dashboard, ported from `leagues/dashboard.html`. */
+/**
+ * `/leagues/:id` (spec #409 F10): the League dashboard, ported from `leagues/dashboard.html`.
+ * Its body cards are the shared `DashboardCards` (spec #444), also on the Season dashboard.
+ */
 @Component({
   selector: 'app-league-dashboard',
-  imports: [MatAnchor, MatButton, RouterLink, SoonBadge],
+  imports: [DashboardCards, MatAnchor, MatButton, RouterLink, SoonBadge],
   templateUrl: './league-dashboard.html',
   styleUrl: './league-dashboard.scss',
 })
 export class LeagueDashboard {
   private readonly leagues = inject(LeaguesService);
   private readonly seasons = inject(SeasonsService);
-  private readonly auth = inject(AuthService);
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
   private readonly destroyRef = inject(DestroyRef);
@@ -52,8 +47,6 @@ export class LeagueDashboard {
   protected readonly writeError = signal<string | null>(null);
   protected readonly del = new LeagueDelete();
   protected readonly canDelete = canDeleteLeague;
-  /** I4: the signed-in Account's Self-insert Player id, if linked. */
-  protected readonly selfId = computed(() => this.auth.currentUser()?.self_insert?.id);
 
   private readonly reloads = new Subject<void>();
 
@@ -137,19 +130,5 @@ export class LeagueDashboard {
 
   protected modeLabel(mode: SeasonMode): string {
     return SEASON_MODE_LABELS[mode];
-  }
-
-  /** I4: the snippet row of the team this Manager runs. */
-  protected isManaged(dash: Dashboard, teamId: number): boolean {
-    return dash.managed_team !== null && dash.managed_team.id === teamId;
-  }
-
-  /** The three leader cards, in the Django dashboard's order. */
-  protected boards(dash: Dashboard): LeaderBoard[] {
-    return [
-      { title: 'Points per game', rows: dash.leaders_points },
-      { title: 'Tags per game', rows: dash.leaders_tags },
-      { title: 'Tag ratio', rows: dash.leaders_ratio },
-    ];
   }
 }

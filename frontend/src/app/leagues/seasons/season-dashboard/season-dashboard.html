@@ -1,0 +1,47 @@
+@if (loadError(); as message) {
+  <div class="season-dashboard__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (dash(); as d) {
+  <div class="season-dashboard__header">
+    <h1>{{ d.league.name }} — {{ d.season.name }}</h1>
+    <div class="season-dashboard__actions">
+      <span class="season-dashboard__state" [attr.data-state]="d.season_mode">{{
+        modeLabel(d.season_mode)
+      }}</span>
+      <a mat-button [routerLink]="['/leagues', d.league.id, 'history']">View past evaluations</a>
+    </div>
+  </div>
+
+  @if (d.playoff_tournament_id !== null) {
+    <p>
+      <a
+        mat-stroked-button
+        [routerLink]="['/leagues', d.league.id, 'playoffs']"
+        [queryParams]="{ season: d.season.id }"
+        >View bracket</a
+      >
+    </p>
+  }
+
+  <p class="season-dashboard__map-config">{{ d.map_config_label }}</p>
+
+  <p class="season-dashboard__links">
+    <a mat-stroked-button [routerLink]="seasonPath(d, 'awards')">Awards</a>
+    @if (d.season_mode === 'draft') {
+      <a mat-stroked-button [routerLink]="seasonPath(d, 'conferences')">Manage Conferences</a>
+    }
+  </p>
+
+  <app-dashboard-cards
+    [body]="d"
+    [managedTeamId]="null"
+    [memberNight]="d.member_night_progress"
+    [leadersLink]="{
+      commands: ['/leagues', d.league.id, 'stats', 'league-leaders'],
+      queryParams: { season: d.season.id },
+    }"
+    [resultsLink]="{ commands: seasonPath(d, 'schedule'), fragment: 'member-nights' }"
+  />
+}

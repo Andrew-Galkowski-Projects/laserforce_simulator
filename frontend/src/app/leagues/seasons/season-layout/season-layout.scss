@@ -1,0 +1,22 @@
+// The Season layout (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+@use '../../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 0.75rem;
+  font-family: var(--lf-font-heading);
+}
+
+.season-layout__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}

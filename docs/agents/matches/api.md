@@ -97,7 +97,7 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `POST /api/leagues/<id>/next-season/` · `/reassign-team/`; `GET /new-team-candidates/` | `SeasonSerializer` (POSTs) | **ANG-01d-1.** Rollover ⇒ 201; 409 conflict codes. **ANG-06-14:** next-season's 201 is an **active** Season (UXP-18), a draft only when the previous Season had Conferences or the start is refused |
 | `GET /api/seasons/` | `SeasonListSerializer` | **ANG-01d-1.** Filters (`SeasonFilterSet`): `league`, `state`. Ordering `start_date`, `created_at`, `id`; default / tiebreak `-id`. No POST / PUT / PATCH / DELETE (405) |
 | `GET /api/seasons/<id>/` | `SeasonSerializer` | **ANG-01d-1.** Nested `phases` / `conferences`; no play-state fields |
-| `GET /api/seasons/<id>/dashboard/` · `/standings/` · `/schedule/` · `/awards/` · `/owner-evaluation/` | — (builder dicts) | **ANG-01d-1.** Reads; standings takes `?sort=&dir=` |
+| `GET /api/seasons/<id>/dashboard/` · `/standings/` · `/schedule/` · `/awards/` · `/owner-evaluation/` | — (builder dicts) | **ANG-01d-1.** Reads; standings takes `?sort=&dir=`. **ANG-06-18a:** the Season dashboard gains `member_night_progress` |
 | `GET` / `PUT /api/seasons/<id>/conferences/` | — (state dict) | **ANG-01d-1.** PUT = full replace via `ConferencePartitionForm`; non-draft ⇒ 409 `season_not_draft` |
 | `GET` / `DELETE /api/leagues/<id>/watch-list/`; `PUT` / `DELETE …/watch-list/<player_id>/` | — (builder rows) | **ANG-01e.** Paginated Player-Stats rows (`?season=&rate=&ordering=`); DELETE clears ⇒ `{removed}`; PUT / DELETE one ⇒ `{player, watched}`; 400 `player_not_in_league` |
 | `GET /api/leagues/<id>/player-stats/` · `/player-ratings/` · `/free-agents/` | — (builder rows) | **ANG-01e.** Paginated; `?ordering=`, plus `season` / `rate` / `team_id` (stats), `team_id` (ratings) |
@@ -341,8 +341,9 @@ team_ids}`); `active_play_job_id` / `play_cancel_requested` excluded (ANG-01d-2 
   `data = {league, displayed_season, season_mode, standings_snippet, next_fixture,
   round_count_completed, round_count_total, leaders_points, leaders_tags, leaders_ratio,
   map_config_label, playoff_tournament_id}`. **Season dashboard** = same keys minus `league`, plus
-  `season` + `league` refs. No play-control keys. (ANG-06-14 adds five League-dashboard-only keys,
-  see **ANG-06-14 League core API gaps** below.)
+  `season` + `league` refs, plus `member_night_progress` (`{played, total}` or null, from
+  `build_dashboard_context`; ANG-06-18a). No play-control keys. (ANG-06-14 adds five
+  League-dashboard-only keys, see **ANG-06-14 League core API gaps** below.)
 - **History** — `history_seasons` → the in-progress Season (if any) then completed ones, paginated
   with `EnvelopePagination`; `build_history_row` runs **only on the page slice**; Team / winner
   instances flattened to refs. In-progress row appears once (page 1), not pinned per page.
@@ -797,7 +798,8 @@ Spec: GitHub issue #409 (ticket #410). The backend half of the Angular League co
   `displayed_season` = `pick_displayed_season`, `schedule_team` = `sidebar_schedule_team`,
   `finance_enabled` = `league.finance_enabled` (ANG-06-17).
 - `GET /api/leagues/<id>/dashboard/` gains five keys, added in `LeagueViewSet.dashboard` only
-  (`_dashboard_payload`, the Season dashboard and `SEASON_DASHBOARD_KEYS` are unchanged): `mode`;
+  (`_dashboard_payload` is unchanged; ANG-06-18a later gives the Season dashboard
+  `member_night_progress` too, and `SEASON_DASHBOARD_KEYS` gains it): `mode`;
   `managed_team` (`{id, name}` of `current_team` per `managed_team_id`, else null);
   `has_owner_evaluations`; `member_night_progress` (`{played, total}` or null, from
   `build_dashboard_context`); `manager_awaiting_reassignment` (`dashboard_awaiting_reassignment`).
