@@ -1,0 +1,110 @@
+// League stats page layout (spec #417 I5): `--lf-*` tokens only, no colour literals.
+//
+// How a screen uses it: `@use '../stats-shared/stats-page';` in the screen's .scss, then
+// - `:host { @include stats-page.host; }`, `h1 { @include stats-page.heading; }`;
+// - `.stats-filters { @include stats-page.filters; }` on the row holding the pickers: each
+//   name picker (`app-season-picker`, `app-team-picker`) takes half the row, or the whole row
+//   when the row is under 36rem, so the chosen name stays whole;
+// - `.stats-scroll { @include stats-page.scroll; }` around the table and
+//   `.stats-table { @include stats-page.table; }` on it: the table scrolls sideways inside its
+//   container, a `th` / `td` with class `name` wraps only between words and keeps 8rem, and
+//   class `num` is right-aligned in the numeric font. A sort header is
+//   `<th><a [routerLink]="[]" [queryParams]="screen.sortParams(key)">` (see
+//   `team-stats/` for the whole pattern);
+// - `.stats-notice { @include stats-page.notice; }` (I3 empty states, role="status") and
+//   `.stats-error { @include stats-page.error; }` (the error box, role="alert");
+// - `.stats-footer { @include stats-page.footer; }` for the per-page picker and pager.
+@use '../../shared/alerts';
+
+@mixin host {
+  display: block;
+  min-width: 0;
+  color: var(--lf-text);
+}
+
+@mixin heading {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+}
+
+@mixin filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  margin-bottom: 1rem;
+
+  .stats-picker--wide {
+    flex: 1 1 max(calc(50% - 0.5rem), min(100%, (36rem - 100%) * 999));
+  }
+}
+
+@mixin scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+@mixin table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--lf-border);
+  background: var(--lf-surface);
+  font-size: 0.875rem;
+
+  th,
+  td {
+    padding: 0.375rem 0.625rem;
+    border-bottom: 1px solid var(--lf-border);
+    text-align: left;
+    white-space: nowrap;
+  }
+
+  th {
+    color: var(--lf-text-muted);
+    font-weight: 500;
+  }
+
+  .num {
+    text-align: right;
+    font-family: var(--lf-font-numeric);
+  }
+
+  .name {
+    min-width: 8rem;
+    white-space: normal;
+  }
+
+  tbody tr:nth-child(even) {
+    background: var(--lf-surface-alt);
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+
+  // A sort header is a link to its own query string.
+  th a {
+    color: inherit;
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+}
+
+@mixin notice {
+  @include alerts.notice;
+}
+
+@mixin error {
+  @include alerts.error;
+}
+
+@mixin footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: center;
+  margin-top: 1rem;
+}

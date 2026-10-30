@@ -29,9 +29,16 @@ export interface PageMeta {
   [extra: string]: unknown;
 }
 
-export interface Page<T> {
+/** A list page; `M` widens `meta` for an action that sends extra keys beside the page ones. */
+export interface Page<T, M extends PageMeta = PageMeta> {
   items: T[];
-  meta: PageMeta;
+  meta: M;
+}
+
+/** A GET whose `meta` the caller reads (`getWithMeta`). */
+export interface WithMeta<T, M> {
+  data: T;
+  meta: M;
 }
 
 /** Query params; an array value repeats its key once per item (`?scope=a&scope=b`). */
@@ -132,9 +139,27 @@ export class ApiClient {
       .pipe(unwrap((body) => body.data));
   }
 
-  list<T>(path: string, params?: ListParams, options: RequestOptions = {}): Observable<Page<T>> {
+  /** Like `get`, but keeps the envelope's `meta` beside `data`. */
+  getWithMeta<T, M>(
+    path: string,
+    params?: ListParams,
+    options: RequestOptions = {},
+  ): Observable<WithMeta<T, M>> {
     return this.http
-      .get<Envelope<T[], PageMeta>>(this.url(path), {
+      .get<Envelope<T, M>>(this.url(path), {
+        params: toHttpParams(params),
+        context: options.context,
+      })
+      .pipe(unwrap((body) => ({ data: body.data, meta: body.meta })));
+  }
+
+  list<T, M extends PageMeta = PageMeta>(
+    path: string,
+    params?: ListParams,
+    options: RequestOptions = {},
+  ): Observable<Page<T, M>> {
+    return this.http
+      .get<Envelope<T[], M>>(this.url(path), {
         params: toHttpParams(params),
         context: options.context,
       })

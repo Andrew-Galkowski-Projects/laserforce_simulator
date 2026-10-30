@@ -1,0 +1,15 @@
+// The stats Player cell (spec #417 I4): `--lf-*` tokens only, no colour literals.
+@use '../../shared/badges';
+
+a {
+  color: var(--lf-accent);
+}
+
+// Read-only: the star marks a watched Player; the title says so for screen readers and hover.
+.player-cell__watched {
+  color: var(--lf-accent);
+}
+
+.player-cell__you {
+  @include badges.you;
+}

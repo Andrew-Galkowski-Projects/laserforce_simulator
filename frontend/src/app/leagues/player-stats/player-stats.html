@@ -1,0 +1,90 @@
+<h1>Player Stats</h1>
+
+@if (screen.loadError(); as message) {
+  <p class="stats-error" role="alert">{{ message }}</p>
+} @else if (screen.result(); as r) {
+  <div class="stats-filters">
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="screen.pickSeason($event)" />
+    <app-rate-picker [rate]="screen.query().rate" (rateChange)="screen.pickRate($event)" />
+    <!-- As player_stats.html, no Team picker on an empty state, but one a Team filter emptied. -->
+    @if (
+      r.meta.season_scope.selected !== null && (r.items.length > 0 || screen.query().team !== null)
+    ) {
+      <app-team-picker
+        [options]="r.meta.team_options"
+        [selected]="screen.query().team"
+        (teamChange)="screen.pickTeam($event)"
+      />
+    }
+  </div>
+
+  @if (r.meta.season_scope.selected === null) {
+    <p id="player-stats-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to view player stats.
+    </p>
+  } @else if (r.items.length === 0) {
+    <p id="player-stats-empty-notice" class="stats-notice" role="status">
+      No player performance recorded in this League's current Season yet.
+    </p>
+  } @else {
+    <p id="player-stats-count" class="stats-count">{{ count(r.meta.count) }}</p>
+
+    <div class="stats-scroll">
+      <table id="player-stats-table" class="stats-table">
+        <thead>
+          <tr>
+            <th id="player-stats-th-name" scope="col" class="name">
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('name')"
+                >Name{{ screen.arrow('name') }}</a
+              >
+            </th>
+            <th id="player-stats-th-team" scope="col" class="name">
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('team')"
+                >Team{{ screen.arrow('team') }}</a
+              >
+            </th>
+            <th id="player-stats-th-games" scope="col" class="num">
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('games')"
+                >GP{{ screen.arrow('games') }}</a
+              >
+            </th>
+            @for (c of columns; track c.key) {
+              <th [id]="'player-stats-th-' + c.key" scope="col" class="num">
+                <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)"
+                  >{{ c.label }}{{ screen.arrow(c.key) }}</a
+                >
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of r.items; track row.player.id) {
+            <tr [id]="'player-stats-row-' + row.player.id">
+              <td class="name">
+                <app-player-cell [player]="row.player" [watched]="row.watched" />
+              </td>
+              <td class="name">{{ row.team?.name ?? '—' }}</td>
+              <td class="num">{{ row.games }}</td>
+              @for (c of columns; track c.key) {
+                <td class="num">{{ cell(row, c) }}</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="stats-footer">
+      <app-per-page-picker
+        [perPage]="screen.query().perPage"
+        (perPageChange)="screen.pickPerPage($event)"
+      />
+      <app-stats-paginator
+        [page]="r.meta.page"
+        [totalPages]="r.meta.total_pages"
+        label="Player stats pagination"
+        (pageChange)="screen.pickPage($event)"
+      />
+    </div>
+  }
+}

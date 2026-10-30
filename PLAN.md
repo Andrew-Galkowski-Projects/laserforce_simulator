@@ -97,8 +97,7 @@ below (13b, 14, 16); the item's grill confirms it.
 13a. **[DONE] Tournaments: list, create, participant pool** (ANG-06-13a, in `PLAN-completed.md`).
 13b. **[DONE] Tournament detail** (ANG-06-13b, in `PLAN-completed.md`).
 14. **[DONE] League core** (ANG-06-14, in `PLAN-completed.md`).
-15. **League stats (ANG-06-15)** — leaders, player stats, player ratings, team stats, statistical feats, game
-    log, power rankings, playoffs.
+15. **[DONE] League stats** (ANG-06-15, in `PLAN-completed.md`).
 16. **League team & player (ANG-06-16)** — team roster, schedule, team history, league player detail, free
     agents, watch list (+ the watch flag). API gap: `teams/<id>/roster/` sends only the Player ref,
     role and watched flag; the template also shows age, height, home site, years playing, total games,

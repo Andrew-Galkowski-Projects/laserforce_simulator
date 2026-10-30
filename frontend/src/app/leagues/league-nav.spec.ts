@@ -30,19 +30,26 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     ]);
   });
 
-  it('makes Dashboard and History live, linking into the League', () => {
+  it('makes Dashboard, History and the eight stats screens live, linking into the League', () => {
     const nav = leagueNav({ league: { id: 7, name: 'Metro League', mode: 'league' } });
     const live = LEAGUE_NAV_ENTRIES.filter((e) => !e.soon);
-    expect(live.map((e) => e.key)).toEqual(['dashboard', 'history']);
-    expect(live.map((e) => e.link(nav))).toEqual([
-      ['/leagues', 7],
-      ['/leagues', 7, 'history'],
+    expect(live.map((e) => [e.key, e.link(nav)])).toEqual([
+      ['dashboard', ['/leagues', 7]],
+      ['playoffs', ['/leagues', 7, 'playoffs']],
+      ['history', ['/leagues', 7, 'history']],
+      ['power_rankings', ['/leagues', 7, 'power-rankings']],
+      ['game_log', ['/leagues', 7, 'stats', 'game-log']],
+      ['league_leaders', ['/leagues', 7, 'stats', 'league-leaders']],
+      ['player_ratings', ['/leagues', 7, 'stats', 'player-ratings']],
+      ['player_stats', ['/leagues', 7, 'stats', 'player-stats']],
+      ['team_stats', ['/leagues', 7, 'stats', 'team-stats']],
+      ['statistical_feats', ['/leagues', 7, 'stats', 'statistical-feats']],
     ]);
   });
 
   it('marks every other entry Soon, with no link', () => {
     const soon = LEAGUE_NAV_ENTRIES.filter((e) => e.soon);
-    expect(soon).toHaveLength(21);
+    expect(soon).toHaveLength(13);
     expect(soon.map((e) => e.link(leagueNav()))).toEqual(soon.map(() => null));
   });
 });

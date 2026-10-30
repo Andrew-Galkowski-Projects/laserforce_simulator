@@ -45,6 +45,36 @@ describe('ApiClient', () => {
     expect(await result).toEqual({ items: [{ id: 6 }, { id: 7 }], meta });
   });
 
+  it('getWithMeta unwraps the envelope but keeps meta, dropping undefined params', async () => {
+    const result = firstValueFrom(
+      api.getWithMeta<{ id: number }[], { season_scope: string }>('leagues/1/team-stats/', {
+        season: 'career',
+        ordering: undefined,
+      }),
+    );
+    const req = http.expectOne((r) => r.url === `${BASE}/leagues/1/team-stats/`);
+    expect(req.request.method).toBe('GET');
+    expect(req.request.params.keys()).toEqual(['season']);
+    req.flush({ data: [{ id: 3 }], meta: { season_scope: 'career' } });
+    expect(await result).toEqual({ data: [{ id: 3 }], meta: { season_scope: 'career' } });
+  });
+
+  it('getWithMeta turns a failure into an ApiError', async () => {
+    const result = firstValueFrom(api.getWithMeta('leagues/1/team-stats/')).catch(
+      (e: unknown) => e,
+    );
+    http
+      .expectOne(`${BASE}/leagues/1/team-stats/`)
+      .flush(
+        { errors: [{ code: 'invalid_choice', message: 'Bad season.', field: 'season' }], meta: {} },
+        { status: 400, statusText: 'Bad Request' },
+      );
+    const err = (await result) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(400);
+    expect(err.errors[0].field).toBe('season');
+  });
+
   it('passes params on a plain GET too', async () => {
     const result = firstValueFrom(api.get<string[]>('things/', { flag: true, skip: undefined }));
     const req = http.expectOne((r) => r.url === `${BASE}/things/`);

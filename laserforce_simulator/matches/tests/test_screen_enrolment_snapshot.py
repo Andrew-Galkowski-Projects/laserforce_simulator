@@ -52,9 +52,9 @@ class LateM2MTeamIsNotEnrolledTests(LeagueApiTestCase):
         )
 
     def test_player_ratings_rows_exclude_its_players(self) -> None:
-        rows, _ = self.ok_page(
-            self.api.get(f"{self.base}/player-ratings/?page_size=100")
-        )
+        # ``ok``, not ``ok_page``: player-ratings' meta also carries
+        # ``team_options`` (ANG-06-15), and this test pins the rows only.
+        rows = self.ok(self.api.get(f"{self.base}/player-ratings/?page_size=100"))
         self.assertNotIn(self.late.id, {r["player"]["team"]["id"] for r in rows})
 
     def test_statistical_feats_team_id_is_400(self) -> None:

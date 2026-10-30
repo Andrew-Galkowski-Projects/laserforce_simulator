@@ -216,18 +216,27 @@ src/
                           ?simulation_ready=true), /leagues/:id (league-layout: LeagueLayout,
                           the League nav beside a <router-outlet>, a "League menu" toggle below
                           768px) with children '' (league-dashboard), history (league-history)
-                          and new-team (league-new-team). league-nav.ts (LEAGUE_NAV_ENTRIES:
-                          23 entries, Dashboard + History live), soon-badge/ (app-soon-badge:
+                          and new-team (league-new-team); ANG-06-15 adds stats/league-leaders,
+                          stats/player-stats, stats/player-ratings, stats/team-stats,
+                          stats/statistical-feats, stats/game-log, power-rankings and playoffs
+                          (one lazily loaded folder each). stats-shared/ is their kit (read each
+                          file's header): stats-query.ts (URL state, I1 / I2), stats-screen.ts
+                          (injectStatsScreen), league-context.ts (the layout's nav), the Season /
+                          Team / per-page pickers, paginator, player-cell, _stats-page.scss.
+                          league-nav.ts (LEAGUE_NAV_ENTRIES:
+                          23 entries, 10 live), soon-badge/ (app-soon-badge:
                           a not-yet-ported target as a disabled span, never an <a>),
                           league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
                           ConfirmDialog -> DELETE, shared by list + dashboard); testing/
-                          (league-fixtures, leagues-loads: releaseLeaguesLoads, specs only)
+                          (league-fixtures, league-stats-fixtures, leagues-loads:
+                          releaseLeaguesLoads, which also releases the stats GETs; specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps, batch, tournaments:
                           TOURNAMENT_STATE_LABELS, TEAM_ASSEMBLY_LABELS; leagues: LeaguesService,
                           every League / Season model + label map; seasons: SeasonsService.start,
-                          ANG-06-14); testing/ holds shared spec fixtures
+                          ANG-06-14; league-stats: LeagueStatsService, one method per stats
+                          screen, ANG-06-15); testing/ holds shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
                           auth.guard.ts (authGuard, signedOutGuard, HOME_URL),
@@ -285,7 +294,8 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   path relative to `apiBaseUrl` (`'teams/'`, `'rounds/7/events/'`, trailing slash as the API routes
   it) and an optional `{ context }`.
 - **Envelope unwrapped once:** objects come back as `T`, lists as `Page<T>` (`items` plus `meta`:
-  `page`, `page_size`, `count`, `total_pages`), and a 204 as `undefined`. Undefined params are
+  `page`, `page_size`, `count`, `total_pages`; `Page<T, M>` / `list<T, M>` widen `meta`), and a
+  204 as `undefined`. `getWithMeta<T, M>` keeps `meta` beside `data` (`{data, meta}`). Undefined params are
   dropped from the query; an array param repeats its key (`?scope=a&scope=b`).
 - **Every row of a list:** `listAll(fetchPage)` (`api/list-all.ts`) asks for page 1 at
   `page_size=100`, follows `meta.total_pages`, and concatenates the pages; a failing page fails the

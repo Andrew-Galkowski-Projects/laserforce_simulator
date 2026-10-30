@@ -463,10 +463,20 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
 - **Params** are strict (bad `season` / `rate` / `ordering` / `team_id` ⇒ 400). Paging is the shared
   `EnvelopePagination` (`page`, `page_size`), not the HTML `per_page`. Sorting is `?ordering=<key>` /
   `-<key>` over the HTML's keys with each screen's HTML default.
-- **`meta.season_scope`** = `{selected: season_ref | "career" | null, options: [season_ref]}` on every
-  Season-scoped screen, merged beside the page keys via the new
-  `EnvelopePagination.get_paginated_response(data, extra_meta=None)` (non-paginated screens set
-  `response.envelope_meta`).
+- **`meta.season_scope`** = `{selected: season_ref | "career" | null, options: [{id, name, year}]}`
+  on every Season-scoped screen (the watch list and the Team screens included), merged beside the
+  page keys via the new `EnvelopePagination.get_paginated_response(data, extra_meta=None)`
+  (non-paginated screens go through `scoped_response(data, scope, *, extra_meta=None)`, which sets
+  `response.envelope_meta`). ANG-06-15 added each option's `year` (`season_option(season)`: the
+  `start_date` year, `null` without one) for the SPA Season picker's "Name (year)" label; `selected`
+  stays a plain `season_ref`, and `season_ref` is unchanged everywhere else.
+- **`meta.team_options`** = `[team_ref]` (ANG-06-15) on `player-stats/`, `player-ratings/`,
+  `statistical-feats/` and `game-log/` only: `team_options_meta(displayed_season)` maps
+  `enrolled_teams(displayed_season)`, so it is the Teams enrolled in the **displayed** Season, by
+  name (the same set the `team_id` allowlist checks), even when `?season=` picks a past Season or
+  `career`. It is `[]` when the League has no Season. `player-ratings/` keeps no `season_scope` and
+  gets `team_options` beside its page keys. No other action (Playoffs included) carries it. It
+  costs a fixed number of queries per request, never one per row.
 - **Every Player row carries `watched`** for the requesting Account; rating rows carry the 19
   lowercase `stats`.
 - **Team-scoped paths** (`teams/<team_id>/…`) use `enrolled_team_or_404` — no displayed Season or a
@@ -474,6 +484,10 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
 - **League player** is lenient (decision 17): 404 only for a missing / foreign League or Player; one
   response with bio, overall, 19 stats, per-Season + Career rows, awards and ratings history.
 - **`leaders/`** returns all four boards (top 10), no sort params. **`playoffs/`** rejects `career`.
+- **`statistical-feats/`** `data.team_feats[]` = `{kind, label, team_name, team: team_ref | null,
+  round_id}` (`team_feats_payload`). `team_name` (ANG-06-15) is the `TeamFeatRecord`'s own winner
+  name, the value the HTML shows, so it is set even when `team` is `null` (no Round 2 to resolve the
+  winner's ref through).
 - **Watch list writes:** `PUT` / `DELETE watch-list/<player_id>/` ⇒ `{player, watched}`, idempotent;
   `DELETE watch-list/` ⇒ `{removed: n}`. Player not in the League ⇒ **400 `player_not_in_league`**
   (field `player_id`).

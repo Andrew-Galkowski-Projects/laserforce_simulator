@@ -14,6 +14,14 @@ import { LeagueHistory } from './league-history/league-history';
 import { LeagueLayout } from './league-layout/league-layout';
 import { LeagueList } from './league-list/league-list';
 import { LeagueNewTeam } from './league-new-team/league-new-team';
+import { GameLog } from './game-log/game-log';
+import { LeagueLeaders } from './league-leaders/league-leaders';
+import { PlayerRatings } from './player-ratings/player-ratings';
+import { PlayerStats } from './player-stats/player-stats';
+import { Playoffs } from './playoffs/playoffs';
+import { PowerRankings } from './power-rankings/power-rankings';
+import { StatisticalFeats } from './statistical-feats/statistical-feats';
+import { TeamStats } from './team-stats/team-stats';
 
 describe('Leagues routes', () => {
   let http: HttpTestingController;
@@ -36,8 +44,8 @@ describe('Leagues routes', () => {
       await signIn();
     });
 
-    // Routing only: drop whatever each screen loads, so the screens' own tickets (#412-#414)
-    // never edit this file.
+    // Routing only: drop whatever each screen loads (every League request, the stats screens'
+    // too), so the screens' own tickets (#412-#414, #420-#425) never edit this file.
     afterEach(() => http.match(() => true));
 
     it.each([
@@ -47,6 +55,18 @@ describe('Leagues routes', () => {
       ['/leagues/4', LeagueDashboard, 'League - Laserforce Simulator'],
       ['/leagues/4/history', LeagueHistory, 'League History - Laserforce Simulator'],
       ['/leagues/4/new-team', LeagueNewTeam, 'Choose New Team - Laserforce Simulator'],
+      ['/leagues/4/stats/league-leaders', LeagueLeaders, 'League Leaders - Laserforce Simulator'],
+      ['/leagues/4/stats/player-stats', PlayerStats, 'Player Stats - Laserforce Simulator'],
+      ['/leagues/4/stats/player-ratings', PlayerRatings, 'Player Ratings - Laserforce Simulator'],
+      ['/leagues/4/stats/team-stats', TeamStats, 'Team Stats - Laserforce Simulator'],
+      [
+        '/leagues/4/stats/statistical-feats',
+        StatisticalFeats,
+        'Statistical Feats - Laserforce Simulator',
+      ],
+      ['/leagues/4/stats/game-log', GameLog, 'Game Log - Laserforce Simulator'],
+      ['/leagues/4/power-rankings', PowerRankings, 'Power Rankings - Laserforce Simulator'],
+      ['/leagues/4/playoffs', Playoffs, 'Playoffs - Laserforce Simulator'],
     ])('resolves %s to its screen and page title', async (url, screen, title) => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl(url);
@@ -55,14 +75,23 @@ describe('Leagues routes', () => {
       expect(TestBed.inject(Title).getTitle()).toBe(title);
     });
 
-    it.each(['/leagues/4', '/leagues/4/history', '/leagues/4/new-team'])(
-      'puts %s inside the League layout',
-      async (url) => {
-        const harness = await RouterTestingHarness.create();
-        await harness.navigateByUrl(url);
-        expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
-      },
-    );
+    it.each([
+      '/leagues/4',
+      '/leagues/4/history',
+      '/leagues/4/new-team',
+      '/leagues/4/stats/league-leaders',
+      '/leagues/4/stats/player-stats',
+      '/leagues/4/stats/player-ratings',
+      '/leagues/4/stats/team-stats',
+      '/leagues/4/stats/statistical-feats',
+      '/leagues/4/stats/game-log',
+      '/leagues/4/power-rankings',
+      '/leagues/4/playoffs',
+    ])('puts %s inside the League layout', async (url) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
+    });
 
     it.each(['/leagues', '/leagues/new', '/leagues/new/advanced'])(
       'shows %s without the League layout',

@@ -593,11 +593,12 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
       expect(page().querySelector('.dashboard__leaders .you')).toBeNull();
     });
 
-    it('shows "View all leaders" as Soon, never a link (I1)', async () => {
+    it('links "View all leaders" to League Leaders (spec #417)', async () => {
       await open();
       const all = q('.dashboard__all-leaders');
-      expect(text(all)).toBe('View all leaders Soon');
-      expect(all?.querySelector('a')).toBeNull();
+      expect(text(all)).toBe('View all leaders');
+      expect(all?.querySelector('a')?.getAttribute('href')).toBe('/leagues/1/stats/league-leaders');
+      expect(all?.querySelector('.soon')).toBeNull();
     });
 
     it.each(['active', 'completed'] as const)('shows on a %s Season', async (mode) => {

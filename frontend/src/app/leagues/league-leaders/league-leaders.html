@@ -1,0 +1,57 @@
+<h1>League Leaders</h1>
+
+@if (screen.loadError(); as message) {
+  <p class="stats-error" role="alert">{{ message }}</p>
+} @else if (screen.result(); as r) {
+  <div class="stats-filters">
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="screen.pickSeason($event)" />
+  </div>
+
+  @if (r.meta.season_scope.selected; as selected) {
+    <p id="leaders-scope" class="leaders-scope">
+      {{ selected === 'career' ? 'Career' : selected.name }}
+    </p>
+    <div class="leaders-boards">
+      @for (board of boards; track board.key) {
+        <div class="stats-scroll">
+          <table [id]="board.id" class="stats-table">
+            <thead>
+              <tr>
+                <th scope="col" class="name">
+                  <button type="button" class="leaders-sort" (click)="sortBy(board, 'player_name')">
+                    {{ board.title }}{{ arrow(board, 'player_name') }}
+                  </button>
+                </th>
+                <th scope="col" class="num">
+                  <button type="button" class="leaders-sort" (click)="sortBy(board, 'value')">
+                    {{ board.valueLabel }}{{ arrow(board, 'value') }}
+                  </button>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of rows(r.data, board); track row.player_id) {
+                <tr>
+                  <td class="name">
+                    {{ row.rank }}.
+                    <app-player-cell [player]="row.player" [watched]="row.watched" />,
+                    {{ row.team_name }}
+                  </td>
+                  <td class="num">{{ value(row, board) }}</td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="2" class="leaders-no-data">No data.</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+  } @else {
+    <p id="leaders-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to populate the leaderboards.
+    </p>
+  }
+}

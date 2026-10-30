@@ -32,6 +32,27 @@
   }
 }
 
+// A Statistical Feats badge (ANG-06-15): one per feat on a row. Put `data-season-best` on a
+// season-best badge: it is filled and bold, and its text also says "(season best)", so the
+// colour is never the only signal.
+@mixin feat {
+  display: inline-block;
+  margin: 0 0.25rem 0.125rem 0;
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--lf-accent);
+  border-radius: var(--lf-radius);
+  background: color-mix(in srgb, var(--lf-accent) 12%, transparent);
+  color: var(--lf-text);
+  font-size: 0.75rem;
+  white-space: nowrap;
+
+  &[data-season-best] {
+    background: var(--lf-accent);
+    color: var(--lf-bg);
+    font-weight: 700;
+  }
+}
+
 // A Tournament's State badge (list, detail): on an element with `data-state` = setup / active /
 // completed. The label always shows, so the colour is never the only signal.
 @mixin tournament-state {

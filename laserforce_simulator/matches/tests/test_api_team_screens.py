@@ -12,6 +12,11 @@ from __future__ import annotations
 
 from datetime import date
 
+from django.test import SimpleTestCase
+
+from matches.league_screen_api_views import season_scope_meta
+from matches.league_screen_services import SeasonScope
+from matches.models import Season
 from matches.tests.league_api_fixtures import (
     LeagueApiTestCase,
     add_round_states,
@@ -280,14 +285,18 @@ class SeasonScopedScreenMixin:
         return response.json()
 
     def test_meta_season_scope_defaults_to_displayed_season(self) -> None:
+        # ANG-06-15: each option gains its start-date ``year`` for the Season
+        # picker label; ``selected`` stays a plain ``season_ref`` and the
+        # options keep their newest-first order, so the default-scope
+        # invariant this test pins is unchanged.
         meta = self.get_body()["meta"]
         self.assertEqual(
             meta["season_scope"],
             {
                 "selected": {"id": self.season2.id, "name": self.season2.name},
                 "options": [
-                    {"id": self.season2.id, "name": self.season2.name},
-                    {"id": self.season1.id, "name": self.season1.name},
+                    {"id": self.season2.id, "name": self.season2.name, "year": 2026},
+                    {"id": self.season1.id, "name": self.season1.name, "year": 2025},
                 ],
             },
         )
@@ -335,6 +344,40 @@ class SeasonScopedScreenMixin:
     def test_leaves_session_untouched(self) -> None:
         self.get_body()
         self.assert_session_untouched()
+
+
+class SeasonScopeMetaYearTests(SimpleTestCase):
+    """ANG-06-15: ``season_scope_meta`` option ``year`` edge case.
+
+    ``Season.start_date`` is a required column, so a Season without one
+    cannot be saved; the ``null`` branch is pinned on an in-memory Season.
+    """
+
+    def test_option_year_is_null_without_start_date(self) -> None:
+        season = Season(id=7, name="Undated", start_date=None)
+        scope = SeasonScope(
+            seasons=[season], selected=season, options=[season], round_filter=None
+        )
+        self.assertEqual(
+            season_scope_meta(scope),
+            {
+                "selected": {"id": 7, "name": "Undated"},
+                "options": [{"id": 7, "name": "Undated", "year": None}],
+            },
+        )
+
+    def test_career_selected_stays_a_plain_string(self) -> None:
+        season = Season(id=8, name="Dated", start_date=date(2024, 6, 1))
+        scope = SeasonScope(
+            seasons=[season], selected="career", options=[season], round_filter={}
+        )
+        self.assertEqual(
+            season_scope_meta(scope),
+            {
+                "selected": "career",
+                "options": [{"id": 8, "name": "Dated", "year": 2024}],
+            },
+        )
 
 
 def _two_season_league(test: LeagueApiTestCase, prefix: str) -> None:

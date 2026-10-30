@@ -9,11 +9,14 @@ keys), the error codes, row shape and ordering -- never simulated point totals
 
 from __future__ import annotations
 
+from datetime import date
+
 from matches.models import WatchedPlayer
 from matches.tests.league_api_fixtures import (
     LEADER_KEYS,
     LeagueApiTestCase,
     add_round_states,
+    make_completed_season,
     make_league,
     make_teams,
     ranked_career_league,
@@ -76,6 +79,10 @@ RATING_STATS_KEYS = {
 class _RatingsScreenMixin:
     """Shared ratings-screen checks over ``self.url`` / ``self.players``."""
 
+    # The ``meta`` keys beside the page keys (ANG-06-15: Player Ratings adds
+    # ``team_options``; Free Agents has no Team picker and adds nothing).
+    extra_meta_keys: set[str] = set()
+
     def get(self, query: str = "") -> tuple[list, dict]:
         response = self.api.get(f"{self.url}?{query}" if query else self.url)
         self.assertEqual(response.status_code, 200, response.content)
@@ -89,7 +96,10 @@ class _RatingsScreenMixin:
 
     def test_rows_have_rating_shape(self) -> None:
         rows, meta = self.get("page_size=100")
-        self.assertEqual(set(meta), PAGE_KEYS)
+        # ANG-06-15: still no ``season_scope`` on either ratings screen; the
+        # only addition is Player Ratings' ``team_options`` (its Team picker),
+        # so the exact-keys invariant holds per screen.
+        self.assertEqual(set(meta), PAGE_KEYS | self.extra_meta_keys)
         self.assertEqual(meta["count"], len(self.players))
         for row in rows:
             self.assertEqual(set(row), RATING_ROW_KEYS)
@@ -170,6 +180,8 @@ class _RatingsScreenMixin:
 
 
 class PlayerRatingsTests(_RatingsScreenMixin, LeagueApiTestCase):
+    extra_meta_keys = {"team_options"}
+
     def setUp(self) -> None:
         super().setUp()
         self.league, self.season, self.teams = ranked_career_league(
@@ -370,7 +382,9 @@ class PlayerStatsTests(LeagueApiTestCase):
             self.assertEqual(set(row), STAT_ROW_KEYS)
             self.assertEqual(set(row["stats"]), STATS_KEYS)
             self.assertFalse(row["watched"])
-        self.assertEqual(set(meta), PAGE_KEYS | {"season_scope"})
+        # ANG-06-15: ``team_options`` (the Team picker) joins ``season_scope``
+        # beside the page keys; the row shape and page keys are unchanged.
+        self.assertEqual(set(meta), PAGE_KEYS | {"season_scope", "team_options"})
         self.assertEqual(meta["count"], 12)
 
     def test_default_ordering_is_points_descending(self) -> None:
@@ -444,3 +458,83 @@ class PlayerStatsTests(LeagueApiTestCase):
         meta = response.json()["meta"]
         self.assertEqual(meta["season_scope"], {"selected": None, "options": []})
         self.assertEqual(meta["count"], 0)
+
+
+# The four Team-picker screens (ANG-06-15) and the others, which must not
+# carry ``team_options``.
+TEAM_PICKER_PATHS = (
+    "player-stats/",
+    "player-ratings/",
+    "statistical-feats/",
+    "game-log/",
+)
+NO_TEAM_PICKER_PATHS = (
+    "leaders/",
+    "team-stats/",
+    "power-rankings/",
+    "playoffs/",
+    "watch-list/",
+    "free-agents/",
+)
+
+
+class TeamOptionsMetaTests(LeagueApiTestCase):
+    """ANG-06-15: ``meta.team_options`` on the Team-picker screens.
+
+    Season 1 enrolls ``TO0..TO2``; the displayed Season 2 drops ``TO2`` and
+    adds ``TNew0``, whose name sorts first though its id is the highest.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.league, self.season1, self.teams = ranked_career_league(
+            "TO", 3, manager=self.user_a
+        )
+        self.newcomer = make_teams("TNew", 1)[0]
+        self.season2 = make_completed_season(
+            self.league,
+            [self.teams[0], self.teams[1], self.newcomer],
+            name="Season 2",
+            start_date=date(2026, 1, 1),
+        )
+        # Displayed-Season Teams, by name.
+        self.expected = [
+            {"id": t.id, "name": t.name}
+            for t in (self.newcomer, self.teams[0], self.teams[1])
+        ]
+
+    def meta(self, path: str, query: str = "", league_id: int | None = None) -> dict:
+        response = self.api.get(
+            f"/api/leagues/{league_id or self.league.id}/{path}{query}"
+        )
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()["meta"]
+
+    def test_lists_displayed_season_enrolled_teams_by_name(self) -> None:
+        for path in TEAM_PICKER_PATHS:
+            with self.subTest(path=path):
+                self.assertEqual(self.meta(path)["team_options"], self.expected)
+
+    def test_past_season_or_career_still_lists_displayed_season_teams(self) -> None:
+        for path in ("player-stats/", "statistical-feats/", "game-log/"):
+            for season in (str(self.season1.id), "career"):
+                with self.subTest(path=path, season=season):
+                    self.assertEqual(
+                        self.meta(path, f"?season={season}")["team_options"],
+                        self.expected,
+                    )
+
+    def test_league_without_season_is_empty(self) -> None:
+        empty = make_league("TO Empty", manager=self.user_a)
+        for path in TEAM_PICKER_PATHS:
+            with self.subTest(path=path):
+                self.assertEqual(
+                    self.meta(path, league_id=empty.id)["team_options"], []
+                )
+
+    def test_other_screens_carry_no_team_options(self) -> None:
+        self.league.free_agent_pool = make_teams("TOPool", 1)[0]
+        self.league.save(update_fields=["free_agent_pool"])
+        for path in NO_TEAM_PICKER_PATHS:
+            with self.subTest(path=path):
+                self.assertNotIn("team_options", self.meta(path))
