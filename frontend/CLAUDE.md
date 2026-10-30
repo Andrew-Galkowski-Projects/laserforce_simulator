@@ -230,9 +230,11 @@ src/
                           (team-finances: the Expense Settings form).
                           ANG-06-18 adds seasons/:seasonId (seasons/seasons.routes.ts,
                           SEASON_ROUTES, lazily loaded): SeasonLayout loads the Season once and
-                          provides SeasonContext (season, seasonId, leagueId); children '' (the
-                          Season dashboard), standings, schedule, awards, owner-evaluation,
-                          conferences, one folder each; SeasonBreadcrumb above each sub-screen;
+                          provides SeasonContext (season, seasonId, leagueId, requireSeasonId,
+                          link(...screen)); children '' (the Season dashboard), standings,
+                          schedule, awards, owner-evaluation, conferences, one folder each;
+                          season-load.ts (injectSeasonLoad: a screen's GET + Retry);
+                          SeasonBreadcrumb above each sub-screen;
                           seasons/testing/ (season-fixtures, season-loads: releaseSeasonLayout,
                           releaseSeasonScreenLoads). dashboard-cards/ (DashboardCards) is the
                           body cards both dashboards share.
@@ -249,7 +251,7 @@ src/
                           _stats-page.scss. watch/ (ANG-06-16): WatchState (provided by
                           LeagueLayout) and app-watch-flag, the star toggle (☆ off, ★ on).
                           league-nav.ts (LEAGUE_NAV_ENTRIES:
-                          23 entries, 17 live), soon-badge/ (app-soon-badge:
+                          23 entries, 19 live), soon-badge/ (app-soon-badge:
                           a not-yet-ported target as a disabled span, never an <a>),
                           league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
                           ConfirmDialog -> DELETE, shared by list + dashboard); testing/

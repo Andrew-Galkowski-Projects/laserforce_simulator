@@ -797,9 +797,10 @@ Spec: GitHub issue #409 (ticket #410). The backend half of the Angular League co
   displayed_season: season_ref | null, schedule_team: ref | null, finance_enabled}`;
   `displayed_season` = `pick_displayed_season`, `schedule_team` = `sidebar_schedule_team`,
   `finance_enabled` = `league.finance_enabled` (ANG-06-17).
-- `GET /api/leagues/<id>/dashboard/` gains five keys, added in `LeagueViewSet.dashboard` only
-  (`_dashboard_payload` is unchanged; ANG-06-18a later gives the Season dashboard
-  `member_night_progress` too, and `SEASON_DASHBOARD_KEYS` gains it): `mode`;
+- `GET /api/leagues/<id>/dashboard/` gains five keys, added in `LeagueViewSet.dashboard` (the
+  shared `_dashboard_payload` body is unchanged, though it now takes an optional prebuilt
+  `build_dashboard_context` `body` so each caller builds it once; ANG-06-18a gives the Season
+  dashboard `member_night_progress` too, and `SEASON_DASHBOARD_KEYS` gains it): `mode`;
   `managed_team` (`{id, name}` of `current_team` per `managed_team_id`, else null);
   `has_owner_evaluations`; `member_night_progress` (`{played, total}` or null, from
   `build_dashboard_context`); `manager_awaiting_reassignment` (`dashboard_awaiting_reassignment`).

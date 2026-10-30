@@ -314,12 +314,13 @@ Shell sidenav lists **Leagues** first):
   (`league-new-team`).
 
 **League nav** (`leagues/league-nav.ts`): `LEAGUE_NAV_ENTRIES`, 23 entries in the Django sidebar's
-order (1 top + LEAGUE 6 + TEAM 4 + PLAYERS 6 + STATS 6). Live: Dashboard and History, plus the
-eight stats entries ANG-06-15 turned live (below). The other 13 render through `leagues/soon-badge`
-(`app-soon-badge`: a disabled `<span>` with a "Soon" badge, never an `<a>`) until ANG-06-16..20 turn
-them live. The dashboard ("View bracket", the Season name, "Manage Conferences", member-night "View
-results") and History (Season name, Awards) use the same piece; "View all leaders" links to League
-Leaders since ANG-06-15.
+order (1 top + LEAGUE 6 + TEAM 4 + PLAYERS 6 + STATS 6). ANG-06-14 shipped Dashboard and History
+live; ANG-06-15..18 turned more live (see their sections). Since ANG-06-18, 19 are live and 4 (Trade,
+Trading Block, Prospects, Hall of Fame) render through `leagues/soon-badge` (`app-soon-badge`: a
+disabled `<span>` with a "Soon" badge, never an `<a>`) until ANG-06-20. The dashboard's and
+History's Season links ("View bracket", the Season name, "Manage Conferences", member-night "View
+results", Awards) went live with ANG-06-18; "View all leaders" links to League Leaders since
+ANG-06-15.
 
 **Dashboard.** Renders `dashboard.html`'s values from `/dashboard/`: "You" on the snippet row where
 `team_id === managed_team.id` and on leader rows whose `player_id` is the Account's Self-insert;
@@ -351,7 +352,7 @@ link back to the dashboard.
 `releaseLeaguesLoads`).
 
 **Out of scope.** The topnav Play menu and play controls (ANG-06-19/20), owner evaluation and
-Conferences screens (ANG-06-18), stats / team / finance screens (ANG-06-15..17), the session's
+Conferences screens (shipped with ANG-06-18), stats / team / finance screens (ANG-06-15..17), the session's
 `last_league_id`, template removal (ANG-08).
 
 ## ANG-06-15 League stats in Angular
@@ -483,7 +484,7 @@ stay until ANG-08.
     plus a bold Career row.
   - Playoffs / Salaries / Transactions show the Coming-soon text.
   - Ratings history: the `count` chart with Season-name `xLabel`, plus a table.
-  - Awards: a Season `app-soon-badge` until ANG-06-18.
+  - Awards: each Season name links to that Season's awards (ANG-06-18; a Soon badge before).
   - A 404 shows "Player not found".
 - **Free Agents:** the Player Ratings columns plus MMR / Rank "-", the count, paging. No sign
   action.
@@ -541,6 +542,87 @@ money cell is a muted `—` on its own; "No enrolled teams.".
   badge on the Self-insert.
 
 **Out of scope.** Django view changes, finance charts, history sort / paging, the per-line money
-breakdown, live projections, Owner Evaluation (ANG-06-18). The template's "Scouting & coaching are
+breakdown, live projections, Owner Evaluation (its own screen, ANG-06-18). The template's "Scouting & coaching are
 cost-only for now" form text is copied verbatim though FIN-02 / FIN-03 made both live. The
 nav-gated load pipeline both screens repeat is follow-up #436's.
+
+## ANG-06-18 Season screens in Angular
+
+Spec: GitHub issue #444 (tickets #445-#451). Ports `templates/seasons/` dashboard (+ its
+`_partials/dashboard_*`), standings, schedule, awards, owner_evaluation and manage_conferences
+under `/leagues/:id/seasons/:seasonId`, inside `LeagueLayout`. The one API change is
+`member_night_progress` on the Season dashboard (`api.md`). The Django templates stay until ANG-08.
+
+**Routes** (`leagues/seasons/seasons.routes.ts`, `SEASON_ROUTES`, lazily loaded as the `:id`
+child `seasons/:seasonId`): `''` (`SeasonDashboard`, title `Season`), `standings`
+(`SeasonStandings`), `schedule` (`SeasonSchedule`), `awards` (`SeasonAwards`, title `Season
+Awards`), `owner-evaluation` (`OwnerEvaluation`), `conferences` (`ManageConferences`), one folder
+each. h1s are the templates'.
+
+**Kit** (`leagues/seasons/`):
+- `SeasonLayout` loads `SeasonsService.get(:seasonId)` once per id and renders the screen only
+  once the Season has loaded and `season.league.id === :id`; a 404 or another League's Season shows
+  "Season not found" + "← Back to League" (I1), any other failure the error with Retry (I2).
+- `SeasonContext` (provided by the layout): `season`, `seasonId`, `leagueId`,
+  `requireSeasonId()` / `requireLeagueId()` (non-null inside a screen), `link(...screen)` (the
+  router commands for `/leagues/:id/seasons/:seasonId/<screen>`).
+- `injectSeasonLoad(fetch, { params?, splitNotFound? })` (`season-load.ts`): the shared load +
+  Retry chain (`data`, `loadError`, `notFound`, `retry`); `params` re-fetches on each emission
+  (Standings' sort), `splitNotFound` routes a 404 to `notFound` (Owner Evaluation). Manage
+  Conferences keeps its own pipeline (its maps GET follows the Conferences GET and Retry re-sends
+  whichever failed).
+- `SeasonBreadcrumb` (`<League> › <Season>`) above every sub-screen's h1.
+- Spec helpers in `seasons/testing/`: `season-fixtures` (`season()`: Season 11 of League 1,
+  active; a builder per screen body), `season-loads` (`releaseSeasonLayout`,
+  `releaseSeasonScreenLoads`, which also releases Standings' `leagues/{id}/` and Conferences'
+  `maps/` side loads).
+- `leagues/dashboard-cards/` (`DashboardCards`): the body cards both dashboards render (Top
+  standings, member night, Next round, Rounds played, the three leader cards, "View all leaders");
+  inputs `body`, `managedTeamId`, `memberNight`, `leadersLink`, `resultsLink` ("View results" is
+  hidden when null).
+
+**Data:** `api/seasons.service.ts` (`SeasonsService`: `start`, `get`, `dashboard`, `standings`,
+`schedule`, `awards`, `ownerEvaluation`, `conferences`, `replaceConferences`), the types in
+`api/seasons.models.ts` (`Season` / `SeasonDashboard` stay in `leagues.models.ts`).
+
+**Screens:**
+- **Season dashboard:** h1 `<League> — <Season>`, state badge, "View past evaluations" (always,
+  as the template), "View bracket" (`/leagues/:id/playoffs?season=`), the map line, Awards,
+  draft-only Manage Conferences, then `DashboardCards` with no managed Team (Django passes none
+  here); "View all leaders" goes to League Leaders `?season=<id>`, fixing Django's dead
+  `/seasons/<id>/leaders/` link; member-night "View results" to `schedule#member-nights`.
+- **Standings:** `?sort=&dir=` in the URL (only the 17 known keys and `asc` / `desc` are sent),
+  Django's arrows, first click ascending; one table per Conference group; the draft preview note
+  and "No teams enrolled in this Season yet."; "You" on `current_team` in a career League only
+  (from `LeaguesService.get`, best-effort: a failed League GET leaves the table unmarked);
+  "Champion: <name>".
+- **Schedule:** per-matchday tables, results linked to `/rounds/:id`, "Unplayed"; the member-nights
+  section (`id="member-nights"`) scrolls into view when the route fragment is `member-nights`.
+- **Awards:** the 11 rows at the template's decimals, `—` for an unwon award, "You" on the
+  Self-insert; winner names are plain text, as in Django.
+- **Owner Evaluation:** verdict badge (key upper-cased), hot-seat / fired texts, the Factor table
+  (3 / 3 / 1 decimals via `players/shared/benchmark-format.ts` `fixed()`); "Start Next Season" ⇒
+  `LeaguesService.nextSeason`, then the new Season's dashboard (409 `manager_fired` ⇒ `new-team`,
+  other failures inline); "Choose New Team" when fired and not reassigned; a 404 shows "Owner
+  evaluation not found" with "← Back to Season".
+- **Manage Conferences:** editable (draft): rows by `ordinal`, rename / Remove / "+ Add
+  conference", each row's `MapRotationComposer` (maps `?simulation_ready=true`; the composer gained a
+  `disabled` input and now wraps so the picker keeps a full row in a narrow card), Team assignment as
+  native selects in an outline `mat-form-field` (`matNativeControl`; option values are stable row
+  keys, so removing a row unassigns only its Teams; a blank name lists as "Conference <n>"), Save
+  ⇒ `replaceConferences` (400 / 409 messages listed above the form, edits kept; 200 ⇒ the response
+  and "Conferences saved."), the form locked while saving. Read-only (started Season): cards with
+  Team names and the numbered rotation (`starting_map_rotation_ids ?? map_rotation_ids`, names
+  from all maps), "No rotation maps.", the no-Conferences note and the locked note.
+
+**Placeholders turned live:** the League nav's Standings / Schedule (to the nav's
+`displayed_season`; with none, `link()` is null and the entry is not rendered); the League
+dashboard's Season name, "View bracket", "Manage Conferences" and member-night "View results";
+History's Season name and Awards; the League player's award Season names.
+
+**Seed:** `seed_browser_check --league` also builds "Browser Check Conferences" (sandbox, a draft
+Season of A's four Teams in North / South with rotations, map mode `rotate_by_conference`) for the
+editable Conferences screen and the draft Standings preview.
+
+**Out of scope.** Play controls and the topnav Play menu (ANG-06-19), a past-evaluations list,
+template removal (ANG-08), any engine / model / Season-lifecycle change.
