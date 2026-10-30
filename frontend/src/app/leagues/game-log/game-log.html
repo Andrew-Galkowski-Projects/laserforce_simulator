@@ -1,0 +1,63 @@
+<h1>{{ nav()?.league?.name }} — Game Log</h1>
+
+@if (screen.loadError(); as message) {
+  <p class="stats-error" role="alert">{{ message }}</p>
+} @else if (screen.result(); as r) {
+  <div class="stats-filters">
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="pickSeason($event)" />
+    @if (r.meta.season_scope.selected !== null) {
+      <app-team-picker
+        [options]="r.meta.team_options"
+        [selected]="screen.query().team"
+        allLabel="All teams"
+        (teamChange)="pickTeam($event)"
+      />
+    }
+  </div>
+
+  @if (r.meta.season_scope.selected === null) {
+    <p id="game-log-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to populate the game log.
+    </p>
+  } @else if (r.data.length === 0) {
+    <p id="game-log-empty-notice" class="stats-notice" role="status">
+      No games played yet in this Season.
+    </p>
+  } @else {
+    <div class="stats-scroll">
+      <table id="game-log-table" class="stats-table">
+        <thead>
+          <tr>
+            @for (c of columns; track c.key) {
+              <th scope="col" [class]="c.align">
+                <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
+                  >{{ c.label }}{{ arrow(c.key) }}</a
+                >
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of r.data; track row.round.id) {
+            <tr [id]="'game-log-row-' + row.round.id">
+              <td class="num">{{ row.round.round_number }}</td>
+              <td>{{ row.round.date_played | date: 'yyyy-MM-dd' : 'UTC' }}</td>
+              <td class="name">
+                <a [routerLink]="['/rounds', row.round.id]">{{ teamName(row.round.team_red) }}</a>
+              </td>
+              <td class="name">
+                <a [routerLink]="['/rounds', row.round.id]">{{ teamName(row.round.team_blue) }}</a>
+              </td>
+              <td class="center">
+                <a [routerLink]="['/rounds', row.round.id]"
+                  >{{ row.red_points }}–{{ row.blue_points }}</a
+                >
+              </td>
+              <td class="name">{{ teamName(row.winner) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

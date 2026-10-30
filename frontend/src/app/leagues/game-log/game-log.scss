@@ -1,0 +1,36 @@
+// Game Log (spec #417): `--lf-*` tokens only, no colour literals.
+@use '../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+}
+
+h1 {
+  @include stats-page.heading;
+}
+
+.stats-filters {
+  @include stats-page.filters;
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+
+  // The Score column is centred, as in `game_log.html`.
+  .center {
+    text-align: center;
+    font-family: var(--lf-font-numeric);
+  }
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+}
