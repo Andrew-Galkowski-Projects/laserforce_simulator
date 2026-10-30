@@ -61,16 +61,16 @@ h2 {
   color: var(--lf-text-muted);
 }
 
-// The five tiles share a row on a wide page and wrap two or three to a row when narrow.
+// The five tiles share one row on a wide page (~810px at 1280) and wrap two to a row when
+// narrow (~300px at 768); the grid keeps every tile the same width, so none spans a lone row.
 .team-finances__tiles {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(7.5rem, 1fr));
   gap: 0.75rem;
   margin-bottom: 0.5rem;
 }
 
 .team-finances__tile {
-  flex: 1 1 8rem;
   padding: 0.75rem;
   border: 1px solid var(--lf-border);
   border-radius: var(--lf-radius);
@@ -121,11 +121,12 @@ h2 {
   min-width: 0;
 }
 
-// Two or three fields to a row when wide, one when narrow; a long hint leaves its neighbour alone.
+// Two or three fields to a row when wide, one when narrow; a long hint leaves its neighbour alone,
+// and the row gap keeps a two-line hint off the next row's outlined label.
 .team-finances__fields {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
-  gap: 0.25rem 0.75rem;
+  gap: 1rem 0.75rem;
   align-items: start;
   margin-bottom: 0.75rem;
 }

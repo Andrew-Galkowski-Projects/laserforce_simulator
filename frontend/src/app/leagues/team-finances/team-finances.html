@@ -121,7 +121,8 @@
           novalidate
         >
           <div class="team-finances__fields">
-            @for (b of budgetRows; track b.control) {
+            @for (b of budgetRows; track b.key) {
+              @let name = budgetControl(b.key);
               <mat-form-field appearance="outline" subscriptSizing="dynamic">
                 <mat-label>{{ b.label }}</mat-label>
                 <input
@@ -131,15 +132,15 @@
                   [max]="d.max_level"
                   step="1"
                   required
-                  [formControlName]="b.control"
-                  [name]="b.control"
+                  [formControlName]="name"
+                  [name]="name"
                   autocomplete="off"
                 />
                 <mat-hint
                   >{{ moneyK(d.budget_costs[b.key]) }} / season · level
                   {{ d.budgets[b.key] }} (neutral {{ d.default_level }}){{ b.extra }}</mat-hint
                 >
-                @if (errorText(form.controls[b.control]); as message) {
+                @if (errorText(form.controls[name]); as message) {
                   <mat-error>{{ message }}</mat-error>
                 }
               </mat-form-field>

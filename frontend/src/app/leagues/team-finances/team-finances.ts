@@ -1,4 +1,4 @@
-import { Component, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import {
   AbstractControl,
@@ -23,7 +23,7 @@ import {
   tap,
 } from 'rxjs';
 import { TeamRef } from '../../api/analytics.models';
-import { ApiError } from '../../api/api-client';
+import { ApiError, ApiErrorItem } from '../../api/api-client';
 import {
   BudgetLevels,
   INJURY_POLICY_LABELS,
@@ -64,25 +64,32 @@ type View =
 /** The request the nav and `?team=` call for, or the state that replaces it. */
 type Request = { leagueId: number; teamId: number } | View;
 
-type BudgetControl = 'budget_scouting' | 'budget_coaching' | 'budget_facilities' | 'budget_health';
+type BudgetControl = `budget_${keyof BudgetLevels}`;
+
+/** A Budget level's form control (and PATCH field) name. */
+function budgetControl(key: keyof BudgetLevels): BudgetControl {
+  return `budget_${key}`;
+}
 
 /** The four Budget level rows, in the template's order; Health's hint adds a clause. */
-const BUDGET_ROWS: readonly {
-  key: keyof BudgetLevels;
-  control: BudgetControl;
-  label: string;
-  extra: string;
-}[] = [
-  { key: 'scouting', control: 'budget_scouting', label: 'Scouting', extra: '' },
-  { key: 'coaching', control: 'budget_coaching', label: 'Coaching', extra: '' },
-  { key: 'facilities', control: 'budget_facilities', label: 'Facilities', extra: '' },
-  {
-    key: 'health',
-    control: 'budget_health',
-    label: 'Health',
-    extra: ' · shortens injury durations',
-  },
+const BUDGET_ROWS: readonly { key: keyof BudgetLevels; label: string; extra?: string }[] = [
+  { key: 'scouting', label: 'Scouting' },
+  { key: 'coaching', label: 'Coaching' },
+  { key: 'facilities', label: 'Facilities' },
+  { key: 'health', label: 'Health', extra: ' · shortens injury durations' },
 ];
+
+/** `TeamFinancesForm`'s field labels, for the error box's `<Field label>: <message>` lines. */
+const FIELD_LABELS: Readonly<Record<string, string>> = {
+  ...Object.fromEntries(BUDGET_ROWS.map((b) => [budgetControl(b.key), b.label])),
+  injury_policy: 'Injury policy',
+  ticket_price: 'Ticket price',
+};
+
+/** An error-box line, as Django's template: bare when non-field, else `<label>: <message>`. */
+function errorLine({ field, message }: ApiErrorItem): string {
+  return field === null ? message : `${FIELD_LABELS[field] ?? field}: ${message}`;
+}
 
 /** Django's `IntegerField` check: a Budget level is a whole number. */
 function wholeNumber(control: AbstractControl): ValidationErrors | null {
@@ -129,6 +136,7 @@ export class LeagueTeamFinances {
   protected readonly nav = this.context.nav;
   protected readonly moneyK = moneyK;
   protected readonly budgetRows = BUDGET_ROWS;
+  protected readonly budgetControl = budgetControl;
   protected readonly injuryPolicies = Object.entries(INJURY_POLICY_LABELS) as [
     InjuryPolicy,
     string,
@@ -183,6 +191,8 @@ export class LeagueTeamFinances {
         if (view.kind === 'loaded') this.fill(view.data);
         this.view.set(view);
       });
+    // Leaving the screen drops a save in flight: no late snackbar or form write.
+    inject(DestroyRef).onDestroy(() => this.cancelSave());
   }
 
   private load(leagueId: number, teamId: number): Observable<View> {
@@ -260,11 +270,17 @@ export class LeagueTeamFinances {
       error: (error: unknown) => {
         this.busy.set(false);
         this.form.enable();
-        this.formErrors.set(
-          error instanceof ApiError && error.status === 409
-            ? error.errors.map((e) => e.message)
-            : applyApiErrors(this.form, error),
-        );
+        if (!(error instanceof ApiError)) {
+          this.formErrors.set(applyApiErrors(this.form, error));
+          return;
+        }
+        // A 409 lists every error in the box; a 400 only those no control owns.
+        const boxed =
+          error.status === 409
+            ? error.errors
+            : error.errors.filter((e) => !(e.field && this.form.contains(e.field)));
+        if (error.status !== 409) applyApiErrors(this.form, error);
+        this.formErrors.set(boxed.map(errorLine));
       },
     });
   }

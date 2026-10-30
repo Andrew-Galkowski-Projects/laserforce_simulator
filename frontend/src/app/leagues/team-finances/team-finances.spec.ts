@@ -614,7 +614,7 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
       ]);
     });
 
-    it('a 409 lists in the error box, even one naming a field', async () => {
+    it('a 409 lists in the error box, even one naming a field, prefixed with its label', async () => {
       await open();
       await submit();
       expectPatch().flush(
@@ -632,9 +632,42 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
       );
       await harness.fixture.whenStable();
       expect([...qa('#team-finances-form-errors li')].map((li) => text(li))).toEqual([
-        "Only the League's managed Team can be edited.",
+        "Scouting: Only the League's managed Team can be edited.",
       ]);
       expect(errorUnder('budget_scouting')).toBe('');
+    });
+
+    it('a 409 naming ticket_price reads "Ticket price: <message>"; a non-field one is bare', async () => {
+      await open();
+      await submit();
+      expectPatch().flush(
+        {
+          errors: [
+            { code: 'invalid', message: 'Too steep.', field: 'ticket_price' },
+            { code: 'finance_disabled', message: 'Finances are off.', field: null },
+          ],
+          meta: {},
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await harness.fixture.whenStable();
+      expect([...qa('#team-finances-form-errors li')].map((li) => text(li))).toEqual([
+        'Ticket price: Too steep.',
+        'Finances are off.',
+      ]);
+    });
+
+    it('a 400 on a field with no control lists as "<raw field name>: <message>"', async () => {
+      await open();
+      await submit();
+      expectPatch().flush(
+        { errors: [{ code: 'invalid', message: 'Not allowed.', field: 'mystery' }], meta: {} },
+        { status: 400, statusText: 'Bad Request' },
+      );
+      await harness.fixture.whenStable();
+      expect([...qa('#team-finances-form-errors li')].map((li) => text(li))).toEqual([
+        'mystery: Not allowed.',
+      ]);
     });
 
     it('a resubmit clears the error box', async () => {
@@ -693,6 +726,15 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
       await harness.fixture.whenStable();
       expect(CONTROLS.map((n) => control(n).disabled)).toEqual(CONTROLS.map(() => false));
       expect(save().disabled).toBe(false);
+    });
+
+    it('destroying the screen while the PATCH is open cancels it: no snackbar', async () => {
+      await open();
+      await submit();
+      const req = expectPatch();
+      harness.fixture.destroy();
+      expect(req.cancelled).toBe(true);
+      expect(document.querySelector('mat-snack-bar-container')).toBeNull();
     });
 
     it('editable: no read-only notice, every control enabled', async () => {

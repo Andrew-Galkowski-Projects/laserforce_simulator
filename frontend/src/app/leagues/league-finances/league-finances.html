@@ -34,15 +34,21 @@
           @for (row of v.rows; track row.team.id) {
             <tr [id]="'league-finances-row-' + row.team.id">
               <td class="name">{{ row.team.name }}</td>
+              <!-- Revenue, Profit and Payroll each show — when null; Cash is always money. -->
               @if (row.revenue !== null) {
                 <td class="num">{{ moneyK(row.revenue) }}</td>
-                <td class="num">{{ moneyK(row.profit ?? 0) }}</td>
-                <td class="num">{{ moneyK(row.cash) }}</td>
-                <td class="num">{{ moneyK(row.payroll ?? 0) }}</td>
               } @else {
                 <td class="num league-finances__muted">—</td>
+              }
+              @if (row.profit !== null) {
+                <td class="num">{{ moneyK(row.profit) }}</td>
+              } @else {
                 <td class="num league-finances__muted">—</td>
-                <td class="num">{{ moneyK(row.cash) }}</td>
+              }
+              <td class="num">{{ moneyK(row.cash) }}</td>
+              @if (row.payroll !== null) {
+                <td class="num">{{ moneyK(row.payroll) }}</td>
+              } @else {
                 <td class="num league-finances__muted">—</td>
               }
             </tr>

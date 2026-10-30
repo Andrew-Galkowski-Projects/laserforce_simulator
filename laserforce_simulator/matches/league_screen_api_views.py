@@ -25,6 +25,7 @@ from rest_framework.response import Response
 from accounts.permissions import get_owned_or_404
 from laserforce_simulator.api.exceptions import validate_form_or_raise
 from laserforce_simulator.api.forms import merged_form_data, plain_form_data
+from matches import finance
 from matches.api_forms import (
     FreeAgentsParamsForm,
     GameLogParamsForm,
@@ -40,7 +41,6 @@ from matches.api_forms import (
     WatchListParamsForm,
     parse_ordering,
 )
-from matches import finance
 from matches.api_refs import conference_ref, player_ref, round_ref, season_ref, team_ref
 from matches.forms import TeamFinancesForm
 from matches.league_screen_services import (

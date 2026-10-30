@@ -119,6 +119,19 @@ describe('League Finances (/leagues/:id/finances, spec #439)', () => {
       expect(cells(5)).toEqual(['Blue Bolts', '—', '—', '$95.5k', '—']);
     });
 
+    it('shows — for each null money figure on its own, even beside a set Revenue', async () => {
+      await open(leagueFinances({ rows: [leagueFinanceRow({ profit: null })] }));
+      expect(cells(3)).toEqual(['Red Raiders', '$250.3k', '—', '$120.0k', '$180.0k']);
+      expect(q('#league-finances-row-3 td:nth-child(3)')?.classList).toContain(
+        'league-finances__muted',
+      );
+    });
+
+    it('shows — for a null Payroll beside a set Revenue and Profit', async () => {
+      await open(leagueFinances({ rows: [leagueFinanceRow({ payroll: null })] }));
+      expect(cells(3)).toEqual(['Red Raiders', '$250.3k', '-$7.2k', '$120.0k', '—']);
+    });
+
     it('lists the rows in the order the API sends them (by name)', async () => {
       await open();
       const ids = [...page().querySelectorAll('#league-finances-table tbody tr')].map(
