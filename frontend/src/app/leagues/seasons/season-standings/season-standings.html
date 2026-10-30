@@ -1,0 +1,92 @@
+<app-season-breadcrumb />
+@if (context.season(); as season) {
+  <div class="season-standings__header">
+    <h1>Standings</h1>
+    <div class="season-standings__actions">
+      <span class="season-standings__state" [attr.data-state]="season.state">{{
+        stateLabel(season.state)
+      }}</span>
+      <a
+        mat-stroked-button
+        [routerLink]="['/leagues', season.league.id, 'seasons', season.id, 'schedule']"
+        >Schedule</a
+      >
+    </div>
+  </div>
+
+  @if (loadError(); as message) {
+    <div class="season-standings__error" role="alert">
+      <span>{{ message }}</span>
+      <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+    </div>
+  } @else if (standings(); as s) {
+    @if (s.is_draft_preview) {
+      <p class="season-standings__preview" role="status">
+        Preview — Season not started. Teams are ranked by computed team rating.
+      </p>
+    }
+
+    @if (noTeams(s)) {
+      <p class="season-standings__empty" role="status">No teams enrolled in this Season yet.</p>
+    } @else {
+      @for (group of s.groups; track group.conference?.id ?? 0) {
+        <section class="season-standings__group">
+          @if (group.conference) {
+            <h2>{{ group.name }}</h2>
+          }
+          <div class="stats-scroll">
+            <table class="stats-table">
+              <thead>
+                <tr>
+                  @for (c of columns; track c.key) {
+                    <th scope="col" [class.name]="c.key === 'team'" [class.num]="c.key !== 'team'">
+                      <a [routerLink]="[]" [queryParams]="sortParams(s, c.key)"
+                        >{{ c.label }}{{ arrow(s, c.key) }}</a
+                      >
+                    </th>
+                  }
+                </tr>
+              </thead>
+              <tbody>
+                @for (row of group.rows; track row.team_id) {
+                  <tr [class.managed]="row.team_id === managedTeamId()">
+                    <td class="num">{{ row.rank }}</td>
+                    <td class="name">
+                      @if (row.team; as team) {
+                        <a [routerLink]="['/teams', team.id]">{{ team.name }}</a>
+                        @if (team.id === managedTeamId()) {
+                          <span class="you">You</span>
+                        }
+                      } @else {
+                        <span class="muted">(unknown)</span>
+                      }
+                    </td>
+                    <td class="num">{{ row.matches_played }}</td>
+                    <td class="num">{{ row.wins }}</td>
+                    <td class="num">{{ row.losses }}</td>
+                    <td class="num">{{ row.ties }}</td>
+                    <td class="num">{{ row.league_points }}</td>
+                    <td class="num">{{ row.round_wins }}</td>
+                    <td class="num">{{ row.total_score }}</td>
+                    <td class="num">{{ streak(row.match_streak) }}</td>
+                    <td class="num">{{ wlt(row.match_l5) }}</td>
+                    <td class="num">{{ streak(row.round_streak) }}</td>
+                    <td class="num">{{ wlt(row.round_l5) }}</td>
+                    <td class="num">{{ wlt(row.red_wlt) }}</td>
+                    <td class="num">{{ wlt(row.blue_wlt) }}</td>
+                    <td class="num">{{ row.red_points_for }}</td>
+                    <td class="num">{{ row.blue_points_for }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      }
+    }
+
+    @if (season.champion_team; as champion) {
+      <p class="season-standings__champion"><strong>Champion:</strong> {{ champion.name }}</p>
+    }
+  }
+}
