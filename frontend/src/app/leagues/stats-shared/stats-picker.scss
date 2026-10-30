@@ -1,0 +1,35 @@
+// The stats pickers and pager (spec #417): `--lf-*` tokens only, no colour literals.
+
+:host {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+select {
+  min-width: 0;
+  max-width: 100%;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: var(--lf-text);
+  font: inherit;
+}
+
+// A name picker's select fills its slot, so a long Season or Team name stays whole (I5).
+:host(.stats-picker--wide) select {
+  flex: 1 1 12rem;
+}
+
+.stats-pager {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.stats-pager__page {
+  font-family: var(--lf-font-numeric);
+}

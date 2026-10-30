@@ -14,6 +14,7 @@ import {
   LeagueNavSection,
 } from '../league-nav';
 import { SoonBadge } from '../soon-badge/soon-badge';
+import { LeagueContext } from '../stats-shared/league-context';
 
 /** At this width and wider the League nav is a column beside the page (as the Shell's). */
 const WIDE = '(min-width: 768px)';
@@ -48,9 +49,11 @@ const GROUPS: readonly NavGroup[] = LEAGUE_NAV_ENTRIES.reduce<NavGroup[]>((group
   imports: [MatAnchor, MatButton, RouterLink, RouterLinkActive, RouterOutlet, SoonBadge],
   templateUrl: './league-layout.html',
   styleUrl: './league-layout.scss',
+  // The routed screens read the loaded nav from here (League name, displayed Season).
+  providers: [LeagueContext],
 })
 export class LeagueLayout {
-  protected readonly nav = signal<LeagueNav | null>(null);
+  protected readonly nav = inject(LeagueContext).nav;
   protected readonly notFound = signal(false);
   protected readonly loadError = signal<string | null>(null);
   protected readonly groups = GROUPS;

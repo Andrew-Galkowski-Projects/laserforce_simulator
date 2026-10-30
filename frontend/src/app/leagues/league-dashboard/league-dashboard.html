@@ -151,6 +151,8 @@
       }
     </div>
 
-    <p class="dashboard__all-leaders"><app-soon-badge label="View all leaders" /></p>
+    <p class="dashboard__all-leaders">
+      <a [routerLink]="['/leagues', d.league.id, 'stats', 'league-leaders']">View all leaders</a>
+    </p>
   }
 }
