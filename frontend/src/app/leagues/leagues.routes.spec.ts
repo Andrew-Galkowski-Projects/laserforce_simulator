@@ -10,6 +10,7 @@ import { authInterceptor } from '../auth/auth.interceptor';
 import { LeagueCreateAdvanced } from './league-create-advanced/league-create-advanced';
 import { LeagueCreate } from './league-create/league-create';
 import { LeagueDashboard } from './league-dashboard/league-dashboard';
+import { LeagueFinances } from './league-finances/league-finances';
 import { LeagueHistory } from './league-history/league-history';
 import { LeagueLayout } from './league-layout/league-layout';
 import { LeagueList } from './league-list/league-list';
@@ -146,6 +147,27 @@ describe('Leagues routes', () => {
       await harness.navigateByUrl('/leagues/4/players/free-agents');
       expect(harness.fixture.debugElement.query(By.directive(LeaguePlayerDetail))).toBeNull();
     });
+  });
+
+  describe('the League finance screens (spec #439)', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    // Routing only: drop every load, so the screens' own specs cover what they fetch.
+    afterEach(() => http.match(() => true));
+
+    it.each([['/leagues/4/finances', LeagueFinances, 'League Finances - Laserforce Simulator']])(
+      'resolves %s inside the League layout, with its page title',
+      async (url, screen, title) => {
+        const harness = await RouterTestingHarness.create();
+        await harness.navigateByUrl(url);
+        expect(routerUrl()).toBe(url);
+        expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+        expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
+        expect(TestBed.inject(Title).getTitle()).toBe(title);
+      },
+    );
   });
 
   describe('signed out', () => {

@@ -30,12 +30,13 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     ]);
   });
 
-  it('makes Dashboard, History, the eight stats and five team / player screens live, linking into the League', () => {
+  it('makes Dashboard, History, Finances, the eight stats and five team / player screens live, linking into the League', () => {
     const nav = leagueNav({ league: { id: 7, name: 'Metro League', mode: 'league' } });
     const live = LEAGUE_NAV_ENTRIES.filter((e) => !e.soon);
     expect(live.map((e) => [e.key, e.link(nav)])).toEqual([
       ['dashboard', ['/leagues', 7]],
       ['playoffs', ['/leagues', 7, 'playoffs']],
+      ['finances', ['/leagues', 7, 'finances']],
       ['history', ['/leagues', 7, 'history']],
       ['power_rankings', ['/leagues', 7, 'power-rankings']],
       ['roster', ['/leagues', 7, 'team', 'roster']],
@@ -57,7 +58,6 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     expect(soon.map((e) => e.key)).toEqual([
       'standings',
       'schedule',
-      'finances',
       'finances_team',
       'trade',
       'trading_block',
@@ -65,5 +65,11 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
       'hall_of_fame',
     ]);
     expect(soon.map((e) => e.link(leagueNav()))).toEqual(soon.map(() => null));
+  });
+
+  it('keeps Finances live in a finance-off League (the screen explains, as in Django)', () => {
+    const entry = LEAGUE_NAV_ENTRIES.find((e) => e.key === 'finances');
+    expect(entry?.soon).toBe(false);
+    expect(entry?.link(leagueNav({ finance_enabled: false }))).toEqual(['/leagues', 1, 'finances']);
   });
 });

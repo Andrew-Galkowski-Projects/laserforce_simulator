@@ -9,7 +9,8 @@ const LOADED = ['leagues', 'seasons', 'maps'].map((r) => `${environment.apiBaseU
 /**
  * Releases the GETs a Leagues screen sends when it loads, for specs that only check routing or
  * the shell (each screen's own spec covers what it fetches). Call before `http.verify()`. Every
- * `leagues/...` GET is released, the League nav and the ANG-06-16 screens' loads included.
+ * `leagues/...` GET is released, the League nav and the ANG-06-16 and ANG-06-17 (finance)
+ * screens' loads included.
  */
 export function releaseLeaguesLoads(): void {
   TestBed.inject(HttpTestingController).match(
@@ -19,17 +20,20 @@ export function releaseLeaguesLoads(): void {
 
 /**
  * The ANG-06-16 screens' GETs (spec #428): a Team's roster / schedule / history / history
- * players, the League player page, Free Agents and the Watch List.
+ * players, the League player page, Free Agents and the Watch List; and the ANG-06-17 finance
+ * screens' GETs (spec #439): League Finances and a Team's finances.
  */
 const TEAM_PLAYER_LOAD = new RegExp(
   `^${environment.apiBaseUrl}/leagues/\\d+/` +
-    '(teams/\\d+/(roster|schedule|history|history/players)|players/\\d+|free-agents|watch-list)/$',
+    '(teams/\\d+/(roster|schedule|history|history/players|finances)|players/\\d+|free-agents|' +
+    'watch-list|finances)/$',
 );
 
 /**
- * Releases only the League team and player screens' GETs (spec #428 F9), leaving the layout's
- * `nav/` and any write (a Watch flag PUT / DELETE) for the spec to answer or assert. Use it when a
- * spec lands on one of those screens but tests something else (the layout, the nav, a ★ toggle).
+ * Releases only the League team, player and finance screens' GETs (spec #428 F9, spec #439),
+ * leaving the layout's `nav/` and any write (a Watch flag PUT / DELETE, a finances PATCH) for the
+ * spec to answer or assert. Use it when a spec lands on one of those screens but tests something
+ * else (the layout, the nav, a ★ toggle).
  */
 export function releaseLeagueTeamPlayerLoads(): void {
   TestBed.inject(HttpTestingController).match(

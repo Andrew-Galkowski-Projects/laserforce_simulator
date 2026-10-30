@@ -40,6 +40,7 @@ from matches.api_forms import (
     WatchListParamsForm,
     parse_ordering,
 )
+from matches import finance
 from matches.api_refs import conference_ref, player_ref, round_ref, season_ref, team_ref
 from matches.forms import TeamFinancesForm
 from matches.league_screen_services import (
@@ -272,6 +273,9 @@ def team_finances_payload(league: League, season: Season | None, team: Team) -> 
             for r in data.availability
         ],
         "history": [_finance_line(row) for row in data.history],
+        # ANG-06-17 B2: the Budget level bounds (the form's min / max / neutral).
+        "max_level": finance.MAX_LEVEL,
+        "default_level": finance.DEFAULT_LEVEL,
     }
 
 
@@ -653,7 +657,7 @@ class LeagueScreensMixin(_ScreensBase):
         """One enrolled Team's finances in the displayed Season."""
         league = self.get_object()
         season, team = enrolled_team_or_404(league, team_id)
-        return Response(team_finances_payload(league, season, team))
+        return team_picker_response(team_finances_payload(league, season, team), season)
 
     @team_finances.mapping.patch
     def update_finances(
@@ -670,7 +674,7 @@ class LeagueScreensMixin(_ScreensBase):
             team = update_team_finances(league, team, form)
         validate_form_or_raise(form)
         team.refresh_from_db()
-        return Response(team_finances_payload(league, season, team))
+        return team_picker_response(team_finances_payload(league, season, team), season)
 
     @action(detail=True, methods=["get"], url_path="finances", url_name="finances")
     def league_finances(self, request: Request, pk: str | None = None) -> Response:

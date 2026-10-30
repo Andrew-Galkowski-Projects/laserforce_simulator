@@ -42,7 +42,8 @@ function soon(section: LeagueNavSection, key: string, label: string): LeagueNavE
  * league_views.py): 1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS + 6 STATS. Live: Dashboard and History
  * (ANG-06-14), Playoffs, Power Rankings and the six STATS entries (ANG-06-15), TEAM Roster /
  * Schedule / History and PLAYERS Free Agents / Watch List (ANG-06-16; the team screens pick their
- * Team from `?team=`, else the nav's `schedule_team`, so the links carry no query).
+ * Team from `?team=`, else the nav's `schedule_team`, so the links carry no query), LEAGUE
+ * Finances (ANG-06-17; shown in a finance-off League too, as in Django: the screen explains).
  */
 export const LEAGUE_NAV_ENTRIES: readonly LeagueNavEntry[] = [
   {
@@ -55,7 +56,7 @@ export const LEAGUE_NAV_ENTRIES: readonly LeagueNavEntry[] = [
   soon('league', 'standings', 'Standings'),
   soon('league', 'schedule', 'Schedule'),
   live('league', 'playoffs', 'Playoffs', ['playoffs']),
-  soon('league', 'finances', 'Finances'),
+  live('league', 'finances', 'Finances', ['finances']),
   {
     key: 'history',
     label: 'History',

@@ -8,9 +8,13 @@ PATCH leaves behind. No simulator runs; Seasons are hand-built fixtures.
 
 from __future__ import annotations
 
-from matches.finance import MAX_LEVEL
+from matches.finance import DEFAULT_LEVEL, MAX_LEVEL
 from matches.models import League, TeamSeasonFinance
-from matches.tests.league_api_fixtures import LeagueApiTestCase, ranked_career_league
+from matches.tests.league_api_fixtures import (
+    LeagueApiTestCase,
+    make_teams,
+    ranked_career_league,
+)
 
 TEAM_FINANCE_KEYS = {
     "finance_enabled",
@@ -29,12 +33,24 @@ TEAM_FINANCE_KEYS = {
     "roster_salaries",
     "availability",
     "history",
+    # ANG-06-17 B2: the Budget level bounds the Angular form needs.
+    "max_level",
+    "default_level",
 }
 BUDGET_KEYS = {"scouting", "coaching", "facilities", "health"}
 
 
 def _team_url(league_id: int, team_id: int) -> str:
     return f"/api/leagues/{league_id}/teams/{team_id}/finances/"
+
+
+def _team_options(teams: list) -> dict:
+    """The expected ``meta``: ``team_options`` = the enrolled Teams by name."""
+    return {
+        "team_options": [
+            {"id": t.id, "name": t.name} for t in sorted(teams, key=lambda t: t.name)
+        ]
+    }
 
 
 def _finance_league(prefix: str, manager, *, enabled: bool = True):
@@ -70,6 +86,19 @@ class TeamFinancesGetTests(LeagueApiTestCase):
         self.assertEqual(data["history"], [])
         self.assert_session_untouched()
 
+    def test_full_payload_carries_the_budget_level_bounds(self) -> None:
+        # ANG-06-17 B2.
+        data = self.ok(self.api.get(_team_url(self.league.id, self.teams[0].id)))
+        self.assertEqual(data["max_level"], MAX_LEVEL)
+        self.assertEqual(data["default_level"], DEFAULT_LEVEL)
+
+    def test_meta_team_options_are_the_enrolled_teams_by_name(self) -> None:
+        # ANG-06-17 B1. ``ok()`` ignores ``meta``, so read the body directly.
+        make_teams("TFGetOut", 1)  # Not enrolled: never an option.
+        response = self.api.get(_team_url(self.league.id, self.teams[0].id))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["meta"], _team_options(self.teams))
+
 
 class TeamFinancesPatchTests(LeagueApiTestCase):
     def setUp(self) -> None:
@@ -94,6 +123,12 @@ class TeamFinancesPatchTests(LeagueApiTestCase):
         self.assertEqual(self.current.budget_scouting, 80)
         self.assertEqual(self.current.injury_policy, "play_hurt")
         self.assertEqual(self.current.budget_coaching, before_coaching)
+
+    def test_patch_meta_team_options_are_the_enrolled_teams_by_name(self) -> None:
+        # ANG-06-17 B1: the PATCH answers through the same Team picker meta.
+        response = self.api.patch(self.url, {"budget_scouting": 80}, format="json")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["meta"], _team_options(self.teams))
 
     def test_patch_another_enrolled_team_is_409_and_changes_nothing(self) -> None:
         ai_team = self.teams[1]

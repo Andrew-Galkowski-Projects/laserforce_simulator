@@ -102,6 +102,13 @@ export const LEAGUES_ROUTES: Routes = [
           import('./league-player/league-player').then((m) => m.LeaguePlayerDetail),
         title: `League Player - ${APP_TITLE}`,
       },
+      // ANG-06-17: the League finance screens, each lazily loaded from its own folder.
+      {
+        path: 'finances',
+        loadComponent: () =>
+          import('./league-finances/league-finances').then((m) => m.LeagueFinances),
+        title: `League Finances - ${APP_TITLE}`,
+      },
     ],
   },
 ];

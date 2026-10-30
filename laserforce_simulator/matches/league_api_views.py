@@ -479,6 +479,8 @@ class LeagueViewSet(
                 "schedule_team": _ref_or_none(
                     sidebar_schedule_team(league, displayed_season)
                 ),
+                # ANG-06-17 B3: the Finance toggle, known before any Season.
+                "finance_enabled": league.finance_enabled,
             }
         )
 
