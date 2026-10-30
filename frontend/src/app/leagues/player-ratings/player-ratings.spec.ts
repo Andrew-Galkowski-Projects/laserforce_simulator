@@ -163,9 +163,9 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
     expect(harness.fixture.debugElement.query(By.directive(PlayerRatings))).not.toBeNull();
   });
 
-  it("heads the page with the League's name", async () => {
+  it('heads the page "Player Ratings", as the template does (no League name)', async () => {
     await open();
-    expect(text(q('h1'))).toBe('Metro League — Player Ratings');
+    expect(text(q('h1'))).toBe('Player Ratings');
   });
 
   describe('columns', () => {
@@ -428,6 +428,16 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
     it('says "1 player" for one', async () => {
       await open();
       expect(text(q('#player-ratings-count'))).toBe('1 player');
+    });
+
+    it('puts the count above the table, outside the paging footer', async () => {
+      await open(PATH, { count: 31, totalPages: 4 });
+      const count = q('#player-ratings-count')!;
+      const table = q('#player-ratings-table')!;
+      expect(count.compareDocumentPosition(table) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(count.closest('.stats-footer')).toBeNull();
+      expect(q('.stats-footer #stats-per-page-select')).not.toBeNull();
+      expect(q('.stats-footer .stats-pager')).not.toBeNull();
     });
 
     it('shows Page X of N and Next loads the next page', async () => {

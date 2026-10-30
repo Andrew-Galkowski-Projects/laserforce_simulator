@@ -1,20 +1,12 @@
 import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { FeatRow, SeasonParam } from '../../api/league-stats.models';
+import { FeatRow } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
 import { LeagueContext } from '../stats-shared/league-context';
 import { PlayerCell } from '../stats-shared/player-cell';
 import { SeasonPicker } from '../stats-shared/season-picker';
 import { PerPagePicker, StatsPaginator } from '../stats-shared/stats-paginator';
-import {
-  STATS_PAGE_SIZES,
-  StatsQueryConfig,
-  withPage,
-  withPerPage,
-  withSeason,
-  withSort,
-  withTeam,
-} from '../stats-shared/stats-query';
+import { PagedStatsQueryConfig } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 import { TeamPicker } from '../stats-shared/team-picker';
 
@@ -59,7 +51,7 @@ const BOX_SCORE: readonly BoxColumn[] = [
   box('nuke_detonations', 'Nukes'),
 ];
 
-const CONFIG: StatsQueryConfig = {
+const CONFIG: PagedStatsQueryConfig = {
   sortKeys: [...DESCRIPTORS.map((h) => h.key), ...BOX_SCORE.map((c) => c.key), 'round'],
   defaultSort: 'round',
   defaultDir: 'desc',
@@ -85,45 +77,12 @@ export class StatisticalFeats {
   protected readonly nav = inject(LeagueContext).nav;
   protected readonly descriptors = DESCRIPTORS;
   protected readonly boxScore = BOX_SCORE;
-  // `paged: true` makes `statsApiParams` always set `page` + `page_size`, but `StatsApiParams`
-  // types them optional; the fallbacks only satisfy `StatisticalFeatsParams` and never apply.
   protected readonly screen = injectStatsScreen(CONFIG, (id, params) =>
-    this.stats.statisticalFeats(id, {
-      ...params,
-      page: params.page ?? 1,
-      page_size: params.page_size ?? STATS_PAGE_SIZES[0],
-    }),
+    this.stats.statisticalFeats(id, params),
   );
-
-  protected sortParams(key: string) {
-    return this.screen.params(withSort(this.screen.query(), key, CONFIG));
-  }
-
-  /** The header's arrow: up / down on the active sort, none elsewhere. */
-  protected arrow(key: string): string {
-    const q = this.screen.query();
-    if (key !== q.sort) return '';
-    return q.dir === 'asc' ? ' ↑' : ' ↓';
-  }
 
   protected cell(row: FeatRow, column: BoxColumn): string {
     const value = row.stats[column.key];
     return value === undefined || value === null ? '—' : value.toFixed(column.places);
-  }
-
-  protected pickSeason(season: SeasonParam | null): void {
-    this.screen.go(withSeason(this.screen.query(), season));
-  }
-
-  protected pickTeam(team: number | null): void {
-    this.screen.go(withTeam(this.screen.query(), team));
-  }
-
-  protected pickPerPage(perPage: number): void {
-    this.screen.go(withPerPage(this.screen.query(), perPage));
-  }
-
-  protected pickPage(page: number): void {
-    this.screen.go(withPage(this.screen.query(), page));
   }
 }

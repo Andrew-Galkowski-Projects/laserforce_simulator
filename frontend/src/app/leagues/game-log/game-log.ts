@@ -2,11 +2,10 @@ import { DatePipe } from '@angular/common';
 import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { TeamRef } from '../../api/analytics.models';
-import { SeasonParam } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
 import { LeagueContext } from '../stats-shared/league-context';
 import { SeasonPicker } from '../stats-shared/season-picker';
-import { StatsQueryConfig, withSeason, withSort, withTeam } from '../stats-shared/stats-query';
+import { StatsQueryConfig } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 import { TeamPicker } from '../stats-shared/team-picker';
 
@@ -54,27 +53,8 @@ export class GameLog {
     this.stats.gameLog(id, params),
   );
 
-  protected sortParams(key: string) {
-    return this.screen.params(withSort(this.screen.query(), key, CONFIG));
-  }
-
-  /** The header's arrow: up / down on the active sort, none elsewhere. */
-  protected arrow(key: string): string {
-    const q = this.screen.query();
-    if (key !== q.sort) return '';
-    return q.dir === 'asc' ? ' ↑' : ' ↓';
-  }
-
   /** A Team's name, or "—" when it is missing (I6). */
   protected teamName(team: TeamRef | null | undefined): string {
     return team?.name ?? '—';
-  }
-
-  protected pickSeason(season: SeasonParam | null): void {
-    this.screen.go(withSeason(this.screen.query(), season));
-  }
-
-  protected pickTeam(team: number | null): void {
-    this.screen.go(withTeam(this.screen.query(), team));
   }
 }

@@ -456,14 +456,36 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
       expect(q('#player-stats-count')).toBeNull();
     });
 
+    it('hides the Team picker, per-page picker and pager footer with no Season', async () => {
+      await open(`${PATH}?team=5`, {
+        rows: [],
+        scope: seasonScope({ selected: null, options: [] }),
+        teams: [],
+      });
+      expect(q('#stats-team-select')).toBeNull();
+      expect(q('#stats-per-page-select')).toBeNull();
+      expect(q('.stats-footer')).toBeNull();
+      expect(q('#stats-season-select')).not.toBeNull();
+      expect(q('#stats-rate-select')).not.toBeNull();
+    });
+
     it('shows the no-performance notice for a Season with no rows', async () => {
       await open(PATH, { rows: [] });
       expect(text(q('#player-stats-empty-notice'))).toBe(NO_ROWS);
       expect(q('#player-stats-table')).toBeNull();
     });
 
+    it('hides the Team picker and the paging footer with no rows and no Team filter', async () => {
+      await open(PATH, { rows: [] });
+      expect(q('#stats-team-select')).toBeNull();
+      expect(q('#stats-per-page-select')).toBeNull();
+      expect(q('.stats-footer')).toBeNull();
+    });
+
     it('keeps the Team picker on an empty Team, so it can be cleared', async () => {
       await open(`${PATH}?team=5`, { rows: [] });
+      expect(q('#stats-per-page-select')).toBeNull();
+      expect(q('.stats-footer')).toBeNull();
       await pick('stats-team-select', '');
       expect(url()).toBe(PATH);
       expect(await answer()).toEqual(DEFAULT);

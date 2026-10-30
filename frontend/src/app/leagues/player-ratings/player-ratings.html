@@ -1,4 +1,4 @@
-<h1>{{ nav()?.league?.name }} — Player Ratings</h1>
+<h1>Player Ratings</h1>
 
 @if (noSeason()) {
   <p id="player-ratings-empty-notice" class="stats-notice" role="status">
@@ -11,7 +11,7 @@
     <app-team-picker
       [options]="r.meta.team_options"
       [selected]="screen.query().team"
-      (teamChange)="pickTeam($event)"
+      (teamChange)="screen.pickTeam($event)"
     />
   </div>
 
@@ -20,6 +20,8 @@
       No players on enrolled teams in this League's current Season.
     </p>
   } @else {
+    <p id="player-ratings-count" class="stats-count">{{ count(r.meta.count) }}</p>
+
     <div class="stats-scroll">
       <table id="player-ratings-table" class="stats-table">
         <thead>
@@ -31,8 +33,8 @@
                 [class.name]="c.key === 'name' || c.key === 'team'"
                 [class.num]="c.key !== 'name' && c.key !== 'team' && c.key !== 'preferred_roles'"
               >
-                <a [routerLink]="[]" [queryParams]="sortParams(c.key)" [title]="c.full"
-                  >{{ c.label }}{{ arrow(c.key) }}</a
+                <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)" [title]="c.full"
+                  >{{ c.label }}{{ screen.arrow(c.key) }}</a
                 >
               </th>
             }
@@ -76,16 +78,15 @@
     </div>
 
     <div class="stats-footer">
-      <p id="player-ratings-count" class="stats-count">{{ count(r.meta.count) }}</p>
       <app-per-page-picker
         [perPage]="screen.query().perPage"
-        (perPageChange)="pickPerPage($event)"
+        (perPageChange)="screen.pickPerPage($event)"
       />
       <app-stats-paginator
         label="Player ratings pagination"
         [page]="r.meta.page"
         [totalPages]="r.meta.total_pages"
-        (pageChange)="pickPage($event)"
+        (pageChange)="screen.pickPage($event)"
       />
     </div>
   }

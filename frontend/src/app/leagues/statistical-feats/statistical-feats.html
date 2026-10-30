@@ -6,12 +6,12 @@
 } @else if (screen.result(); as r) {
   @let noSeason = r.meta.season_scope.selected === null;
   <div class="stats-filters">
-    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="pickSeason($event)" />
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="screen.pickSeason($event)" />
     @if (!noSeason) {
       <app-team-picker
         [options]="r.meta.team_options"
         [selected]="screen.query().team"
-        (teamChange)="pickTeam($event)"
+        (teamChange)="screen.pickTeam($event)"
       />
     }
   </div>
@@ -32,21 +32,21 @@
             <tr>
               @for (h of descriptors; track h.key) {
                 <th scope="col" [class.name]="h.key === 'name' || h.key === 'team'">
-                  <a [routerLink]="[]" [queryParams]="sortParams(h.key)"
-                    >{{ h.label }}{{ arrow(h.key) }}</a
+                  <a [routerLink]="[]" [queryParams]="screen.sortParams(h.key)"
+                    >{{ h.label }}{{ screen.arrow(h.key) }}</a
                   >
                 </th>
               }
               @for (c of boxScore; track c.key) {
                 <th scope="col" class="num">
-                  <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
-                    >{{ c.label }}{{ arrow(c.key) }}</a
+                  <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)"
+                    >{{ c.label }}{{ screen.arrow(c.key) }}</a
                   >
                 </th>
               }
               <th scope="col">
-                <a [routerLink]="[]" [queryParams]="sortParams('round')"
-                  >Round{{ arrow('round') }}</a
+                <a [routerLink]="[]" [queryParams]="screen.sortParams('round')"
+                  >Round{{ screen.arrow('round') }}</a
                 >
               </th>
             </tr>
@@ -89,13 +89,13 @@
     <div class="stats-footer">
       <app-per-page-picker
         [perPage]="screen.query().perPage"
-        (perPageChange)="pickPerPage($event)"
+        (perPageChange)="screen.pickPerPage($event)"
       />
       <app-stats-paginator
         [page]="r.meta.page"
         [totalPages]="r.meta.total_pages"
         label="Statistical feats pagination"
-        (pageChange)="pickPage($event)"
+        (pageChange)="screen.pickPage($event)"
       />
     </div>
 

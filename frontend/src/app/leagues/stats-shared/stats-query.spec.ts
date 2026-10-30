@@ -1,10 +1,14 @@
 import { convertToParamMap } from '@angular/router';
 import { ApiError } from '../../api/api-client';
+import { PlayerStatsParams, StatRate } from '../../api/league-stats.models';
 import {
+  PagedStatsApiParams,
+  PagedStatsQueryConfig,
   StatsQuery,
   StatsQueryConfig,
   parseStatsQuery,
   recoverFrom,
+  sortArrow,
   statsApiParams,
   toQueryParams,
   withPage,
@@ -23,6 +27,13 @@ const FULL: StatsQueryConfig = {
   firstDir: 'desc',
   rates: ['total', 'per_game', 'per_10'],
   team: true,
+  paged: true,
+};
+
+/** FULL as Player Stats declares it: paged, its rates the `StatRate`s. */
+const PAGED: PagedStatsQueryConfig<StatRate> = {
+  ...FULL,
+  rates: ['total', 'per_game', 'per_10'],
   paged: true,
 };
 
@@ -144,6 +155,35 @@ describe('statsApiParams', () => {
   it('sends only season and ordering on an unpaged screen', () => {
     const q = parse({ season: '11', sort: 'avg_margin', dir: 'desc' }, PLAIN);
     expect(statsApiParams(q, PLAIN)).toEqual({ season: 11, ordering: '-avg_margin' });
+  });
+
+  it('gives a PagedStatsQueryConfig params with page and page_size required', () => {
+    const q = parseStatsQuery(convertToParamMap({ page: '3', per_page: '25' }), PAGED);
+    // Typed as `PagedStatsApiParams<StatRate>`: assignable to a paged service's params as is.
+    const params: PagedStatsApiParams<StatRate> = statsApiParams(q, PAGED);
+    const playerStats: PlayerStatsParams = params;
+    expect(playerStats).toEqual({
+      rate: 'total',
+      ordering: '-points_scored',
+      page: 3,
+      page_size: 25,
+    });
+  });
+
+  it('reads the rate as one of config.rates, typed as their value type', () => {
+    const rate: StatRate | null = parseStatsQuery(
+      convertToParamMap({ rate: 'per_game' }),
+      PAGED,
+    ).rate;
+    expect(rate).toBe('per_game');
+    expect(parseStatsQuery(convertToParamMap({ rate: 'per_hour' }), PAGED).rate).toBe('total');
+  });
+});
+
+describe('sortArrow', () => {
+  it('points up for ascending and down for descending', () => {
+    expect(sortArrow('asc')).toBe(' ↑');
+    expect(sortArrow('desc')).toBe(' ↓');
   });
 });
 

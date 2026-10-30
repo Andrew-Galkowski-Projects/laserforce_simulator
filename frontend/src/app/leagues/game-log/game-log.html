@@ -4,13 +4,13 @@
   <p class="stats-error" role="alert">{{ message }}</p>
 } @else if (screen.result(); as r) {
   <div class="stats-filters">
-    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="pickSeason($event)" />
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="screen.pickSeason($event)" />
     @if (r.meta.season_scope.selected !== null) {
       <app-team-picker
         [options]="r.meta.team_options"
         [selected]="screen.query().team"
         allLabel="All teams"
-        (teamChange)="pickTeam($event)"
+        (teamChange)="screen.pickTeam($event)"
       />
     }
   </div>
@@ -30,8 +30,8 @@
           <tr>
             @for (c of columns; track c.key) {
               <th scope="col" [class]="c.align">
-                <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
-                  >{{ c.label }}{{ arrow(c.key) }}</a
+                <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)"
+                  >{{ c.label }}{{ screen.arrow(c.key) }}</a
                 >
               </th>
             }

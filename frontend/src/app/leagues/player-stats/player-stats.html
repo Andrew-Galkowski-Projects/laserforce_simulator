@@ -4,13 +4,18 @@
   <p class="stats-error" role="alert">{{ message }}</p>
 } @else if (screen.result(); as r) {
   <div class="stats-filters">
-    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="pickSeason($event)" />
-    <app-rate-picker [rate]="screen.query().rate" (rateChange)="pickRate($event)" />
-    <app-team-picker
-      [options]="r.meta.team_options"
-      [selected]="screen.query().team"
-      (teamChange)="pickTeam($event)"
-    />
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="screen.pickSeason($event)" />
+    <app-rate-picker [rate]="screen.query().rate" (rateChange)="screen.pickRate($event)" />
+    <!-- As player_stats.html, no Team picker on an empty state, but one a Team filter emptied. -->
+    @if (
+      r.meta.season_scope.selected !== null && (r.items.length > 0 || screen.query().team !== null)
+    ) {
+      <app-team-picker
+        [options]="r.meta.team_options"
+        [selected]="screen.query().team"
+        (teamChange)="screen.pickTeam($event)"
+      />
+    }
   </div>
 
   @if (r.meta.season_scope.selected === null) {
@@ -29,18 +34,24 @@
         <thead>
           <tr>
             <th id="player-stats-th-name" scope="col" class="name">
-              <a [routerLink]="[]" [queryParams]="sortParams('name')">Name{{ arrow('name') }}</a>
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('name')"
+                >Name{{ screen.arrow('name') }}</a
+              >
             </th>
             <th id="player-stats-th-team" scope="col" class="name">
-              <a [routerLink]="[]" [queryParams]="sortParams('team')">Team{{ arrow('team') }}</a>
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('team')"
+                >Team{{ screen.arrow('team') }}</a
+              >
             </th>
             <th id="player-stats-th-games" scope="col" class="num">
-              <a [routerLink]="[]" [queryParams]="sortParams('games')">GP{{ arrow('games') }}</a>
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('games')"
+                >GP{{ screen.arrow('games') }}</a
+              >
             </th>
             @for (c of columns; track c.key) {
               <th [id]="'player-stats-th-' + c.key" scope="col" class="num">
-                <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
-                  >{{ c.label }}{{ arrow(c.key) }}</a
+                <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)"
+                  >{{ c.label }}{{ screen.arrow(c.key) }}</a
                 >
               </th>
             }
@@ -62,15 +73,18 @@
         </tbody>
       </table>
     </div>
-  }
 
-  <div class="stats-footer">
-    <app-per-page-picker [perPage]="screen.query().perPage" (perPageChange)="pickPerPage($event)" />
-    <app-stats-paginator
-      [page]="r.meta.page"
-      [totalPages]="r.meta.total_pages"
-      label="Player stats pagination"
-      (pageChange)="pickPage($event)"
-    />
-  </div>
+    <div class="stats-footer">
+      <app-per-page-picker
+        [perPage]="screen.query().perPage"
+        (perPageChange)="screen.pickPerPage($event)"
+      />
+      <app-stats-paginator
+        [page]="r.meta.page"
+        [totalPages]="r.meta.total_pages"
+        label="Player stats pagination"
+        (pageChange)="screen.pickPage($event)"
+      />
+    </div>
+  }
 }

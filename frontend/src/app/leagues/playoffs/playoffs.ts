@@ -1,11 +1,11 @@
 import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { PlayoffsParams, SeasonParam } from '../../api/league-stats.models';
+import { PlayoffsParams } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
 import { Bracket } from '../../tournaments/tournament-results/bracket/bracket';
 import { LeagueContext } from '../stats-shared/league-context';
 import { SeasonPicker } from '../stats-shared/season-picker';
-import { StatsApiParams, StatsQueryConfig, withSeason } from '../stats-shared/stats-query';
+import { StatsApiParams, StatsQueryConfig } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 
 /** Playoffs has no sort, Team, rate or paging, and a bracket belongs to one Season. */
@@ -38,8 +38,4 @@ export class Playoffs {
   protected readonly screen = injectStatsScreen(CONFIG, (id, params) =>
     this.stats.playoffs(id, playoffsParams(params)),
   );
-
-  protected pickSeason(season: SeasonParam | null): void {
-    this.screen.go(withSeason(this.screen.query(), season));
-  }
 }

@@ -1,20 +1,12 @@
 import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { PlayerStatRow, PlayerStatsParams, SeasonParam } from '../../api/league-stats.models';
+import { PlayerStatRow, StatRate } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
 import { countOf } from '../../shared/count-of';
 import { PlayerCell } from '../stats-shared/player-cell';
 import { SeasonPicker } from '../stats-shared/season-picker';
 import { PerPagePicker, StatsPaginator } from '../stats-shared/stats-paginator';
-import {
-  StatsQueryConfig,
-  withPage,
-  withPerPage,
-  withRate,
-  withSeason,
-  withSort,
-  withTeam,
-} from '../stats-shared/stats-query';
+import { PagedStatsQueryConfig } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 import { TeamPicker } from '../stats-shared/team-picker';
 import { RATE_OPTIONS, RatePicker } from './rate-picker';
@@ -48,7 +40,7 @@ const STAT_COLUMNS: readonly Column[] = [
   { key: 'combo_resupply_count', label: 'Combo Resup', places: 0 },
 ];
 
-const CONFIG: StatsQueryConfig = {
+const CONFIG: PagedStatsQueryConfig<StatRate> = {
   sortKeys: ['name', 'team', 'games', ...STAT_COLUMNS.map((c) => c.key)],
   defaultSort: 'points_scored',
   defaultDir: 'desc',
@@ -80,21 +72,9 @@ const CONFIG: StatsQueryConfig = {
 export class PlayerStats {
   private readonly stats = inject(LeagueStatsService);
   protected readonly columns = STAT_COLUMNS;
-  // `paged: true` makes `statsApiParams` always send `page` and `page_size`.
   protected readonly screen = injectStatsScreen(CONFIG, (id, params) =>
-    this.stats.playerStats(id, params as PlayerStatsParams),
+    this.stats.playerStats(id, params),
   );
-
-  protected sortParams(key: string) {
-    return this.screen.params(withSort(this.screen.query(), key, CONFIG));
-  }
-
-  /** The header's arrow: up / down on the active sort, none elsewhere. */
-  protected arrow(key: string): string {
-    const q = this.screen.query();
-    if (key !== q.sort) return '';
-    return q.dir === 'asc' ? ' ↑' : ' ↓';
-  }
 
   protected cell(row: PlayerStatRow, column: Column): string {
     return (row.stats[column.key] ?? 0).toFixed(column.places) + (column.suffix ?? '');
@@ -102,25 +82,5 @@ export class PlayerStats {
 
   protected count(n: number): string {
     return countOf(n, 'player');
-  }
-
-  protected pickSeason(season: SeasonParam | null): void {
-    this.screen.go(withSeason(this.screen.query(), season));
-  }
-
-  protected pickRate(rate: string): void {
-    this.screen.go(withRate(this.screen.query(), rate));
-  }
-
-  protected pickTeam(team: number | null): void {
-    this.screen.go(withTeam(this.screen.query(), team));
-  }
-
-  protected pickPerPage(perPage: number): void {
-    this.screen.go(withPerPage(this.screen.query(), perPage));
-  }
-
-  protected pickPage(page: number): void {
-    this.screen.go(withPage(this.screen.query(), page));
   }
 }

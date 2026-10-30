@@ -6,14 +6,7 @@ import { countOf } from '../../shared/count-of';
 import { LeagueContext } from '../stats-shared/league-context';
 import { PlayerCell } from '../stats-shared/player-cell';
 import { PerPagePicker, StatsPaginator } from '../stats-shared/stats-paginator';
-import {
-  STATS_PAGE_SIZES,
-  StatsQueryConfig,
-  withPage,
-  withPerPage,
-  withSort,
-  withTeam,
-} from '../stats-shared/stats-query';
+import { PagedStatsQueryConfig } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 import { TeamPicker } from '../stats-shared/team-picker';
 
@@ -64,7 +57,7 @@ const BIO_HEADERS = [
   { key: 'started', label: 'Start', full: 'Started Playing Age' },
 ] as const;
 
-const CONFIG: StatsQueryConfig = {
+const CONFIG: PagedStatsQueryConfig = {
   sortKeys: SORT_COLUMNS.map((c) => c.key),
   defaultSort: 'team',
   defaultDir: 'asc',
@@ -96,13 +89,8 @@ export class PlayerRatings {
   protected readonly sortColumns = SORT_COLUMNS;
   protected readonly statKeys = STAT_KEYS;
   protected readonly bioHeaders = BIO_HEADERS;
-  // A paged config always sets `page` / `page_size`; `StatsApiParams` types them optional.
   protected readonly screen = injectStatsScreen(CONFIG, (id, params) =>
-    this.stats.playerRatings(id, {
-      ...params,
-      page: params.page ?? 1,
-      page_size: params.page_size ?? STATS_PAGE_SIZES[0],
-    }),
+    this.stats.playerRatings(id, params),
   );
 
   /** I3: the nav has loaded and the League has no Season. */
@@ -110,17 +98,6 @@ export class PlayerRatings {
     const nav = this.nav();
     return nav !== null && nav.displayed_season === null;
   });
-
-  protected sortParams(key: string) {
-    return this.screen.params(withSort(this.screen.query(), key, CONFIG));
-  }
-
-  /** The header's arrow: up / down on the active sort, none elsewhere. */
-  protected arrow(key: string): string {
-    const q = this.screen.query();
-    if (key !== q.sort) return '';
-    return q.dir === 'asc' ? ' ↑' : ' ↓';
-  }
 
   protected count(n: number): string {
     return countOf(n, 'player');
@@ -141,17 +118,5 @@ export class PlayerRatings {
   /** `default:"-"`: a missing number or an empty string shows "-". */
   protected orDash(value: number | string | null): string {
     return value === null || value === '' ? '-' : String(value);
-  }
-
-  protected pickTeam(team: number | null): void {
-    this.screen.go(withTeam(this.screen.query(), team));
-  }
-
-  protected pickPerPage(perPage: number): void {
-    this.screen.go(withPerPage(this.screen.query(), perPage));
-  }
-
-  protected pickPage(page: number): void {
-    this.screen.go(withPage(this.screen.query(), page));
   }
 }

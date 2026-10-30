@@ -4,7 +4,7 @@
   <p class="stats-error" role="alert">{{ message }}</p>
 } @else if (screen.result(); as r) {
   <div class="stats-filters">
-    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="pickSeason($event)" />
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="screen.pickSeason($event)" />
   </div>
 
   @if (r.meta.season_scope.selected === null) {
@@ -21,12 +21,14 @@
         <thead>
           <tr>
             <th scope="col" class="name">
-              <a [routerLink]="[]" [queryParams]="sortParams('team')">Team{{ arrow('team') }}</a>
+              <a [routerLink]="[]" [queryParams]="screen.sortParams('team')"
+                >Team{{ screen.arrow('team') }}</a
+              >
             </th>
             @for (c of columns; track c.key) {
               <th scope="col" class="num">
-                <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
-                  >{{ c.label }}{{ arrow(c.key) }}</a
+                <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)"
+                  >{{ c.label }}{{ screen.arrow(c.key) }}</a
                 >
               </th>
             }

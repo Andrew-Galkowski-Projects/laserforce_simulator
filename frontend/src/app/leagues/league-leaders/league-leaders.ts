@@ -1,9 +1,9 @@
 import { Component, inject, signal } from '@angular/core';
-import { LeaderBoardRow, LeaderBoards, SeasonParam } from '../../api/league-stats.models';
+import { LeaderBoardRow, LeaderBoards } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
 import { PlayerCell } from '../stats-shared/player-cell';
 import { SeasonPicker } from '../stats-shared/season-picker';
-import { SortDir, StatsQueryConfig, withSeason } from '../stats-shared/stats-query';
+import { SortDir, StatsQueryConfig, sortArrow } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 
 /** One board: its `LeaderBoards` key, table id, header labels and decimal places. */
@@ -95,15 +95,10 @@ export class LeagueLeaders {
   /** The header's arrow: up / down on the board's active sort, none elsewhere. */
   protected arrow(board: Board, key: BoardSortKey): string {
     const sort = this.sorts()[board.key];
-    if (sort?.key !== key) return '';
-    return sort.dir === 'asc' ? ' ↑' : ' ↓';
+    return sort?.key === key ? sortArrow(sort.dir) : '';
   }
 
   protected value(row: LeaderBoardRow, board: Board): string {
     return row.value.toFixed(board.places);
-  }
-
-  protected pickSeason(season: SeasonParam | null): void {
-    this.screen.go(withSeason(this.screen.query(), season));
   }
 }

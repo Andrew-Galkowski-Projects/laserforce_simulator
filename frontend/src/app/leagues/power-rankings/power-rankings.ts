@@ -1,10 +1,10 @@
 import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
-import { PowerRankingRow, SeasonParam } from '../../api/league-stats.models';
+import { PowerRankingRow } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
 import { LeagueContext } from '../stats-shared/league-context';
 import { SeasonPicker } from '../stats-shared/season-picker';
-import { StatsQueryConfig, withSeason, withSort } from '../stats-shared/stats-query';
+import { StatsQueryConfig } from '../stats-shared/stats-query';
 import { injectStatsScreen } from '../stats-shared/stats-screen';
 
 /** A numeric Power Rankings column: its sort key (the API's), header and decimal places. */
@@ -48,22 +48,7 @@ export class PowerRankings {
     this.stats.powerRankings(id, params),
   );
 
-  protected sortParams(key: string) {
-    return this.screen.params(withSort(this.screen.query(), key, CONFIG));
-  }
-
-  /** The header's arrow: up / down on the active sort, none elsewhere. */
-  protected arrow(key: string): string {
-    const q = this.screen.query();
-    if (key !== q.sort) return '';
-    return q.dir === 'asc' ? ' ↑' : ' ↓';
-  }
-
   protected cell(row: PowerRankingRow, column: Column): string {
     return (row[column.key] as number).toFixed(column.places);
-  }
-
-  protected pickSeason(season: SeasonParam | null): void {
-    this.screen.go(withSeason(this.screen.query(), season));
   }
 }

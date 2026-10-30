@@ -9,11 +9,11 @@
 //   `.stats-table { @include stats-page.table; }` on it: the table scrolls sideways inside its
 //   container, a `th` / `td` with class `name` wraps only between words and keeps 8rem, and
 //   class `num` is right-aligned in the numeric font. A sort header is
-//   `<th><a [routerLink]="[]" [queryParams]="screen.params(withSort(...))">` (see
+//   `<th><a [routerLink]="[]" [queryParams]="screen.sortParams(key)">` (see
 //   `team-stats/` for the whole pattern);
 // - `.stats-notice { @include stats-page.notice; }` (I3 empty states, role="status") and
 //   `.stats-error { @include stats-page.error; }` (the error box, role="alert");
-// - `.stats-footer { @include stats-page.footer; }` for the count, per-page picker and pager.
+// - `.stats-footer { @include stats-page.footer; }` for the per-page picker and pager.
 @use '../../shared/alerts';
 
 @mixin host {
