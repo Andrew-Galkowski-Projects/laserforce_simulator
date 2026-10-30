@@ -1,0 +1,152 @@
+// League player page (spec #428): `--lf-*` tokens only, no colour literals.
+@use '../../shared/badges';
+@use '../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+}
+
+h1 {
+  @include stats-page.heading;
+
+  margin: 0;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.muted {
+  color: var(--lf-text-muted);
+}
+
+.badge--you {
+  @include badges.you;
+
+  vertical-align: middle;
+}
+
+.player-header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.75rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+// Two cards a row while each keeps ~20rem; one a row below that (~500px at 768px).
+.player-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 20rem), 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.player-card {
+  min-width: 0;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+}
+
+.player-card__line {
+  display: flex;
+  gap: 0.75rem;
+  align-items: baseline;
+  margin-bottom: 0.5rem;
+}
+
+.player-card__value {
+  font-family: var(--lf-font-numeric);
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+
+.player-card__roles small {
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.player-card__role {
+  display: inline-block;
+  margin: 0 0.25rem 0.25rem 0;
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--lf-radius);
+  background: var(--lf-accent);
+  color: var(--lf-bg);
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.rating-group--wide {
+  grid-column: 1 / -1;
+}
+
+.rating-group__rows {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16rem), 1fr));
+  gap: 0.25rem 1.5rem;
+}
+
+.rating-group__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.rating-group__value {
+  font-family: var(--lf-font-numeric);
+  font-weight: 600;
+}
+
+.player-section {
+  margin-top: 1rem;
+
+  p {
+    margin: 0;
+  }
+}
+
+.history-chart {
+  height: 16rem;
+  margin-bottom: 1rem;
+}
+
+.award {
+  margin-bottom: 0.5rem;
+
+  ul {
+    margin: 0.25rem 0 0;
+  }
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+}
+
+.rs-career td {
+  border-top: 2px solid var(--lf-border);
+  font-weight: 700;
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+}
+
+.player-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
