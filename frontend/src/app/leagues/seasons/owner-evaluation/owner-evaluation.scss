@@ -1,0 +1,92 @@
+// The Owner evaluation (ADR-0043): `--lf-*` / `--mat-sys-*` tokens only, no colour literals.
+@use '../../../shared/alerts';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 1rem;
+  font-family: var(--lf-font-heading);
+  overflow-wrap: anywhere;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+// The verdict key always shows as text, so the colour is never the only signal.
+.owner-evaluation__badge {
+  --verdict: var(--lf-ev-resupply);
+
+  padding: 0.125rem 0.5rem;
+  border: 1px solid var(--verdict);
+  border-radius: var(--lf-radius);
+  background: color-mix(in srgb, var(--verdict) 12%, transparent);
+  color: var(--verdict);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+
+  &[data-verdict='hot_seat'] {
+    --verdict: var(--lf-rating-fair);
+  }
+
+  &[data-verdict='fired'] {
+    --verdict: var(--mat-sys-error);
+  }
+}
+
+.owner-evaluation__hot-seat {
+  @include alerts.box;
+
+  border-color: var(--lf-rating-fair);
+}
+
+.owner-evaluation__fired,
+.owner-evaluation__write-error {
+  @include alerts.error;
+}
+
+.owner-evaluation__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.owner-evaluation__table {
+  max-width: 100%;
+  margin-bottom: 1rem;
+  overflow-x: auto;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+th,
+td {
+  padding: 0.375rem 0.75rem;
+  border-bottom: 1px solid var(--lf-border);
+  text-align: left;
+}
+
+.num {
+  font-family: var(--lf-font-numeric);
+  text-align: right;
+}
+
+tfoot th,
+tfoot td {
+  border-bottom: none;
+  font-weight: 700;
+}
+
+.owner-evaluation__cta {
+  margin-top: 1rem;
+}
