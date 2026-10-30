@@ -495,3 +495,52 @@ stay until ANG-08.
 **Out of scope.** Sign / release free agents, Trade / Trading Block / Prospects / Hall of Fame
 (ANG-06-20), real MMR / Rank (STAT-PROXY-01), template removal (ANG-08). Follow-up #436: one
 nav-gated load helper for Roster / Schedule / History / League player.
+
+## ANG-06-17 League finances in Angular
+
+Spec: GitHub issue #439 (tickets #440, #441). Ports `templates/leagues/league_finances.html` and
+`team_finances.html` as children of `/leagues/:id`, and turns the LEAGUE > Finances and TEAM >
+Finances nav entries live. The three API additions (`meta.team_options` on the Team Finances GET /
+PATCH, `max_level` / `default_level` on its full payload, `finance_enabled` on `nav/`) are in
+`api.md`. The Django templates stay until ANG-08.
+
+**Routes** (lazy): `finances` (`league-finances/`, `LeagueFinances`) and `team/finances`
+(`team-finances/`, `LeagueTeamFinances`; `?team=`, else `nav.schedule_team` via
+`resolveTeamParam`).
+
+**Data:** `api/league-finances.service.ts` (`LeagueFinancesService.league` / `team` (`getWithMeta`)
+/ `updateTeam` (`patch`: no meta, the screen keeps the GET's `team_options`)), the types in
+`api/league-finances.models.ts` (`INJURY_POLICY_LABELS` included), fixtures in
+`leagues/testing/league-finances-fixtures.ts`. `shared/money-k.ts` `moneyK` mirrors the Django
+`money_k` filter (`$7.2k`, `-$7.2k`, no sign on a zero); both screens use it, so the League table's
+old bare `7.2k` now reads `$7.2k`. `releaseLeagueTeamPlayerLoads` also releases both finance GETs.
+
+**States** (both screens, in the template's order): nav `finance_enabled: false` ⇒ "Finances are
+disabled for this League."; no displayed Season ⇒ the no-Season notice; (Team only) no Team, or a
+404 on `?team=` ⇒ "No team available to display in this League's current Season."; none of these
+sends a request. A loaded `finance_enabled: false` also shows the disabled notice. Any other load
+failure shows the error with Retry.
+
+**League Finances:** Season name line, then Team / Revenue / Profit / Cash / Payroll; each `null`
+money cell is a muted `—` on its own; "No enrolled teams.".
+
+**Team Finances:**
+- Tiles in a grid (all five in one row at 1280px, two per row at 768px): Wins `W–L`, Hype (2 dp,
+  a `--lf-accent` bar clamped to 0–100%, `role="progressbar"`), Revenue / Expenses from
+  `history[0]` or `—`, Cash.
+- Expense Settings: four Budget level fields (required, whole number, 1..`max_level`) with the cost /
+  level / neutral hint, Injury policy, Ticket price (required, >= 0, `step` 0.5 as the template).
+  Client errors use Django's wording. A 400 lands on its control; any 409, and a 400 field with no
+  control, lists under "Expense settings not saved:" as `<Field label>: <message>` (bare when
+  non-field). Success: the "Expense settings saved." snackbar and the PATCH response's values. The
+  form and Save are disabled while a save is in flight; a Team switch, Retry or leaving the screen
+  cancels it.
+- `editable: false` (not `current_team`): "Only your own team's expense settings can be changed."
+  and every control disabled.
+- Player Salaries (Total = `live_payroll`), Player availability, Season history, with the "You"
+  badge on the Self-insert.
+
+**Out of scope.** Django view changes, finance charts, history sort / paging, the per-line money
+breakdown, live projections, Owner Evaluation (ANG-06-18). The template's "Scouting & coaching are
+cost-only for now" form text is copied verbatim though FIN-02 / FIN-03 made both live. The
+nav-gated load pipeline both screens repeat is follow-up #436's.

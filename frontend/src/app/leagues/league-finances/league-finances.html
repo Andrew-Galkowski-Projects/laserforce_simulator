@@ -1,0 +1,64 @@
+@let v = view();
+<h1>{{ nav()?.league?.name }} — Finances</h1>
+@switch (v.kind) {
+  @case ('disabled') {
+    <p id="league-finances-disabled-notice" class="stats-notice" role="status">
+      Finances are disabled for this League.
+    </p>
+  }
+  @case ('noSeason') {
+    <p id="league-finances-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to view finances.
+    </p>
+  }
+  @case ('error') {
+    <div class="stats-error league-finances__error" role="alert">
+      <span>{{ v.message }}</span>
+      <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+    </div>
+  }
+  @case ('loaded') {
+    <p id="league-finances-season" class="league-finances__season">{{ v.season.name }}</p>
+    <div class="stats-scroll">
+      <table id="league-finances-table" class="stats-table">
+        <thead>
+          <tr>
+            <th scope="col" class="name">Team</th>
+            <th scope="col" class="num">Revenue</th>
+            <th scope="col" class="num">Profit</th>
+            <th scope="col" class="num">Cash</th>
+            <th scope="col" class="num">Payroll</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of v.rows; track row.team.id) {
+            <tr [id]="'league-finances-row-' + row.team.id">
+              <td class="name">{{ row.team.name }}</td>
+              <!-- Revenue, Profit and Payroll each show — when null; Cash is always money. -->
+              @if (row.revenue !== null) {
+                <td class="num">{{ moneyK(row.revenue) }}</td>
+              } @else {
+                <td class="num league-finances__muted">—</td>
+              }
+              @if (row.profit !== null) {
+                <td class="num">{{ moneyK(row.profit) }}</td>
+              } @else {
+                <td class="num league-finances__muted">—</td>
+              }
+              <td class="num">{{ moneyK(row.cash) }}</td>
+              @if (row.payroll !== null) {
+                <td class="num">{{ moneyK(row.payroll) }}</td>
+              } @else {
+                <td class="num league-finances__muted">—</td>
+              }
+            </tr>
+          } @empty {
+            <tr>
+              <td colspan="5" class="league-finances__muted">No enrolled teams.</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

@@ -184,6 +184,8 @@ export interface LeagueNav {
   displayed_season: SeasonRef | null;
   /** The TEAM > Schedule target (`sidebar_schedule_team`). */
   schedule_team: TeamRef | null;
+  /** The League's Finance toggle, known before any Season (ANG-06-17 B3). */
+  finance_enabled: boolean;
 }
 
 /** One dashboard standings-snippet row: 9 standings keys plus `team`. */

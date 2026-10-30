@@ -111,7 +111,8 @@ src/
                           message, ANG-06-14), form-errors.ts (applyApiErrors,
                           clearServerErrors: drop `server` errors before a resubmit, keeping
                           `required` / `min`; GENERIC_ERROR_MESSAGE, REQUIRED_MESSAGE),
-                          count-of.ts (countOf: "1 player" / "2 players"), read-token.ts (readToken: a
+                          count-of.ts (countOf: "1 player" / "2 players"), money-k.ts (moneyK:
+                          thousands of dollars as $7.2k / -$7.2k, the Django money_k), read-token.ts (readToken: a
                           --lf-* value for canvas; resolveColor: a CSS colour as the browser
                           computes it), notify.ts (injectNotify: the "Close" snackbar),
                           api-message.ts (apiMessage: an ApiError's message or a fallback),
@@ -224,7 +225,9 @@ src/
                           (one lazily loaded folder each); ANG-06-16 adds team/roster
                           (team-roster), team/schedule (team-schedule), team/history
                           (team-history), players/free-agents (free-agents),
-                          players/watch-list (watch-list) and players/:playerId (league-player).
+                          players/watch-list (watch-list) and players/:playerId (league-player);
+                          ANG-06-17 adds finances (league-finances) and team/finances
+                          (team-finances: the Expense Settings form).
                           stats-shared/ is their kit (read each
                           file's header): stats-query.ts (URL state, I1 / I2), stats-screen.ts
                           (injectStatsScreen; `retry()`, and `{ waitForSeason: true }` to wait
@@ -238,14 +241,15 @@ src/
                           _stats-page.scss. watch/ (ANG-06-16): WatchState (provided by
                           LeagueLayout) and app-watch-flag, the star toggle (☆ off, ★ on).
                           league-nav.ts (LEAGUE_NAV_ENTRIES:
-                          23 entries, 15 live), soon-badge/ (app-soon-badge:
+                          23 entries, 17 live), soon-badge/ (app-soon-badge:
                           a not-yet-ported target as a disabled span, never an <a>),
                           league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
                           ConfirmDialog -> DELETE, shared by list + dashboard); testing/
                           (league-fixtures, league-stats-fixtures, league-team-fixtures,
-                          league-players-fixtures, leagues-loads: releaseLeaguesLoads, which
-                          also releases the stats and ANG-06-16 GETs, and
-                          releaseLeagueTeamPlayerLoads, only the ANG-06-16 GETs; specs only)
+                          league-players-fixtures, league-finances-fixtures, leagues-loads:
+                          releaseLeaguesLoads, which also releases the stats, ANG-06-16 and
+                          finance GETs, and releaseLeagueTeamPlayerLoads, only the ANG-06-16
+                          and finance GETs; specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps, batch, tournaments:
@@ -253,7 +257,9 @@ src/
                           every League / Season model + label map; seasons: SeasonsService.start,
                           ANG-06-14; league-stats: LeagueStatsService, one method per stats
                           screen, ANG-06-15; league-team: LeagueTeamService and league-players:
-                          LeaguePlayersService, ANG-06-16); testing/ holds shared spec fixtures
+                          LeaguePlayersService, ANG-06-16; league-finances:
+                          LeagueFinancesService, INJURY_POLICY_LABELS, ANG-06-17); testing/ holds
+                          shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
                           auth.guard.ts (authGuard, signedOutGuard, HOME_URL),

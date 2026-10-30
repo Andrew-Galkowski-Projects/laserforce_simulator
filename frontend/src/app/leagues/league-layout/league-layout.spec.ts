@@ -144,16 +144,18 @@ describe('League layout (spec #409 F4 / F5)', () => {
     ]);
   });
 
-  it('links Dashboard, History, the stats and team / player screens; every other entry is a Soon span (I1)', async () => {
+  it('links Dashboard, History, Finances, the stats and team / player screens; every other entry is a Soon span (I1)', async () => {
     await open();
     const links = [...(nav()?.querySelectorAll('a') ?? [])];
     expect(links.map((a) => [text(a), a.getAttribute('href')])).toEqual([
       ['Dashboard', '/leagues/1'],
       ['Playoffs', '/leagues/1/playoffs'],
+      ['Finances', '/leagues/1/finances'],
       ['History', '/leagues/1/history'],
       ['Power Rankings', '/leagues/1/power-rankings'],
       ['Roster', '/leagues/1/team/roster'],
       ['Schedule', '/leagues/1/team/schedule'],
+      ['Finances', '/leagues/1/team/finances'],
       ['History', '/leagues/1/team/history'],
       ['Free Agents', '/leagues/1/players/free-agents'],
       ['Watch List', '/leagues/1/players/watch-list'],
@@ -165,7 +167,7 @@ describe('League layout (spec #409 F4 / F5)', () => {
       ['Statistical Feats', '/leagues/1/stats/statistical-feats'],
     ]);
     const soon = [...(nav()?.querySelectorAll('span.soon') ?? [])];
-    expect(soon).toHaveLength(8);
+    expect(soon).toHaveLength(6);
     expect(soon.every((s) => text(s).endsWith('Soon'))).toBe(true);
   });
 

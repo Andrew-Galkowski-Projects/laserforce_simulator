@@ -77,6 +77,7 @@ export function leagueNav(overrides: Partial<LeagueNav> = {}): LeagueNav {
     league: { id: 1, name: 'Metro League', mode: 'league' },
     displayed_season: { id: 11, name: 'Season 1' },
     schedule_team: { id: 3, name: 'Red Raiders' },
+    finance_enabled: true,
     ...overrides,
   };
 }

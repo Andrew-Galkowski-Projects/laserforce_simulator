@@ -10,6 +10,7 @@ import { authInterceptor } from '../auth/auth.interceptor';
 import { LeagueCreateAdvanced } from './league-create-advanced/league-create-advanced';
 import { LeagueCreate } from './league-create/league-create';
 import { LeagueDashboard } from './league-dashboard/league-dashboard';
+import { LeagueFinances } from './league-finances/league-finances';
 import { LeagueHistory } from './league-history/league-history';
 import { LeagueLayout } from './league-layout/league-layout';
 import { LeagueList } from './league-list/league-list';
@@ -24,6 +25,7 @@ import { StatisticalFeats } from './statistical-feats/statistical-feats';
 import { TeamStats } from './team-stats/team-stats';
 import { FreeAgents } from './free-agents/free-agents';
 import { LeaguePlayerDetail } from './league-player/league-player';
+import { LeagueTeamFinances } from './team-finances/team-finances';
 import { LeagueTeamHistory } from './team-history/team-history';
 import { LeagueTeamRoster } from './team-roster/team-roster';
 import { LeagueTeamSchedule } from './team-schedule/team-schedule';
@@ -145,6 +147,27 @@ describe('Leagues routes', () => {
       expect(harness.fixture.debugElement.query(By.directive(LeaguePlayerDetail))).toBeNull();
       await harness.navigateByUrl('/leagues/4/players/free-agents');
       expect(harness.fixture.debugElement.query(By.directive(LeaguePlayerDetail))).toBeNull();
+    });
+  });
+
+  describe('the League finance screens (spec #439)', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    // Routing only: drop every load, so the screens' own specs cover what they fetch.
+    afterEach(() => http.match(() => true));
+
+    it.each([
+      ['/leagues/4/finances', LeagueFinances, 'League Finances - Laserforce Simulator'],
+      ['/leagues/4/team/finances', LeagueTeamFinances, 'Team Finances - Laserforce Simulator'],
+    ])('resolves %s inside the League layout, with its page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
     });
   });
 

@@ -7466,6 +7466,42 @@ Team roster, schedule, team history, league player detail, free
  - **Out of scope:** sign / release free agents; Trade / Trading Block / Prospects / Hall of Fame
    (ANG-06-20); real MMR / Rank (STAT-PROXY-01); removing Django templates (ANG-08).
 
+#### ANG-06-17 · [DONE] League finances
+
+**[DONE] Shipped (2026-10-30).** League Finances (/leagues/:id/finances) and Team Finances
+(/leagues/:id/team/finances?team=) ported to Angular, both nav entries live (spec #439, tickets #440
+/ #441). API additions: nav finance_enabled, Team Finances meta.team_options on GET and PATCH,
+max_level / default_level on its full payload. A shared moneyK (mirrors money_k) changed the League
+table from 7.2k to $7.2k. Beyond the plan: the error box prefixes field errors with the field label
+as Django does, a save in flight is cancelled on leaving the screen, and the template's stale
+'Scouting & coaching are cost-only for now' text was copied verbatim (FIN-02 / FIN-03 made both
+live; a separate copy fix). The repeated nav-gated load pipeline is follow-up #436.
+
+League and team finances.
+
+ Spec: #439
+
+ Settled (owner, 2026-10-30 grill): replaces `leagues/league_finances.html` (`GET
+ leagues/<id>/finances/`) and `leagues/team_finances.html` (`GET` / `PATCH
+ leagues/<id>/teams/<team_id>/finances/`); no model, migration or engine change.
+ (1) Team Finances GET + PATCH return `meta.team_options` via `team_picker_response`.
+ (2) The full Team Finances payload gains `max_level` / `default_level`
+ (`finance.MAX_LEVEL` / `DEFAULT_LEVEL`). (3) `GET leagues/<id>/nav/` gains
+ `finance_enabled`; both screens decide disabled -> no Season -> no Team -> loaded in the
+ template's order, sending no request for the first two. (4) One shared `moneyK` (mirrors
+ `money_k`: `$7.2k` / `-$7.2k`) on both screens; the League table's bare `7.2k` changes.
+ (5) The editable form for `current_team`: four budget levels (int, required, 1..max_level,
+ each with its cost / level / neutral hint), Injury policy, Ticket price (required, >= 0,
+ step 0.5); PATCH sends all six; 400s onto fields via `applyApiErrors`, non-field / 409 in
+ an "Expense settings not saved:" box; success = `notify` "Expense settings saved." and the
+ view from the PATCH response. (6) Another Team: the same form disabled plus "Only your own
+ team's expense settings can be changed." (7) Hype tile: a hand-rolled `--lf-*` bar,
+ width hype x 100% clamped, value to 2 decimals. (8) No unsaved-edits guard; a save in
+ flight disables the form. (9) Out: Django view changes, charts, history sort / paging,
+ the money breakdown lines, live projections, Owner Evaluation (ANG-06-18). (10) Two
+ sequential tickets: T1 backend gaps + `moneyK` + League Finances + its nav entry live;
+ T2 Team Finances + its nav entry, blocked by T1.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

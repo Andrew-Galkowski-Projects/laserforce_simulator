@@ -297,8 +297,29 @@ class TestLeagueDeleteSummary(LeagueApiTestCase):
 class TestLeagueNav(LeagueApiTestCase):
     def get(self, league: League) -> dict:
         data = self.ok(self.api.get(action(league.id, "nav")))
-        self.assertEqual(set(data), {"league", "displayed_season", "schedule_team"})
+        self.assertEqual(
+            set(data),
+            {"league", "displayed_season", "schedule_team", "finance_enabled"},
+        )
         return data
+
+    def test_finance_enabled_follows_the_league(self) -> None:
+        # ANG-06-17 B3: both values, before any Season exists.
+        off = make_league("NavFinOff", manager=self.user_a)
+        on = make_league("NavFinOn", manager=self.user_a)
+        League.objects.filter(pk=off.pk).update(finance_enabled=False)
+        League.objects.filter(pk=on.pk).update(finance_enabled=True)
+        self.assertIs(self.get(off)["finance_enabled"], False)
+        self.assertIs(self.get(on)["finance_enabled"], True)
+
+    def test_finance_enabled_is_owner_only(self) -> None:
+        # ANG-06-17 B3: the flag is read through the same owned nav route.
+        league = make_league("NavFinOwn", manager=self.user_a)
+        League.objects.filter(pk=league.pk).update(finance_enabled=True)
+        self.assertIs(self.get(league)["finance_enabled"], True)
+        assert_owner_only(
+            action(league.id, "nav"), owner=self.user_a, other=self.user_b
+        )
 
     def test_route_name(self) -> None:
         self.assertEqual(reverse("league-nav", args=[7]), "/api/leagues/7/nav/")

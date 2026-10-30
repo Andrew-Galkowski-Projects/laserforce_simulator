@@ -92,7 +92,7 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `GET /api/leagues/templates/` | — (dataclass dicts) | **ANG-01d-1.** The 5 `LEAGUE_TEMPLATES`, not paginated |
 | `GET` / `DELETE /api/leagues/<id>/` | `LeagueSerializer` | **ANG-01d-1.** DELETE career-only (`teardown_league`) ⇒ 204; non-career ⇒ 409 `not_career_league` |
 | `GET /api/leagues/<id>/delete-summary/` | — (`league_delete_summary` dict) | **ANG-06-14.** `{seasons, matches, tournaments, teams, players}`, the counts `DELETE` would remove; non-career ⇒ 409 `not_career_league` |
-| `GET /api/leagues/<id>/nav/` | — (dict) | **ANG-06-14.** The League nav context: `{league: {id, name, mode}, displayed_season: ref \| null, schedule_team: ref \| null}` |
+| `GET /api/leagues/<id>/nav/` | — (dict) | **ANG-06-14.** The League nav context: `{league: {id, name, mode}, displayed_season: ref \| null, schedule_team: ref \| null, finance_enabled}` (`finance_enabled`: ANG-06-17) |
 | `GET /api/leagues/<id>/dashboard/` · `/history/` · `/teams/<team_id>/schedule/` | — (builder dicts) | **ANG-01d-1.** Reads; history paginated. **ANG-06-14:** the League dashboard gains `mode`, `managed_team`, `has_owner_evaluations`, `member_night_progress`, `manager_awaiting_reassignment` |
 | `POST /api/leagues/<id>/next-season/` · `/reassign-team/`; `GET /new-team-candidates/` | `SeasonSerializer` (POSTs) | **ANG-01d-1.** Rollover ⇒ 201; 409 conflict codes. **ANG-06-14:** next-season's 201 is an **active** Season (UXP-18), a draft only when the previous Season had Conferences or the start is refused |
 | `GET /api/seasons/` | `SeasonListSerializer` | **ANG-01d-1.** Filters (`SeasonFilterSet`): `league`, `state`. Ordering `start_date`, `created_at`, `id`; default / tiebreak `-id`. No POST / PUT / PATCH / DELETE (405) |
@@ -502,7 +502,8 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
   `DELETE watch-list/` ⇒ `{removed: n}`. Player not in the League ⇒ **400 `player_not_in_league`**
   (field `player_id`).
 - **Finances:** `GET teams/<team_id>/finances/` — finances off ⇒ only `{finance_enabled, team,
-  editable}`. `PATCH` order: 404 (not enrolled) → **409 `finance_disabled`** → **409
+  editable}`; the full payload also carries `max_level` / `default_level` (`finance.MAX_LEVEL` /
+  `DEFAULT_LEVEL`, ANG-06-17), and both GET and PATCH set `meta.team_options` (ANG-06-17). `PATCH` order: 404 (not enrolled) → **409 `finance_disabled`** → **409
   `team_not_editable`** (not `current_team`, or none) → 400 form errors → the GET payload. `GET
   finances/` — finances off ⇒ `{finance_enabled: false, rows: []}`; else one row per enrolled Team
   `{team, cash, revenue, profit, payroll}` (money `null` without a snapshot).
@@ -792,8 +793,9 @@ Spec: GitHub issue #409 (ticket #410). The backend half of the Angular League co
   `league_delete_summary`. Non-career ⇒ 409 `not_career_league` with the `DELETE` message
   (`_DELETE_NOT_CAREER`).
 - `GET /api/leagues/<id>/nav/` (route `league-nav`) — `{league: {id, name, mode},
-  displayed_season: season_ref | null, schedule_team: ref | null}`; `displayed_season` =
-  `pick_displayed_season`, `schedule_team` = `sidebar_schedule_team`.
+  displayed_season: season_ref | null, schedule_team: ref | null, finance_enabled}`;
+  `displayed_season` = `pick_displayed_season`, `schedule_team` = `sidebar_schedule_team`,
+  `finance_enabled` = `league.finance_enabled` (ANG-06-17).
 - `GET /api/leagues/<id>/dashboard/` gains five keys, added in `LeagueViewSet.dashboard` only
   (`_dashboard_payload`, the Season dashboard and `SEASON_DASHBOARD_KEYS` are unchanged): `mode`;
   `managed_team` (`{id, name}` of `current_team` per `managed_team_id`, else null);
