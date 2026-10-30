@@ -373,6 +373,23 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   - Run `npm --prefix frontend run start:worktree`. Its `worktree` configuration serves on 4201
     and swaps in `environment.worktree.ts`, which points at `:8001`. No committed file is edited.
   - In dev mode, reach a service from DevTools through `ng.ɵgetInjectorProviders`.
+  - Sign in from the MCP (on `/login`, a `seed_browser_check` Account) with one `evaluate_script`.
+    Set each value through the native setter, so Angular's forms see the `input` event:
+    ```js
+    async () => {
+      const set = (el, v) => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      };
+      const [email, password] = document.querySelectorAll('input');
+      set(email, 'browser-a@example.com');
+      set(password, 'browser-check-pass');
+      document.querySelector('button[type=submit]').click();
+      for (let i = 0; i < 50 && location.pathname === '/login'; i++)
+        await new Promise((r) => setTimeout(r, 200));
+      return location.pathname;
+    };
+    ```
 
 ## The `apiBaseUrl` rule
 

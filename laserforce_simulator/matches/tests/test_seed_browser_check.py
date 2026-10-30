@@ -321,6 +321,25 @@ class SeedBrowserCheckLeagueTests(ClassTempMediaMixin, TestCase):
         self.assertEqual(len(history), 3)
         self.assertEqual(len({row["overall_rating"] for row in history}), 3)
 
+    def test_team_finances_have_settled_history_cash_and_an_injury(self) -> None:
+        # ANG-06-17 retro: the finance screens need settled figures, not only
+        # their empty states, before any screen runs the lazy finance ensure.
+        league = League.objects.get(name=_LEAGUE_NAME)
+        team = league.current_team
+
+        response = _api_for_a().get(
+            f"/api/leagues/{league.pk}/teams/{team.pk}/finances/"
+        )
+
+        self.assertEqual(response.status_code, 200, response.content)
+        data = response.json()["data"]
+        self.assertEqual(
+            [row["season"]["name"] for row in data["history"]],
+            ["Season 2", "Season 1"],
+        )
+        self.assertNotEqual(data["cash"], 0)
+        self.assertEqual(len(data["availability"]), 1)
+
 
 class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
     """``--league`` reruns and ``--clean``, each from its own seed or none."""

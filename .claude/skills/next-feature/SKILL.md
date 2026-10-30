@@ -169,7 +169,8 @@ field behind it; a value with no field is a backend change in the spec
 (ANG-06-9's Single Round cards showed Won / Lost / Tie, and the spec's response
 shape had no `result`; ANG-06-14's History heading needed the League name, which
 the History endpoint lacks, so every page change re-fetched the League). Quote
-each screen's h1 verbatim and list which controls each empty state hides:
+each screen's h1 and route `title` verbatim (ANG-06-17's spec named no title, so an
+agent chose one) and list which controls each empty state hides:
 templates differ screen by screen, and ANG-06-15's spec said only "copied word
 for word", so an agent copied a sibling's "<League> — X" heading and kept
 pickers the template hides. Check every "one of" the spec writes against the
@@ -198,7 +199,9 @@ Follow `to-tickets` on the spec. Vertical tracer-bullet slices (model,
 service, view/endpoint, tests), each sized for one fresh session: estimated
 tokens / 150k is the ticket count. A ported Angular screen with its spec and
 mutation runs costs about 160k tokens (ANG-06-10: one screen per ticket, 157k
-and 170k), so count screens before dividing. A task small enough for one session gets one ticket.
+and 170k), so count screens before dividing. A ticket that adds API fields, a
+service and shared helpers before its screen costs about 230k (ANG-06-17a: 233k
+for one small screen). A task small enough for one session gets one ticket.
 Don't pad.
 
 Run every number an acceptance criterion names through the spec's rule before
@@ -416,7 +419,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    map features; add `--league` for League features: a career, finance-enabled
    League with two completed Seasons and an active one at its playoffs (round
    robin played, seeded bracket built, no bracket games yet), a three-Player
-   free-agent pool and a ratings snapshot per Player per Season; `--tournaments` for
+   free-agent pool, a ratings snapshot per Player per Season, and settled finances
+   for both completed Seasons (cash, Season history, one injured Player); `--tournaments` for
    Tournament features: one sandbox Tournament per format and stage) and
    remove it with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Wait with
