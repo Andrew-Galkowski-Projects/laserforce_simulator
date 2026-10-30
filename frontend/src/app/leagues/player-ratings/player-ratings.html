@@ -1,0 +1,92 @@
+<h1>{{ nav()?.league?.name }} — Player Ratings</h1>
+
+@if (noSeason()) {
+  <p id="player-ratings-empty-notice" class="stats-notice" role="status">
+    No Season in this League yet — start a Season to view player ratings.
+  </p>
+} @else if (screen.loadError(); as message) {
+  <p class="stats-error" role="alert">{{ message }}</p>
+} @else if (screen.result(); as r) {
+  <div class="stats-filters">
+    <app-team-picker
+      [options]="r.meta.team_options"
+      [selected]="screen.query().team"
+      (teamChange)="pickTeam($event)"
+    />
+  </div>
+
+  @if (r.meta.count === 0) {
+    <p id="player-ratings-empty-notice" class="stats-notice" role="status">
+      No players on enrolled teams in this League's current Season.
+    </p>
+  } @else {
+    <div class="stats-scroll">
+      <table id="player-ratings-table" class="stats-table">
+        <thead>
+          <tr>
+            @for (c of sortColumns; track c.key) {
+              <th
+                scope="col"
+                [id]="'player-ratings-th-' + c.key"
+                [class.name]="c.key === 'name' || c.key === 'team'"
+                [class.num]="c.key !== 'name' && c.key !== 'team' && c.key !== 'preferred_roles'"
+              >
+                <a [routerLink]="[]" [queryParams]="sortParams(c.key)" [title]="c.full"
+                  >{{ c.label }}{{ arrow(c.key) }}</a
+                >
+              </th>
+            }
+            @for (h of bioHeaders; track h.key) {
+              <th scope="col" [id]="'player-ratings-th-' + h.key" [title]="h.full">
+                {{ h.label }}
+              </th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of r.items; track row.player.id) {
+            <tr [id]="'player-ratings-row-' + row.player.id">
+              <td class="name">
+                <app-player-cell [player]="row.player" [watched]="row.watched" />
+              </td>
+              <td class="name">
+                @if (row.player.team; as team) {
+                  <a [routerLink]="['/teams', team.id]" [title]="team.name">{{
+                    short(team.name)
+                  }}</a>
+                } @else {
+                  —
+                }
+              </td>
+              <td [title]="roles(row)">{{ short(roles(row)) }}</td>
+              <td class="num">{{ row.overall_rating.toFixed(1) }}</td>
+              @for (key of statKeys; track key) {
+                <td class="num">{{ row.stats[key] }}</td>
+              }
+              <td class="num">{{ potential(row) }}</td>
+              <td class="num">{{ orDash(row.age) }}</td>
+              <td [title]="row.home_site">{{ short(orDash(row.home_site), 10) }}</td>
+              <td>{{ orDash(row.height) }}</td>
+              <td class="num">{{ row.total_games }}</td>
+              <td class="num">{{ orDash(row.started_playing_age) }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+
+    <div class="stats-footer">
+      <p id="player-ratings-count" class="stats-count">{{ count(r.meta.count) }}</p>
+      <app-per-page-picker
+        [perPage]="screen.query().perPage"
+        (perPageChange)="pickPerPage($event)"
+      />
+      <app-stats-paginator
+        label="Player ratings pagination"
+        [page]="r.meta.page"
+        [totalPages]="r.meta.total_pages"
+        (pageChange)="pickPage($event)"
+      />
+    </div>
+  }
+}
