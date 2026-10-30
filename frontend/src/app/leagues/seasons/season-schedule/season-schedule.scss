@@ -1,0 +1,86 @@
+// The Season Schedule (spec #444): `--lf-*` tokens only, no colour literals. The tables reuse the
+// League stats page kit (sideways scroll, Team names wrap only between words).
+@use '../../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+}
+
+.season-schedule__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--lf-font-heading);
+}
+
+h2,
+h3,
+h4 {
+  font-family: var(--lf-font-heading);
+}
+
+h2 {
+  margin: 0 0 0.25rem;
+  font-size: 1.25rem;
+}
+
+h3 {
+  margin: 0 0 0.5rem;
+  font-size: 1.125rem;
+}
+
+h4 {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+}
+
+.season-schedule__matchday {
+  margin-bottom: 1.5rem;
+}
+
+.season-schedule__member-nights {
+  margin-top: 2.5rem;
+
+  > section {
+    margin-bottom: 1.5rem;
+  }
+}
+
+.season-schedule__scroll {
+  @include stats-page.scroll;
+}
+
+.season-schedule__table {
+  @include stats-page.table;
+}
+
+.season-schedule__muted {
+  color: var(--lf-text-muted);
+}
+
+.season-schedule__help {
+  margin: 0 0 1rem;
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.season-schedule__notice {
+  @include stats-page.notice;
+}
+
+.season-schedule__error {
+  @include stats-page.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}

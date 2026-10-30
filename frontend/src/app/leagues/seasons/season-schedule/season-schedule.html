@@ -1,0 +1,128 @@
+<app-season-breadcrumb />
+<div class="season-schedule__header">
+  <h1>Schedule</h1>
+  <a mat-stroked-button [routerLink]="seasonPath('standings')">Standings</a>
+</div>
+
+@if (loadError(); as message) {
+  <div class="season-schedule__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (schedule(); as s) {
+  @if (s.matchdays.length === 0) {
+    <p id="season-schedule-empty" class="season-schedule__notice" role="status">
+      No fixtures scheduled — at least 2 enrolled teams are required.
+    </p>
+  } @else {
+    @for (md of s.matchdays; track md.matchday) {
+      <section [id]="'season-schedule-matchday-' + md.matchday" class="season-schedule__matchday">
+        <h3>
+          Matchday {{ md.matchday }}
+          <small class="season-schedule__muted">— {{ md.date }}</small>
+        </h3>
+        <div class="season-schedule__scroll">
+          <table class="season-schedule__table">
+            <thead>
+              <tr>
+                <th scope="col">Round</th>
+                <th scope="col" class="name">Home</th>
+                <th scope="col" class="name">Away</th>
+                <th scope="col" class="num">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (fixture of md.fixtures; track $index) {
+                <tr>
+                  <td>R{{ fixture.round_number }}</td>
+                  <td class="name">
+                    @if (fixture.team_a; as team) {
+                      <a [routerLink]="['/teams', team.id]">{{ team.name }}</a>
+                    } @else {
+                      <span class="season-schedule__muted">(team {{ fixture.team_a_id }})</span>
+                    }
+                  </td>
+                  <td class="name">
+                    @if (fixture.team_b; as team) {
+                      <a [routerLink]="['/teams', team.id]">{{ team.name }}</a>
+                    } @else {
+                      <span class="season-schedule__muted">(team {{ fixture.team_b_id }})</span>
+                    }
+                  </td>
+                  <td class="num">
+                    @if (fixture.played) {
+                      @if (fixture.game_round_id !== null) {
+                        <a [routerLink]="['/rounds', fixture.game_round_id]"
+                          >{{ fixture.red_score }}–{{ fixture.blue_score }}</a
+                        >
+                      } @else {
+                        {{ fixture.red_score }}–{{ fixture.blue_score }}
+                      }
+                    } @else {
+                      <span class="season-schedule__muted">Unplayed</span>
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+  }
+
+  @if (s.member_night_games.length > 0) {
+    <section id="member-nights" class="season-schedule__member-nights" #memberNights>
+      <h2>Member nights</h2>
+      <p class="season-schedule__help">
+        Casual per-Site social games — not counted toward Standings.
+      </p>
+      @for (mn of s.member_night_games; track mn.ordinal) {
+        <section [id]="'season-schedule-member-night-' + mn.ordinal">
+          <h4>
+            Member night <small class="season-schedule__muted">— phase {{ mn.ordinal }}</small>
+          </h4>
+          <div class="season-schedule__scroll">
+            <table class="season-schedule__table">
+              <thead>
+                <tr>
+                  <th scope="col" class="name">Teams</th>
+                  <th scope="col" class="num">Result</th>
+                  <th scope="col">Rounds</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (g of mn.games; track g.match_id) {
+                  <tr [id]="'member-night-game-' + g.match_id">
+                    <td class="name">
+                      {{ g.team_a_name }} <span class="season-schedule__muted">vs</span>
+                      {{ g.team_b_name }}
+                    </td>
+                    <td class="num">
+                      @if (g.is_completed) {
+                        {{ g.red_points }}–{{ g.blue_points }}
+                        @if (g.winner_name) {
+                          <span class="season-schedule__muted">({{ g.winner_name }})</span>
+                        }
+                      } @else {
+                        <span class="season-schedule__muted">Not played</span>
+                      }
+                    </td>
+                    <td>
+                      @for (r of g.rounds; track r.id) {
+                        <a [routerLink]="['/rounds', r.id]">R{{ r.round_number }}</a>
+                        @if (!$last) {
+                          ·
+                        }
+                      }
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        </section>
+      }
+    </section>
+  }
+}
