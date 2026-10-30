@@ -67,6 +67,7 @@ from matches.league_screen_services import (
     build_watch_list_rows,
     clear_watch_list,
     enrolled_team,
+    enrolled_teams,
     remove_watch,
     rating_stats,
     resolve_season_scope,
@@ -154,14 +155,29 @@ def enrolled_team_or_404(league: League, team_id: str | None) -> tuple[Season, T
     return season, team
 
 
+def season_option(season: Season) -> dict:
+    """One Season-picker option: ``season_ref`` plus ``year`` (the start
+    date's year, ``None`` without a start date) -- ANG-06-15."""
+    return {
+        **season_ref(season),
+        "year": season.start_date.year if season.start_date is not None else None,
+    }
+
+
 def season_scope_meta(scope: SeasonScope) -> dict:
     """``meta.season_scope``: ``{"selected": season_ref | "career" | None,
-    "options": [season_ref]}``."""
+    "options": [{id, name, year}]}``."""
     selected = scope.selected
     return {
         "selected": season_ref(selected) if isinstance(selected, Season) else selected,
-        "options": [season_ref(s) for s in scope.options],
+        "options": [season_option(s) for s in scope.options],
     }
+
+
+def team_options_meta(season: Season | None) -> list[dict]:
+    """``meta.team_options``: the Teams enrolled in ``season`` (the displayed
+    one), by name, as ``team_ref``s; ``[]`` for no Season -- ANG-06-15."""
+    return [team_ref(team) for team in enrolled_teams(season)]
 
 
 def player_stat_rows(
@@ -399,10 +415,16 @@ class LeagueScreensMixin(_ScreensBase):
         )
 
     @staticmethod
-    def scoped_response(data: Any, scope: SeasonScope) -> Response:
-        """A non-paginated ``Response`` with ``meta.season_scope`` set."""
+    def scoped_response(
+        data: Any, scope: SeasonScope, *, extra_meta: dict | None = None
+    ) -> Response:
+        """A non-paginated ``Response`` with ``meta.season_scope`` set;
+        ``extra_meta`` (e.g. ``team_options``) is merged beside it."""
         response = Response(data)
-        response.envelope_meta = {"season_scope": season_scope_meta(scope)}
+        response.envelope_meta = {
+            "season_scope": season_scope_meta(scope),
+            **(extra_meta or {}),
+        }
         return response
 
     # --- watch list ------------------------------------------------------
@@ -474,9 +496,8 @@ class LeagueScreensMixin(_ScreensBase):
         """The Player Stats screen: per-player performance over a Season scope."""
         league = self.get_object()
         params = self.screen_params(PlayerStatsParamsForm, league)
-        scope = resolve_season_scope(
-            league, pick_displayed_season(league), params["season"]
-        )
+        displayed_season = pick_displayed_season(league)
+        scope = resolve_season_scope(league, displayed_season, params["season"])
         sort, direction = parse_ordering(params["ordering"])
         rows = build_player_stats(
             scope,
@@ -489,7 +510,10 @@ class LeagueScreensMixin(_ScreensBase):
         return self.paginated_rows(
             rows,
             lambda page: player_stat_rows(page, watched_ids=watched_ids),
-            extra_meta={"season_scope": season_scope_meta(scope)},
+            extra_meta={
+                "season_scope": season_scope_meta(scope),
+                "team_options": team_options_meta(displayed_season),
+            },
         )
 
     @action(
@@ -503,15 +527,18 @@ class LeagueScreensMixin(_ScreensBase):
         league = self.get_object()
         params = self.screen_params(PlayerRatingsParamsForm, league)
         sort, direction = parse_ordering(params["ordering"])
+        displayed_season = pick_displayed_season(league)
         rows = build_player_ratings_queryset(
-            pick_displayed_season(league),
+            displayed_season,
             team_id=params["team_id"],
             sort=sort,
             direction=direction,
         )
         watched_ids = watched_player_ids(request.user, league)
         return self.paginated_rows(
-            rows, lambda page: player_rating_rows(page, watched_ids=watched_ids)
+            rows,
+            lambda page: player_rating_rows(page, watched_ids=watched_ids),
+            extra_meta={"team_options": team_options_meta(displayed_season)},
         )
 
     @action(detail=True, methods=["get"], url_path="leaders", url_name="leaders")
@@ -661,9 +688,8 @@ class LeagueScreensMixin(_ScreensBase):
         """Statistical Feats: paged per-(Player, Round) feat rows + team feats."""
         league = self.get_object()
         params = self.screen_params(StatisticalFeatsParamsForm, league)
-        scope = resolve_season_scope(
-            league, pick_displayed_season(league), params["season"]
-        )
+        displayed_season = pick_displayed_season(league)
+        scope = resolve_season_scope(league, displayed_season, params["season"])
         sort, direction = parse_ordering(params["ordering"])
         feat_rows, team_feats = build_statistical_feats(
             scope, team_id=params["team_id"], sort=sort, direction=direction
@@ -676,7 +702,11 @@ class LeagueScreensMixin(_ScreensBase):
             "team_feats": team_feats_payload(team_feats),
         }
         return self.paginator.get_paginated_response(
-            data, extra_meta={"season_scope": season_scope_meta(scope)}
+            data,
+            extra_meta={
+                "season_scope": season_scope_meta(scope),
+                "team_options": team_options_meta(displayed_season),
+            },
         )
 
     @action(detail=True, methods=["get"], url_path="playoffs", url_name="playoffs")
@@ -878,7 +908,9 @@ class LeagueScreensMixin(_ScreensBase):
     def game_log(self, request: Request, pk: str | None = None) -> Response:
         """One row per played Round in scope, filterable by Team, sortable."""
         league = self.get_object()
-        params, _, scope, sort, direction = self.screen_scope(league, GameLogParamsForm)
+        params, displayed_season, scope, sort, direction = self.screen_scope(
+            league, GameLogParamsForm
+        )
         rows = build_game_log(
             scope.round_filter,
             team_id=params["team_id"],
@@ -894,7 +926,11 @@ class LeagueScreensMixin(_ScreensBase):
             }
             for row in rows
         ]
-        return self.scoped_response(data, scope)
+        return self.scoped_response(
+            data,
+            scope,
+            extra_meta={"team_options": team_options_meta(displayed_season)},
+        )
 
 
 def _team_ref_or_none(team: Team | None) -> dict | None:
@@ -949,10 +985,12 @@ def feat_rows_payload(rows: list, *, watched_ids: set[int]) -> list[dict]:
 
 
 def team_feats_payload(team_feats: list) -> list[dict]:
-    """``{kind, label, team: team_ref | None, round_id}`` per team feat.
+    """``{kind, label, team_name, team: team_ref | None, round_id}`` per team feat.
 
-    ``TeamFeatRecord`` carries only the winner's name (Team names are not
-    unique), so the ref resolves from the record's Round's Match winner.
+    ``team_name`` is the record's own winner name (what the HTML shows), so it
+    is set even when ``team`` is ``None``. ``TeamFeatRecord`` carries only that
+    name (Team names are not unique), so the ref resolves from the record's
+    Round's Match winner.
     """
     rounds = GameRound.objects.select_related("match__winner").in_bulk(
         [r.round_id for r in team_feats if r.round_id is not None]
@@ -969,6 +1007,7 @@ def team_feats_payload(team_feats: list) -> list[dict]:
             {
                 "kind": record.kind,
                 "label": record.label,
+                "team_name": record.team_name,
                 "team": team_ref(winner) if winner is not None else None,
                 "round_id": record.round_id,
             }

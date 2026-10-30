@@ -66,8 +66,18 @@ class StatisticalFeatsTests(LeagueApiTestCase):
         self.assertTrue(row["feats"])
         self.assertEqual(set(row["feats"][0]), {"kind", "label", "is_season_best"})
         self.assertIn("nuke_detonations", row["stats"])
+        # ANG-06-15: ``team_options`` (the Team picker) is the one new key;
+        # ``season_scope`` and the page keys are unchanged.
         self.assertEqual(
-            set(meta), {"season_scope", "page", "page_size", "count", "total_pages"}
+            set(meta),
+            {
+                "season_scope",
+                "team_options",
+                "page",
+                "page_size",
+                "count",
+                "total_pages",
+            },
         )
         self.assertEqual(
             meta["season_scope"]["selected"],
@@ -132,14 +142,48 @@ class StatisticalFeatsTests(LeagueApiTestCase):
             is_completed=True,
         )
         data = self.ok(self.get())
+        # ANG-06-15: each entry adds ``team_name`` (the record's own winner
+        # name, what the HTML shows). ``team`` still resolves to the winner's
+        # ref through the Round, so the team-ref invariant is unchanged.
         self.assertEqual(
             data["team_feats"],
             [
                 {
                     "kind": "comeback_win",
                     "label": data["team_feats"][0]["label"],
+                    "team_name": self.teams[1].name,
                     "team": {"id": self.teams[1].id, "name": self.teams[1].name},
                     "round_id": round_2.id,
+                }
+            ],
+        )
+
+    def test_team_feat_names_its_team_when_team_ref_is_null(self) -> None:
+        from matches.models import Match
+
+        # A comeback Match with no Round 2: ``round_id`` and so ``team`` are
+        # null, but the record still carries the winner's name.
+        Match.objects.create(
+            team_red=self.teams[1],
+            team_blue=self.teams[0],
+            season=self.season,
+            red_round1_points=1,
+            blue_round1_points=100,
+            red_round2_points=200,
+            blue_round2_points=1,
+            winner=self.teams[1],
+            is_completed=True,
+        )
+        data = self.ok(self.get())
+        self.assertEqual(
+            data["team_feats"],
+            [
+                {
+                    "kind": "comeback_win",
+                    "label": data["team_feats"][0]["label"],
+                    "team_name": self.teams[1].name,
+                    "team": None,
+                    "round_id": None,
                 }
             ],
         )
