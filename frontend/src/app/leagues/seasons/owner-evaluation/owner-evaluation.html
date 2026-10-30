@@ -1,0 +1,93 @@
+<app-season-breadcrumb />
+@if (notFound()) {
+  <h1>Owner evaluation not found</h1>
+  <p>
+    <a mat-stroked-button [routerLink]="['/leagues', leagueId(), 'seasons', seasonId()]"
+      >&larr; Back to Season</a
+    >
+  </p>
+} @else if (loadError(); as message) {
+  <div class="owner-evaluation__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (evaluation(); as e) {
+  <h1>Annual Performance Evaluation</h1>
+
+  <p class="owner-evaluation__verdict">
+    The Owner's verdict:
+    <span class="owner-evaluation__badge" [attr.data-verdict]="e.verdict">{{
+      verdictLabel(e)
+    }}</span>
+  </p>
+
+  @if (e.verdict === 'hot_seat') {
+    <p class="owner-evaluation__hot-seat">
+      @if (e.hot_seat_level === 1) {
+        Another season like that and you're fired!
+      } @else if (e.hot_seat_level === 2) {
+        A couple more seasons like that and you're fired!
+      }
+    </p>
+  }
+
+  @if (e.verdict === 'fired') {
+    <p class="owner-evaluation__fired">
+      @if (e.fired_reason === 'luxury_tax') {
+        Fired for paying the luxury tax.
+      } @else {
+        Fired by the owner — mood fell too low.
+      }
+    </p>
+  }
+
+  <div class="owner-evaluation__table">
+    <table>
+      <thead>
+        <tr>
+          <th scope="col">Factor</th>
+          <th scope="col" class="num">This Season</th>
+          <th scope="col" class="num">Cumulative</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Wins</td>
+          <td class="num">{{ fixed(e.wins_delta, 3) }}</td>
+          <td class="num">{{ fixed(e.wins_total, 3) }}</td>
+        </tr>
+        <tr>
+          <td>Playoffs</td>
+          <td class="num">{{ fixed(e.playoffs_delta, 3) }}</td>
+          <td class="num">{{ fixed(e.playoffs_total, 3) }}</td>
+        </tr>
+        <tr>
+          <td>Money</td>
+          <td class="num">{{ fixed(e.money_delta, 1) }}</td>
+          <td class="num">{{ fixed(e.money_total, 1) }}</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <th scope="row">Overall mood</th>
+          <td></td>
+          <td class="num">{{ fixed(e.overall_mood, 3) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  @if (writeError(); as message) {
+    <p class="owner-evaluation__write-error" role="alert">{{ message }}</p>
+  }
+
+  <p class="owner-evaluation__cta">
+    @if (e.is_fired && !e.reassigned) {
+      <a mat-flat-button [routerLink]="['/leagues', leagueId(), 'new-team']">Choose New Team</a>
+    } @else {
+      <button mat-flat-button type="button" [disabled]="writing()" (click)="startNextSeason()">
+        Start Next Season
+      </button>
+    }
+  </p>
+}
