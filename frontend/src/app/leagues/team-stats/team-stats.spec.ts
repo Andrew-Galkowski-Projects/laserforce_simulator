@@ -182,6 +182,22 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
       expect(headers()[3]).toBe('Avg Margin ↓');
     });
 
+    it('a new sort supersedes the request still in flight', async () => {
+      await open();
+      await click(header('Avg Margin'));
+      const stale = statsRequest();
+      await click(header('Base Captures'));
+      expect(stale.cancelled).toBe(true);
+      const fresh = teamStatRow({
+        team_id: 5,
+        team_name: 'Blue Bolts',
+        team: { id: 5, name: 'Blue Bolts' },
+      });
+      expect(await answer([fresh])).toEqual({ ordering: 'base_captures' });
+      expect(page().querySelector('#team-stats-row-5')).not.toBeNull();
+      expect(page().querySelector('#team-stats-row-3')).toBeNull();
+    });
+
     it('reads the sort and Season from the URL', async () => {
       expect(
         await open('/leagues/1/stats/team-stats?season=career&sort=avg_survivors&dir=desc'),
