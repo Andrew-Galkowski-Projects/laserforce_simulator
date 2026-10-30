@@ -6,7 +6,7 @@
   </p>
 } @else if (screen.loadError(); as message) {
   <p class="stats-error" role="alert">{{ message }}</p>
-} @else if (screen.result(); as r) {
+} @else if (nav() && screen.result(); as r) {
   <div class="stats-filters">
     <app-team-picker
       [options]="r.meta.team_options"

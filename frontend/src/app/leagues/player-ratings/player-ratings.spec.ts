@@ -508,6 +508,19 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
       expect(q('#stats-team-select')).toBeNull();
     });
 
+    it('shows no table before the League nav says whether there is a Season', async () => {
+      await harness.navigateByUrl(PATH);
+      await answer();
+      expect(q('#player-ratings-table')).toBeNull();
+      http.expectOne(`${BASE}/leagues/1/nav/`).flush({
+        data: leagueNav({ displayed_season: null }),
+        meta: {},
+      });
+      await harness.fixture.whenStable();
+      expect(text(q('#player-ratings-empty-notice'))).toBe(NO_SEASON);
+      expect(q('#player-ratings-table')).toBeNull();
+    });
+
     it('shows the no-players notice for an empty result', async () => {
       await open(PATH, { rows: [] });
       expect(text(q('#player-ratings-empty-notice'))).toBe(NO_PLAYERS);
