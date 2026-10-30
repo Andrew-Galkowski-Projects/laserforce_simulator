@@ -109,6 +109,12 @@ export const LEAGUES_ROUTES: Routes = [
           import('./league-finances/league-finances').then((m) => m.LeagueFinances),
         title: `League Finances - ${APP_TITLE}`,
       },
+      {
+        path: 'team/finances',
+        loadComponent: () =>
+          import('./team-finances/team-finances').then((m) => m.LeagueTeamFinances),
+        title: `Team Finances - ${APP_TITLE}`,
+      },
     ],
   },
 ];

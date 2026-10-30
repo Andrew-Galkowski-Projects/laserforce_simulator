@@ -25,6 +25,7 @@ import { StatisticalFeats } from './statistical-feats/statistical-feats';
 import { TeamStats } from './team-stats/team-stats';
 import { FreeAgents } from './free-agents/free-agents';
 import { LeaguePlayerDetail } from './league-player/league-player';
+import { LeagueTeamFinances } from './team-finances/team-finances';
 import { LeagueTeamHistory } from './team-history/team-history';
 import { LeagueTeamRoster } from './team-roster/team-roster';
 import { LeagueTeamSchedule } from './team-schedule/team-schedule';
@@ -157,17 +158,17 @@ describe('Leagues routes', () => {
     // Routing only: drop every load, so the screens' own specs cover what they fetch.
     afterEach(() => http.match(() => true));
 
-    it.each([['/leagues/4/finances', LeagueFinances, 'League Finances - Laserforce Simulator']])(
-      'resolves %s inside the League layout, with its page title',
-      async (url, screen, title) => {
-        const harness = await RouterTestingHarness.create();
-        await harness.navigateByUrl(url);
-        expect(routerUrl()).toBe(url);
-        expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
-        expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
-        expect(TestBed.inject(Title).getTitle()).toBe(title);
-      },
-    );
+    it.each([
+      ['/leagues/4/finances', LeagueFinances, 'League Finances - Laserforce Simulator'],
+      ['/leagues/4/team/finances', LeagueTeamFinances, 'Team Finances - Laserforce Simulator'],
+    ])('resolves %s inside the League layout, with its page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
   });
 
   describe('signed out', () => {

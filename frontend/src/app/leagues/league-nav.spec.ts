@@ -30,7 +30,7 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     ]);
   });
 
-  it('makes Dashboard, History, Finances, the eight stats and five team / player screens live, linking into the League', () => {
+  it('makes Dashboard, History, both Finances, the eight stats and five team / player screens live, linking into the League', () => {
     const nav = leagueNav({ league: { id: 7, name: 'Metro League', mode: 'league' } });
     const live = LEAGUE_NAV_ENTRIES.filter((e) => !e.soon);
     expect(live.map((e) => [e.key, e.link(nav)])).toEqual([
@@ -41,6 +41,7 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
       ['power_rankings', ['/leagues', 7, 'power-rankings']],
       ['roster', ['/leagues', 7, 'team', 'roster']],
       ['schedule_team', ['/leagues', 7, 'team', 'schedule']],
+      ['finances_team', ['/leagues', 7, 'team', 'finances']],
       ['history_team', ['/leagues', 7, 'team', 'history']],
       ['free_agents', ['/leagues', 7, 'players', 'free-agents']],
       ['watch_list', ['/leagues', 7, 'players', 'watch-list']],
@@ -58,7 +59,6 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     expect(soon.map((e) => e.key)).toEqual([
       'standings',
       'schedule',
-      'finances_team',
       'trade',
       'trading_block',
       'prospects',
@@ -71,5 +71,13 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     const entry = LEAGUE_NAV_ENTRIES.find((e) => e.key === 'finances');
     expect(entry?.soon).toBe(false);
     expect(entry?.link(leagueNav({ finance_enabled: false }))).toEqual(['/leagues', 1, 'finances']);
+    const team = LEAGUE_NAV_ENTRIES.find((e) => e.key === 'finances_team');
+    expect(team?.soon).toBe(false);
+    expect(team?.link(leagueNav({ finance_enabled: false }))).toEqual([
+      '/leagues',
+      1,
+      'team',
+      'finances',
+    ]);
   });
 });

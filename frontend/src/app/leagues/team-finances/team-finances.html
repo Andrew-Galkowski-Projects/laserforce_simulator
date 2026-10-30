@@ -1,0 +1,311 @@
+@let v = view();
+@if (v.kind !== 'loaded') {
+  <h1>{{ nav()?.league?.name }} — Finances</h1>
+}
+@switch (v.kind) {
+  @case ('disabled') {
+    <p id="team-finances-disabled-notice" class="stats-notice" role="status">
+      Finances are disabled for this League.
+    </p>
+  }
+  @case ('noSeason') {
+    <p id="team-finances-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to view team finances.
+    </p>
+  }
+  @case ('noTeam') {
+    <p id="team-finances-empty-notice" class="stats-notice" role="status">
+      No team available to display in this League's current Season.
+    </p>
+  }
+  @case ('error') {
+    <div class="stats-error team-finances__error" role="alert">
+      <span>{{ v.message }}</span>
+      <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+    </div>
+  }
+  @case ('loaded') {
+    @let d = v.data;
+    @let latest = d.history[0];
+    <header id="team-finances-header" class="team-finances__header">
+      <h1>{{ d.team.name }} — Finances</h1>
+      <div class="stats-filters">
+        <app-team-picker
+          [options]="v.options"
+          [selected]="d.team.id"
+          [allowAll]="false"
+          (teamChange)="pickTeam($event)"
+        />
+      </div>
+    </header>
+
+    <p id="team-finances-payroll-headline" class="team-finances__headline">
+      The current payroll is <strong>{{ moneyK(d.live_payroll) }}</strong
+      >.
+    </p>
+    <p id="team-finances-hype-text" class="team-finances__muted-text">
+      The better you do in the regular season and the playoffs the higher your team hype. The higher
+      your hype the more fans turn out and the more revenue your team gets.
+    </p>
+
+    <div id="team-finances-metrics" class="team-finances__tiles">
+      <div id="team-finances-tile-wins" class="team-finances__tile">
+        <div class="team-finances__tile-label">Wins</div>
+        <div class="team-finances__tile-value">{{ d.record.wins }}–{{ d.record.losses }}</div>
+      </div>
+      <div id="team-finances-tile-hype" class="team-finances__tile">
+        <div class="team-finances__tile-label">Hype</div>
+        <div class="team-finances__tile-value">{{ d.current_hype.toFixed(2) }}</div>
+        @let hype = hypeFraction(d.current_hype);
+        <div
+          id="team-finances-hype-bar"
+          class="team-finances__bar"
+          role="progressbar"
+          aria-label="Hype"
+          aria-valuemin="0"
+          aria-valuemax="1"
+          [attr.aria-valuenow]="hype"
+        >
+          <div class="team-finances__bar-fill" [style.width.%]="hype * 100"></div>
+        </div>
+      </div>
+      <div id="team-finances-tile-revenue" class="team-finances__tile">
+        <div class="team-finances__tile-label">Revenue</div>
+        <div class="team-finances__tile-value">
+          {{ latest ? moneyK(latest.revenue) : '—' }}
+        </div>
+      </div>
+      <div id="team-finances-tile-expenses" class="team-finances__tile">
+        <div class="team-finances__tile-label">Expenses</div>
+        <div class="team-finances__tile-value">
+          {{ latest ? moneyK(latest.expenses) : '—' }}
+        </div>
+      </div>
+      <div id="team-finances-tile-cash" class="team-finances__tile">
+        <div class="team-finances__tile-label">Cash</div>
+        <div class="team-finances__tile-value">{{ moneyK(d.cash) }}</div>
+      </div>
+    </div>
+    <p id="team-finances-metrics-note" class="team-finances__muted-text">
+      @if (latest) {
+        Revenue and Expenses are {{ latest.season.name }}'s final figures.
+      } @else {
+        No Season's finances have been settled yet.
+      }
+      Finances are settled at the end of each Season with the ticket price and budget levels in
+      effect then, so changes saved below show up once the current Season ends.
+    </p>
+
+    <div class="team-finances__columns">
+      <section id="team-finances-settings" class="team-finances__settings">
+        <h2>Expense Settings</h2>
+        @if (formErrors().length > 0) {
+          <div id="team-finances-form-errors" class="team-finances__form-errors" role="alert">
+            <p class="team-finances__errors-heading">Expense settings not saved:</p>
+            <ul>
+              @for (message of formErrors(); track $index) {
+                <li>{{ message }}</li>
+              }
+            </ul>
+          </div>
+        }
+        @if (!d.editable) {
+          <p id="team-finances-readonly-notice" class="team-finances__muted-text">
+            Only your own team's expense settings can be changed.
+          </p>
+        }
+        <form
+          id="team-finances-budget-form"
+          [formGroup]="form"
+          (ngSubmit)="save(d, v.options)"
+          novalidate
+        >
+          <div class="team-finances__fields">
+            @for (b of budgetRows; track b.control) {
+              <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                <mat-label>{{ b.label }}</mat-label>
+                <input
+                  matInput
+                  type="number"
+                  min="1"
+                  [max]="d.max_level"
+                  step="1"
+                  required
+                  [formControlName]="b.control"
+                  [name]="b.control"
+                  autocomplete="off"
+                />
+                <mat-hint
+                  >{{ moneyK(d.budget_costs[b.key]) }} / season · level
+                  {{ d.budgets[b.key] }} (neutral {{ d.default_level }}){{ b.extra }}</mat-hint
+                >
+                @if (errorText(form.controls[b.control]); as message) {
+                  <mat-error>{{ message }}</mat-error>
+                }
+              </mat-form-field>
+            }
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>Injury policy</mat-label>
+              <select matNativeControl formControlName="injury_policy" name="injury_policy">
+                @for (p of injuryPolicies; track p[0]) {
+                  <option [value]="p[0]">{{ p[1] }}</option>
+                }
+              </select>
+              <mat-hint>how an injured starter is resolved at fixture time</mat-hint>
+              @if (errorText(form.controls.injury_policy); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+            <mat-form-field appearance="outline" subscriptSizing="dynamic">
+              <mat-label>Ticket price</mat-label>
+              <input
+                matInput
+                type="number"
+                min="0"
+                step="0.5"
+                required
+                formControlName="ticket_price"
+                name="ticket_price"
+                autocomplete="off"
+              />
+              <mat-hint>drives attendance &amp; gate revenue</mat-hint>
+              @if (errorText(form.controls.ticket_price); as message) {
+                <mat-error>{{ message }}</mat-error>
+              }
+            </mat-form-field>
+          </div>
+          <button
+            mat-flat-button
+            id="team-finances-budget-save"
+            type="submit"
+            [disabled]="busy() || !d.editable"
+          >
+            Save Expense Settings
+          </button>
+          <p
+            id="team-finances-form-text"
+            class="team-finances__muted-text team-finances__form-text"
+          >
+            Budget levels are 1–{{ d.max_level }} ({{ d.default_level }} = neutral). Scouting &amp;
+            coaching are cost-only for now; facilities also feeds revenue.
+          </p>
+        </form>
+        <p id="team-finances-live-penalties" class="team-finances__muted-text">
+          Live luxury tax {{ moneyK(d.live_luxury_tax) }} · min-payroll penalty
+          {{ moneyK(d.live_min_payroll_penalty) }} (computed from the current roster payroll).
+        </p>
+      </section>
+
+      <section id="team-finances-salaries" class="team-finances__salaries">
+        <h2>Player Salaries</h2>
+        <p id="team-finances-salaries-note" class="team-finances__muted-text">
+          Salaries are derived from each Player's overall rating (cap-scaled).
+        </p>
+        <div class="stats-scroll">
+          <table id="team-finances-salaries-table" class="stats-table">
+            <thead>
+              <tr>
+                <th scope="col" class="name">Name</th>
+                <th scope="col" class="num">Salary</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (r of d.roster_salaries; track r.player.id) {
+                <tr>
+                  <td class="name">
+                    {{ r.player.name }}
+                    @if (r.player.id === selfId()) {
+                      &ngsp;<span class="team-finances__you">You</span>
+                    }
+                  </td>
+                  <td class="num">{{ moneyK(r.salary) }}</td>
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="2" class="team-finances__muted">No roster players.</td>
+                </tr>
+              }
+            </tbody>
+            <tfoot>
+              <tr class="team-finances__total">
+                <td>Total</td>
+                <td class="num">{{ moneyK(d.live_payroll) }}</td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <section id="team-finances-availability-section">
+      <h2>Player availability</h2>
+      <div id="team-finances-availability">
+        @if (d.availability.length > 0) {
+          <div class="stats-scroll">
+            <table class="stats-table">
+              <thead>
+                <tr>
+                  <th scope="col" class="name">Player</th>
+                  <th scope="col" class="num">Games remaining</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (entry of d.availability; track entry.player.id) {
+                  <tr>
+                    <td class="name">
+                      {{ entry.player.name }}
+                      @if (entry.player.id === selfId()) {
+                        &ngsp;<span class="team-finances__you">You</span>
+                      }
+                    </td>
+                    <td class="num">{{ entry.games_remaining }}</td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        } @else {
+          <p id="team-finances-availability-empty" class="team-finances__muted-text">
+            Everyone's available — no injured players.
+          </p>
+        }
+      </div>
+    </section>
+
+    <section id="team-finances-history-section">
+      <h2>Season history</h2>
+      <div class="stats-scroll">
+        <table id="team-finances-table" class="stats-table">
+          <thead>
+            <tr>
+              <th scope="col" class="name">Season</th>
+              <th scope="col" class="num">Revenue</th>
+              <th scope="col" class="num">Expenses</th>
+              <th scope="col" class="num">Profit</th>
+              <th scope="col" class="num">Payroll</th>
+              <th scope="col" class="num">Hype</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of d.history; track row.season.id) {
+              <tr>
+                <td class="name">{{ row.season.name }}</td>
+                <td class="num">{{ moneyK(row.revenue) }}</td>
+                <td class="num">{{ moneyK(row.expenses) }}</td>
+                <td class="num">{{ moneyK(row.profit) }}</td>
+                <td class="num">{{ moneyK(row.payroll) }}</td>
+                <td class="num">{{ row.hype.toFixed(2) }}</td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="6" class="team-finances__muted">
+                  No finance history yet — complete a Season.
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+  }
+}

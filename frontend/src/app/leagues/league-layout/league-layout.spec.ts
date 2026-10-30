@@ -155,6 +155,7 @@ describe('League layout (spec #409 F4 / F5)', () => {
       ['Power Rankings', '/leagues/1/power-rankings'],
       ['Roster', '/leagues/1/team/roster'],
       ['Schedule', '/leagues/1/team/schedule'],
+      ['Finances', '/leagues/1/team/finances'],
       ['History', '/leagues/1/team/history'],
       ['Free Agents', '/leagues/1/players/free-agents'],
       ['Watch List', '/leagues/1/players/watch-list'],
@@ -166,7 +167,7 @@ describe('League layout (spec #409 F4 / F5)', () => {
       ['Statistical Feats', '/leagues/1/stats/statistical-feats'],
     ]);
     const soon = [...(nav()?.querySelectorAll('span.soon') ?? [])];
-    expect(soon).toHaveLength(7);
+    expect(soon).toHaveLength(6);
     expect(soon.every((s) => text(s).endsWith('Soon'))).toBe(true);
   });
 
