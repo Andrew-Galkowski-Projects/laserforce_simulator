@@ -57,6 +57,12 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   the table then shrinks instead of scrolling, and at 768px names broke one
   letter per line (ANG-06-13b's crosstable and Standings). It suits free text in
   a card or alert.
+- **A state shows in shape or text, not colour alone.** A state a user must tell
+  apart (on / off, current / former) differs by glyph, label or text as well as
+  colour, as Sides keep their R / B badge. Flag a toggle or row mark that changes
+  only a colour token: specs read text, so only a screenshot catches it (ANG-06-16's
+  Watch-flag star read the same grey-blue on and off, and Team History's on-team
+  mark was a tint alone).
 
 ## Tests
 

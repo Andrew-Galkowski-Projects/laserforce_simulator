@@ -90,7 +90,11 @@ playoffs (ANG-06-15 retro): a round-robin phase hand-played through the real sch
 Team best), then a `standings` tournament phase whose seeded bracket
 `activate_pending_tournament_phase` builds, so the Playoffs screen has a bracket to draw (no bracket
 games played). Every GameRound carries 12 hand-built `PlayerRoundState` rows, so standings, awards
-and player stats are non-empty; no simulator runs. The rows are built by
+and player stats are non-empty; no simulator runs. ANG-06-16 retro additions:
+- **Free-agent pool:** the League's `free_agent_pool` is "Browser Check Free Agents", an A-owned
+  Team holding three "FA <name>" copies of the first Team's Players, so Free Agents has a table.
+- **Ratings history:** every Player gets one `PlayerSeasonRating` per Season, Overall rising 2.0 a
+  Season up to the live rating, so the League player ratings-history chart draws a line. The rows are built by
 `_browser_check_league.py` (a copy of the `league_api_fixtures.py` shapes: production code never
 imports test modules; the leading underscore keeps it out of the command list). The summary gains
 `League <id> (Browser Check League), Seasons <id>, <id>, <id> (completed, completed, active)`.

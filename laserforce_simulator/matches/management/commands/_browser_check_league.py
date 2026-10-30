@@ -10,17 +10,24 @@ from datetime import date
 
 from django.contrib.auth.models import AbstractBaseUser
 
+from matches.development import STAT_FIELDS
 from matches.models import (
     GameRound,
     League,
     Match,
     PlayerRoundState,
+    PlayerSeasonRating,
     Season,
     SeasonPhase,
 )
-from teams.models import Team
+from teams.models import Player, Team
 
 LEAGUE_NAME = "Browser Check League"
+POOL_NAME = "Browser Check Free Agents"
+_POOL_SIZE = 3
+# Each older Season's snapshot sits this far below the next, so the ratings
+# history chart draws a rising line rather than a flat one.
+_RATING_STEP = 2.0
 
 _SLOTS = (
     ("slot_commander", "commander"),
@@ -172,13 +179,47 @@ def _playoff_season(league: League, teams: list[Team]) -> Season:
     return season
 
 
+def _free_agent_pool(manager: AbstractBaseUser, source: Team) -> Team:
+    """A ``manager``-owned pool Team holding copies of ``source``'s first
+    Players, renamed "FA <name>" (ANG-06-16 retro: the Free Agents table)."""
+    pool = Team.objects.create(name=POOL_NAME, manager=manager)
+    for player in Player.objects.filter(team=source).order_by("id")[:_POOL_SIZE]:
+        player.pk = None
+        player.id = None
+        player.name = f"FA {player.name}"
+        player.team = pool
+        player.save()
+    return pool
+
+
+def _ratings_history(seasons: list[Season], teams: list[Team]) -> None:
+    """One ``PlayerSeasonRating`` per Player per Season, Overall rising
+    ``_RATING_STEP`` a Season up to the live rating (ANG-06-16 retro: the
+    League player ratings-history chart)."""
+    rows = []
+    for player in Player.objects.filter(team__in=teams):
+        for seasons_ago, season in enumerate(reversed(seasons)):
+            rows.append(
+                PlayerSeasonRating(
+                    player=player,
+                    season=season,
+                    age=None if player.age is None else player.age - seasons_ago,
+                    overall_rating=player.overall_rating - seasons_ago * _RATING_STEP,
+                    **{name: getattr(player, name) for name in STAT_FIELDS},
+                )
+            )
+    PlayerSeasonRating.objects.bulk_create(rows)
+
+
 def seed_browser_check_league(
     manager: AbstractBaseUser, teams: list[Team]
 ) -> tuple[League, list[Season]]:
     """A career, finance-enabled League owned by ``manager`` over ``teams``:
     two completed ranked round-robin Seasons (a different champion each) and
     one active Season at its playoffs (round robin played, bracket built,
-    ANG-06-15 retro). Returns the League and its Seasons, oldest first."""
+    ANG-06-15 retro), a three-Player free-agent pool and a ratings snapshot per
+    Player per Season (ANG-06-16 retro). Returns the League and its Seasons,
+    oldest first."""
     league = League.objects.create(
         name=LEAGUE_NAME,
         mode="league",
@@ -186,6 +227,7 @@ def seed_browser_check_league(
         manager=manager,
         current_team=teams[0],
         finance_enabled=True,
+        free_agent_pool=_free_agent_pool(manager, teams[0]),
     )
     seasons = []
     for number, order in ((1, teams), (2, teams[1:] + teams[:1])):
@@ -199,4 +241,5 @@ def seed_browser_check_league(
         season.save(update_fields=["champion_team"])
         seasons.append(season)
     seasons.append(_playoff_season(league, teams))
+    _ratings_history(seasons, teams)
     return league, seasons
