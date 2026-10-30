@@ -1,0 +1,39 @@
+// Player Stats (spec #417): `--lf-*` tokens only, no colour literals.
+@use '../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+}
+
+h1 {
+  @include stats-page.heading;
+}
+
+.stats-filters {
+  @include stats-page.filters;
+}
+
+.stats-count {
+  margin: 0 0 0.5rem;
+  color: var(--lf-text-muted);
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+}
+
+.stats-footer {
+  @include stats-page.footer;
+}
