@@ -273,6 +273,25 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
       expect(await answer()).toEqual({ season: '10' });
     });
 
+    it('a new Season supersedes the request still in flight', async () => {
+      await open();
+      const pick = async (value: string): Promise<void> => {
+        seasonSelect().value = value;
+        seasonSelect().dispatchEvent(new Event('change'));
+        await harness.fixture.whenStable();
+      };
+      await pick('10');
+      const stale = leadersRequest();
+      await pick('career');
+      expect(stale.cancelled).toBe(true);
+      const fresh = leaderBoardRow({ player_id: 26, player: { id: 26, name: 'Bea', team: null } });
+      expect(
+        await answer(leaderBoards({ avg_tags: [fresh] }), seasonScope({ selected: 'career' })),
+      ).toEqual({ season: 'career' });
+      expect(text(q('#leaders-scope'))).toBe('Career');
+      expect(rows('leaders-avg-tags')[0][0]).toBe('1. Bea, Red Raiders');
+    });
+
     it('a Season change drops a hand-written team param (the screen has no Team filter)', async () => {
       expect(await open(`${PATH}?team=5`)).toEqual({});
       seasonSelect().value = 'career';
