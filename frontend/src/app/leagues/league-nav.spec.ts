@@ -30,7 +30,7 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     ]);
   });
 
-  it('makes Dashboard, History and the eight stats screens live, linking into the League', () => {
+  it('makes Dashboard, History, the eight stats and five team / player screens live, linking into the League', () => {
     const nav = leagueNav({ league: { id: 7, name: 'Metro League', mode: 'league' } });
     const live = LEAGUE_NAV_ENTRIES.filter((e) => !e.soon);
     expect(live.map((e) => [e.key, e.link(nav)])).toEqual([
@@ -38,6 +38,11 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
       ['playoffs', ['/leagues', 7, 'playoffs']],
       ['history', ['/leagues', 7, 'history']],
       ['power_rankings', ['/leagues', 7, 'power-rankings']],
+      ['roster', ['/leagues', 7, 'team', 'roster']],
+      ['schedule_team', ['/leagues', 7, 'team', 'schedule']],
+      ['history_team', ['/leagues', 7, 'team', 'history']],
+      ['free_agents', ['/leagues', 7, 'players', 'free-agents']],
+      ['watch_list', ['/leagues', 7, 'players', 'watch-list']],
       ['game_log', ['/leagues', 7, 'stats', 'game-log']],
       ['league_leaders', ['/leagues', 7, 'stats', 'league-leaders']],
       ['player_ratings', ['/leagues', 7, 'stats', 'player-ratings']],
@@ -49,7 +54,16 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
 
   it('marks every other entry Soon, with no link', () => {
     const soon = LEAGUE_NAV_ENTRIES.filter((e) => e.soon);
-    expect(soon).toHaveLength(13);
+    expect(soon.map((e) => e.key)).toEqual([
+      'standings',
+      'schedule',
+      'finances',
+      'finances_team',
+      'trade',
+      'trading_block',
+      'prospects',
+      'hall_of_fame',
+    ]);
     expect(soon.map((e) => e.link(leagueNav()))).toEqual(soon.map(() => null));
   });
 });

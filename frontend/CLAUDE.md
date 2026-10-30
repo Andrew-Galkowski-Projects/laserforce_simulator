@@ -220,24 +220,35 @@ src/
                           and new-team (league-new-team); ANG-06-15 adds stats/league-leaders,
                           stats/player-stats, stats/player-ratings, stats/team-stats,
                           stats/statistical-feats, stats/game-log, power-rankings and playoffs
-                          (one lazily loaded folder each). stats-shared/ is their kit (read each
+                          (one lazily loaded folder each); ANG-06-16 adds team/roster
+                          (team-roster), team/schedule (team-schedule), team/history
+                          (team-history), players/free-agents (free-agents),
+                          players/watch-list (watch-list) and players/:playerId (league-player).
+                          stats-shared/ is their kit (read each
                           file's header): stats-query.ts (URL state, I1 / I2), stats-screen.ts
-                          (injectStatsScreen), league-context.ts (the layout's nav), the Season /
-                          Team / per-page pickers, paginator, player-cell, _stats-page.scss.
+                          (injectStatsScreen), league-context.ts (the layout's nav + leagueId),
+                          the Season / Team / Rate / per-page pickers, paginator, player-cell
+                          (Watch flag + League player link), player-columns.ts (the Ratings /
+                          Stats columns and cell formats), team-param.ts (resolveTeamParam),
+                          _stats-page.scss. watch/ (ANG-06-16): WatchState (provided by
+                          LeagueLayout) and app-watch-flag, the ★ toggle.
                           league-nav.ts (LEAGUE_NAV_ENTRIES:
-                          23 entries, 10 live), soon-badge/ (app-soon-badge:
+                          23 entries, 15 live), soon-badge/ (app-soon-badge:
                           a not-yet-ported target as a disabled span, never an <a>),
                           league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
                           ConfirmDialog -> DELETE, shared by list + dashboard); testing/
-                          (league-fixtures, league-stats-fixtures, leagues-loads:
-                          releaseLeaguesLoads, which also releases the stats GETs; specs only)
+                          (league-fixtures, league-stats-fixtures, league-team-fixtures,
+                          league-players-fixtures, leagues-loads: releaseLeaguesLoads, which
+                          also releases the stats and ANG-06-16 GETs, and
+                          releaseLeagueTeamPlayerLoads, only the ANG-06-16 GETs; specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps, batch, tournaments:
                           TOURNAMENT_STATE_LABELS, TEAM_ASSEMBLY_LABELS; leagues: LeaguesService,
                           every League / Season model + label map; seasons: SeasonsService.start,
                           ANG-06-14; league-stats: LeagueStatsService, one method per stats
-                          screen, ANG-06-15); testing/ holds shared spec fixtures
+                          screen, ANG-06-15; league-team: LeagueTeamService and league-players:
+                          LeaguePlayersService, ANG-06-16); testing/ holds shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
                           auth.guard.ts (authGuard, signedOutGuard, HOME_URL),

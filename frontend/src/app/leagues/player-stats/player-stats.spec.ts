@@ -191,7 +191,7 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
       ],
     });
     expect(cells(25)).toEqual([
-      'Ace',
+      '★ Ace',
       'Red Raiders',
       '8',
       '9121',
@@ -215,12 +215,12 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
     expect(numeric).toEqual([false, false, ...Array(15).fill(true)]);
   });
 
-  it('puts the shared Player cell in the Name column, linking to the career stats (I4)', async () => {
+  it('puts the shared Player cell in the Name column, linking to the League player page (I4)', async () => {
     await open(PATH, { rows: [playerStatRow({ watched: true })] });
     const cell = q('#player-stats-row-25 td.name app-player-cell');
     expect(cell).not.toBeNull();
-    expect(cell!.querySelector('a')!.getAttribute('href')).toBe('/players/25/stats');
-    expect(cell!.querySelector('[title="Watched"]')).not.toBeNull();
+    expect(cell!.querySelector('a')!.getAttribute('href')).toBe('/leagues/1/players/25');
+    expect(cell!.querySelector('button')!.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('shows "—" for a Player with no Team (I6)', async () => {
@@ -414,7 +414,7 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
       expect(nav.mock.calls.map(([, extras]) => extras?.replaceUrl)).toEqual([true]);
       expect(await answer()).toEqual({ ...DEFAULT, rate: 'per_game' });
       expect(q('[role="alert"]')).toBeNull();
-      expect(cells(25)[0]).toBe('Ace');
+      expect(cells(25)[0]).toBe('★ Ace');
     });
 
     it('drops a team the API rejects', async () => {

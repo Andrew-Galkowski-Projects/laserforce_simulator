@@ -204,7 +204,7 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
     it("shows the template's cells and formats", async () => {
       await open();
       expect(cells()).toEqual([
-        'Ace',
+        '★ Ace',
         'Red Raiders',
         'commander, he…',
         '72.4',
@@ -254,12 +254,12 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
       ]);
     });
 
-    it('uses the Player cell: the name links to the career stats page (I4)', async () => {
+    it('uses the Player cell: the name links to the League player page (I4)', async () => {
       await open('/leagues/1/stats/player-ratings', { rows: [playerRatingRow({ watched: true })] });
       const cell = row()[0];
       expect(cell.querySelector('app-player-cell')).not.toBeNull();
-      expect(cell.querySelector('a')!.getAttribute('href')).toBe('/players/25/stats');
-      expect(cell.querySelector('[title="Watched"]')).not.toBeNull();
+      expect(cell.querySelector('a')!.getAttribute('href')).toBe('/leagues/1/players/25');
+      expect(cell.querySelector('button')!.getAttribute('aria-pressed')).toBe('true');
     });
 
     it('links the Team to its page, its full name in the title', async () => {
@@ -483,7 +483,7 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
       expect(navigateSpy.mock.calls.map(([, extras]) => extras?.replaceUrl)).toEqual([true]);
       expect(await answer()).toEqual({ ordering: 'speed', page: '1', page_size: '10' });
       expect(q('[role="alert"]')).toBeNull();
-      expect(cells()[0]).toBe('Ace');
+      expect(cells()[0]).toBe('★ Ace');
     });
 
     it('drops an ordering the API rejects', async () => {

@@ -179,7 +179,7 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
       }),
     });
     expect(cells(rows()[0])).toEqual([
-      'Ace You',
+      '★ Ace You',
       'commander',
       'Red Raiders',
       'Blue Bolts',
@@ -205,11 +205,11 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
     expect(numeric).toEqual([...Array(7).fill(false), ...Array(13).fill(true), false]);
   });
 
-  it('puts the Player cell first: a career-stats link and the watched marker (I4)', async () => {
+  it('puts the Player cell first: a League player link and the Watch flag (I4)', async () => {
     await open(PATH, { data: statisticalFeats({ feats: [featRow({ watched: true })] }) });
     const cell = rows()[0].querySelector('td.name app-player-cell')!;
-    expect(cell.querySelector('a')!.getAttribute('href')).toBe('/players/25/stats');
-    expect(cell.querySelector('[title="Watched"]')).not.toBeNull();
+    expect(cell.querySelector('a')!.getAttribute('href')).toBe('/leagues/1/players/25');
+    expect(cell.querySelector('button')!.getAttribute('aria-pressed')).toBe('true');
   });
 
   it('gives each feat a badge; a season best is marked apart and says so', async () => {

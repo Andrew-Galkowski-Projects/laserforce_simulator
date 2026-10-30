@@ -40,7 +40,9 @@ function soon(section: LeagueNavSection, key: string, label: string): LeagueNavE
 /**
  * Every League nav entry, in the Django sidebar's order (`_build_league_sidebar_links`,
  * league_views.py): 1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS + 6 STATS. Live: Dashboard and History
- * (ANG-06-14), Playoffs, Power Rankings and the six STATS entries (ANG-06-15).
+ * (ANG-06-14), Playoffs, Power Rankings and the six STATS entries (ANG-06-15), TEAM Roster /
+ * Schedule / History and PLAYERS Free Agents / Watch List (ANG-06-16; the team screens pick their
+ * Team from `?team=`, else the nav's `schedule_team`, so the links carry no query).
  */
 export const LEAGUE_NAV_ENTRIES: readonly LeagueNavEntry[] = [
   {
@@ -62,15 +64,15 @@ export const LEAGUE_NAV_ENTRIES: readonly LeagueNavEntry[] = [
     soon: false,
   },
   live('league', 'power_rankings', 'Power Rankings', ['power-rankings']),
-  soon('team', 'roster', 'Roster'),
-  soon('team', 'schedule_team', 'Schedule'),
+  live('team', 'roster', 'Roster', ['team', 'roster']),
+  live('team', 'schedule_team', 'Schedule', ['team', 'schedule']),
   soon('team', 'finances_team', 'Finances'),
-  soon('team', 'history_team', 'History'),
-  soon('players', 'free_agents', 'Free Agents'),
+  live('team', 'history_team', 'History', ['team', 'history']),
+  live('players', 'free_agents', 'Free Agents', ['players', 'free-agents']),
   soon('players', 'trade', 'Trade'),
   soon('players', 'trading_block', 'Trading Block'),
   soon('players', 'prospects', 'Prospects'),
-  soon('players', 'watch_list', 'Watch List'),
+  live('players', 'watch_list', 'Watch List', ['players', 'watch-list']),
   soon('players', 'hall_of_fame', 'Hall of Fame'),
   live('stats', 'game_log', 'Game Log', ['stats', 'game-log']),
   live('stats', 'league_leaders', 'League Leaders', ['stats', 'league-leaders']),

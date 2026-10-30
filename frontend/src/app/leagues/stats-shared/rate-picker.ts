@@ -9,8 +9,9 @@ export const RATE_OPTIONS: readonly (readonly [StatRate, string])[] = [
 ];
 
 /**
- * `<app-rate-picker>`: Player Stats' "Rate:" native `<select id="stats-rate-select">`.
- * `[rate]` is the `StatsQuery.rate`; `(rateChange)` emits the new value for `withRate`.
+ * `<app-rate-picker>`: the "Rate:" native `<select id="stats-rate-select">` (Player Stats, Watch
+ * List). `[rate]` is the `StatsQuery.rate`; `(rateChange)` emits the new value for `withRate`
+ * (`screen.pickRate($event)`). A screen's config takes `rates: RATE_OPTIONS.map(([v]) => v)`.
  */
 @Component({
   selector: 'app-rate-picker',
@@ -23,7 +24,7 @@ export const RATE_OPTIONS: readonly (readonly [StatRate, string])[] = [
       }
     </select>
   `,
-  styleUrl: '../stats-shared/stats-picker.scss',
+  styleUrl: './stats-picker.scss',
 })
 export class RatePicker {
   readonly rate = input<string | null>(null);
