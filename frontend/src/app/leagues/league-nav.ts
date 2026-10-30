@@ -32,7 +32,7 @@ function live(
   return { key, label, section, link: (nav) => ['/leagues', nav.league.id, ...path], soon: false };
 }
 
-/** A screen not ported yet: ANG-06-16..20 turn these live. */
+/** A screen not ported yet: ANG-06-17..20 turn these live. */
 function soon(section: LeagueNavSection, key: string, label: string): LeagueNavEntry {
   return { key, label, section, link: () => null, soon: true };
 }

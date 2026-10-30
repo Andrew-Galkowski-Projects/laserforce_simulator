@@ -406,8 +406,92 @@ children of `/leagues/:id`, and turns their eight League nav entries live. The t
   still draws under it), pending notice, or the reused tournaments `app-bracket`; then the Worlds
   table. No Career option.
 
-**Links before ANG-06-16:** Player names go to `/players/:id/stats`, the Ratings Team cell to
-`/teams/:id`; ANG-06-16 repoints them to League player detail / roster.
+**Links:** since ANG-06-16, Player names go to the League player page `/leagues/:id/players/:id`
+and the ★ toggles the Watch flag (both through `player-cell`); the Ratings Team cell still links
+to `/teams/:id`.
 
-**Out of scope.** The watch-flag toggle, League player detail and roster (ANG-06-16), MMR / Rank
-(STAT-PROXY-01), sort params on the Leaders API, template removal (ANG-08).
+**Out of scope.** The watch-flag toggle, League player detail and roster (shipped in ANG-06-16),
+MMR / Rank (STAT-PROXY-01), sort params on the Leaders API, template removal (ANG-08).
+
+## ANG-06-16 League team & player in Angular
+
+Spec: GitHub issue #428 (tickets #429-#435). Ports `templates/leagues/` Team Roster, Team
+Schedule, Team History, League player detail, Free Agents and Watch List as children of
+`/leagues/:id`. It turns their five League nav entries live (Roster, TEAM Schedule, TEAM History,
+Free Agents, Watch List), and makes the Watch flag a real toggle on every League table. The
+three API additions (`player_bio` on roster rows, `meta.team_options` on the three team actions,
+`can_link_self_insert`) are in `api.md`, **ANG-01e league screens API**. The Django templates
+stay until ANG-08.
+
+**Routes** (lazy, one folder each): `team/roster` (`team-roster/`, `LeagueTeamRoster`),
+`team/schedule` (`team-schedule/`), `team/history` (`team-history/`), `players/free-agents`
+(`free-agents/`), `players/watch-list` (`watch-list/`), `players/:playerId` (`league-player/`,
+`LeaguePlayerDetail`). The three team screens read `?team=`; without it they show
+`nav.schedule_team` (`resolveTeamParam`).
+
+**Data:**
+- `api/league-team.service.ts`: `LeagueTeamService.roster` / `schedule` / `history` /
+  `historyPlayers`.
+- `api/league-players.service.ts`: `LeaguePlayersService.freeAgents` / `watchList` / `player` /
+  `watch` (PUT) / `unwatch` (DELETE) / `clearWatchList` (DELETE `watch-list/`).
+- Fixtures: `leagues/testing/league-team-fixtures.ts`, `league-players-fixtures.ts`.
+- `releaseLeagueTeamPlayerLoads`.
+
+**Watch flag** (`leagues/watch/`):
+- `WatchState` is provided by `LeagueLayout` beside `LeagueContext`.
+  - `watched(id, seed)`: the state this visit last saved, else the row's seed.
+  - `toggle(id, current)`: PUT / DELETE by the current state. A failure keeps the state and shows
+    the `apiMessage` snackbar. A toggle while one is pending is ignored.
+  - `clearAll()`: Remove All.
+- `app-watch-flag` is a `<button aria-pressed>`: ☆ in `--lf-text-muted` when off, ★ in
+  `--lf-accent` when on. Its label is "Watch <name>" / "Stop watching <name>", and it is disabled
+  while pending.
+- `player-cell` renders it and links the name to `/leagues/:id/players/:id`. The League id comes
+  from the new `LeagueContext.leagueId`, which the layout sets from `:id` before the nav loads.
+
+**Kit additions** (`leagues/stats-shared/`):
+- `player-columns.ts`: the Ratings / Stats columns moved out of Player Ratings / Player Stats, plus
+  `statCell`, `potentialText`, `orDash`, `roleTitle`.
+- `rate-picker.ts`, moved from `player-stats/`.
+- `team-param.ts`: `resolveTeamParam`, `teamQueryParam`.
+- `TeamPicker [allowAll]=false`, for the three team screens (no "All Teams").
+- `LeagueContext.noSeason`.
+- `injectStatsScreen(config, load, { waitForSeason: true })`: waits for the nav and sends nothing
+  with no Season, and gains `retry()`. Free Agents and Watch List opt in; the ANG-06-15 screens
+  keep the old, ungated behaviour.
+- `shared/line-chart.ts` gained `[xLabel]`, which names a `count` axis's ticks and tooltip title.
+
+**Screens** (headings and empty states verbatim from the templates):
+- **Roster:**
+  - Starting Six / Bench, with MMR and Rank as "-".
+  - The no-Season and no-team states hide the picker and both tables.
+  - A 404 on a stale `?team=` is the no-team state.
+- **Team Schedule:**
+  - Upcoming / Completed / Member Night Appearances (that section only when non-empty).
+  - Round links go to `/rounds/:id`.
+  - The no-Season notice is new: Django 404s in that case.
+- **Team History:**
+  - Overall, then a client-sorted Seasons table (`?seasons_sort=&seasons_dir=`, default year
+    desc), then the server-paged Players table (kit `sort` / `dir` / `page` / `per_page`). Neither
+    sort resets the other.
+  - Rows are tinted by `on_team`, with a visually hidden "(current)" / "(former)".
+  - "No history yet." is not ported (unreachable once a Team resolves).
+- **League player:**
+  - Header: ★, h1, You, "Career stats (global)", and This is me (`can_link_self_insert`) /
+    Unlink.
+  - Overall / Potential cards; five rating groups (Role in Django's column order); Regular Season
+    plus a bold Career row.
+  - Playoffs / Salaries / Transactions show the Coming-soon text.
+  - Ratings history: the `count` chart with Season-name `xLabel`, plus a table.
+  - Awards: a Season `app-soon-badge` until ANG-06-18.
+  - A 404 shows "Player not found".
+- **Free Agents:** the Player Ratings columns plus MMR / Rank "-", the count, paging. No sign
+  action.
+- **Watch List:**
+  - Player Stats columns, with the Season and Rate pickers in every state.
+  - Remove All asks through `ConfirmDialog`, then shows the empty-list state.
+  - An un-starred row stays until reload.
+
+**Out of scope.** Sign / release free agents, Trade / Trading Block / Prospects / Hall of Fame
+(ANG-06-20), real MMR / Rank (STAT-PROXY-01), template removal (ANG-08). Follow-up #436: one
+nav-gated load helper for Roster / Schedule / History / League player.
