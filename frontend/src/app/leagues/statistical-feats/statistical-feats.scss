@@ -1,0 +1,93 @@
+// Statistical Feats (spec #417): `--lf-*` tokens only, no colour literals.
+@use '../stats-shared/stats-page';
+@use '../../shared/badges';
+
+:host {
+  @include stats-page.host;
+}
+
+h1 {
+  @include stats-page.heading;
+}
+
+.stats-intro {
+  margin: -0.5rem 0 1rem;
+  color: var(--lf-text-muted);
+}
+
+.stats-filters {
+  @include stats-page.filters;
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+}
+
+.feat-badge {
+  @include badges.feat;
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+}
+
+.stats-footer {
+  @include stats-page.footer;
+}
+
+.team-feats {
+  margin-top: 1.5rem;
+
+  h2 {
+    margin: 0 0 0.5rem;
+    font-family: var(--lf-font-heading);
+    font-size: 1.125rem;
+  }
+
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+  }
+
+  a {
+    color: var(--lf-accent);
+  }
+}
+
+.team-feat {
+  display: flex;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+
+  & + & {
+    border-top: 1px solid var(--lf-border);
+  }
+
+  &__label {
+    font-weight: 600;
+  }
+
+  &__team {
+    color: var(--lf-text-muted);
+    font-size: 0.875rem;
+  }
+
+  &__round {
+    flex: none;
+    font-size: 0.875rem;
+  }
+}
