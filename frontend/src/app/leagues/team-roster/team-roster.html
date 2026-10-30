@@ -1,0 +1,101 @@
+@if (noSeason()) {
+  <h1>{{ nav()?.league?.name }} — Roster</h1>
+  <p id="roster-empty-notice" class="stats-notice" role="status">
+    No Season in this League yet — start a Season to view team rosters.
+  </p>
+} @else if (noTeam()) {
+  <h1>{{ nav()?.league?.name }} — Roster</h1>
+  <p id="roster-empty-notice" class="stats-notice" role="status">
+    No team available to display in this League's current Season.
+  </p>
+} @else if (loadError(); as message) {
+  <h1>{{ nav()?.league?.name }} — Roster</h1>
+  <div class="stats-error roster-error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (result(); as r) {
+  <h1>{{ r.data.team.name }} — Roster</h1>
+
+  <div class="roster-filters">
+    <label for="roster-team-picker">Team:</label>
+    <select id="roster-team-picker" (change)="pickTeam($event)">
+      @for (team of r.meta.team_options; track team.id) {
+        <option [value]="team.id" [selected]="team.id === r.data.team.id">{{ team.name }}</option>
+      }
+    </select>
+  </div>
+
+  <!-- MMR / Rank are placeholders until STAT-PROXY-01. -->
+  <h2 id="roster-starting-heading">Starting Six</h2>
+  <div class="stats-scroll">
+    <table id="roster-starting-table" class="stats-table">
+      <thead>
+        <tr>
+          <th scope="col">Role</th>
+          <ng-container *ngTemplateOutlet="playerHeaders" />
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of r.data.starters; track row.player.id) {
+          <tr [id]="'roster-starting-row-' + row.player.id">
+            <td>{{ role(row) }}</td>
+            <ng-container *ngTemplateOutlet="playerCells; context: { $implicit: row }" />
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="11" class="roster-empty-row">No starting players assigned.</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="roster-bench-heading">Bench</h2>
+  <div class="stats-scroll">
+    <table id="roster-bench-table" class="stats-table">
+      <thead>
+        <tr>
+          <ng-container *ngTemplateOutlet="playerHeaders" />
+        </tr>
+      </thead>
+      <tbody>
+        @for (row of r.data.bench; track row.player.id) {
+          <tr [id]="'roster-bench-row-' + row.player.id">
+            <ng-container *ngTemplateOutlet="playerCells; context: { $implicit: row }" />
+          </tr>
+        } @empty {
+          <tr>
+            <td colspan="10" class="roster-empty-row">No bench players.</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+}
+
+<ng-template #playerHeaders>
+  <th scope="col" class="name">Name</th>
+  <th scope="col" class="num">Age</th>
+  <th scope="col">Home Site</th>
+  <th scope="col">Height</th>
+  <th scope="col" class="num">Games</th>
+  <th scope="col" class="num">Started</th>
+  <th scope="col">MMR</th>
+  <th scope="col">Rank</th>
+  <th scope="col" class="num">Overall</th>
+  <th scope="col" class="num">Potential</th>
+</ng-template>
+
+<ng-template #playerCells let-row>
+  <td class="name"><app-player-cell [player]="row.player" [watched]="row.watched" /></td>
+  <td class="num">{{ orDash(row.age) }}</td>
+  <td>{{ orDash(row.home_site) }}</td>
+  <td>{{ orDash(row.height) }}</td>
+  <td class="num">{{ row.total_games }}</td>
+  <td class="num">{{ orDash(row.started_playing_age) }}</td>
+  <td>-</td>
+  <td>-</td>
+  <td class="num">{{ row.overall_rating.toFixed(1) }}</td>
+  <td class="num">{{ potential(row) }}</td>
+</ng-template>

@@ -1,0 +1,62 @@
+// Team Roster (spec #428): `--lf-*` tokens only, no colour literals.
+@use '../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+}
+
+h1 {
+  @include stats-page.heading;
+}
+
+.roster-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+
+  select {
+    min-width: 0;
+    max-width: 100%;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--lf-border);
+    border-radius: var(--lf-radius);
+    background: var(--lf-surface);
+    color: var(--lf-text);
+    font: inherit;
+  }
+}
+
+h2 {
+  margin: 1.5rem 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+}
+
+.roster-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.roster-empty-row {
+  color: var(--lf-text-muted);
+}
