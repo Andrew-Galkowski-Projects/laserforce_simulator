@@ -153,8 +153,11 @@ redirects to the sign-in page. For every user-facing message the spec quotes,
 find the line that produces it: ANG-06 item 7 promised "Something went wrong"
 where `ApiClient` says "Could not reach the server.". For every field the
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
-exact key-set asserts) and name each hit in the spec as a test to update:
-ANG-06b's full suite found one that pinned `overall_rating` absent.
+exact key-set asserts, shared test helpers included) and name each hit in the
+spec as a test to update: ANG-06b's full suite found one that pinned
+`overall_rating` absent, and ANG-06-15's found `ok_page`
+(`matches/tests/league_api_fixtures.py`), which pins paged `meta` to the page
+keys exactly.
 Check each frontend decision against `CODING_STANDARDS.md`'s Angular section
 and cite the rule it follows or the reason it departs: ANG-06c's grill left
 the team pickers without `required`, and review sent them back.
@@ -165,7 +168,13 @@ card, table row and page heading, list every value it renders and name the API
 field behind it; a value with no field is a backend change in the spec
 (ANG-06-9's Single Round cards showed Won / Lost / Tie, and the spec's response
 shape had no `result`; ANG-06-14's History heading needed the League name, which
-the History endpoint lacks, so every page change re-fetched the League).
+the History endpoint lacks, so every page change re-fetched the League). Quote
+each screen's h1 verbatim and list which controls each empty state hides:
+templates differ screen by screen, and ANG-06-15's spec said only "copied word
+for word", so an agent copied a sibling's "<League> — X" heading and kept
+pickers the template hides. Check every "one of" the spec writes against the
+template's `if` branches (ANG-06-15's Playoffs template shows the champion and
+the bracket together).
 
 When tickets will run in parallel, write each behaviour they share (input
 during a save, retry after a failed load, the dirty flag) once as a spec
@@ -244,6 +253,15 @@ parallel, prepare the integration tip yourself:
   functions: ANG-06-13a moved `classifyImportErrors` alone, both agents copied
   roster-import's chooser, template download and error lists, and review paid
   for a shared `CsvImport`.
+- When a foundation ticket ships a **worked-example screen** for parallel
+  tickets to copy, move every helper it defines on the component into the kit
+  before they start: agents copy the example, helpers included (ANG-06-15's
+  Team Stats defined `arrow`, `sortParams` and `pickSeason`; six screens copied
+  them, and the review fix pass cost 184k tokens). A kit whose output feeds each
+  ticket's service call gets a compile-time assignment test against every
+  target params type (`const p: PlayerStatsParams = statsApiParams(...)`):
+  ANG-06-15's header comment claimed assignability it lacked, and three agents
+  worked around it two ways.
 - For each new public seam method, grep what it calls (an `ApiClient` verb, a
   model method). Add anything missing to its shared module first, or the ticket
   that is barred from that file stops half-done (ANG-06a: `ApiClient.put`).
@@ -383,11 +401,16 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    Accounts, Teams, a Match, a Single Round, an unfinished Match, and a
    full-fidelity Single Round on the configured "Browser Check Arena" map for
    map features; add `--league` for League features: a career, finance-enabled
-   League with two completed Seasons and an active one; `--tournaments` for
+   League with two completed Seasons and an active one at its playoffs (round
+   robin played, seeded bracket built, no bracket games yet); `--tournaments` for
    Tournament features: one sandbox Tournament per format and stage) and
    remove it with `--clean` when done.
-   Assert on `innerText` or the API response body, not a status code. Take a
-   screenshot of each changed screen at 1280px and at 768px (`resize_page`);
+   Assert on `innerText` or the API response body, not a status code. Wait with
+   `evaluate_script` (poll for a selector, return only the text you assert):
+   `wait_for` returns the whole page snapshot, 3-6k tokens on a League screen.
+   Take a viewport screenshot of each changed screen at 1280px and at 768px
+   (`resize_page`): a `fullPage` shot drops an inner box's scrollbar, so check
+   a box scrolls with `scrollWidth > clientWidth` (ANG-06-15's Feats table);
    shoot transient UI (a snackbar lasts 5 s) in the same turn it appears,
    right after the script that waits for it (ANG-06-11),
    read it, and fix anything clipped or wrapped mid-word before review: specs
