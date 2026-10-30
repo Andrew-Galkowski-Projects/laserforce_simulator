@@ -789,6 +789,22 @@ class TestLeagueTeamSchedule(LeagueApiTestCase):
         self.assertEqual(data["member_night_appearances"], [])
         self.assert_session_untouched()
 
+    def test_meta_team_options_are_the_enrolled_teams_by_name(self) -> None:
+        # ANG-06-16 B2. ``ok()`` ignores ``meta``, so read the body directly.
+        league, _season, teams = ranked_career_league("TsMeta", 3, manager=self.user_a)
+        make_teams("TsMetaOut", 1)  # Not enrolled: never an option.
+        response = self.api.get(self.url(league.id, teams[0].id))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.json()["meta"],
+            {
+                "team_options": [
+                    {"id": t.id, "name": t.name}
+                    for t in sorted(teams, key=lambda t: t.name)
+                ]
+            },
+        )
+
     def test_draft_schedule_has_upcoming(self) -> None:
         teams = make_teams("TsDraft", 4)
         league = make_league("TsDraftL", manager=self.user_a)

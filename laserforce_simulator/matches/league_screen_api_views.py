@@ -81,6 +81,20 @@ from matches.tournament_services.detail import node_payload
 from teams.models import Player, Team
 
 
+def player_bio(player: Player) -> dict:
+    """A Player's bio and rating values: ``{overall_rating, potential, age,
+    height, home_site, started_playing_age, total_games}`` -- ANG-06-16 B1."""
+    return {
+        "overall_rating": player.overall_rating,
+        "potential": player.potential,
+        "age": player.age,
+        "height": player.height,
+        "home_site": player.home_site,
+        "started_playing_age": player.started_playing_age,
+        "total_games": player.total_games,
+    }
+
+
 def player_rating_rows(players: list[Player], *, watched_ids: set[int]) -> list[dict]:
     """The Player Ratings / Free Agents row shape: ``{player, watched,
     preferred_roles, overall_rating, potential, age, height, home_site,
@@ -90,13 +104,7 @@ def player_rating_rows(players: list[Player], *, watched_ids: set[int]) -> list[
             "player": player_ref(player),
             "watched": player.id in watched_ids,
             "preferred_roles": list(player.preferred_roles or []),
-            "overall_rating": player.overall_rating,
-            "potential": player.potential,
-            "age": player.age,
-            "height": player.height,
-            "home_site": player.home_site,
-            "started_playing_age": player.started_playing_age,
-            "total_games": player.total_games,
+            **player_bio(player),
             "stats": rating_stats(player),
         }
         for player in players
@@ -178,6 +186,14 @@ def team_options_meta(season: Season | None) -> list[dict]:
     """``meta.team_options``: the Teams enrolled in ``season`` (the displayed
     one), by name, as ``team_ref``s; ``[]`` for no Season -- ANG-06-15."""
     return [team_ref(team) for team in enrolled_teams(season)]
+
+
+def team_picker_response(data: Any, season: Season) -> Response:
+    """A non-paginated ``Response`` with ``meta.team_options`` for the
+    displayed ``season`` -- the team screens' Team picker (ANG-06-16 B2)."""
+    response = Response(data)
+    response.envelope_meta = {"team_options": team_options_meta(season)}
+    return response
 
 
 def player_stat_rows(
@@ -611,11 +627,16 @@ class LeagueScreensMixin(_ScreensBase):
         )
         detail = build_player_detail(league, player)
         return Response(
-            league_player_payload(
-                player,
-                detail,
-                watched=player.id in watched_player_ids(request.user, league),
-            )
+            {
+                **league_player_payload(
+                    player,
+                    detail,
+                    watched=player.id in watched_player_ids(request.user, league),
+                ),
+                # ANG-06-16 B3: the template's team.manager_id == user.id; an
+                # unmanaged Team (manager_id None) never matches a signed-in pk.
+                "can_link_self_insert": player.team.manager_id == request.user.pk,
+            }
         )
 
     # --- finances -------------------------------------------------------
@@ -747,21 +768,26 @@ class LeagueScreensMixin(_ScreensBase):
     ) -> Response:
         """A Team's starters by role plus the bench."""
         league = self.get_object()
-        _, team = enrolled_team_or_404(league, team_id)
+        season, team = enrolled_team_or_404(league, team_id)
         roster = build_team_roster(team)
         watched = watched_player_ids(request.user, league)
 
         def row(player: Player) -> dict:
-            return {"player": player_ref(player), "watched": player.id in watched}
+            return {
+                "player": player_ref(player),
+                "watched": player.id in watched,
+                **player_bio(player),
+            }
 
-        return Response(
+        return team_picker_response(
             {
                 "team": team_ref(roster.team),
                 "starters": [
                     {"role": role, **row(player)} for role, player in roster.starters
                 ],
                 "bench": [row(player) for player in roster.bench],
-            }
+            },
+            season,
         )
 
     @action(
@@ -775,10 +801,10 @@ class LeagueScreensMixin(_ScreensBase):
     ) -> Response:
         """A Team's Overall record and Seasons table (year descending)."""
         league = self.get_object()
-        _, team = enrolled_team_or_404(league, team_id)
+        season, team = enrolled_team_or_404(league, team_id)
         history = build_team_history(team)
         overall = history.overall
-        return Response(
+        return team_picker_response(
             {
                 "team": team_ref(history.team),
                 "overall": {
@@ -799,7 +825,8 @@ class LeagueScreensMixin(_ScreensBase):
                     }
                     for row in history.seasons
                 ],
-            }
+            },
+            season,
         )
 
     @action(
