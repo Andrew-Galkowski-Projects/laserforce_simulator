@@ -7357,6 +7357,65 @@ List, create (+ advanced), delete, dashboard (+ its `_partials/dashboard_*`),
      (ANG-08), the session's `last_league_id`, any model / migration change, any engine / RNG /
      ordering change. Every new endpoint gets an `assert_owner_only` test and an N+1 registry entry.
 
+#### ANG-06-15 · [DONE] League stats
+
+**[DONE] Shipped (2026-10-29).** Spec #417, tickets #418-#425. The eight League stats screens
+(League Leaders, Player Stats, Player Ratings, Team Stats, Statistical Feats, Game Log, Power
+Rankings, Playoffs) are Angular children of /leagues/:id on a shared leagues/stats-shared/ kit (URL
+state, lenient fallback on a 400, switchMap supersede), and their League nav entries plus the
+dashboard's View all leaders are live. The API gained season_scope.options[].year, meta.team_options
+on the four Team-filtered actions and team_feats[].team_name; ApiClient gained getWithMeta and a
+meta-generic Page. Found along the way: the team_id allowlist is the displayed Season's, so
+team_options follows it even when a past Season is picked; Player Ratings waits for the League nav
+so a League with no Season never flashes its table; Playoffs follows its template and still draws a
+decided bracket under its champion; no seeded League has a tournament phase, so the bracket was
+checked in specs only.
+
+Leaders, player stats, player ratings, team stats, statistical feats, game
+
+ log, power rankings, playoffs.
+
+ Spec: #417
+
+ Grill (owner, 2026-10-29), round 1:
+ - **API gaps found:** Season options lack the year; `ApiClient.get` drops `meta`; no endpoint lists
+   the enrolled Teams; Feats' `team_feats[]` has no `team_name`; Feats' paged `data` is an object.
+ - **Season year:** `meta.season_scope.options[]` gains `year` (`start_date.year`, null when unset).
+   `season_ref` stays `{id, name}` elsewhere.
+ - **`ApiClient.getWithMeta<T, M>`** returns `{data, meta}`. It is used by Leaders, Team Stats, Power
+   Rankings, Game Log, Playoffs, and Feats (typed meta).
+ - **`meta.team_options: [team_ref]`** (enrolled in the displayed Season, by name) on player-stats,
+   player-ratings, statistical-feats and game-log, from one helper in `league_screen_services.py`.
+ - **Feats `team_feats[]`** also sends `team_name`; the screen links it only when `team` is set.
+ - **Links:** Player names go to `/players/:id/stats`; the Ratings Team cell goes to `/teams/:id`
+   (full name in `title`). ANG-06-16 repoints both.
+ - **Watch flag:** read-only marker from `watched`, plus the "You" badge. The toggle is ANG-06-16's.
+ - **URL state:** `?season=&team=&rate=&sort=&dir=&page=&per_page=`, lenient fallbacks; page sizes
+   10/25/50/100, default 10, `page_size` always sent.
+ - **Leaders:** each board sorts its 10 rows on the client (no URL state, no API change).
+ - **Ratings:** MMR and Rank columns dropped (STAT-PROXY-01 adds them).
+ - **Shared kit** `leagues/stats-shared/` (first ticket, with the backend gaps and `getWithMeta`):
+   Season picker (optional Career), Team picker, sort-header + paginator URL helper, and the empty
+   rule (`season_scope.selected === null` gives "No Season in this League yet…").
+ - **Playoffs** reuses tournaments' `app-bracket` / `app-node-card`, with the conference, stage
+   badge, champion and pending notices, and the Worlds table. No Career option.
+ - **In scope:** the 8 nav entries go live; the dashboard's "View all leaders" links to Leaders.
+ - **Out of scope:** the watch toggle, League player detail / roster (ANG-06-16), template removal
+   (ANG-08), Leaders sort params, MMR / Rank, new stats or charts.
+
+ Round 2:
+ - **Routes** under `/leagues/:id`: `stats/league-leaders`, `stats/player-stats`,
+   `stats/player-ratings`, `stats/team-stats`, `stats/statistical-feats`, `stats/game-log`,
+   `power-rankings`, `playoffs`.
+ - **Filters:** changing the Season clears `team` and `page`. A 400 caused by a bad URL value
+   (`season`, `team`) replaces the URL without that value and reloads. Any other failure shows
+   the error box (`apiMessage`).
+ - **Rate:** `?rate=total|per_game|per_10`; changing it keeps the sort and resets `page`.
+ - **Feat badges:** a `feat` mixin in `shared/_badges.scss`, with a `[data-season-best]` variant
+   that adds "(season best)".
+ - **Text:** static text and empty states are copied word for word from the templates; a missing
+   Team or winner shows "—".
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

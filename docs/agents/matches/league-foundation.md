@@ -314,11 +314,12 @@ Shell sidenav lists **Leagues** first):
   (`league-new-team`).
 
 **League nav** (`leagues/league-nav.ts`): `LEAGUE_NAV_ENTRIES`, 23 entries in the Django sidebar's
-order (1 top + LEAGUE 6 + TEAM 4 + PLAYERS 6 + STATS 6). Live: Dashboard and History. The other 21
-render through `leagues/soon-badge` (`app-soon-badge`: a disabled `<span>` with a "Soon" badge,
-never an `<a>`) until ANG-06-15..20 turn them live. The dashboard ("View bracket", the Season name,
-"Manage Conferences", member-night "View results", "View all leaders") and History (Season name,
-Awards) use the same piece.
+order (1 top + LEAGUE 6 + TEAM 4 + PLAYERS 6 + STATS 6). Live: Dashboard and History, plus the
+eight stats entries ANG-06-15 turned live (below). The other 13 render through `leagues/soon-badge`
+(`app-soon-badge`: a disabled `<span>` with a "Soon" badge, never an `<a>`) until ANG-06-16..20 turn
+them live. The dashboard ("View bracket", the Season name, "Manage Conferences", member-night "View
+results") and History (Season name, Awards) use the same piece; "View all leaders" links to League
+Leaders since ANG-06-15.
 
 **Dashboard.** Renders `dashboard.html`'s values from `/dashboard/`: "You" on the snippet row where
 `team_id === managed_team.id` and on leader rows whose `player_id` is the Account's Self-insert;
@@ -352,3 +353,61 @@ link back to the dashboard.
 **Out of scope.** The topnav Play menu and play controls (ANG-06-19/20), owner evaluation and
 Conferences screens (ANG-06-18), stats / team / finance screens (ANG-06-15..17), the session's
 `last_league_id`, template removal (ANG-08).
+
+## ANG-06-15 League stats in Angular
+
+Spec: GitHub issue #417 (tickets #418-#425). Ports `templates/leagues/` League Leaders, Player
+Stats, Player Ratings, Team Stats, Statistical Feats, Game Log, Power Rankings and Playoffs as
+children of `/leagues/:id`, and turns their eight League nav entries live. The three API additions
+(`season_scope.options[].year`, `meta.team_options`, `team_feats[].team_name`) are in `api.md`,
+**ANG-01e league screens API**. The Django templates stay until ANG-08.
+
+**Routes** (lazy, each in its own `leagues/<screen>/` folder): `stats/league-leaders`,
+`stats/player-stats`, `stats/player-ratings`, `stats/team-stats`, `stats/statistical-feats`,
+`stats/game-log`, `power-rankings`, `playoffs`.
+
+**Shared kit** (`leagues/stats-shared/`; each file's header says how a screen uses it):
+- `stats-query.ts`: the URL state `?season=&team=&rate=&sort=&dir=&page=&per_page=`, parsed
+  leniently (a bad value takes the default); `statsApiParams` (`ordering` as `-key` / `key`, `team`
+  sent as `team_id`, `page` + `page_size` always sent when paged; a `PagedStatsQueryConfig` types
+  them required); `withSort` / `withSeason` (also clears `team`) / `withTeam` / `withRate` /
+  `withPerPage` (each back to page 1) / `withPage`; `recoverFrom`: a 400 on `season`, `team_id`,
+  `rate` or `ordering` drops that param, a 404 past page 1 goes to page 1, anything else is `null`
+  (the error box). Page sizes 10 / 25 / 50 / 100, default 10.
+- `stats-screen.ts` (`injectStatsScreen(config, load)`): reads `:id` and the query, loads with
+  `switchMap` (a new request supersedes the one in flight), applies `recoverFrom` with
+  `replaceUrl`, else sets `loadError`. Exposes `query`, `result`, `loadError`, and the template
+  helpers `sortParams(key)`, `arrow(key)`, `pickSeason` / `pickTeam` / `pickRate` / `pickPerPage` /
+  `pickPage`.
+- `league-context.ts` (`LeagueContext`, provided by `LeagueLayout`): the nav, for headings that
+  name the League and Player Ratings' `displayed_season` check.
+- `season-picker` (`name (year)`, Career optional), `team-picker` (configurable "All Teams"
+  label), `stats-paginator` + `app-per-page-picker`, `player-cell` (link to `/players/:id/stats`,
+  read-only watched star, "You"), `_stats-page.scss` (host, filters, scroll, table, notice, error,
+  footer). `shared/_badges.scss` gained the `feat` mixin (`[data-season-best]` variant).
+- Data: `api/league-stats.service.ts` (`LeagueStatsService`, one method per screen) and
+  `api/league-stats.models.ts`; `ApiClient.getWithMeta` and the meta-generic `Page<T, M>` /
+  `list<T, M>`. Spec fixtures: `leagues/testing/league-stats-fixtures.ts`.
+
+**Screens** (text and formats from the templates):
+- **League Leaders:** four top-10 boards, each sorted on the client (component state, not the
+  URL); the subheading names the selected scope ("Career" or the Season), not the displayed Season.
+- **Player Stats:** the 17 `_PLAYER_STATS_COLUMNS`, the Rate picker (`rate=total|per_game|per_10`),
+  Team picker, paging. In the empty states the paging footer is hidden, and the Team picker shows
+  only while a Team filter is set (so it can be cleared).
+- **Player Ratings:** no Season picker; `RATING_SORT_KEYS_DISPLAY` headers (full name as `title`)
+  plus Age, Site, Ht, GP, Start; no MMR / Rank. Team links to `/teams/:id`. The table waits for the
+  League nav, so a League with no Season never flashes it.
+- **Team Stats, Game Log, Power Rankings:** not paged; Game Log's Red / Blue / Score link to
+  `/rounds/:id`; Power Rankings' Team links to `/teams/:id`.
+- **Statistical Feats:** paged feed (`data` is `{feats, team_feats}`) with feat badges and a "Team
+  Feats" list; a Team feat links its Team only when `team` is set.
+- **Playoffs:** per bracket, the conference, stage badge, champion (as the template, the bracket
+  still draws under it), pending notice, or the reused tournaments `app-bracket`; then the Worlds
+  table. No Career option.
+
+**Links before ANG-06-16:** Player names go to `/players/:id/stats`, the Ratings Team cell to
+`/teams/:id`; ANG-06-16 repoints them to League player detail / roster.
+
+**Out of scope.** The watch-flag toggle, League player detail and roster (ANG-06-16), MMR / Rank
+(STAT-PROXY-01), sort params on the Leaders API, template removal (ANG-08).
