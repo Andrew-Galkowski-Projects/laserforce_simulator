@@ -534,7 +534,7 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
   });
 
   describe('Awards', () => {
-    it("lists each Season's awards under its name, a Soon badge until ANG-06-18", async () => {
+    it("lists each Season's awards under its name, linked to that Season's awards", async () => {
       const second = leaguePlayerAward({
         season: { id: 10, name: 'Season 0' },
         award_labels: ['Rookie of the Year'],
@@ -542,15 +542,20 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
       await open(leaguePlayer({ awards: [leaguePlayerAward(), second] }));
       expect(text(q('#league-player-awards h2'))).toBe('Awards');
       const entries = qa('#league-player-awards .award');
-      expect(entries.map((e) => text(e.querySelector('app-soon-badge')))).toEqual([
-        'Season 1 Soon',
-        'Season 0 Soon',
+      expect(
+        entries.map((e) => {
+          const link = e.querySelector('a');
+          return [text(link), link?.getAttribute('href')];
+        }),
+      ).toEqual([
+        ['Season 1', '/leagues/1/seasons/11/awards'],
+        ['Season 0', '/leagues/1/seasons/10/awards'],
       ]);
       expect(entries.map((e) => [...e.querySelectorAll('li')].map((li) => text(li)))).toEqual([
         ['Season MVP', 'All-League First Team'],
         ['Rookie of the Year'],
       ]);
-      expect(q('#league-player-awards a')).toBeNull();
+      expect(q('#league-player-awards app-soon-badge')).toBeNull();
     });
 
     it('says "No awards won in this League yet." when empty', async () => {

@@ -7,11 +7,14 @@ unfinished Match (round 1 only,
 like a League Match mid-Season); B owns nothing, for cross-Account checks.
 ``--league`` also gives A "Browser Check League" (career mode, finance on):
 two completed Seasons and one active Season, every played Round with player
-stats, hand-built by ``_browser_check_league`` (no simulator).
+stats, hand-built by ``_browser_check_league`` (no simulator); and
+"Browser Check Conferences" (sandbox): one draft Season over A's four Teams in
+two Conferences, each with a rotation on the map, map mode
+``rotate_by_conference``.
 ``--tournaments`` also gives A one sandbox Tournament per format and stage
 (``_browser_check_tournaments``; Matches played with ``play_next``).
-``--clean`` deletes both Accounts, every row they own, the Tournaments, the League and its
-Matches, the map and its media files. For a worktree's disposable database
+``--clean`` deletes both Accounts, every row they own, the Tournaments, both Leagues and
+their Matches, the map and its media files. For a worktree's disposable database
 (ADR-0004).
 """
 
@@ -34,7 +37,9 @@ from core.services import (
     upload_map,
 )
 from matches.management.commands._browser_check_league import (
+    CONFERENCE_LEAGUE_NAME,
     LEAGUE_NAME,
+    seed_browser_check_conference_league,
     seed_browser_check_league,
 )
 from matches.management.commands._browser_check_tournaments import (
@@ -183,7 +188,10 @@ class Command(BaseCommand):
         parser.add_argument(
             "--league",
             action="store_true",
-            help="also seed Account A a League (2 completed Seasons, 1 active)",
+            help=(
+                "also seed Account A a League (2 completed Seasons, 1 active) and a "
+                "sandbox League with a draft Season in 2 Conferences"
+            ),
         )
         parser.add_argument(
             "--tournaments",
@@ -202,7 +210,12 @@ class Command(BaseCommand):
         if (
             user_model.objects.filter(email__in=[EMAIL_A, EMAIL_B]).exists()
             or ArenaMap.objects.filter(name=MAP_NAME).exists()
-            or (league and League.objects.filter(name=LEAGUE_NAME).exists())
+            or (
+                league
+                and League.objects.filter(
+                    name__in=[LEAGUE_NAME, CONFERENCE_LEAGUE_NAME]
+                ).exists()
+            )
         ):
             raise CommandError("Already seeded: run seed_browser_check --clean first.")
 
@@ -257,6 +270,13 @@ class Command(BaseCommand):
                 + ", ".join(str(s.pk) for s in seasons)
                 + " (completed, completed, active)"
             )
+            draft = seed_browser_check_conference_league(
+                a, [red, blue, third, fourth], arena_map
+            )
+            self.stdout.write(
+                f"League {draft.league_id} ({CONFERENCE_LEAGUE_NAME}), "
+                f"Season {draft.pk} (draft, 2 Conferences)"
+            )
         if tournaments:
             seeded_tournaments = seed_browser_check_tournaments(a)
             self.stdout.write(
@@ -269,11 +289,13 @@ class Command(BaseCommand):
         users = get_user_model().objects.filter(email__in=[EMAIL_A, EMAIL_B])
         # League.manager and Match.season are SET_NULL, so deleting the Account
         # would orphan the League and its Matches: delete them explicitly (the
-        # League cascades its Seasons). An Unmanaged League of the seed's name
-        # (its Account deleted by hand) goes too. Not teardown_league: its
-        # orphan-Team sweep would delete A's Teams and skew the counts below.
+        # League cascades its Seasons and their Conferences). An Unmanaged
+        # League of either seeded name (its Account deleted by hand) goes too.
+        # Not teardown_league: its orphan-Team sweep would delete A's Teams and
+        # skew the counts below.
         leagues = League.objects.filter(
-            Q(manager__in=users) | Q(name=LEAGUE_NAME, manager__isnull=True)
+            Q(manager__in=users)
+            | Q(name__in=[LEAGUE_NAME, CONFERENCE_LEAGUE_NAME], manager__isnull=True)
         )
         league_count = leagues.count()
         Match.objects.filter(season__league__in=leagues).delete()

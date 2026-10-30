@@ -43,7 +43,11 @@
               "
               [class.league-history__in-progress]="row.is_in_progress"
             >
-              <td class="name"><app-soon-badge [label]="row.season_name" /></td>
+              <td class="name">
+                <a [routerLink]="['/leagues', l.league.id, 'seasons', row.season_id]">{{
+                  row.season_name
+                }}</a>
+              </td>
               <td class="num">{{ row.start_date }}</td>
               <td class="num">{{ row.teams_enrolled }}</td>
               <td class="num">{{ row.matches_played }}</td>
@@ -79,7 +83,13 @@
                   }
                 </td>
               }
-              <td><app-soon-badge label="Awards" /></td>
+              <td>
+                <a
+                  [id]="'league-history-awards-link-' + row.season_id"
+                  [routerLink]="['/leagues', l.league.id, 'seasons', row.season_id, 'awards']"
+                  >Awards</a
+                >
+              </td>
             </tr>
           }
         </tbody>

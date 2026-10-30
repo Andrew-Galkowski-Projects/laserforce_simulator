@@ -119,7 +119,7 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
       '',
     ]);
     expect(cells(bodyRows()[0])).toEqual([
-      'Season 1 Soon',
+      'Season 1',
       '2026-09-01',
       '8',
       '28',
@@ -131,7 +131,7 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
       'Green Giants',
       'Ace',
       'Bolt',
-      'Awards Soon',
+      'Awards',
     ]);
   });
 
@@ -147,7 +147,7 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
     await open([live, historyRow()]);
     const [first, second] = bodyRows();
     expect(first.id).toBe('league-history-in-progress-row');
-    expect(cells(first)[0]).toBe('Season 2 Soon');
+    expect(cells(first)[0]).toBe('Season 2');
     expect(text(first.querySelector('.league-history__badge'))).toBe('In progress');
     expect(cells(first)[4]).toBe('In progress');
     expect(cells(first).slice(10, 12)).toEqual(['—', '—']);
@@ -168,7 +168,10 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
 
   describe('MVPs (I4)', () => {
     const mvpLinks = (): [string, string | null][] =>
-      [...bodyRows()[0].querySelectorAll('a')].map((a) => [text(a), a.getAttribute('href')]);
+      [...bodyRows()[0].querySelectorAll('td[id*="-mvp-"] a')].map((a) => [
+        text(a),
+        a.getAttribute('href'),
+      ]);
 
     it('link each MVP to /players/:id/stats', async () => {
       await open([historyRow()]);
@@ -191,12 +194,25 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
     });
   });
 
-  it('renders Season and Awards as Soon spans, never links (I1)', async () => {
-    await open([historyRow()]);
-    const row = bodyRows()[0];
-    const soon = [...row.querySelectorAll('span.soon')].map((s) => text(s));
-    expect(soon).toEqual(['Season 1 Soon', 'Awards Soon']);
-    expect([...row.querySelectorAll('a')].map((a) => text(a))).toEqual(['Ace', 'Bolt']);
+  it("links each row's Season name to its Season dashboard and Awards to its awards", async () => {
+    const live = historyRow({ season_id: 11, season_name: 'Season 2', is_in_progress: true });
+    await open([live, historyRow()]);
+    const links = bodyRows().map((row) =>
+      [...row.querySelectorAll('a')]
+        .filter((a) => !a.closest('td[id*="-mvp-"]'))
+        .map((a) => [text(a), a.getAttribute('href')]),
+    );
+    expect(links).toEqual([
+      [
+        ['Season 2', '/leagues/1/seasons/11'],
+        ['Awards', '/leagues/1/seasons/11/awards'],
+      ],
+      [
+        ['Season 1', '/leagues/1/seasons/10'],
+        ['Awards', '/leagues/1/seasons/10/awards'],
+      ],
+    ]);
+    expect(page().querySelector('app-soon-badge, .soon')).toBeNull();
   });
 
   it('shows the Django empty notice, and no table or pager, when there are no Seasons', async () => {
@@ -251,7 +267,7 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
         }),
       );
       await harness.fixture.whenStable();
-      expect(cells(bodyRows()[0])[0]).toBe('Season 0 Soon');
+      expect(cells(bodyRows()[0])[0]).toBe('Season 0');
       expect(button('Previous')?.disabled).toBe(false);
       expect(button('Next')?.disabled).toBe(true);
 

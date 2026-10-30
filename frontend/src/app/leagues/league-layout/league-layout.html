@@ -30,10 +30,10 @@
             }
             <ul class="league-nav__list">
               @for (entry of group.entries; track entry.key) {
-                <li>
-                  @if (entry.soon) {
-                    <app-soon-badge class="league-nav__link" [label]="entry.label" />
-                  } @else if (entry.link(n); as link) {
+                @if (entry.soon) {
+                  <li><app-soon-badge class="league-nav__link" [label]="entry.label" /></li>
+                } @else if (entry.link(n); as link) {
+                  <li>
                     <a
                       class="league-nav__link"
                       [routerLink]="link"
@@ -42,8 +42,8 @@
                       ariaCurrentWhenActive="page"
                       >{{ entry.label }}</a
                     >
-                  }
-                </li>
+                  </li>
+                }
               }
             </ul>
           }

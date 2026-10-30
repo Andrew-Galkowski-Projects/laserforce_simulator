@@ -60,9 +60,9 @@ Throwaway data for a browser check in a worktree's disposable database (ADR-0004
 
 ```bash
 python manage.py seed_browser_check          # Accounts browser-a / browser-b@example.com, password browser-check-pass
-python manage.py seed_browser_check --league # also seed Account A "Browser Check League"
+python manage.py seed_browser_check --league # also seed Account A "Browser Check League" and "Browser Check Conferences"
 python manage.py seed_browser_check --tournaments # also seed Account A one Tournament per format and stage
-python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, the League and the map
+python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, both Leagues and the map
 ```
 
 Account A gets four valid Teams, a simulated sandbox Match, a map-less Single Round, a **mapped
@@ -99,16 +99,26 @@ ANG-06-17 retro addition:
 - **Settled finances:** the real `_ensure_team_finances` writes a `TeamSeasonFinance` row per Team
   for both completed Seasons and carries their profit into each Team's cash, and the first Team's
   second scout is injured for 2 games, so Team Finances shows tiles, Season history and Player
-  availability with figures (League Finances' table stays `—`: it shows the active Season). The rows are built by
+  availability with figures (League Finances' table stays `—`: it shows the active Season).
+ANG-06-18 addition:
+- **Draft Conference League:** a second League, "Browser Check Conferences" (`manager` = A,
+  `mode="sandbox"`, so not career), whose only Season is a **draft** over A's same four Teams with
+  `map_mode="rotate_by_conference"`, split by `ConferencePartitionForm` + `replace_conferences`
+  into "North" (first two Teams, rotation = the Browser Check Arena once) and "South" (last two,
+  the Arena twice), so Manage Conferences is editable and Standings shows the draft preview. The
+  summary gains `League <id> (Browser Check Conferences), Season <id> (draft, 2 Conferences)`.
+
+The rows are built by
 `_browser_check_league.py` (a copy of the `league_api_fixtures.py` shapes: production code never
 imports test modules; the leading underscore keeps it out of the command list). The summary gains
 `League <id> (Browser Check League), Seasons <id>, <id>, <id> (completed, completed, active)`.
-`--clean` deletes the League's Matches and then the League, which cascades its Seasons (deleting
-the Account alone would not: `League.manager` and `Match.season` are `SET_NULL`), plus any
-Unmanaged League of that name, and reports `Leagues: N` first; with no League the `removed` line is
-unchanged. It does not call `league_services.teardown_league`: that one's orphan-Team sweep would
-delete A's Teams (and their Single Rounds) before they are counted.
-A `--league` seed is refused while a League of that name exists. Without `--league` the seed is
+`--clean` deletes both Leagues' Matches and then the Leagues, which cascade their Seasons and
+Conferences (deleting the Account alone would not: `League.manager` and `Match.season` are
+`SET_NULL`), plus any Unmanaged League of either name, and reports `Leagues: N` first (2 after a
+`--league` seed); with no League the `removed` line is unchanged. It does not call
+`league_services.teardown_league`: that one's orphan-Team sweep would delete A's Teams (and their
+Single Rounds) before they are counted.
+A `--league` seed is refused while a League of either name exists. Without `--league` the seed is
 unchanged.
 
 **`--tournaments`** (for Tournament-screen checks, ANG-06-13b retro) also gives Account A seven

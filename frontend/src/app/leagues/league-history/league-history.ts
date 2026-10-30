@@ -17,7 +17,6 @@ import { AwardWinner, HistoryRow, League } from '../../api/leagues.models';
 import { LeaguesService } from '../../api/leagues.service';
 import { AuthService } from '../../auth/auth.service';
 import { notFoundOrError } from '../../shared/not-found-or-error';
-import { SoonBadge } from '../soon-badge/soon-badge';
 
 /** `history.html`'s "Per page" choices; the first is the default (always sent). */
 export const HISTORY_PAGE_SIZES = [10, 25, 50, 100] as const;
@@ -37,11 +36,11 @@ interface Loaded {
 /**
  * `/leagues/:id/history` (spec #409 F11, `leagues/history.html`): every Season's champion,
  * podium and MVPs, paged at 10 / 25 / 50 / 100. The in-progress Season leads page 1 only (the
- * API's accepted behaviour). Season and Awards links are Soon (I1).
+ * API's accepted behaviour). Each Season name opens its Season dashboard, "Awards" its awards.
  */
 @Component({
   selector: 'app-league-history',
-  imports: [MatButton, RouterLink, SoonBadge],
+  imports: [MatButton, RouterLink],
   templateUrl: './league-history.html',
   styleUrl: './league-history.scss',
 })

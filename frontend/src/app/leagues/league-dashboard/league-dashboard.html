@@ -34,12 +34,21 @@
     <p class="dashboard__write-error" role="alert">{{ message }}</p>
   }
 
-  @if (d.playoff_tournament_id !== null) {
-    <p class="dashboard__bracket"><app-soon-badge label="View bracket" /></p>
+  @if (d.playoff_tournament_id !== null && d.displayed_season; as season) {
+    <p class="dashboard__bracket">
+      <a
+        mat-stroked-button
+        [routerLink]="['/leagues', d.league.id, 'playoffs']"
+        [queryParams]="{ season: season.id }"
+        >View bracket</a
+      >
+    </p>
   }
 
   @if (d.displayed_season; as season) {
-    <p class="dashboard__season"><app-soon-badge [label]="season.name" /></p>
+    <p class="dashboard__season">
+      <a [routerLink]="['/leagues', d.league.id, 'seasons', season.id]">{{ season.name }}</a>
+    </p>
   }
 
   @if (d.managed_team; as team) {
@@ -79,8 +88,14 @@
 
   <p class="dashboard__map-config">{{ d.map_config_label }}</p>
 
-  @if (d.season_mode === 'draft' && d.displayed_season) {
-    <p class="dashboard__conferences"><app-soon-badge label="Manage Conferences" /></p>
+  @if (d.season_mode === 'draft' && d.displayed_season; as season) {
+    <p class="dashboard__conferences">
+      <a
+        mat-stroked-button
+        [routerLink]="['/leagues', d.league.id, 'seasons', season.id, 'conferences']"
+        >Manage Conferences</a
+      >
+    </p>
   }
 
   <app-dashboard-cards
@@ -88,5 +103,6 @@
     [managedTeamId]="d.managed_team?.id ?? null"
     [memberNight]="d.member_night_progress"
     [leadersLink]="{ commands: ['/leagues', d.league.id, 'stats', 'league-leaders'] }"
+    [resultsLink]="resultsLink(d)"
   />
 }

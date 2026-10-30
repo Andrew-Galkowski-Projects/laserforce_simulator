@@ -160,8 +160,9 @@
     <h2>Awards</h2>
     @for (entry of d.awards; track entry.season.id) {
       <div class="award">
-        <!-- The Season awards screen arrives with ANG-06-18. -->
-        <app-soon-badge [label]="entry.season.name" />
+        <a [routerLink]="['/leagues', leagueId(), 'seasons', entry.season.id, 'awards']">{{
+          entry.season.name
+        }}</a>
         <ul>
           @for (label of entry.award_labels; track label) {
             <li>{{ label }}</li>
