@@ -1,0 +1,127 @@
+<h1>{{ nav()?.league?.name }} — Statistical Feats</h1>
+<p class="stats-intro">One row per (player, round) that achieved a feat — most recent first.</p>
+
+@if (screen.loadError(); as message) {
+  <p class="stats-error" role="alert">{{ message }}</p>
+} @else if (screen.result(); as r) {
+  @let noSeason = r.meta.season_scope.selected === null;
+  <div class="stats-filters">
+    <app-season-picker [scope]="r.meta.season_scope" (seasonChange)="pickSeason($event)" />
+    @if (!noSeason) {
+      <app-team-picker
+        [options]="r.meta.team_options"
+        [selected]="screen.query().team"
+        (teamChange)="pickTeam($event)"
+      />
+    }
+  </div>
+
+  @if (noSeason) {
+    <p id="stat-feats-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to record statistical feats.
+    </p>
+  } @else if (r.data.feats.length === 0 && r.data.team_feats.length === 0) {
+    <p id="stat-feats-empty-notice" class="stats-notice" role="status">
+      No statistical feats recorded yet in this Season.
+    </p>
+  } @else {
+    @if (r.data.feats.length > 0) {
+      <div class="stats-scroll">
+        <table id="statistical-feats-table" class="stats-table">
+          <thead>
+            <tr>
+              @for (h of descriptors; track h.key) {
+                <th scope="col" [class.name]="h.key === 'name' || h.key === 'team'">
+                  <a [routerLink]="[]" [queryParams]="sortParams(h.key)"
+                    >{{ h.label }}{{ arrow(h.key) }}</a
+                  >
+                </th>
+              }
+              @for (c of boxScore; track c.key) {
+                <th scope="col" class="num">
+                  <a [routerLink]="[]" [queryParams]="sortParams(c.key)"
+                    >{{ c.label }}{{ arrow(c.key) }}</a
+                  >
+                </th>
+              }
+              <th scope="col">
+                <a [routerLink]="[]" [queryParams]="sortParams('round')"
+                  >Round{{ arrow('round') }}</a
+                >
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of r.data.feats; track row.player_id + '-' + row.round_id) {
+              <tr>
+                <td class="name">
+                  <app-player-cell [player]="row.player" [watched]="row.watched" />
+                </td>
+                <td>{{ row.role }}</td>
+                <td class="name">{{ row.team_name || '—' }}</td>
+                <td class="name">{{ row.opp_team_name || '—' }}</td>
+                <td>{{ row.result }}</td>
+                <td>{{ row.season_name }}</td>
+                <td class="feats">
+                  @for (badge of row.feats; track badge.kind) {
+                    <span
+                      class="feat-badge"
+                      [attr.data-kind]="badge.kind"
+                      [attr.data-season-best]="badge.is_season_best ? '' : null"
+                      >{{ badge.label }}{{ badge.is_season_best ? ' (season best)' : '' }}</span
+                    >
+                    @if (!$last) {
+                      &ngsp;
+                    }
+                  }
+                </td>
+                @for (c of boxScore; track c.key) {
+                  <td class="num">{{ cell(row, c) }}</td>
+                }
+                <td><a [routerLink]="['/rounds', row.round_id]">View round</a></td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
+
+    <div class="stats-footer">
+      <app-per-page-picker
+        [perPage]="screen.query().perPage"
+        (perPageChange)="pickPerPage($event)"
+      />
+      <app-stats-paginator
+        [page]="r.meta.page"
+        [totalPages]="r.meta.total_pages"
+        label="Statistical feats pagination"
+        (pageChange)="pickPage($event)"
+      />
+    </div>
+
+    @if (r.data.team_feats.length > 0) {
+      <section id="statistical-feats-team-feats" class="team-feats">
+        <h2>Team Feats</h2>
+        <ul>
+          @for (rec of r.data.team_feats; track $index) {
+            <li [id]="'stat-team-feat-' + rec.kind" class="team-feat">
+              <div>
+                <div class="team-feat__label">{{ rec.label }}</div>
+                <div class="team-feat__team">
+                  @if (rec.team; as team) {
+                    <a [routerLink]="['/teams', team.id, 'history']">{{ rec.team_name }}</a>
+                  } @else {
+                    {{ rec.team_name || '—' }}
+                  }
+                </div>
+              </div>
+              @if (rec.round_id !== null) {
+                <a class="team-feat__round" [routerLink]="['/rounds', rec.round_id]">View round</a>
+              }
+            </li>
+          }
+        </ul>
+      </section>
+    }
+  }
+}
