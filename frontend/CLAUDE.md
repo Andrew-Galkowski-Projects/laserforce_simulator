@@ -25,8 +25,9 @@ auth** below.
   following the OS light/dark setting. See **Theme** below and
   [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md).
 - **Vitest** through the `@angular/build:unit-test` builder (`ng test`), on jsdom.
-  `vitest-base.config.mts` (wired by `runnerConfig` in `angular.json`) only raises `testTimeout`
-  to 15 s: under the full parallel run a heavy route spec's first render passed 5 s (ANG-06c).
+  `vitest-base.config.mts` (wired by `runnerConfig` in `angular.json`) raises `testTimeout`
+  to 15 s (under the full parallel run a heavy route spec's first render passed 5 s, ANG-06c) and
+  pins `TZ` to `America/Los_Angeles`, so a date shown in the wrong zone fails on a UTC CI runner too.
   `src/test-setup.ts` (`setupFiles`) resets the TestBed before each test, so a spec whose
   `afterEach(verify)` throws fails alone instead of failing every later test in its file.
 - **ESLint** (`angular-eslint`, `eslint.config.js`) and **Prettier** (`.prettierrc`, print width

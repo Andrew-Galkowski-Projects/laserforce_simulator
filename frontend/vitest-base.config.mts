@@ -9,5 +9,8 @@ export default defineConfig({
     // took 5.7-6.2 s in full runs on the ANG-06c branch while passing alone. A real hang
     // still fails, just later.
     testTimeout: 15000,
+    // A zone west of UTC-2 on every machine: CI runs in UTC, where a date shown in the
+    // browser's zone instead of the server's UTC still passes (ANG-06-15's Game Log date).
+    env: { TZ: 'America/Los_Angeles' },
   },
 });

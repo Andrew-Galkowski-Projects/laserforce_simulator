@@ -268,6 +268,18 @@ class SeedBrowserCheckLeagueTests(ClassTempMediaMixin, TestCase):
         self.assertIn(f"League {league.pk} ({_LEAGUE_NAME})", self.output)
         self.assertIn(f"Seasons {season_ids}", self.output)
 
+    def test_active_season_has_a_built_playoff_bracket(self) -> None:
+        # ANG-06-15 retro: the Playoffs screen needs a bracket to draw.
+        league = League.objects.get(name=_LEAGUE_NAME)
+        response = _api_for_a().get(f"/api/leagues/{league.pk}/playoffs/")
+        self.assertEqual(response.status_code, 200, response.content)
+        brackets = response.json()["data"]["brackets"]
+        self.assertEqual(len(brackets), 1)
+        self.assertFalse(brackets[0]["pending"])
+        first_round = brackets[0]["rounds"][0]["nodes"]
+        self.assertTrue(first_round)
+        self.assertTrue(all(n["team_a"] and n["team_b"] for n in first_round))
+
     def test_league_history_and_player_apis_return_data_for_account_a(
         self,
     ) -> None:

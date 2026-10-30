@@ -85,8 +85,11 @@ cache go on commit). Each `removed` count is that model's own rows (`_deleted`),
 standings, awards, owner evaluation, finances) also gives Account A "Browser Check League"
 (`manager` = A, `mode="league"` so `is_career_league` holds, `finance_enabled=True`,
 `current_team` = A's first Team) over A's four Teams: two completed single-round-robin Seasons
-(every pair plays a 2-0 Match, a different champion each Season) and one active Season with one
-played Match. Every GameRound carries 12 hand-built `PlayerRoundState` rows, so standings, awards
+(every pair plays a 2-0 Match, a different champion each Season) and one active Season at its
+playoffs (ANG-06-15 retro): a round-robin phase hand-played through the real schedule (the first
+Team best), then a `standings` tournament phase whose seeded bracket
+`activate_pending_tournament_phase` builds, so the Playoffs screen has a bracket to draw (no bracket
+games played). Every GameRound carries 12 hand-built `PlayerRoundState` rows, so standings, awards
 and player stats are non-empty; no simulator runs. The rows are built by
 `_browser_check_league.py` (a copy of the `league_api_fixtures.py` shapes: production code never
 imports test modules; the leading underscore keeps it out of the command list). The summary gains

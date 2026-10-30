@@ -10,7 +10,14 @@ from datetime import date
 
 from django.contrib.auth.models import AbstractBaseUser
 
-from matches.models import GameRound, League, Match, PlayerRoundState, Season
+from matches.models import (
+    GameRound,
+    League,
+    Match,
+    PlayerRoundState,
+    Season,
+    SeasonPhase,
+)
 from teams.models import Team
 
 LEAGUE_NAME = "Browser Check League"
@@ -98,13 +105,80 @@ def _season(
     return season
 
 
+def _playoff_season(league: League, teams: list[Team]) -> Season:
+    """The active Season at its playoffs: a round-robin phase, hand-played
+    (``teams`` best-first, each pairing 2-0 to the better Team), then a
+    tournament phase whose seeded bracket the real activation builds.
+
+    The shape of ``test_regional_playoffs._flat_season`` + ``_hand_play_rr``.
+    """
+    season = Season.objects.create(
+        league=league,
+        name="Season 3",
+        start_date=date(2027, 1, 1),
+        schedule_format="single_round_robin",
+    )
+    season.teams.add(*teams)
+    rr_phase = SeasonPhase.objects.create(
+        season=season, ordinal=1, phase_type="round_robin"
+    )
+    SeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament", tournament_mode="standings"
+    )
+    season.start_season()
+    rank = {team.id: position for position, team in enumerate(teams)}
+    by_id = {team.id: team for team in teams}
+    fixtures = next(
+        fixtures
+        for phase, fixtures in season.scheduled_fixtures_by_phase()
+        if phase.pk == rr_phase.pk
+    )
+    grouped: dict[tuple[frozenset, int], list] = {}
+    for fixture in fixtures:
+        key = (frozenset({fixture.team_a_id, fixture.team_b_id}), fixture.leg)
+        grouped.setdefault(key, []).append(fixture)
+    for (_pair, leg), pair_fixtures in grouped.items():
+        red = by_id[pair_fixtures[0].team_a_id]
+        blue = by_id[pair_fixtures[0].team_b_id]
+        red_wins = rank[red.id] < rank[blue.id]
+        red_pts, blue_pts = (_WIN_PTS, _LOSE_PTS) if red_wins else (_LOSE_PTS, _WIN_PTS)
+        match = Match.objects.create(
+            team_red=red,
+            team_blue=blue,
+            season=season,
+            season_phase=rr_phase,
+            leg=leg,
+            is_completed=True,
+            winner=red if red_wins else blue,
+            red_round1_points=red_pts,
+            blue_round1_points=blue_pts,
+            red_round2_points=red_pts,
+            blue_round2_points=blue_pts,
+        )
+        for fixture in pair_fixtures:
+            _add_round_states(
+                GameRound.objects.create(
+                    match=match,
+                    round_number=fixture.round_number,
+                    team_red=red,
+                    team_blue=blue,
+                    red_points=red_pts,
+                    blue_points=blue_pts,
+                    is_completed=True,
+                )
+            )
+    season.refresh_from_db()
+    season.activate_pending_tournament_phase()
+    return season
+
+
 def seed_browser_check_league(
     manager: AbstractBaseUser, teams: list[Team]
 ) -> tuple[League, list[Season]]:
     """A career, finance-enabled League owned by ``manager`` over ``teams``:
     two completed ranked round-robin Seasons (a different champion each) and
-    one active Season with one played Match. Returns the League and its
-    Seasons, oldest first."""
+    one active Season at its playoffs (round robin played, bracket built,
+    ANG-06-15 retro). Returns the League and its Seasons, oldest first."""
     league = League.objects.create(
         name=LEAGUE_NAME,
         mode="league",
@@ -124,7 +198,5 @@ def seed_browser_check_league(
         season.champion_team = order[0]
         season.save(update_fields=["champion_team"])
         seasons.append(season)
-    active = _season(league, teams, "Season 3", date(2027, 1, 1), "active")
-    _add_win(active, teams[0], teams[1])
-    seasons.append(active)
+    seasons.append(_playoff_season(league, teams))
     return league, seasons
