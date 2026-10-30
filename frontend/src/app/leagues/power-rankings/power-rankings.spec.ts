@@ -253,4 +253,13 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
     expect(q('#power-rankings-table')).toBeNull();
   });
+
+  it("shows the layout's not-found state for another Account's League (I7)", async () => {
+    await harness.navigateByUrl('/leagues/1/power-rankings');
+    http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    http.match((req) => req.url === RANKINGS);
+    await harness.fixture.whenStable();
+    expect(text(page().querySelector('h1'))).toBe('League not found');
+    expect(page().querySelector('app-power-rankings')).toBeNull();
+  });
 });

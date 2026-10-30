@@ -296,4 +296,13 @@ describe('Game Log (/leagues/:id/stats/game-log, spec #417)', () => {
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
     expect(q('#game-log-table')).toBeNull();
   });
+
+  it("shows the layout's not-found state for another Account's League (I7)", async () => {
+    await harness.navigateByUrl('/leagues/1/stats/game-log');
+    http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    http.match((req) => req.url === LOG);
+    await harness.fixture.whenStable();
+    expect(text(page().querySelector('h1'))).toBe('League not found');
+    expect(page().querySelector('app-game-log')).toBeNull();
+  });
 });
