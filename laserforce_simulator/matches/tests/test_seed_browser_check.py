@@ -18,6 +18,7 @@ from rest_framework.test import APIClient
 from core.map_test_fixtures import ClassTempMediaMixin, TempMediaMixin
 from core.models import ArenaMap
 from matches.models import (
+    Conference,
     GameRound,
     League,
     Match,
@@ -33,6 +34,7 @@ _A = "browser-a@example.com"
 _B = "browser-b@example.com"
 _MAP_NAME = "Browser Check Arena"
 _LEAGUE_NAME = "Browser Check League"
+_CONFERENCE_LEAGUE_NAME = "Browser Check Conferences"
 
 
 def _seed(*args: str) -> str:
@@ -340,6 +342,43 @@ class SeedBrowserCheckLeagueTests(ClassTempMediaMixin, TestCase):
         self.assertNotEqual(data["cash"], 0)
         self.assertEqual(len(data["availability"]), 1)
 
+    def test_conference_league_has_a_draft_season_in_two_conferences(self) -> None:
+        # ANG-06-18: the editable Manage Conferences screen and the draft
+        # Standings preview need a non-career League with a draft Season.
+        a = get_user_model().objects.get(email=_A)
+        league = League.objects.get(name=_CONFERENCE_LEAGUE_NAME)
+        self.assertEqual(league.manager, a)
+        self.assertNotEqual(league.mode, "league")
+        season = league.seasons.get()
+        self.assertEqual(season.state, "draft")
+        self.assertEqual(season.map_mode, "rotate_by_conference")
+        enrolled = {t.id for t in season.teams.all()}
+        self.assertGreaterEqual(len(enrolled), 4)
+
+        conferences = list(season.conferences.order_by("ordinal"))
+        self.assertEqual(len(conferences), 2)
+        members = [{t.id for t in c.teams.all()} for c in conferences]
+        self.assertEqual(members[0] | members[1], enrolled)
+        self.assertFalse(members[0] & members[1])
+        arena_map = ArenaMap.objects.get(name=_MAP_NAME)
+        for conference, member_ids in zip(conferences, members):
+            self.assertGreaterEqual(len(member_ids), 2)
+            self.assertIn(len(conference.map_rotation_ids_json), (1, 2))
+            self.assertEqual(set(conference.map_rotation_ids_json), {arena_map.pk})
+
+        api = _api_for_a()
+        state = api.get(f"/api/seasons/{season.pk}/conferences/").json()["data"]
+        self.assertTrue(state["editable"])
+        self.assertEqual(state["unassigned_team_ids"], [])
+        standings = api.get(f"/api/seasons/{season.pk}/standings/").json()["data"]
+        self.assertTrue(standings["is_draft_preview"])
+        self.assertEqual(len(standings["groups"]), 2)
+        self.assertIn(
+            f"League {league.pk} ({_CONFERENCE_LEAGUE_NAME}), Season {season.pk} "
+            "(draft, 2 Conferences)",
+            self.output,
+        )
+
 
 class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
     """``--league`` reruns and ``--clean``, each from its own seed or none."""
@@ -356,7 +395,9 @@ class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
         self.assertFalse(GameRound.objects.exists())
         self.assertFalse(PlayerRoundState.objects.exists())
         self.assertFalse(Team.objects.exists())
-        self.assertIn("Leagues: 1", output)
+        self.assertFalse(Conference.objects.exists())
+        # The career League and the draft Conference League (ANG-06-18).
+        self.assertIn("Leagues: 2", output)
         # The League goes without taking A's Teams with it, so the rest of the
         # line still counts them (teardown_league's orphan sweep would not):
         # A's four Teams plus the free-agent pool Team (ANG-06-16 retro).
@@ -380,13 +421,21 @@ class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
             _seed("--league")
         self.assertEqual(League.objects.filter(name=_LEAGUE_NAME).count(), 1)
 
+    def test_refuses_when_a_stray_conference_league_exists(self) -> None:
+        League.objects.create(name=_CONFERENCE_LEAGUE_NAME)
+
+        with self.assertRaisesMessage(CommandError, "--clean"):
+            _seed("--league")
+        self.assertEqual(League.objects.filter(name=_CONFERENCE_LEAGUE_NAME).count(), 1)
+
     def test_clean_removes_a_stray_unmanaged_league_of_that_name(self) -> None:
         League.objects.create(name=_LEAGUE_NAME)
+        League.objects.create(name=_CONFERENCE_LEAGUE_NAME)
 
         with self.captureOnCommitCallbacks(execute=True):
             _seed("--clean")
 
-        self.assertFalse(League.objects.filter(name=_LEAGUE_NAME).exists())
+        self.assertFalse(League.objects.exists())
 
 
 # Short Rounds: the Tournament seed plays real Matches (ANG-06-13b retro).

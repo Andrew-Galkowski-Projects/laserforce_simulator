@@ -110,12 +110,12 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
     expect(badge?.dataset['mode']).toBe(mode);
   });
 
-  it('shows the displayed Season name as Soon, never a link (I1)', async () => {
+  it('links the displayed Season name to its Season dashboard', async () => {
     await open();
     const season = q('.dashboard__season');
-    expect(text(season)).toBe('Season 1 Soon');
-    expect(season?.querySelector('span.soon')).not.toBeNull();
-    expect(season?.querySelector('a')).toBeNull();
+    expect(text(season)).toBe('Season 1');
+    expect(linkIn(season, 'Season 1')?.getAttribute('href')).toBe('/leagues/1/seasons/11');
+    expect(season?.querySelector('span.soon')).toBeNull();
   });
 
   it('shows no Season name when there is no displayed Season', async () => {
@@ -318,7 +318,7 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
         meta: {},
       });
       await harness.fixture.whenStable();
-      expect(text(q('.dashboard__season'))).toBe('Season 2 Soon');
+      expect(text(q('.dashboard__season'))).toBe('Season 2');
       expect(nextButton()).toBeUndefined();
     });
 
@@ -404,12 +404,13 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
   });
 
   describe('links', () => {
-    it('shows "View bracket" as Soon when the Season has a playoff Tournament (I1)', async () => {
+    it('links "View bracket" to the displayed Season\'s Playoffs when it has a playoff Tournament', async () => {
       await open(leagueDashboard({ playoff_tournament_id: 44 }));
       const bracket = q('.dashboard__bracket');
-      expect(text(bracket)).toBe('View bracket Soon');
-      expect(bracket?.querySelector('span.soon')).not.toBeNull();
-      expect(bracket?.querySelector('a')).toBeNull();
+      expect(text(bracket)).toBe('View bracket');
+      expect(linkIn(bracket, 'View bracket')?.getAttribute('href')).toBe(
+        '/leagues/1/playoffs?season=11',
+      );
     });
 
     it('has no "View bracket" without a playoff Tournament', async () => {
@@ -417,11 +418,24 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
       expect(q('.dashboard__bracket')).toBeNull();
     });
 
-    it('shows "Manage Conferences" as Soon on a draft Season (I1)', async () => {
+    it('links "Manage Conferences" to the draft Season\'s Conferences screen', async () => {
       await open(leagueDashboard({ season_mode: 'draft' }));
       const conferences = q('.dashboard__conferences');
-      expect(text(conferences)).toBe('Manage Conferences Soon');
-      expect(conferences?.querySelector('a')).toBeNull();
+      expect(text(conferences)).toBe('Manage Conferences');
+      expect(linkIn(conferences, 'Manage Conferences')?.getAttribute('href')).toBe(
+        '/leagues/1/seasons/11/conferences',
+      );
+    });
+
+    it('leaves no Soon badge anywhere on the dashboard', async () => {
+      await open(
+        leagueDashboard({
+          season_mode: 'draft',
+          playoff_tournament_id: 44,
+          member_night_progress: { played: 3, total: 10 },
+        }),
+      );
+      expect(page().querySelector('app-soon-badge, .soon')).toBeNull();
     });
 
     it.each(['active', 'completed'] as const)(
@@ -504,12 +518,13 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
   });
 
   describe('member night', () => {
-    it('shows "Member night: <played> / <total> games played" with a Soon View results', async () => {
+    it('shows "Member night: <played> / <total> games played" with View results to the Season Schedule\'s member nights', async () => {
       await open(leagueDashboard({ member_night_progress: { played: 3, total: 10 } }));
       const card = q('.dashboard__member-night');
-      expect(text(card)).toBe('Member night: 3 / 10 games played View results Soon');
-      expect(card?.querySelector('span.soon')).not.toBeNull();
-      expect(card?.querySelector('a')).toBeNull();
+      expect(text(card)).toBe('Member night: 3 / 10 games played View results');
+      expect(linkIn(card, 'View results')?.getAttribute('href')).toBe(
+        '/leagues/1/seasons/11/schedule#member-nights',
+      );
     });
 
     it('is not shown without member-night progress', async () => {

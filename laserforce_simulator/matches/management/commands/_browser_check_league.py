@@ -9,9 +9,12 @@ production code never imports test modules.
 from datetime import date
 
 from django.contrib.auth.models import AbstractBaseUser
+from django.core.management.base import CommandError
 
+from core.models import ArenaMap
 from matches.development import STAT_FIELDS
-from matches.league_services import _ensure_team_finances
+from matches.forms import ConferencePartitionForm
+from matches.league_services import _ensure_team_finances, replace_conferences
 from matches.models import (
     GameRound,
     League,
@@ -24,6 +27,7 @@ from matches.models import (
 from teams.models import Player, Team
 
 LEAGUE_NAME = "Browser Check League"
+CONFERENCE_LEAGUE_NAME = "Browser Check Conferences"
 POOL_NAME = "Browser Check Free Agents"
 _POOL_SIZE = 3
 # Each older Season's snapshot sits this far below the next, so the ratings
@@ -259,3 +263,50 @@ def seed_browser_check_league(
     seasons.append(_playoff_season(league, teams))
     _ratings_history(seasons, teams)
     return league, seasons
+
+
+def seed_browser_check_conference_league(
+    manager: AbstractBaseUser, teams: list[Team], arena_map: ArenaMap
+) -> Season:
+    """A non-career (sandbox) League owned by ``manager`` whose only Season is
+    a draft over ``teams`` (four or more), map mode ``rotate_by_conference``,
+    split into two Conferences: the first half of ``teams`` with a one-map
+    rotation on ``arena_map``, the rest with a two-map one (ANG-06-18: the
+    editable Manage Conferences screen and the draft Standings preview).
+
+    The partition goes through ``ConferencePartitionForm`` and
+    ``replace_conferences``, as the Conferences API does. Returns the Season.
+    """
+    league = League.objects.create(
+        name=CONFERENCE_LEAGUE_NAME, mode="sandbox", state="active", manager=manager
+    )
+    season = Season.objects.create(
+        league=league,
+        name="Season 1",
+        start_date=date(2027, 9, 1),
+        schedule_format="single_round_robin",
+        map_mode="rotate_by_conference",
+    )
+    season.teams.add(*teams)
+    half = len(teams) // 2
+    form = ConferencePartitionForm(
+        {
+            "conferences": [
+                {
+                    "name": "North",
+                    "team_ids": [t.id for t in teams[:half]],
+                    "map_rotation_ids": [arena_map.id],
+                },
+                {
+                    "name": "South",
+                    "team_ids": [t.id for t in teams[half:]],
+                    "map_rotation_ids": [arena_map.id, arena_map.id],
+                },
+            ]
+        },
+        season=season,
+    )
+    if not form.is_valid():
+        raise CommandError(f"Conference partition rejected: {form.errors}")
+    replace_conferences(season, form.cleaned_data["conferences"])
+    return season

@@ -2,7 +2,7 @@ import { leagueNav } from './testing/league-fixtures';
 import { LEAGUE_NAV_ENTRIES } from './league-nav';
 
 describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
-  it('lists the 23 entries in the Django order and sections', () => {
+  it('lists the 23 entries (19 live, 4 Soon) in the Django order and sections', () => {
     expect(LEAGUE_NAV_ENTRIES.map((e) => `${e.section}.${e.key}:${e.label}`)).toEqual([
       'top.dashboard:Dashboard',
       'league.standings:Standings',
@@ -30,11 +30,16 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
     ]);
   });
 
-  it('makes Dashboard, History, both Finances, the eight stats and five team / player screens live, linking into the League', () => {
-    const nav = leagueNav({ league: { id: 7, name: 'Metro League', mode: 'league' } });
+  it('makes Dashboard, Standings, Schedule, History, both Finances, the eight stats and five team / player screens live, linking into the League', () => {
+    const nav = leagueNav({
+      league: { id: 7, name: 'Metro League', mode: 'league' },
+      displayed_season: { id: 12, name: 'Season 3' },
+    });
     const live = LEAGUE_NAV_ENTRIES.filter((e) => !e.soon);
     expect(live.map((e) => [e.key, e.link(nav)])).toEqual([
       ['dashboard', ['/leagues', 7]],
+      ['standings', ['/leagues', 7, 'seasons', 12, 'standings']],
+      ['schedule', ['/leagues', 7, 'seasons', 12, 'schedule']],
       ['playoffs', ['/leagues', 7, 'playoffs']],
       ['finances', ['/leagues', 7, 'finances']],
       ['history', ['/leagues', 7, 'history']],
@@ -56,15 +61,17 @@ describe('LEAGUE_NAV_ENTRIES (spec #409 F5)', () => {
 
   it('marks every other entry Soon, with no link', () => {
     const soon = LEAGUE_NAV_ENTRIES.filter((e) => e.soon);
-    expect(soon.map((e) => e.key)).toEqual([
-      'standings',
-      'schedule',
-      'trade',
-      'trading_block',
-      'prospects',
-      'hall_of_fame',
-    ]);
+    expect(soon.map((e) => e.key)).toEqual(['trade', 'trading_block', 'prospects', 'hall_of_fame']);
     expect(soon.map((e) => e.link(leagueNav()))).toEqual(soon.map(() => null));
+  });
+
+  it('gives Standings and Schedule no link while the League has no displayed Season', () => {
+    const nav = leagueNav({ displayed_season: null });
+    for (const key of ['standings', 'schedule']) {
+      const entry = LEAGUE_NAV_ENTRIES.find((e) => e.key === key);
+      expect(entry?.soon).toBe(false);
+      expect(entry?.link(nav)).toBeNull();
+    }
   });
 
   it('keeps Finances live in a finance-off League (the screen explains, as in Django)', () => {
