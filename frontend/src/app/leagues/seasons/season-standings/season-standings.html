@@ -6,11 +6,7 @@
       <span class="season-standings__state" [attr.data-state]="season.state">{{
         stateLabel(season.state)
       }}</span>
-      <a
-        mat-stroked-button
-        [routerLink]="['/leagues', season.league.id, 'seasons', season.id, 'schedule']"
-        >Schedule</a
-      >
+      <a mat-stroked-button [routerLink]="context.link('schedule')">Schedule</a>
     </div>
   </div>
 

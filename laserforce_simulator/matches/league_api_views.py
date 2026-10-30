@@ -498,10 +498,12 @@ class LeagueViewSet(
     def dashboard(self, request: Request, pk: str | None = None) -> Response:
         """The League dashboard body for its displayed Season.
 
-        ANG-06-14 B5 adds five League-only keys (the Season dashboard body is
-        unchanged): ``mode``, ``managed_team`` (career Leagues only, the
-        ``managed_team_id`` rule the HTML dashboard uses), ``has_owner_evaluations``,
-        ``member_night_progress`` and ``manager_awaiting_reassignment``.
+        ANG-06-14 B5 adds five keys beside the shared body: ``mode``,
+        ``managed_team`` (career Leagues only, the ``managed_team_id`` rule the
+        HTML dashboard uses), ``has_owner_evaluations``, ``member_night_progress``
+        and ``manager_awaiting_reassignment``. All but ``member_night_progress``
+        are League-only: since ANG-06-18 the Season dashboard returns
+        ``member_night_progress`` too.
         """
         league = self.get_object()
         displayed_season = pick_displayed_season(league)

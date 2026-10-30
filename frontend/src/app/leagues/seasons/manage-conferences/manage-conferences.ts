@@ -50,8 +50,7 @@ interface ConferenceRow {
 export class ManageConferences {
   private readonly seasons = inject(SeasonsService);
   private readonly mapsService = inject(MapsService);
-  private readonly context = inject(SeasonContext);
-  private readonly seasonId = this.context.seasonId;
+  protected readonly context = inject(SeasonContext);
   private readonly destroyRef = inject(DestroyRef);
 
   protected readonly state = signal<ConferencesState | null>(null);
@@ -103,14 +102,6 @@ export class ManageConferences {
       }));
   });
 
-  /** "Cancel": the Season dashboard. */
-  protected readonly dashboardLink = computed(() => [
-    '/leagues',
-    this.context.leagueId(),
-    'seasons',
-    this.seasonId(),
-  ]);
-
   constructor() {
     this.loadConferences();
     // Leaving the screen drops an open load or save: no late snackbar.
@@ -122,7 +113,7 @@ export class ManageConferences {
 
   private loadConferences(): void {
     this.loadError.set(null);
-    this.loading = this.seasons.conferences(this.seasonId() as number).subscribe({
+    this.loading = this.seasons.conferences(this.context.requireSeasonId()).subscribe({
       next: (state) => {
         this.fill(state);
         this.loadMaps(state.editable);
@@ -200,7 +191,7 @@ export class ManageConferences {
     this.saveErrors.set([]);
     this.busy.set(true);
     this.saving = this.seasons
-      .replaceConferences(this.seasonId() as number, { conferences })
+      .replaceConferences(this.context.requireSeasonId(), { conferences })
       .subscribe({
         next: (saved) => {
           this.busy.set(false);

@@ -28,9 +28,9 @@
   <p class="season-dashboard__map-config">{{ d.map_config_label }}</p>
 
   <p class="season-dashboard__links">
-    <a mat-stroked-button [routerLink]="seasonPath(d, 'awards')">Awards</a>
+    <a mat-stroked-button [routerLink]="context.link('awards')">Awards</a>
     @if (d.season_mode === 'draft') {
-      <a mat-stroked-button [routerLink]="seasonPath(d, 'conferences')">Manage Conferences</a>
+      <a mat-stroked-button [routerLink]="context.link('conferences')">Manage Conferences</a>
     }
   </p>
 
@@ -42,6 +42,6 @@
       commands: ['/leagues', d.league.id, 'stats', 'league-leaders'],
       queryParams: { season: d.season.id },
     }"
-    [resultsLink]="{ commands: seasonPath(d, 'schedule'), fragment: 'member-nights' }"
+    [resultsLink]="{ commands: context.link('schedule'), fragment: 'member-nights' }"
   />
 }

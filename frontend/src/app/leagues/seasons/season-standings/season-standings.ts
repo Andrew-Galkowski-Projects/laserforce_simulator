@@ -2,7 +2,7 @@ import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatAnchor, MatButton } from '@angular/material/button';
 import { ActivatedRoute, ParamMap, Params, RouterLink } from '@angular/router';
-import { EMPTY, Subject, catchError, combineLatest, map, startWith, switchMap, tap } from 'rxjs';
+import { EMPTY, catchError, map } from 'rxjs';
 import { SEASON_STATE_LABELS, SeasonState, Streak, WinLossTie } from '../../../api/leagues.models';
 import { LeaguesService } from '../../../api/leagues.service';
 import {
@@ -11,11 +11,10 @@ import {
   StandingsSortKey,
 } from '../../../api/seasons.models';
 import { SeasonsService } from '../../../api/seasons.service';
-import { apiMessage } from '../../../shared/api-message';
-import { GENERIC_ERROR_MESSAGE } from '../../../shared/form-errors';
 import { sortArrow } from '../../stats-shared/stats-query';
 import { SeasonBreadcrumb } from '../season-breadcrumb/season-breadcrumb';
 import { SeasonContext } from '../season-context';
+import { injectSeasonLoad } from '../season-load';
 
 /** `_STANDINGS_SORT_KEYS_DISPLAY`: every column's sort key and header, in table order. */
 export const STANDINGS_COLUMNS: readonly { key: StandingsSortKey; label: string }[] = [
@@ -61,48 +60,33 @@ function standingsParams(query: ParamMap): StandingsParams {
 export class SeasonStandings {
   protected readonly context = inject(SeasonContext);
   protected readonly columns = STANDINGS_COLUMNS;
-  protected readonly standings = signal<Standings | null>(null);
-  protected readonly loadError = signal<string | null>(null);
   /** The manager's Team in a career League (marked "You"), else null. */
   protected readonly managedTeamId = signal<number | null>(null);
-  private readonly reloads = new Subject<void>();
+  private readonly seasons = inject(SeasonsService);
+  private readonly load = injectSeasonLoad(
+    (id, params: StandingsParams) => this.seasons.standings(id, params),
+    { params: inject(ActivatedRoute).queryParamMap.pipe(map(standingsParams)) },
+  );
+  protected readonly standings = this.load.data;
+  protected readonly loadError = this.load.loadError;
 
   constructor() {
-    const seasons = inject(SeasonsService);
-    const destroyRef = inject(DestroyRef);
     // I4: Django's `_managed_team_id`, `current_team` in a career League only. The badge is a
     // nicety, so a failed League GET just leaves every row unmarked.
     inject(LeaguesService)
-      .get(this.context.leagueId() as number)
+      .get(this.context.requireLeagueId())
       .pipe(
         catchError(() => EMPTY),
-        takeUntilDestroyed(destroyRef),
+        takeUntilDestroyed(inject(DestroyRef)),
       )
       .subscribe((league) =>
         this.managedTeamId.set(league.mode === 'league' ? (league.current_team?.id ?? null) : null),
       );
-    combineLatest([
-      inject(ActivatedRoute).queryParamMap.pipe(map(standingsParams)),
-      this.reloads.pipe(startWith(undefined)),
-    ])
-      .pipe(
-        tap(() => this.loadError.set(null)),
-        switchMap(([params]) =>
-          seasons.standings(this.context.seasonId() as number, params).pipe(
-            catchError((failure: unknown) => {
-              this.loadError.set(apiMessage(failure, GENERIC_ERROR_MESSAGE));
-              return EMPTY;
-            }),
-          ),
-        ),
-        takeUntilDestroyed(destroyRef),
-      )
-      .subscribe((loaded) => this.standings.set(loaded));
   }
 
   /** I2: re-sends only the standings GET, with the URL's sort. */
   protected retry(): void {
-    this.reloads.next();
+    this.load.retry();
   }
 
   /** A draft preview with no rows in any group: no table, just the empty text. */

@@ -85,19 +85,22 @@
               @for (team of s.teams; track team.id) {
                 <tr>
                   <td>{{ team.name }}</td>
-                  <td>
-                    <select
-                      [attr.aria-label]="'Conference for ' + team.name"
-                      [disabled]="busy()"
-                      (change)="assign(team, $any($event.target).value)"
-                    >
-                      <option value="" [selected]="chosen(team) === null">Unassigned</option>
-                      @for (option of options(); track option.key) {
-                        <option [value]="option.key" [selected]="chosen(team) === option.key">
-                          {{ option.label }}
-                        </option>
-                      }
-                    </select>
+                  <td class="team-assignment__conference">
+                    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                      <select
+                        matNativeControl
+                        [attr.aria-label]="'Conference for ' + team.name"
+                        [disabled]="busy()"
+                        (change)="assign(team, $any($event.target).value)"
+                      >
+                        <option value="" [selected]="chosen(team) === null">Unassigned</option>
+                        @for (option of options(); track option.key) {
+                          <option [value]="option.key" [selected]="chosen(team) === option.key">
+                            {{ option.label }}
+                          </option>
+                        }
+                      </select>
+                    </mat-form-field>
                   </td>
                 </tr>
               }
@@ -107,7 +110,7 @@
 
         <div class="manage-conferences__actions">
           <button mat-flat-button type="submit" [disabled]="busy()">Save Conferences</button>
-          <a mat-button [routerLink]="dashboardLink()">Cancel</a>
+          <a mat-button [routerLink]="context.link()">Cancel</a>
         </div>
       </form>
     } @else {

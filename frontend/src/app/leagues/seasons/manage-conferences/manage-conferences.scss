@@ -1,5 +1,6 @@
 // Manage Conferences (ADR-0043): `--lf-*` tokens only, no colour literals.
 @use '../../../shared/alerts';
+@use '../../stats-shared/stats-page';
 
 :host {
   display: block;
@@ -76,34 +77,22 @@ h2 {
 }
 
 .team-assignment__scroll {
+  @include stats-page.scroll;
+
   max-width: 36rem;
-  overflow-x: auto;
 }
 
 .team-assignment {
+  @include stats-page.table;
+}
+
+// The Conference picker takes the rest of the row and keeps room for a Conference name.
+.team-assignment__conference {
   width: 100%;
-  border-collapse: collapse;
 
-  th,
-  td {
-    padding: 0.25rem 0.5rem;
-    border-bottom: 1px solid var(--lf-border);
-    text-align: left;
-  }
-
-  td:first-child {
-    white-space: nowrap;
-  }
-
-  select {
+  mat-form-field {
     width: 100%;
-    min-width: 10rem;
-    padding: 0.25rem;
-    border: 1px solid var(--lf-border);
-    border-radius: var(--lf-radius);
-    background: var(--lf-surface);
-    color: var(--lf-text);
-    font: inherit;
+    min-width: 12rem;
   }
 }
 

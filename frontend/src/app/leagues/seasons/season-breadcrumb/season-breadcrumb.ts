@@ -15,7 +15,7 @@ import { SeasonContext } from '../season-context';
       <nav class="season-breadcrumb" aria-label="Breadcrumb">
         <a [routerLink]="['/leagues', season.league.id]">{{ season.league.name }}</a>
         <span class="season-breadcrumb__sep" aria-hidden="true">{{ ' › ' }}</span>
-        <a [routerLink]="['/leagues', season.league.id, 'seasons', season.id]">{{ season.name }}</a>
+        <a [routerLink]="context.link()">{{ season.name }}</a>
       </nav>
     }
   `,

@@ -2,7 +2,7 @@ import { Component, DestroyRef, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatAnchor, MatButton } from '@angular/material/button';
 import { Router, RouterLink } from '@angular/router';
-import { Subject, finalize, startWith, switchMap, tap } from 'rxjs';
+import { finalize } from 'rxjs';
 import { ApiError } from '../../../api/api-client';
 import { LeaguesService } from '../../../api/leagues.service';
 import { OwnerEvaluation as Evaluation } from '../../../api/seasons.models';
@@ -10,9 +10,9 @@ import { SeasonsService } from '../../../api/seasons.service';
 import { fixed } from '../../../players/shared/benchmark-format';
 import { apiMessage } from '../../../shared/api-message';
 import { GENERIC_ERROR_MESSAGE } from '../../../shared/form-errors';
-import { notFoundOrError } from '../../../shared/not-found-or-error';
 import { SeasonBreadcrumb } from '../season-breadcrumb/season-breadcrumb';
 import { SeasonContext } from '../season-context';
+import { injectSeasonLoad } from '../season-load';
 
 /**
  * `/leagues/:id/seasons/:seasonId/owner-evaluation` (spec #444): the Owner's Annual Performance
@@ -27,47 +27,28 @@ import { SeasonContext } from '../season-context';
   styleUrl: './owner-evaluation.scss',
 })
 export class OwnerEvaluation {
-  private readonly ctx = inject(SeasonContext);
+  protected readonly context = inject(SeasonContext);
   private readonly leagues = inject(LeaguesService);
+  private readonly seasons = inject(SeasonsService);
   private readonly router = inject(Router);
   private readonly destroyRef = inject(DestroyRef);
 
-  protected readonly evaluation = signal<Evaluation | null>(null);
-  protected readonly notFound = signal(false);
-  protected readonly loadError = signal<string | null>(null);
+  private readonly load = injectSeasonLoad((id) => this.seasons.ownerEvaluation(id), {
+    splitNotFound: true,
+  });
+  protected readonly evaluation = this.load.data;
+  protected readonly notFound = this.load.notFound;
+  protected readonly loadError = this.load.loadError;
   /** I3: Start Next Season in flight. */
   protected readonly writing = signal(false);
   /** I3: the last failed Start Next Season's message; the evaluation stays as it was. */
   protected readonly writeError = signal<string | null>(null);
 
-  protected readonly leagueId = this.ctx.leagueId;
-  protected readonly seasonId = this.ctx.seasonId;
   protected readonly fixed = fixed;
-
-  private readonly reloads = new Subject<void>();
-
-  constructor() {
-    const seasons = inject(SeasonsService);
-    this.reloads
-      .pipe(
-        startWith(undefined),
-        tap(() => {
-          this.notFound.set(false);
-          this.loadError.set(null);
-        }),
-        switchMap(() =>
-          seasons
-            .ownerEvaluation(this.seasonId() as number)
-            .pipe(notFoundOrError<Evaluation>(this.notFound, this.loadError)),
-        ),
-        takeUntilDestroyed(this.destroyRef),
-      )
-      .subscribe((loaded) => this.evaluation.set(loaded));
-  }
 
   /** I2: re-sends only the evaluation GET. */
   protected retry(): void {
-    this.reloads.next();
+    this.load.retry();
   }
 
   /** Django's `text-uppercase` badge: `hot_seat` shows as `HOT_SEAT`. */
@@ -81,7 +62,7 @@ export class OwnerEvaluation {
    */
   protected startNextSeason(): void {
     if (this.writing()) return;
-    const leagueId = this.leagueId() as number;
+    const leagueId = this.context.requireLeagueId();
     this.writing.set(true);
     this.writeError.set(null);
     this.leagues

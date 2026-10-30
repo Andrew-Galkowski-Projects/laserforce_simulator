@@ -1,5 +1,6 @@
 // The Owner evaluation (ADR-0043): `--lf-*` / `--mat-sys-*` tokens only, no colour literals.
 @use '../../../shared/alerts';
+@use '../../stats-shared/stats-page';
 
 :host {
   display: block;
@@ -60,31 +61,23 @@ p {
 }
 
 .owner-evaluation__table {
-  max-width: 100%;
+  @include stats-page.scroll;
+
   margin-bottom: 1rem;
-  overflow-x: auto;
-}
 
-table {
-  border-collapse: collapse;
-}
+  table {
+    @include stats-page.table;
 
-th,
-td {
-  padding: 0.375rem 0.75rem;
-  border-bottom: 1px solid var(--lf-border);
-  text-align: left;
-}
+    // Three columns: as wide as their content, not the page.
+    width: auto;
 
-.num {
-  font-family: var(--lf-font-numeric);
-  text-align: right;
-}
-
-tfoot th,
-tfoot td {
-  border-bottom: none;
-  font-weight: 700;
+    tfoot th,
+    tfoot td {
+      border-bottom: none;
+      color: var(--lf-text);
+      font-weight: 700;
+    }
+  }
 }
 
 .owner-evaluation__cta {

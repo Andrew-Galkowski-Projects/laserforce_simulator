@@ -2,9 +2,7 @@
 @if (notFound()) {
   <h1>Owner evaluation not found</h1>
   <p>
-    <a mat-stroked-button [routerLink]="['/leagues', leagueId(), 'seasons', seasonId()]"
-      >&larr; Back to Season</a
-    >
+    <a mat-stroked-button [routerLink]="context.link()">&larr; Back to Season</a>
   </p>
 } @else if (loadError(); as message) {
   <div class="owner-evaluation__error" role="alert">
@@ -83,7 +81,9 @@
 
   <p class="owner-evaluation__cta">
     @if (e.is_fired && !e.reassigned) {
-      <a mat-flat-button [routerLink]="['/leagues', leagueId(), 'new-team']">Choose New Team</a>
+      <a mat-flat-button [routerLink]="['/leagues', context.requireLeagueId(), 'new-team']"
+        >Choose New Team</a
+      >
     } @else {
       <button mat-flat-button type="button" [disabled]="writing()" (click)="startNextSeason()">
         Start Next Season

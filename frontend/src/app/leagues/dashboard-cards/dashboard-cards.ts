@@ -2,7 +2,6 @@ import { Component, computed, inject, input } from '@angular/core';
 import { Params, RouterLink } from '@angular/router';
 import { DashboardBody, LeaderRow, MemberNightProgress } from '../../api/leagues.models';
 import { AuthService } from '../../auth/auth.service';
-import { SoonBadge } from '../soon-badge/soon-badge';
 
 /** A `routerLink` target: absolute commands plus an optional query and fragment. */
 export interface DashboardLink {
@@ -23,11 +22,11 @@ interface LeaderBoard {
  * `memberNight` is set), and on an active or completed Season "Next round", "Rounds played", the
  * three leader cards and "View all leaders". A "You" badge marks the managed Team's standings row
  * (`managedTeamId`; null on the Season dashboard, as Django passes none there) and the signed-in
- * Account's Self-insert leader rows (I4). `resultsLink` null shows "View results" as Soon.
+ * Account's Self-insert leader rows (I4). With `resultsLink` null, "View results" is not shown.
  */
 @Component({
   selector: 'app-dashboard-cards',
-  imports: [RouterLink, SoonBadge],
+  imports: [RouterLink],
   templateUrl: './dashboard-cards.html',
   styleUrl: './dashboard-cards.scss',
 })
