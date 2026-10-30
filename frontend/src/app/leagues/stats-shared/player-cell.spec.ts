@@ -63,11 +63,11 @@ describe('PlayerCell (spec #417 I4, spec #428 F5)', () => {
 
   it("marks the signed-in Account's Self-insert with You", async () => {
     const el = await render(false, { ...USER, self_insert: { ...SELF_INSERT, id: 25 } });
-    expect(text(el)).toBe('★ Ace You');
+    expect(text(el)).toBe('☆ Ace You');
   });
 
   it('marks no one else', async () => {
     const el = await render(false, { ...USER, self_insert: { ...SELF_INSERT, id: 26 } });
-    expect(text(el)).toBe('★ Ace');
+    expect(text(el)).toBe('☆ Ace');
   });
 });

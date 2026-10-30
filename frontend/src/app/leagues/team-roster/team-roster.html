@@ -17,13 +17,13 @@
 } @else if (result(); as r) {
   <h1>{{ r.data.team.name }} — Roster</h1>
 
-  <div class="roster-filters">
-    <label for="roster-team-picker">Team:</label>
-    <select id="roster-team-picker" (change)="pickTeam($event)">
-      @for (team of r.meta.team_options; track team.id) {
-        <option [value]="team.id" [selected]="team.id === r.data.team.id">{{ team.name }}</option>
-      }
-    </select>
+  <div class="stats-filters">
+    <app-team-picker
+      [options]="r.meta.team_options"
+      [selected]="r.data.team.id"
+      [allowAll]="false"
+      (teamChange)="pickTeam($event)"
+    />
   </div>
 
   <!-- MMR / Rank are placeholders until STAT-PROXY-01. -->
@@ -39,7 +39,7 @@
       <tbody>
         @for (row of r.data.starters; track row.player.id) {
           <tr [id]="'roster-starting-row-' + row.player.id">
-            <td>{{ role(row) }}</td>
+            <td>{{ roleTitle(row.role) }}</td>
             <ng-container *ngTemplateOutlet="playerCells; context: { $implicit: row }" />
           </tr>
         } @empty {
@@ -97,5 +97,5 @@
   <td>-</td>
   <td>-</td>
   <td class="num">{{ row.overall_rating.toFixed(1) }}</td>
-  <td class="num">{{ potential(row) }}</td>
+  <td class="num">{{ potentialText(row.potential) }}</td>
 </ng-template>

@@ -211,7 +211,7 @@ describe('Team Schedule (/leagues/:id/team/schedule, spec #428)', () => {
       expect(scheduleRequests()).toEqual([]);
       expect(text(q('h1'))).toBe('Metro League — Schedule');
       expect(text(q('#team-schedule-empty-notice'))).toBe(NO_SEASON);
-      expect(q('#team-schedule-team-picker')).toBeNull();
+      expect(q('app-team-picker')).toBeNull();
     });
 
     it('I1: sends no request with no Season even when ?team= is given', async () => {
@@ -268,8 +268,14 @@ describe('Team Schedule (/leagues/:id/team/schedule, spec #428)', () => {
   });
 
   describe('Team picker', () => {
-    const picker = (): HTMLSelectElement => q('#team-schedule-team-picker') as HTMLSelectElement;
+    const picker = (): HTMLSelectElement =>
+      q('app-team-picker select#stats-team-select') as HTMLSelectElement;
     const options = (): string[] => [...picker().options].map((o) => text(o));
+
+    it('is the kit app-team-picker in a filters row below the h1', async () => {
+      await open();
+      expect(q('h1 ~ .stats-filters app-team-picker')).not.toBeNull();
+    });
 
     it("asks for ?team='s Team", async () => {
       await navigate(`${PATH}?team=5`);
@@ -279,7 +285,7 @@ describe('Team Schedule (/leagues/:id/team/schedule, spec #428)', () => {
 
     it('lists meta.team_options by name, labelled Team:, with the shown Team selected', async () => {
       await open();
-      expect(text(q('label[for="team-schedule-team-picker"]'))).toBe('Team:');
+      expect(text(q('label[for="stats-team-select"]'))).toBe('Team:');
       expect(options()).toEqual(['Blue Bolts', 'Red Raiders']);
       expect(picker().selectedOptions[0].textContent?.trim()).toBe('Red Raiders');
     });

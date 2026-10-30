@@ -5,6 +5,7 @@ import {
   STAT_COLUMNS,
   orDash,
   potentialText,
+  roleTitle,
   statCell,
   truncateChars,
 } from './player-columns';
@@ -97,6 +98,12 @@ describe('player-columns (spec #428 F7)', () => {
     expect(orDash(null)).toBe('-');
     expect(orDash('')).toBe('-');
     expect(orDash(0)).toBe('0');
+  });
+
+  it("title-cases a role like Django's |title, null as empty", () => {
+    expect(roleTitle('commander')).toBe('Commander');
+    expect(roleTitle('ammo')).toBe('Ammo');
+    expect(roleTitle(null)).toBe('');
   });
 
   it("truncates like Django's truncatechars", () => {

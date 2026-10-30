@@ -204,7 +204,7 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
     it("shows the template's cells and formats", async () => {
       await open();
       expect(cells()).toEqual([
-        '★ Ace',
+        '☆ Ace',
         'Red Raiders',
         'commander, he…',
         '72.4',
@@ -483,7 +483,7 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
       expect(navigateSpy.mock.calls.map(([, extras]) => extras?.replaceUrl)).toEqual([true]);
       expect(await answer()).toEqual({ ordering: 'speed', page: '1', page_size: '10' });
       expect(q('[role="alert"]')).toBeNull();
-      expect(cells()[0]).toBe('★ Ace');
+      expect(cells()[0]).toBe('☆ Ace');
     });
 
     it('drops an ordering the API rejects', async () => {

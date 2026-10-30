@@ -67,14 +67,15 @@ describe('app-watch-flag (spec #428 F4)', () => {
     await fixture.whenStable();
   }
 
-  it('is a ★ button that says what it does, pressed only when watched', () => {
+  it('is a star button that says what it does: ☆ off, ★ pressed when watched', () => {
     const off = flag('ace-1');
     expect(off.type).toBe('button');
-    expect(off.textContent?.trim()).toBe('★');
+    expect(off.textContent?.trim()).toBe('☆');
     expect(off.getAttribute('aria-pressed')).toBe('false');
     expect(off.getAttribute('aria-label')).toBe('Watch Ace');
     expect(off.title).toBe('Watch Ace');
     const on = flag('bolt');
+    expect(on.textContent?.trim()).toBe('★');
     expect(on.getAttribute('aria-pressed')).toBe('true');
     expect(on.getAttribute('aria-label')).toBe('Stop watching Bolt');
   });
@@ -93,6 +94,7 @@ describe('app-watch-flag (spec #428 F4)', () => {
     watchRequest('PUT').flush({ data: watchResult(true), meta: {} });
     await fixture.whenStable();
     for (const id of ['ace-1', 'ace-2']) {
+      expect(flag(id).textContent?.trim()).toBe('★');
       expect(flag(id).getAttribute('aria-pressed')).toBe('true');
       expect(flag(id).getAttribute('aria-label')).toBe('Stop watching Ace');
       expect(flag(id).classList).toContain('watch-flag--on');

@@ -1,10 +1,24 @@
 import { DestroyRef, Signal, inject, signal } from '@angular/core';
-import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toObservable } from '@angular/core/rxjs-interop';
 import { ActivatedRoute, Params, Router } from '@angular/router';
-import { EMPTY, Observable, catchError, combineLatest, map, switchMap, tap } from 'rxjs';
+import {
+  EMPTY,
+  Observable,
+  Subject,
+  catchError,
+  combineLatest,
+  distinctUntilChanged,
+  filter,
+  map,
+  of,
+  startWith,
+  switchMap,
+  tap,
+} from 'rxjs';
 import { SeasonParam } from '../../api/league-stats.models';
 import { apiMessage } from '../../shared/api-message';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
+import { LeagueContext } from './league-context';
 import {
   PagedStatsApiParams,
   PagedStatsQueryConfig,
@@ -49,6 +63,19 @@ export interface StatsScreen<R, Rate extends string = string> {
   pickRate(rate: Rate): void;
   pickPerPage(perPage: number): void;
   pickPage(page: number): void;
+  /** I2's Retry: re-sends the current request. */
+  retry(): void;
+}
+
+/** `injectStatsScreen`'s opt-ins; leaving them out keeps the ANG-06-15 behaviour. */
+export interface StatsScreenOptions {
+  /**
+   * Wait for the League nav (`LeagueContext`) and send nothing while its `displayed_season` is
+   * null (I1: the screen shows its no-Season notice instead). Each new request also clears
+   * `loadError`, so Retry or a picker hides the error box while it loads (Free Agents, Watch
+   * List). Off by default: the screen loads at once and keeps the error box until a success.
+   */
+  waitForSeason?: boolean;
 }
 
 /**
@@ -64,22 +91,26 @@ export interface StatsScreen<R, Rate extends string = string> {
  * with `replaceUrl` (a 400 on season / team_id / rate / ordering, or a 404 past page 1) or sets
  * `loadError` to the server's message. A `PagedStatsQueryConfig` types `load`'s params as
  * `PagedStatsApiParams` (`page` / `page_size` required). The template binds a sort header to
- * `screen.sortParams(key)` / `screen.arrow(key)` and a picker to `screen.pickSeason($event)`,
- * and so on.
+ * `screen.sortParams(key)` / `screen.arrow(key)`, a picker to `screen.pickSeason($event)`, and
+ * so on, and the error box's Retry to `screen.retry()`. `{ waitForSeason: true }` gates the
+ * load on the League nav (see `StatsScreenOptions`).
  */
 export function injectStatsScreen<R, Rate extends string = string>(
   config: PagedStatsQueryConfig<Rate>,
   load: (leagueId: number, params: PagedStatsApiParams<Rate>) => Observable<R>,
+  options?: StatsScreenOptions,
 ): StatsScreen<R, Rate>;
 export function injectStatsScreen<R, Rate extends string = string>(
   config: StatsQueryConfig<Rate>,
   load: (leagueId: number, params: StatsApiParams<Rate>) => Observable<R>,
+  options?: StatsScreenOptions,
 ): StatsScreen<R, Rate>;
 export function injectStatsScreen<R, Rate extends string>(
   config: StatsQueryConfig<Rate>,
   pagedOrNotLoad:
     | ((leagueId: number, params: PagedStatsApiParams<Rate>) => Observable<R>)
     | ((leagueId: number, params: StatsApiParams<Rate>) => Observable<R>),
+  options: StatsScreenOptions = {},
 ): StatsScreen<R, Rate> {
   // The overloads pair a paged `load` only with a `PagedStatsQueryConfig`, whose
   // `statsApiParams` always carry `page` and `page_size`: each `load` gets the params it takes.
@@ -96,24 +127,39 @@ export function injectStatsScreen<R, Rate extends string>(
   };
   const go = (next: StatsQuery<Rate>): void => navigate(next, false);
 
+  const gated = options.waitForSeason === true;
+  const reloads = new Subject<void>();
   const id$ = (route.parent ?? route).paramMap.pipe(map((p) => Number(p.get('id'))));
   const query$ = route.queryParamMap.pipe(map((p) => parseStatsQuery(p, config)));
-  combineLatest([id$, query$])
+  // Ungated: always open. Gated: nothing until the nav loads, then whether it has a Season.
+  const open$ = gated
+    ? toObservable(inject(LeagueContext).nav).pipe(
+        filter((nav) => nav !== null),
+        map((nav) => nav.displayed_season !== null),
+        distinctUntilChanged(),
+      )
+    : of(true);
+  combineLatest([id$, query$, open$, reloads.pipe(startWith(undefined))])
     .pipe(
-      tap(([, q]) => query.set(q)),
-      switchMap(([id, q]) =>
-        load(id, statsApiParams(q, config)).pipe(
-          catchError((error: unknown) => {
-            const next = recoverFrom(q, error, config);
-            // A state that writes the same URL would never reload: show the error instead.
-            if (next && JSON.stringify(params(next)) !== JSON.stringify(params(q))) {
-              navigate(next, true);
-            } else {
-              loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
-            }
-            return EMPTY;
-          }),
-        ),
+      tap(([, q]) => {
+        query.set(q);
+        if (gated) loadError.set(null);
+      }),
+      switchMap(([id, q, open]) =>
+        !open
+          ? EMPTY
+          : load(id, statsApiParams(q, config)).pipe(
+              catchError((error: unknown) => {
+                const next = recoverFrom(q, error, config);
+                // A state that writes the same URL would never reload: show the error instead.
+                if (next && JSON.stringify(params(next)) !== JSON.stringify(params(q))) {
+                  navigate(next, true);
+                } else {
+                  loadError.set(apiMessage(error, GENERIC_ERROR_MESSAGE));
+                }
+                return EMPTY;
+              }),
+            ),
       ),
       takeUntilDestroyed(inject(DestroyRef)),
     )
@@ -135,5 +181,6 @@ export function injectStatsScreen<R, Rate extends string>(
     pickRate: (rate) => go(withRate(query(), rate)),
     pickPerPage: (perPage) => go(withPerPage(query(), perPage)),
     pickPage: (page) => go(withPage(query(), page)),
+    retry: () => reloads.next(),
   };
 }

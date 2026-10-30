@@ -108,7 +108,7 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
       expect(rows('roster-starting-table')).toEqual([
         [
           'Commander',
-          '★ Ace',
+          '☆ Ace',
           '24',
           'Laserforce Ventura',
           '5\'11"',
@@ -142,7 +142,7 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
         }),
       );
       expect(rows('roster-starting-table')).toEqual([
-        ['Scout', '★ Ace', '-', '-', '-', '120', '-', '-', '-', '60.0', '—'],
+        ['Scout', '☆ Ace', '-', '-', '-', '120', '-', '-', '-', '60.0', '—'],
       ]);
     });
 
@@ -158,7 +158,7 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
     expect(text(q('h1'))).toBe('Metro League — Roster');
     expect(text(q('#roster-empty-notice'))).toBe(notice);
     expect(q('#roster-empty-notice')?.getAttribute('role')).toBe('status');
-    expect(q('#roster-team-picker')).toBeNull();
+    expect(q('app-team-picker')).toBeNull();
     expect(q('#roster-starting-table')).toBeNull();
     expect(q('#roster-bench-table')).toBeNull();
   }
@@ -246,12 +246,18 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
   });
 
   describe('Team picker', () => {
-    const picker = (): HTMLSelectElement => q('#roster-team-picker') as HTMLSelectElement;
+    const picker = (): HTMLSelectElement =>
+      q('app-team-picker select#stats-team-select') as HTMLSelectElement;
     const options = (): [string, string][] => [...picker().options].map((o) => [o.value, text(o)]);
+
+    it('is the kit app-team-picker in a filters row below the h1', async () => {
+      await open();
+      expect(q('h1 ~ .stats-filters app-team-picker')).not.toBeNull();
+    });
 
     it("lists meta.team_options by name, labelled 'Team:', with the shown Team selected", async () => {
       await open();
-      expect(text(q('label[for="roster-team-picker"]'))).toBe('Team:');
+      expect(text(q('label[for="stats-team-select"]'))).toBe('Team:');
       expect(options()).toEqual([
         ['5', 'Blue Bolts'],
         ['3', 'Red Raiders'],
@@ -298,7 +304,7 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
     it('shows a bench Player without a role', async () => {
       await open();
       expect(rows('roster-bench-table')).toEqual([
-        ['★ Bolt', '24', 'Laserforce Ventura', '5\'11"', '120', '15', '-', '-', '72.4', '80.6'],
+        ['☆ Bolt', '24', 'Laserforce Ventura', '5\'11"', '120', '15', '-', '-', '72.4', '80.6'],
       ]);
       const link = q('#roster-bench-table app-player-cell a');
       expect(link?.getAttribute('href')).toBe('/leagues/1/players/26');

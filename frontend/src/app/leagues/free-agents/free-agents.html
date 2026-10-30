@@ -4,12 +4,12 @@
   <p id="free-agents-empty-notice" class="stats-notice" role="status">
     No Season in this League yet — start a Season to view free agents.
   </p>
-} @else if (loadError(); as message) {
+} @else if (screen.loadError(); as message) {
   <div class="stats-error free-agents-error" role="alert">
     <span>{{ message }}</span>
-    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+    <button mat-stroked-button type="button" (click)="screen.retry()">Retry</button>
   </div>
-} @else if (nav() && result(); as r) {
+} @else if (nav() && screen.result(); as r) {
   @if (r.meta.count === 0) {
     <p id="free-agents-empty-notice" class="stats-notice" role="status">
       No free agents available in this League's current Season.
@@ -28,8 +28,8 @@
                 [class.name]="c.key === 'name' || c.key === 'team'"
                 [class.num]="c.key !== 'name' && c.key !== 'team' && c.key !== 'preferred_roles'"
               >
-                <a [routerLink]="[]" [queryParams]="sortParams(c.key)" [title]="c.full"
-                  >{{ c.label }}{{ arrow(c.key) }}</a
+                <a [routerLink]="[]" [queryParams]="screen.sortParams(c.key)" [title]="c.full"
+                  >{{ c.label }}{{ screen.arrow(c.key) }}</a
                 >
               </th>
             }
@@ -60,7 +60,7 @@
               @for (key of statKeys; track key) {
                 <td class="num">{{ row.stats[key] }}</td>
               }
-              <td class="num">{{ potential(row) }}</td>
+              <td class="num">{{ potentialText(row.potential) }}</td>
               <td class="num">{{ orDash(row.age) }}</td>
               <td [title]="row.home_site">{{ short(orDash(row.home_site), 10) }}</td>
               <td>{{ orDash(row.height) }}</td>
@@ -75,12 +75,15 @@
     </div>
 
     <div class="stats-footer">
-      <app-per-page-picker [perPage]="query().perPage" (perPageChange)="pickPerPage($event)" />
+      <app-per-page-picker
+        [perPage]="screen.query().perPage"
+        (perPageChange)="screen.pickPerPage($event)"
+      />
       <app-stats-paginator
         label="Free agents pagination"
         [page]="r.meta.page"
         [totalPages]="r.meta.total_pages"
-        (pageChange)="pickPage($event)"
+        (pageChange)="screen.pickPage($event)"
       />
     </div>
   }

@@ -18,18 +18,14 @@
       <button mat-stroked-button type="button" (click)="retry()">Retry</button>
     </div>
   } @else if (history(); as h) {
-    <div class="team-history__header">
-      <h1>{{ h.team.name }} — History</h1>
-      <div class="team-history__picker">
-        <label for="team-history-team-picker">Team:</label>
-        <select id="team-history-team-picker" (change)="pickTeam($event)">
-          @for (option of teamOptions(); track option.id) {
-            <option [value]="option.id" [selected]="option.id === t.team">
-              {{ option.name }}
-            </option>
-          }
-        </select>
-      </div>
+    <h1>{{ h.team.name }} — History</h1>
+    <div class="stats-filters">
+      <app-team-picker
+        [options]="teamOptions()"
+        [selected]="t.team"
+        [allowAll]="false"
+        (teamChange)="pickTeam($event)"
+      />
     </div>
 
     <section id="team-history-overall">
@@ -121,6 +117,9 @@
                 >
                   <td class="name">
                     <app-player-cell [player]="row.player" [watched]="row.watched" />
+                    <span class="team-history__status">{{
+                      row.on_team ? ' (current)' : ' (former)'
+                    }}</span>
                   </td>
                   @for (c of columns; track c.key) {
                     <td class="num">{{ c.value(row) }}</td>

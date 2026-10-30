@@ -20,6 +20,20 @@ class Host {
   readonly picked: (number | null)[] = [];
 }
 
+@Component({
+  imports: [TeamPicker],
+  template: `<app-team-picker
+    [options]="options"
+    [selected]="3"
+    [allowAll]="false"
+    (teamChange)="picked.push($event)"
+  />`,
+})
+class NoAllHost {
+  readonly options = teamOptions();
+  readonly picked: (number | null)[] = [];
+}
+
 describe('TeamPicker (spec #417)', () => {
   async function render(selected: number | null = null, allLabel = 'All Teams') {
     const fixture = TestBed.createComponent(Host);
@@ -48,6 +62,22 @@ describe('TeamPicker (spec #417)', () => {
   it('takes its own "All" label (Game Log: "All teams")', async () => {
     const { select } = await render(null, 'All teams');
     expect(options(select)[0]).toEqual(['', 'All teams']);
+  });
+
+  it('drops the "All" option with [allowAll]="false" (the League team screens)', async () => {
+    const fixture = TestBed.createComponent(NoAllHost);
+    await fixture.whenStable();
+    const el = fixture.nativeElement as HTMLElement;
+    const select = el.querySelector<HTMLSelectElement>('select#stats-team-select')!;
+    expect(el.querySelector('label')?.textContent?.trim()).toBe('Team:');
+    expect(options(select)).toEqual([
+      ['5', 'Blue Bolts'],
+      ['3', 'Red Raiders'],
+    ]);
+    expect(select.value).toBe('3');
+    select.value = '5';
+    select.dispatchEvent(new Event('change'));
+    expect(fixture.componentInstance.picked).toEqual([5]);
   });
 
   it('selects the chosen Team', async () => {

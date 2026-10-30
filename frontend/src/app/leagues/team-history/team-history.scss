@@ -19,35 +19,8 @@ h2 {
   font-size: 1.125rem;
 }
 
-.team-history__header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  align-items: baseline;
-  justify-content: space-between;
-
-  h1 {
-    margin-bottom: 0;
-  }
-}
-
-.team-history__picker {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-
-  select {
-    min-width: 12rem;
-    max-width: 100%;
-    padding: 0.25rem 0.5rem;
-    border: 1px solid var(--lf-border);
-    border-radius: var(--lf-radius);
-    background: var(--lf-surface);
-    color: var(--lf-text);
-    font: inherit;
-  }
+.stats-filters {
+  @include stats-page.filters;
 }
 
 dl {
@@ -97,6 +70,16 @@ dd {
   td.name {
     box-shadow: inset 3px 0 0 var(--mark);
   }
+}
+
+// The mark in words for a screen reader (story 27: never colour alone), visually hidden.
+.team-history__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .team-history__legend {

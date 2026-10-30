@@ -305,6 +305,61 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
       });
     });
 
+    const seasonOptions = (): [string, string][] =>
+      [...select('stats-season-select').options].map((o) => [o.value, text(o)]);
+
+    it('render while the nav and the list load: the displayed Season plus Career', async () => {
+      await harness.navigateByUrl(PATH);
+      await settle();
+      // Before the nav: no Season to name yet, but both pickers are there.
+      expect(seasonOptions()).toEqual([['career', 'Career']]);
+      expect(q('#stats-rate-select')).not.toBeNull();
+      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      await settle();
+      // The list is in flight: the nav's displayed Season, selected, plus Career.
+      expect(seasonOptions()).toEqual([
+        ['11', 'Season 1'],
+        ['career', 'Career'],
+      ]);
+      expect(select('stats-season-select').value).toBe('11');
+      expect(q('#stats-rate-select')).not.toBeNull();
+      await answer();
+    });
+
+    it('show the ?season= selection before any season_scope', async () => {
+      await navigate(`${PATH}?season=career`);
+      expect(select('stats-season-select').value).toBe('career');
+      await answer();
+    });
+
+    it('render on a load error and stay usable: a pick sends the new request', async () => {
+      await navigate(`${PATH}?rate=per_game`);
+      listRequest().flush(...failure(500, 'Database is down.'));
+      await settle();
+      expect(q('[role="alert"]')).not.toBeNull();
+      expect(seasonOptions()).toEqual([
+        ['11', 'Season 1'],
+        ['career', 'Career'],
+      ]);
+      expect(select('stats-rate-select').value).toBe('per_game');
+      await pick('stats-season-select', 'career');
+      expect(url()).toBe(`${PATH}?season=career&rate=per_game`);
+      expect(await answer()).toEqual({ ...DEFAULT, season: 'career', rate: 'per_game' });
+      expect(q('[role="alert"]')).toBeNull();
+    });
+
+    it('stay usable after a bad ?season= that errors', async () => {
+      await navigate(`${PATH}?season=99`);
+      listRequest().flush(...failure(500, 'Database is down.'));
+      await settle();
+      expect(q('[role="alert"]')).not.toBeNull();
+      expect(select('stats-season-select')).not.toBeNull();
+      expect(q('#stats-rate-select')).not.toBeNull();
+      await pick('stats-season-select', '11');
+      expect(url()).toBe(`${PATH}?season=11`);
+      expect(await answer()).toEqual({ ...DEFAULT, season: '11' });
+    });
+
     it('a rate change keeps the Season and resets the page', async () => {
       await open(`${PATH}?season=10&page=2`, { page: 2, totalPages: 3 });
       await pick('stats-rate-select', 'per_10');
@@ -394,7 +449,7 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
     del.flush(null, { status: 204, statusText: 'No Content' });
     await settle();
     expect(flag().getAttribute('aria-pressed')).toBe('false');
-    expect(cells()[0]).toBe('★ Ace');
+    expect(cells()[0]).toBe('☆ Ace');
     expect(text(q('#watch-list-count'))).toBe('1 player');
     // Starring it again puts it back.
     await click(flag());

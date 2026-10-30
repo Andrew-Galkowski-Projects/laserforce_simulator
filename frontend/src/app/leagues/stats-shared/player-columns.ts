@@ -4,8 +4,9 @@
 //   `PlayerRatingRow`). Headers sort by `key` and take `full` as their `title`.
 // - Player Stats' stat columns (`STAT_COLUMNS`, after Name / Team / GP): Player Stats and Watch
 //   List (`PlayerStatRow`). A cell is `statCell(row.stats, column)`.
-// - `potentialText` / `orDash` / `truncateChars`: the templates' `floatformat:1` + `default:"—"`,
-//   `default:"-"` and `truncatechars:n`.
+// - `potentialText` / `orDash` / `roleTitle` / `truncateChars`: the templates' `floatformat:1` +
+//   `default:"—"`, `default:"-"`, a role's `|title` and `truncatechars:n`. A template uses one
+//   directly: `protected readonly orDash = orDash;`.
 
 /** A sortable Player Ratings header: the API sort key, its abbreviation and its full name. */
 export interface SortColumn {
@@ -100,7 +101,12 @@ export function orDash(value: number | string | null): string {
   return value === null || value === '' ? '-' : String(value);
 }
 
-/** Django's `truncatechars:n`: `n` characters at most, the last an ellipsis when cut. */
+/** Django's `|title` on a role: "commander" reads "Commander"; none reads "". */
+export function roleTitle(role: string | null | undefined): string {
+  return (role ?? '').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+/** Django's `truncatechars:n`:`n` characters at most, the last an ellipsis when cut. */
 export function truncateChars(value: string, n: number): string {
   return value.length > n ? `${value.slice(0, n - 1)}…` : value;
 }

@@ -41,10 +41,8 @@ h2 {
   justify-content: space-between;
 }
 
-.team-schedule__picker {
-  display: flex;
-  gap: 0.5rem;
-  align-items: center;
+.stats-filters {
+  @include stats-page.filters;
 }
 
 .team-schedule__help {

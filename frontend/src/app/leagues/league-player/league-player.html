@@ -47,7 +47,7 @@
       <h2>Potential</h2>
       <div class="player-card__line">
         <span class="muted">Potential rating</span>
-        <span class="player-card__value">{{ potential(d) }}</span>
+        <span class="player-card__value">{{ potentialText(d.potential) }}</span>
       </div>
       <small class="muted">Projected peak overall rating.</small>
     </section>
@@ -119,6 +119,7 @@
           [theme]="theme()"
           xAxis="count"
           xTitle="Season"
+          [xLabel]="seasonLabel"
           [yTitle]="overallLabel"
         />
       </div>

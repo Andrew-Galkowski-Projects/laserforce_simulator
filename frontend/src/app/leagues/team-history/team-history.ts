@@ -45,6 +45,7 @@ import {
 import { PerPagePicker, StatsPaginator } from '../stats-shared/stats-paginator';
 import { PlayerCell } from '../stats-shared/player-cell';
 import { resolveTeamParam } from '../stats-shared/team-param';
+import { TeamPicker } from '../stats-shared/team-picker';
 
 /** A Players column after Name: its sort key (the API's) and header. */
 interface PlayerColumn {
@@ -150,7 +151,7 @@ interface LoadState {
  */
 @Component({
   selector: 'app-league-team-history',
-  imports: [MatButton, PerPagePicker, PlayerCell, RouterLink, StatsPaginator],
+  imports: [MatButton, PerPagePicker, PlayerCell, RouterLink, StatsPaginator, TeamPicker],
   templateUrl: './team-history.html',
   styleUrl: './team-history.scss',
 })
@@ -268,9 +269,8 @@ export class LeagueTeamHistory {
   }
 
   /** The Team picker: `?team=`, the Players back to page 1, both sorts kept. */
-  protected pickTeam(event: Event): void {
+  protected pickTeam(team: number | null): void {
     const t = this.target()!;
-    const team = Number((event.target as HTMLSelectElement).value);
     this.navigate(withTeam(t.query, team), t.seasons);
   }
 

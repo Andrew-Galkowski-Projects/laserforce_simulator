@@ -179,7 +179,7 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
       }),
     });
     expect(cells(rows()[0])).toEqual([
-      '★ Ace You',
+      '☆ Ace You',
       'commander',
       'Red Raiders',
       'Blue Bolts',

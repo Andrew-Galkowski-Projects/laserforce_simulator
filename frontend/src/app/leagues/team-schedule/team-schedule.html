@@ -23,15 +23,13 @@
     <header id="team-schedule-header">
       <h1>{{ v.result.data.team.name }} — Schedule</h1>
       <p id="team-schedule-season" class="team-schedule__season">{{ v.result.data.season.name }}</p>
-      <div class="team-schedule__picker">
-        <label for="team-schedule-team-picker">Team:</label>
-        <select id="team-schedule-team-picker" (change)="pickTeam($event)">
-          @for (team of v.result.meta.team_options; track team.id) {
-            <option [value]="team.id" [selected]="team.id === v.result.data.team.id">
-              {{ team.name }}
-            </option>
-          }
-        </select>
+      <div class="stats-filters">
+        <app-team-picker
+          [options]="v.result.meta.team_options"
+          [selected]="v.result.data.team.id"
+          [allowAll]="false"
+          (teamChange)="pickTeam($event)"
+        />
       </div>
     </header>
 

@@ -191,7 +191,7 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
       ],
     });
     expect(cells(25)).toEqual([
-      '★ Ace',
+      '☆ Ace',
       'Red Raiders',
       '8',
       '9121',
@@ -414,7 +414,7 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
       expect(nav.mock.calls.map(([, extras]) => extras?.replaceUrl)).toEqual([true]);
       expect(await answer()).toEqual({ ...DEFAULT, rate: 'per_game' });
       expect(q('[role="alert"]')).toBeNull();
-      expect(cells(25)[0]).toBe('★ Ace');
+      expect(cells(25)[0]).toBe('☆ Ace');
     });
 
     it('drops a team the API rejects', async () => {

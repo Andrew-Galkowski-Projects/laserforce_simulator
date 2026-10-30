@@ -1,3 +1,6 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { compile } from 'sass';
 import { TestBed } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import {
@@ -249,7 +252,17 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
 
     it('shows each row from its fields, "—" for an unknown last season', async () => {
       await open(PATH, 3, teamHistory(), [teamHistoryPlayerRow(), former()]);
-      expect(cells(25)).toEqual(['★ Ace', '16', '145000', '650', '340', '12', '0', '30', '2026']);
+      expect(cells(25)).toEqual([
+        '☆ Ace (current)',
+        '16',
+        '145000',
+        '650',
+        '340',
+        '12',
+        '0',
+        '30',
+        '2026',
+      ]);
       expect(cells(30)[8]).toBe('—');
     });
 
@@ -267,6 +280,25 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
       expect(playerRow(25)?.classList).not.toContain('team-history-player--former');
       expect(playerRow(30)?.classList).toContain('team-history-player--former');
       expect(playerRow(30)?.classList).not.toContain('team-history-player--current');
+    });
+
+    it('names the mark in text too, not by colour alone (story 27): a hidden (current) / (former)', async () => {
+      await open(PATH, 3, teamHistory(), [teamHistoryPlayerRow(), former()]);
+      const status = (id: number): HTMLElement | null | undefined =>
+        playerRow(id)?.querySelector<HTMLElement>('td.name .team-history__status');
+      expect(text(status(25))).toBe('(current)');
+      expect(text(status(30))).toBe('(former)');
+      expect(cells(25)[0]).toBe('☆ Ace (current)');
+
+      // The spec runs from `frontend/` (`npm run test:ci`) or from the repo root.
+      const scss = 'app/leagues/team-history/team-history.scss';
+      const file = [
+        join(process.cwd(), 'src', scss),
+        join(process.cwd(), 'frontend', 'src', scss),
+      ].find((path) => existsSync(path)) as string;
+      const rule = /\.team-history__status\s*\{([^}]*)\}/.exec(compile(file).css)?.[1] ?? '';
+      expect(rule).toContain('position: absolute');
+      expect(rule).toContain('clip: rect(0, 0, 0, 0)');
     });
 
     it('reads "No players have appeared for this team yet." with no Players', async () => {
@@ -336,11 +368,19 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
   });
 
   describe('Team picker', () => {
-    const picker = (): HTMLSelectElement => q('#team-history-team-picker') as HTMLSelectElement;
+    const picker = (): HTMLSelectElement =>
+      q('app-team-picker select#stats-team-select') as HTMLSelectElement;
+
+    it('is the kit app-team-picker in a filters row below the h1, not beside it', async () => {
+      await open();
+      expect(q('h1 ~ .stats-filters app-team-picker')).not.toBeNull();
+      // Its own row right under the h1, not a header row beside it.
+      expect(q('h1')?.nextElementSibling?.classList).toContain('stats-filters');
+    });
 
     it("lists meta.team_options by name, the shown Team selected, with no 'All'", async () => {
       await open();
-      expect(text(q('label[for="team-history-team-picker"]'))).toBe('Team:');
+      expect(text(q('label[for="stats-team-select"]'))).toBe('Team:');
       expect([...picker().options].map((o) => `${o.value}:${o.text}`)).toEqual([
         '5:Blue Bolts',
         '3:Red Raiders',
@@ -404,7 +444,7 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
   describe('empty states (I1)', () => {
     /** Everything but the h1 and the notice is absent. */
     function onlyNotice(): void {
-      expect(q('#team-history-team-picker')).toBeNull();
+      expect(q('app-team-picker')).toBeNull();
       expect(q('#team-history-overall')).toBeNull();
       expect(q('#team-history-seasons')).toBeNull();
       expect(q('#team-history-players')).toBeNull();

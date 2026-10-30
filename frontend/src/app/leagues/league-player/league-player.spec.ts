@@ -312,6 +312,20 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
         'Special Usage 70',
       ]);
     });
+
+    it("lays the Role card out in Django's two columns: four rows, filled column by column", async () => {
+      await open();
+      // The spec runs from `frontend/` (`npm run test:ci`) or from the repo root.
+      const scss = 'app/leagues/league-player/league-player.scss';
+      const file = [
+        join(process.cwd(), 'src', scss),
+        join(process.cwd(), 'frontend', 'src', scss),
+      ].find((path) => existsSync(path)) as string;
+      const css = compile(file).css;
+      const rule = /\.rating-group--wide \.rating-group__rows\s*\{([^}]*)\}/.exec(css)?.[1] ?? '';
+      expect(rule).toContain('grid-auto-flow: column');
+      expect(rule).toContain('grid-template-rows: repeat(4, auto)');
+    });
   });
 
   const headers = (table: string): string[] => qa(`#${table} thead th`).map((th) => text(th));
@@ -332,7 +346,7 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
         'Tagged',
         'Tag Ratio',
         'Acc%',
-        'Survival(s)',
+        'Survival',
         'Lives',
         'Resup',
         'Missiles',
@@ -437,6 +451,9 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
       expect(c?.xTitle()).toBe('Season');
       expect(c?.yTitle()).toBe('Overall rating');
       expect(c?.maxSec()).toBe(2);
+      // The tooltip and ticks name each point's Season, not its number.
+      expect(c?.xLabel()?.(1)).toBe('Season 1');
+      expect(c?.xLabel()?.(2)).toBe('Season 2');
       expect(c?.datasets()).toEqual([
         {
           label: 'Overall rating',

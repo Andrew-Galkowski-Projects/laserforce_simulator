@@ -1,4 +1,4 @@
-import { Component, computed, inject } from '@angular/core';
+import { Component, inject } from '@angular/core';
 import { RouterLink } from '@angular/router';
 import { PlayerRatingRow } from '../../api/league-stats.models';
 import { LeagueStatsService } from '../../api/league-stats.service';
@@ -41,7 +41,8 @@ const CONFIG: PagedStatsQueryConfig = {
 })
 export class PlayerRatings {
   private readonly stats = inject(LeagueStatsService);
-  protected readonly nav = inject(LeagueContext).nav;
+  private readonly context = inject(LeagueContext);
+  protected readonly nav = this.context.nav;
   protected readonly sortColumns = RATING_SORT_COLUMNS;
   protected readonly statKeys = RATING_STAT_KEYS;
   protected readonly bioHeaders = RATING_BIO_HEADERS;
@@ -50,10 +51,7 @@ export class PlayerRatings {
   );
 
   /** I3: the nav has loaded and the League has no Season. */
-  protected readonly noSeason = computed(() => {
-    const nav = this.nav();
-    return nav !== null && nav.displayed_season === null;
-  });
+  protected readonly noSeason = this.context.noSeason;
 
   protected count(n: number): string {
     return countOf(n, 'player');

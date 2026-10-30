@@ -1,4 +1,26 @@
+import { ParamMap } from '@angular/router';
 import { LeagueNav } from '../../api/leagues.models';
+import { StatsQueryConfig, parseStatsQuery } from './stats-query';
+
+/** Only `?team=`: `parseStatsQuery`'s lenient Team reader, nothing else. */
+const TEAM_ONLY: StatsQueryConfig = {
+  sortKeys: [],
+  defaultSort: '',
+  defaultDir: 'asc',
+  firstDir: 'asc',
+  team: true,
+};
+
+/**
+ * `?team=` as a Team id, or null when it is missing or not a positive integer. For a League team
+ * screen with no other URL state (Roster, Team Schedule); a screen with a sort or paging reads
+ * `parseStatsQuery(...).team` instead (Team History).
+ *
+ *   const team = toSignal(route.queryParamMap.pipe(map(teamQueryParam)), { initialValue: null });
+ */
+export function teamQueryParam(params: ParamMap): number | null {
+  return parseStatsQuery(params, TEAM_ONLY).team;
+}
 
 /**
  * The Team a League team screen shows (spec #428 F8; Roster, Team Schedule, Team History):

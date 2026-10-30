@@ -10,7 +10,8 @@ import { LeagueTeamService } from '../../api/league-team.service';
 import { apiMessage } from '../../shared/api-message';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 import { LeagueContext } from '../stats-shared/league-context';
-import { resolveTeamParam } from '../stats-shared/team-param';
+import { resolveTeamParam, teamQueryParam } from '../stats-shared/team-param';
+import { TeamPicker } from '../stats-shared/team-picker';
 
 /** What the screen shows. */
 type View =
@@ -27,8 +28,6 @@ type View =
 /** The request the nav and `?team=` call for, or the empty state that replaces it. */
 type Request = { leagueId: number; teamId: number } | View;
 
-const POSITIVE_INT = /^[1-9]\d*$/;
-
 /**
  * `/leagues/:id/team/schedule?team=` (spec #428 Team Schedule, `leagues/team_schedule.html`): a
  * Team's Upcoming and Completed Games and, when there are any, its Member Night Appearances. The
@@ -37,7 +36,7 @@ const POSITIVE_INT = /^[1-9]\d*$/;
  */
 @Component({
   selector: 'app-league-team-schedule',
-  imports: [MatButton, RouterLink],
+  imports: [MatButton, RouterLink, TeamPicker],
   templateUrl: './team-schedule.html',
   styleUrl: './team-schedule.scss',
 })
@@ -48,7 +47,7 @@ export class LeagueTeamSchedule {
   private readonly context = inject(LeagueContext);
   protected readonly nav = this.context.nav;
 
-  private readonly teamQuery = toSignal(this.route.queryParamMap.pipe(map((p) => p.get('team'))), {
+  private readonly teamQuery = toSignal(this.route.queryParamMap.pipe(map(teamQueryParam)), {
     initialValue: null,
   });
   private readonly reloads = signal(0);
@@ -58,11 +57,7 @@ export class LeagueTeamSchedule {
     const leagueId = this.context.leagueId();
     if (nav === null || leagueId === null) return { kind: 'loading' };
     if (nav.displayed_season === null) return { kind: 'noSeason' };
-    const raw = this.teamQuery();
-    const teamId = resolveTeamParam(
-      raw !== null && POSITIVE_INT.test(raw) ? Number(raw) : null,
-      nav,
-    );
+    const teamId = resolveTeamParam(this.teamQuery(), nav);
     return teamId === null ? { kind: 'noTeam' } : { leagueId, teamId };
   });
 
@@ -96,8 +91,7 @@ export class LeagueTeamSchedule {
   }
 
   /** The picker sets `?team=`; the load follows the URL. */
-  protected pickTeam(event: Event): void {
-    const team = Number((event.target as HTMLSelectElement).value);
+  protected pickTeam(team: number | null): void {
     void this.router.navigate([], { relativeTo: this.route, queryParams: { team } });
   }
 }

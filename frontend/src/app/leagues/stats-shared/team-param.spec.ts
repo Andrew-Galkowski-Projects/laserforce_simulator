@@ -1,5 +1,19 @@
+import { convertToParamMap } from '@angular/router';
 import { leagueNav } from '../testing/league-fixtures';
-import { resolveTeamParam } from './team-param';
+import { resolveTeamParam, teamQueryParam } from './team-param';
+
+describe('teamQueryParam', () => {
+  it('reads ?team= as a Team id', () => {
+    expect(teamQueryParam(convertToParamMap({ team: '5' }))).toBe(5);
+  });
+
+  it('is null when ?team= is missing or not a positive integer', () => {
+    expect(teamQueryParam(convertToParamMap({}))).toBeNull();
+    for (const bad of ['0', '-3', 'abc', '2.5', '']) {
+      expect(teamQueryParam(convertToParamMap({ team: bad }))).toBeNull();
+    }
+  });
+});
 
 describe('resolveTeamParam (spec #428 F8)', () => {
   const nav = leagueNav({ schedule_team: { id: 3, name: 'Red Raiders' } });

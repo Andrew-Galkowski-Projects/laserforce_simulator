@@ -116,7 +116,8 @@ src/
                           computes it), notify.ts (injectNotify: the "Close" snackbar),
                           api-message.ts (apiMessage: an ApiError's message or a fallback),
                           line-chart.ts (app-line-chart over Chart.js, ADR-0045: clock or
-                          count x-axis; Round charts + career trend),
+                          count x-axis, `[xLabel]` names a count: League player's Seasons;
+                          Round charts + career trend),
                           auth-card.scss (the signed-out card: login + register),
                           _alerts.scss (notice / error box mixins), _badges.scss (the
                           "You" badge mixin; tournament-state and league-state (ANG-06-14), the
@@ -226,12 +227,16 @@ src/
                           players/watch-list (watch-list) and players/:playerId (league-player).
                           stats-shared/ is their kit (read each
                           file's header): stats-query.ts (URL state, I1 / I2), stats-screen.ts
-                          (injectStatsScreen), league-context.ts (the layout's nav + leagueId),
-                          the Season / Team / Rate / per-page pickers, paginator, player-cell
+                          (injectStatsScreen; `retry()`, and `{ waitForSeason: true }` to wait
+                          for the nav and send nothing with no Season: Free Agents, Watch
+                          List), league-context.ts (the layout's nav + leagueId, `noSeason`),
+                          the Season / Team / Rate / per-page pickers (Team: `[allowAll]="false"`
+                          drops "All" on the three team screens), paginator, player-cell
                           (Watch flag + League player link), player-columns.ts (the Ratings /
-                          Stats columns and cell formats), team-param.ts (resolveTeamParam),
+                          Stats columns and cell formats, roleTitle), team-param.ts
+                          (teamQueryParam: `?team=` alone; resolveTeamParam),
                           _stats-page.scss. watch/ (ANG-06-16): WatchState (provided by
-                          LeagueLayout) and app-watch-flag, the ★ toggle.
+                          LeagueLayout) and app-watch-flag, the star toggle (☆ off, ★ on).
                           league-nav.ts (LEAGUE_NAV_ENTRIES:
                           23 entries, 15 live), soon-badge/ (app-soon-badge:
                           a not-yet-ported target as a disabled span, never an <a>),

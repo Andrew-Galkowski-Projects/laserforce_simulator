@@ -212,7 +212,7 @@ describe('Free Agents (/leagues/:id/players/free-agents, spec #428)', () => {
     it("shows the template's cells and formats, MMR and Rank as '-'", async () => {
       await open();
       expect(cells()).toEqual([
-        '★ Ace',
+        '☆ Ace',
         '—',
         'commander, he…',
         '72.4',
@@ -397,7 +397,7 @@ describe('Free Agents (/leagues/:id/players/free-agents, spec #428)', () => {
       await click(button('Retry'));
       expect(await answer()).toEqual({ ...DEFAULT, ordering: 'speed' });
       expect(q('[role="alert"]')).toBeNull();
-      expect(cells()[0]).toBe('★ Ace');
+      expect(cells()[0]).toBe('☆ Ace');
     });
 
     it('drops an ordering the API rejects, replacing the URL', async () => {

@@ -131,10 +131,10 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
 
   it('shows a row as "rank. Player, Team" and its value to 1 place (Tag Ratio: 2)', async () => {
     await open();
-    expect(rows('leaders-avg-tags')).toEqual([['1. ★ Ace, Red Raiders', '41.3']]);
-    expect(rows('leaders-avg-score')).toEqual([['1. ★ Ace, Red Raiders', '9120.5']]);
-    expect(rows('leaders-fewest-tagged')).toEqual([['1. ★ Ace, Red Raiders', '12.4']]);
-    expect(rows('leaders-tag-ratio')).toEqual([['1. ★ Ace, Red Raiders', '1.80']]);
+    expect(rows('leaders-avg-tags')).toEqual([['1. ☆ Ace, Red Raiders', '41.3']]);
+    expect(rows('leaders-avg-score')).toEqual([['1. ☆ Ace, Red Raiders', '9120.5']]);
+    expect(rows('leaders-fewest-tagged')).toEqual([['1. ☆ Ace, Red Raiders', '12.4']]);
+    expect(rows('leaders-tag-ratio')).toEqual([['1. ☆ Ace, Red Raiders', '1.80']]);
     const cells = [...page().querySelectorAll('#leaders-avg-tags tbody td')];
     expect(cells.map((td) => td.className)).toEqual(['name', 'num']);
   });
@@ -197,9 +197,9 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
       await click(header('leaders-avg-tags', 1));
       await click(header('leaders-avg-tags', 0));
       expect(rows('leaders-avg-tags').map((r) => r[0])).toEqual([
-        '2. ★ Ace, Red Raiders',
-        '3. ★ Bea, Red Raiders',
-        '1. ★ Cal, Red Raiders',
+        '2. ☆ Ace, Red Raiders',
+        '3. ☆ Bea, Red Raiders',
+        '1. ☆ Cal, Red Raiders',
       ]);
       expect(headers('leaders-avg-tags')).toEqual(['Average Tags ↑', 'Tags']);
       await click(header('leaders-avg-tags', 0));
@@ -289,7 +289,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
         await answer(leaderBoards({ avg_tags: [fresh] }), seasonScope({ selected: 'career' })),
       ).toEqual({ season: 'career' });
       expect(text(q('#leaders-scope'))).toBe('Career');
-      expect(rows('leaders-avg-tags')[0][0]).toBe('1. ★ Bea, Red Raiders');
+      expect(rows('leaders-avg-tags')[0][0]).toBe('1. ☆ Bea, Red Raiders');
     });
 
     it('a Season change drops a hand-written team param (the screen has no Team filter)', async () => {
@@ -312,7 +312,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
     expect(navigate.mock.calls.map(([, extras]) => extras?.replaceUrl)).toEqual([true]);
     expect(await answer()).toEqual({});
     expect(q('[role="alert"]')).toBeNull();
-    expect(rows('leaders-avg-tags')[0][0]).toBe('1. ★ Ace, Red Raiders');
+    expect(rows('leaders-avg-tags')[0][0]).toBe('1. ☆ Ace, Red Raiders');
   });
 
   describe('empty states (I3)', () => {
@@ -333,7 +333,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
       expect(page().querySelector('#leaders-fewest-tagged tbody td')?.getAttribute('colspan')).toBe(
         '2',
       );
-      expect(rows('leaders-avg-tags')).toEqual([['1. ★ Ace, Red Raiders', '41.3']]);
+      expect(rows('leaders-avg-tags')).toEqual([['1. ☆ Ace, Red Raiders', '41.3']]);
       expect(q('#leaders-empty-notice')).toBeNull();
     });
   });

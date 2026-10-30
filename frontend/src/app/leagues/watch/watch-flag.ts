@@ -3,7 +3,7 @@ import { PlayerRef } from '../../api/analytics.models';
 import { WatchState } from './watch-state';
 
 /**
- * `<app-watch-flag [player] [watched]>`: the ★ toggle beside a Player's name on a League table
+ * `<app-watch-flag [player] [watched]>`: the star toggle (☆ off, ★ on) beside a Player's name on a League table
  * (spec #428 F4). `[watched]` is the row's seed; the shown state is `WatchState.watched`, so every
  * flag for one Player changes together. Clicking calls `WatchState.toggle`; the button is
  * disabled while that request is in flight. `app-player-cell` puts one before the name; the League
@@ -22,7 +22,7 @@ import { WatchState } from './watch-state';
       [disabled]="pending()"
       (click)="toggle()"
     >
-      &#9733;
+      {{ on() ? '★' : '☆' }}
     </button>
   `,
   styleUrl: './watch-flag.scss',

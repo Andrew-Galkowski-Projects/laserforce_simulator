@@ -7,6 +7,7 @@ import { LeaguePlayer, LeaguePlayerStatRow } from '../../api/league-players.mode
 import { LeaguePlayersService } from '../../api/league-players.service';
 import { AuthService } from '../../auth/auth.service';
 import { apiMessage } from '../../shared/api-message';
+import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 import { ChartTheme, LineChart, LineSeries } from '../../shared/line-chart';
 import { notFoundOrError } from '../../shared/not-found-or-error';
 import { injectNotify } from '../../shared/notify';
@@ -18,12 +19,10 @@ import {
   STAT_COLUMNS,
   orDash,
   potentialText,
+  roleTitle,
   statCell,
 } from '../stats-shared/player-columns';
 import { WatchFlag } from '../watch/watch-flag';
-
-/** A failed Self-insert call's message when the error is not an `ApiError` (Teams' wording). */
-const FAILED = 'Something went wrong.';
 
 /** The chart's series label and y-axis title (Django's chart). */
 const OVERALL_LABEL = 'Overall rating';
@@ -94,11 +93,6 @@ const HISTORY_HEADERS: readonly string[] = [
   'Special Usage',
 ];
 
-/** The Regular Season stat headers: `STAT_COLUMNS`, with the ticket's "Survival(s)". */
-const RS_HEADERS: readonly string[] = STAT_COLUMNS.map((c) =>
-  c.key === 'survival' ? 'Survival(s)' : c.label,
-);
-
 /** One Regular Season / Career row as shown. */
 interface RsRow {
   key: string;
@@ -135,7 +129,8 @@ export class LeaguePlayerDetail {
   protected readonly loadError = signal<string | null>(null);
   private readonly reloads = new Subject<void>();
 
-  protected readonly rsHeaders = RS_HEADERS;
+  /** The Regular Season stat headers: `STAT_COLUMNS`' (Django's "Survival"; the cells keep `s`). */
+  protected readonly rsHeaders = STAT_COLUMNS.map((c) => c.label);
   protected readonly historyHeaders = HISTORY_HEADERS;
   protected readonly overallLabel = OVERALL_LABEL;
 
@@ -152,7 +147,7 @@ export class LeaguePlayerDetail {
   protected readonly canLink = computed(() => this.data()?.can_link_self_insert ?? false);
 
   protected readonly roles = computed(() =>
-    (this.data()?.bio.preferred_roles ?? []).map((r) => r.charAt(0).toUpperCase() + r.slice(1)),
+    (this.data()?.bio.preferred_roles ?? []).map(roleTitle),
   );
 
   protected readonly groups = computed(() => {
@@ -195,6 +190,10 @@ export class LeaguePlayerDetail {
     };
   });
 
+  /** The chart's name for Season number `x` (1-based): that snapshot's Season name. */
+  protected readonly seasonLabel = (x: number): string =>
+    this.data()?.ratings_history[x - 1]?.season.name ?? String(x);
+
   /** Overall rating by Season number (1 = the oldest snapshot). */
   protected readonly trend = computed<LineSeries[]>(() => [
     {
@@ -236,12 +235,10 @@ export class LeaguePlayerDetail {
     this.reloads.next();
   }
 
+  protected readonly potentialText = potentialText;
+
   protected overall(d: LeaguePlayer): string {
     return d.overall_rating.toFixed(0);
-  }
-
-  protected potential(d: LeaguePlayer): string {
-    return potentialText(d.potential);
   }
 
   protected link(d: LeaguePlayer): void {
@@ -256,7 +253,7 @@ export class LeaguePlayerDetail {
   private run(call: Observable<unknown>, done: string): void {
     call.subscribe({
       next: () => this.notify(done),
-      error: (err: unknown) => this.notify(apiMessage(err, FAILED)),
+      error: (err: unknown) => this.notify(apiMessage(err, GENERIC_ERROR_MESSAGE)),
     });
   }
 }
