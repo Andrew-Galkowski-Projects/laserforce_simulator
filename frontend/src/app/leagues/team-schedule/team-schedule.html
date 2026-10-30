@@ -1,0 +1,150 @@
+@let v = view();
+@if (v.kind !== 'loaded') {
+  <h1>{{ nav()?.league?.name }} — Schedule</h1>
+}
+@switch (v.kind) {
+  @case ('noSeason') {
+    <p id="team-schedule-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to view the team schedule.
+    </p>
+  }
+  @case ('noTeam') {
+    <p id="team-schedule-empty-notice" class="stats-notice" role="status">
+      No team available to display in this League's current Season.
+    </p>
+  }
+  @case ('error') {
+    <div class="stats-error team-schedule__error" role="alert">
+      <span>{{ v.message }}</span>
+      <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+    </div>
+  }
+  @case ('loaded') {
+    <header id="team-schedule-header">
+      <h1>{{ v.result.data.team.name }} — Schedule</h1>
+      <p id="team-schedule-season" class="team-schedule__season">{{ v.result.data.season.name }}</p>
+      <div class="stats-filters">
+        <app-team-picker
+          [options]="v.result.meta.team_options"
+          [selected]="v.result.data.team.id"
+          [allowAll]="false"
+          (teamChange)="pickTeam($event)"
+        />
+      </div>
+    </header>
+
+    <section id="team-schedule-upcoming-section">
+      <h2>Upcoming Games</h2>
+      @if (v.result.data.upcoming.length === 0) {
+        <p id="team-schedule-upcoming-empty" class="stats-notice" role="status">
+          No upcoming games
+        </p>
+      } @else {
+        <div class="stats-scroll">
+          <table id="team-schedule-upcoming-list" class="stats-table">
+            <thead>
+              <tr>
+                <th scope="col">Matchday</th>
+                <th scope="col">Date</th>
+                <th scope="col" class="name">Match</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of v.result.data.upcoming; track $index) {
+                <tr [id]="'team-schedule-upcoming-row-' + row.matchday + '-' + row.round_number">
+                  <td>{{ row.matchday }} · R{{ row.round_number }}</td>
+                  <td>{{ row.date }}</td>
+                  <td class="name">(R) {{ row.red_team_name }} VS (B) {{ row.blue_team_name }}</td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    <section id="team-schedule-completed-section">
+      <h2>Completed Games</h2>
+      @if (v.result.data.completed.length === 0) {
+        <p id="team-schedule-completed-empty" class="stats-notice" role="status">
+          No completed games
+        </p>
+      } @else {
+        <div class="stats-scroll">
+          <table id="team-schedule-completed-list" class="stats-table">
+            <thead>
+              <tr>
+                <th scope="col">Matchday</th>
+                <th scope="col">Date</th>
+                <th scope="col" class="name">Match</th>
+                <th scope="col" class="num">Score</th>
+                <th scope="col">Result</th>
+                <th scope="col"></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of v.result.data.completed; track row.game_round_id) {
+                <tr [id]="'team-schedule-completed-row-' + row.game_round_id">
+                  <td>{{ row.matchday }} · R{{ row.round_number }}</td>
+                  <td>{{ row.date }}</td>
+                  <td class="name">(R) {{ row.red_team_name }} VS (B) {{ row.blue_team_name }}</td>
+                  <td class="num">{{ row.red_score }} — {{ row.blue_score }}</td>
+                  <td>{{ row.outcome }}</td>
+                  <td><a [routerLink]="['/rounds', row.game_round_id]">View Round detail</a></td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </section>
+
+    @if (v.result.data.member_night_appearances.length > 0) {
+      <section id="team-schedule-member-nights">
+        <h2>Member Night Appearances</h2>
+        <p class="team-schedule__help">
+          Casual member-night games where one of {{ v.result.data.team.name }}'s players played
+          (drawn onto a mixed team — not counted toward Standings).
+        </p>
+        <div class="stats-scroll">
+          <table id="team-schedule-member-night-list" class="stats-table">
+            <thead>
+              <tr>
+                <th scope="col" class="name">Game</th>
+                <th scope="col">Result</th>
+                <th scope="col" class="name">Your players</th>
+                <th scope="col"></th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (g of v.result.data.member_night_appearances; track g.match_id) {
+                <tr [id]="'team-schedule-member-night-row-' + g.match_id">
+                  <td class="name">{{ g.team_a_name }} VS {{ g.team_b_name }}</td>
+                  <td>
+                    @if (g.is_completed) {
+                      {{ g.red_points }} — {{ g.blue_points }}
+                      @if (g.winner_name) {
+                        ({{ g.winner_name }})
+                      }
+                    } @else {
+                      <span class="team-schedule__muted">Not played</span>
+                    }
+                  </td>
+                  <td class="name">{{ g.players.join(', ') }}</td>
+                  <td>
+                    @for (r of g.rounds; track r.id) {
+                      <a [routerLink]="['/rounds', r.id]">R{{ r.round_number }}</a>
+                      @if (!$last) {
+                        ·
+                      }
+                    }
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      </section>
+    }
+  }
+}

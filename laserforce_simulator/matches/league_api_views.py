@@ -90,7 +90,7 @@ from matches.league_play_services import (
     SeasonNotDraftError,
     WrongPhaseError,
 )
-from matches.league_screen_api_views import LeagueScreensMixin
+from matches.league_screen_api_views import LeagueScreensMixin, team_picker_response
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
 from matches.models import League, Season
 from matches.season_awards import ROLE_KEYS, AwardWinner
@@ -568,13 +568,14 @@ class LeagueViewSet(
         displayed_season = pick_displayed_season(league)
         if displayed_season is None:
             raise NotFound("No Season in this League.")
-        return Response(
+        return team_picker_response(
             {
                 "league": league_ref(league),
                 "season": season_ref(displayed_season),
                 "team": team_ref(team),
                 **build_team_schedule(displayed_season, team),
-            }
+            },
+            displayed_season,
         )
 
     @action(

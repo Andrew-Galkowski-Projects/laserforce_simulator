@@ -1,0 +1,185 @@
+@if (notFound()) {
+  <h1>Player not found</h1>
+  <p><a mat-stroked-button [routerLink]="['/leagues', leagueId()]">&larr; Back to League</a></p>
+} @else if (loadError(); as message) {
+  <div class="stats-error player-error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (data(); as d) {
+  <div id="league-player-header" class="player-header">
+    <app-watch-flag [player]="d.player" [watched]="d.watched" />
+    <h1>
+      {{ d.player.name }}
+      @if (isSelf()) {
+        <span class="badge--you">You</span>
+      }
+    </h1>
+    <a mat-stroked-button [routerLink]="['/players', d.player.id, 'stats']"
+      >Career stats (global)</a
+    >
+    @if (isSelf()) {
+      <button mat-stroked-button type="button" (click)="unlink()">Unlink</button>
+    } @else if (canLink()) {
+      <button mat-stroked-button type="button" (click)="link(d)">This is me</button>
+    }
+  </div>
+
+  <div class="player-cards">
+    <section id="league-player-overall" class="player-card">
+      <h2>Overall</h2>
+      <div class="player-card__line">
+        <span class="muted">Overall rating</span>
+        <span class="player-card__value">{{ overall(d) }}</span>
+      </div>
+      @if (roles().length > 0) {
+        <div class="player-card__roles">
+          <small class="muted">Preferred roles</small>
+          <div>
+            @for (r of roles(); track r) {
+              <span class="player-card__role">{{ r }}</span>
+            }
+          </div>
+        </div>
+      }
+    </section>
+    <section id="league-player-potential" class="player-card">
+      <h2>Potential</h2>
+      <div class="player-card__line">
+        <span class="muted">Potential rating</span>
+        <span class="player-card__value">{{ potentialText(d.potential) }}</span>
+      </div>
+      <small class="muted">Projected peak overall rating.</small>
+    </section>
+  </div>
+
+  <div id="league-player-ratings" class="player-cards">
+    @for (g of groups(); track g.label) {
+      <section class="player-card rating-group" [class.rating-group--wide]="g.label === 'Role'">
+        <h2>{{ g.label }}</h2>
+        <div class="rating-group__rows">
+          @for (s of g.stats; track s.label) {
+            <div class="rating-group__row">
+              <span class="muted">{{ s.label }}</span>
+              <span class="rating-group__value">{{ s.value }}</span>
+            </div>
+          }
+        </div>
+      </section>
+    }
+  </div>
+
+  <h2 id="league-player-rs-heading">Regular Season</h2>
+  @if (rsRows().length > 0) {
+    <div class="stats-scroll">
+      <table id="league-player-rs-stats-table" class="stats-table">
+        <thead>
+          <tr>
+            <th scope="col">Year</th>
+            <th scope="col" class="name">Team</th>
+            <th scope="col" class="num">GP</th>
+            @for (h of rsHeaders; track h) {
+              <th scope="col" class="num">{{ h }}</th>
+            }
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rsRows(); track row.key) {
+            <tr [class.rs-career]="row.career">
+              <td>{{ row.year }}</td>
+              <td class="name">{{ row.team }}</td>
+              <td class="num">{{ row.games }}</td>
+              @for (cell of row.cells; track $index) {
+                <td class="num">{{ cell }}</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  } @else {
+    <p id="league-player-rs-stats-empty" class="stats-notice" role="status">
+      {{ d.player.name }} has no recorded Rounds in {{ nav()?.league?.name }} yet.
+    </p>
+  }
+
+  <section id="league-player-playoffs-stub" class="player-card player-section">
+    <h2>Playoffs</h2>
+    <p class="muted">Coming soon — arrives with LG-02.</p>
+  </section>
+
+  <section id="league-player-ratings-history" class="player-card player-section">
+    <h2>Ratings history</h2>
+    @if (historyRows().length > 0) {
+      <div class="history-chart">
+        <app-line-chart
+          [title]="overallLabel"
+          [datasets]="trend()"
+          [maxSec]="historyRows().length"
+          [theme]="theme()"
+          xAxis="count"
+          xTitle="Season"
+          [xLabel]="seasonLabel"
+          [yTitle]="overallLabel"
+        />
+      </div>
+      <div class="stats-scroll">
+        <table id="league-player-ratings-history-table" class="stats-table">
+          <thead>
+            <tr>
+              <th scope="col" class="name">Season</th>
+              <th scope="col" class="num">Age</th>
+              <th scope="col" class="num">Ovr</th>
+              <th scope="col" class="num">Pot</th>
+              @for (h of historyHeaders; track h) {
+                <th scope="col" class="num">{{ h }}</th>
+              }
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of historyRows(); track row.key) {
+              <tr>
+                <td class="name">{{ row.season }}</td>
+                <td class="num">{{ row.age }}</td>
+                <td class="num">{{ row.overall }}</td>
+                <td class="num">{{ row.potential }}</td>
+                @for (value of row.ratings; track $index) {
+                  <td class="num">{{ value }}</td>
+                }
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    } @else {
+      <p id="league-player-ratings-history-empty" class="muted">No ratings history yet.</p>
+    }
+  </section>
+
+  <section id="league-player-awards" class="player-card player-section">
+    <h2>Awards</h2>
+    @for (entry of d.awards; track entry.season.id) {
+      <div class="award">
+        <!-- The Season awards screen arrives with ANG-06-18. -->
+        <app-soon-badge [label]="entry.season.name" />
+        <ul>
+          @for (label of entry.award_labels; track label) {
+            <li>{{ label }}</li>
+          }
+        </ul>
+      </div>
+    } @empty {
+      <p class="muted">No awards won in this League yet.</p>
+    }
+  </section>
+
+  <section id="league-player-salaries-stub" class="player-card player-section">
+    <h2>Salaries</h2>
+    <p class="muted">Coming soon — awaiting a roster-economy model.</p>
+  </section>
+
+  <section id="league-player-transactions-stub" class="player-card player-section">
+    <h2>Transactions</h2>
+    <p class="muted">Coming soon — awaiting a transactions model.</p>
+  </section>
+}

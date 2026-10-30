@@ -15,6 +15,7 @@ import {
 } from '../league-nav';
 import { SoonBadge } from '../soon-badge/soon-badge';
 import { LeagueContext } from '../stats-shared/league-context';
+import { WatchState } from '../watch/watch-state';
 
 /** At this width and wider the League nav is a column beside the page (as the Shell's). */
 const WIDE = '(min-width: 768px)';
@@ -49,11 +50,13 @@ const GROUPS: readonly NavGroup[] = LEAGUE_NAV_ENTRIES.reduce<NavGroup[]>((group
   imports: [MatAnchor, MatButton, RouterLink, RouterLinkActive, RouterOutlet, SoonBadge],
   templateUrl: './league-layout.html',
   styleUrl: './league-layout.scss',
-  // The routed screens read the loaded nav from here (League name, displayed Season).
-  providers: [LeagueContext],
+  // The routed screens read the loaded nav from here (League name, displayed Season), and share
+  // one WatchState, so a Watch flag toggled on one screen stays toggled on the next (spec #428 F3).
+  providers: [LeagueContext, WatchState],
 })
 export class LeagueLayout {
-  protected readonly nav = inject(LeagueContext).nav;
+  private readonly context = inject(LeagueContext);
+  protected readonly nav = this.context.nav;
   protected readonly notFound = signal(false);
   protected readonly loadError = signal<string | null>(null);
   protected readonly groups = GROUPS;
@@ -72,7 +75,8 @@ export class LeagueLayout {
     const leagues = inject(LeaguesService);
     combineLatest([inject(ActivatedRoute).paramMap, this.reloads.pipe(startWith(undefined))])
       .pipe(
-        tap(() => {
+        tap(([params]) => {
+          this.context.leagueId.set(Number(params.get('id')));
           this.notFound.set(false);
           this.loadError.set(null);
         }),

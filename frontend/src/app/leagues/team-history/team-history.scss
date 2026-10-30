@@ -1,0 +1,117 @@
+// Team History (spec #428): `--lf-*` tokens only, no colour literals.
+@use '../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+
+  // `team_history.html`'s green (still on the Team) and blue (now on another Team).
+  --team-history-current: var(--lf-rating-elite);
+  --team-history-former: var(--lf-rating-good);
+}
+
+h1 {
+  @include stats-page.heading;
+}
+
+h2 {
+  margin: 1.5rem 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+}
+
+.stats-filters {
+  @include stats-page.filters;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: max-content auto;
+  gap: 0.25rem 1.5rem;
+  max-width: 22rem;
+  margin: 0;
+}
+
+dt {
+  color: var(--lf-text-muted);
+}
+
+dd {
+  margin: 0;
+  font-family: var(--lf-font-numeric);
+}
+
+// I6: both tables scroll sideways inside this box, never the page.
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+}
+
+.team-history__empty-row {
+  color: var(--lf-text-muted);
+}
+
+// The on-team marks: a tint plus a coloured edge on the name cell (the legend names them).
+.team-history-player--current,
+.team-history-player--former {
+  --mark: var(--team-history-current);
+}
+
+.team-history-player--former {
+  --mark: var(--team-history-former);
+}
+
+.stats-table tbody tr.team-history-player--current,
+.stats-table tbody tr.team-history-player--former {
+  background: color-mix(in srgb, var(--mark) 12%, transparent);
+
+  td.name {
+    box-shadow: inset 3px 0 0 var(--mark);
+  }
+}
+
+// The mark in words for a screen reader (story 27: never colour alone), visually hidden.
+.team-history__status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.team-history__legend {
+  margin: 0 0 0.75rem;
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.team-history__swatch {
+  padding: 0 0.25rem;
+  border-radius: var(--lf-radius);
+  background: color-mix(in srgb, var(--mark) 12%, transparent);
+  box-shadow: inset 3px 0 0 var(--mark);
+  color: var(--lf-text);
+}
+
+.stats-notice {
+  @include stats-page.notice;
+}
+
+.stats-error {
+  @include stats-page.error;
+}
+
+.team-history__error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.stats-footer {
+  @include stats-page.footer;
+}

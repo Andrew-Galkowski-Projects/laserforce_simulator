@@ -475,14 +475,24 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
   `enrolled_teams(displayed_season)`, so it is the Teams enrolled in the **displayed** Season, by
   name (the same set the `team_id` allowlist checks), even when `?season=` picks a past Season or
   `career`. It is `[]` when the League has no Season. `player-ratings/` keeps no `season_scope` and
-  gets `team_options` beside its page keys. No other action (Playoffs included) carries it. It
-  costs a fixed number of queries per request, never one per row.
+  gets `team_options` beside its page keys. ANG-06-16 adds it to the non-paged
+  `teams/<team_id>/roster/`, `teams/<team_id>/history/` and `teams/<team_id>/schedule/` through
+  `team_picker_response(data, season)` (sets `response.envelope_meta`); `history/players/` stays
+  without it. No other action (Playoffs included) carries it. It costs a fixed number of queries
+  per request, never one per row.
+- **`player_bio(player)`** (ANG-06-16) = `{overall_rating, potential, age, height, home_site,
+  started_playing_age, total_games}`. `player_rating_rows` spreads it (shape unchanged), and so
+  does every `teams/<team_id>/roster/` row: starters `{role, player, watched, ...bio}`, bench
+  `{player, watched, ...bio}`.
 - **Every Player row carries `watched`** for the requesting Account; rating rows carry the 19
   lowercase `stats`.
 - **Team-scoped paths** (`teams/<team_id>/…`) use `enrolled_team_or_404` — no displayed Season or a
   Team not enrolled in it ⇒ 404. No current-team fallback (HTML-only).
 - **League player** is lenient (decision 17): 404 only for a missing / foreign League or Player; one
   response with bio, overall, 19 stats, per-Season + Career rows, awards and ratings history.
+  ANG-06-16 adds `can_link_self_insert`: `player.team.manager_id == request.user.pk` (the
+  template's *This is me* rule; an unmanaged Team is false). Another Account's Player is a 404, so
+  the flag is never sent false for that reason.
 - **`leaders/`** returns all four boards (top 10), no sort params. **`playoffs/`** rejects `career`.
 - **`statistical-feats/`** `data.team_feats[]` = `{kind, label, team_name, team: team_ref | null,
   round_id}` (`team_feats_payload`). `team_name` (ANG-06-15) is the `TeamFeatRecord`'s own winner

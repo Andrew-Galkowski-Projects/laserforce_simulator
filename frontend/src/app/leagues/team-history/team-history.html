@@ -1,0 +1,151 @@
+@if (target(); as t) {
+  @if (!t.navLoaded) {
+    <!-- The League nav is loading: nothing to show yet. -->
+  } @else if (!t.hasSeason) {
+    <h1>{{ nav()?.league?.name }} — History</h1>
+    <p id="team-history-empty-notice" class="stats-notice" role="status">
+      No Season in this League yet — start a Season to view team history.
+    </p>
+  } @else if (t.team === null || notFound()) {
+    <h1>{{ nav()?.league?.name }} — History</h1>
+    <p id="team-history-empty-notice" class="stats-notice" role="status">
+      No team available to display in this League's current Season.
+    </p>
+  } @else if (loadError(); as message) {
+    <h1>{{ nav()?.league?.name }} — History</h1>
+    <div class="stats-error team-history__error" role="alert">
+      <span>{{ message }}</span>
+      <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+    </div>
+  } @else if (history(); as h) {
+    <h1>{{ h.team.name }} — History</h1>
+    <div class="stats-filters">
+      <app-team-picker
+        [options]="teamOptions()"
+        [selected]="t.team"
+        [allowAll]="false"
+        (teamChange)="pickTeam($event)"
+      />
+    </div>
+
+    <section id="team-history-overall">
+      <h2>Overall</h2>
+      <dl>
+        <dt>Record (round W-L-T)</dt>
+        <dd>{{ h.overall.wins }}-{{ h.overall.losses }}-{{ h.overall.ties }}</dd>
+        <dt>Playoff appearances</dt>
+        <dd>{{ h.overall.playoff_appearances }}</dd>
+        <dt>Championships</dt>
+        <dd>{{ h.overall.championships }}</dd>
+      </dl>
+    </section>
+
+    <section id="team-history-seasons">
+      <h2>Seasons</h2>
+      <div class="stats-scroll">
+        <table id="team-history-seasons-table" class="stats-table">
+          <thead>
+            <tr>
+              <th scope="col">
+                <a [routerLink]="[]" [queryParams]="seasonsSortParams('year')"
+                  >Year{{ seasonsArrow('year') }}</a
+                >
+              </th>
+              <th scope="col" class="num">
+                <a [routerLink]="[]" [queryParams]="seasonsSortParams('wins')"
+                  >Record (W-L-T){{ seasonsArrow('wins') }}</a
+                >
+              </th>
+              <th scope="col" class="num">
+                <a [routerLink]="[]" [queryParams]="seasonsSortParams('rank')"
+                  >Final rank{{ seasonsArrow('rank') }}</a
+                >
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (row of seasonRows(); track row.season.id) {
+              <tr [id]="'team-history-season-row-' + row.season.id">
+                <td>{{ row.year ?? '—' }}</td>
+                <td class="num">{{ row.wins }}-{{ row.losses }}-{{ row.ties }}</td>
+                <td class="num">{{ row.rank ?? '—' }}</td>
+              </tr>
+            } @empty {
+              <tr>
+                <td colspan="3" class="team-history__empty-row">No Seasons enrolled.</td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    @if (players(); as p) {
+      <section id="team-history-players">
+        <h2>Players</h2>
+        <p id="team-history-players-legend" class="team-history__legend">
+          Players currently on this team are
+          <span class="team-history__swatch team-history-player--current">highlighted in green</span
+          >. Players now on another team are
+          <span class="team-history__swatch team-history-player--former">highlighted in blue</span>.
+        </p>
+
+        <div class="stats-scroll">
+          <table id="team-history-players-table" class="stats-table">
+            <thead>
+              <tr>
+                <th scope="col" class="name">
+                  <a [routerLink]="[]" [queryParams]="playersSortParams('name')"
+                    >Name{{ playersArrow('name') }}</a
+                  >
+                </th>
+                @for (c of columns; track c.key) {
+                  <th scope="col" class="num">
+                    <a [routerLink]="[]" [queryParams]="playersSortParams(c.key)"
+                      >{{ c.label }}{{ playersArrow(c.key) }}</a
+                    >
+                  </th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of p.items; track row.player.id) {
+                <tr
+                  [id]="'team-history-player-row-' + row.player.id"
+                  [class.team-history-player--current]="row.on_team"
+                  [class.team-history-player--former]="!row.on_team"
+                >
+                  <td class="name">
+                    <app-player-cell [player]="row.player" [watched]="row.watched" />
+                    <span class="team-history__status">{{
+                      row.on_team ? ' (current)' : ' (former)'
+                    }}</span>
+                  </td>
+                  @for (c of columns; track c.key) {
+                    <td class="num">{{ c.value(row) }}</td>
+                  }
+                </tr>
+              } @empty {
+                <tr>
+                  <td colspan="9" class="team-history__empty-row">
+                    No players have appeared for this team yet.
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div class="stats-footer">
+          <app-per-page-picker [perPage]="t.query.perPage" (perPageChange)="pickPerPage($event)" />
+          <app-stats-paginator
+            [page]="p.meta.page"
+            [totalPages]="p.meta.total_pages"
+            label="Team history players pagination"
+            (pageChange)="pickPage($event)"
+          />
+        </div>
+      </section>
+    }
+  }
+}

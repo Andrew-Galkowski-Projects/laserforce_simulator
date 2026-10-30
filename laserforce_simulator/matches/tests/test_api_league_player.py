@@ -57,6 +57,9 @@ class LeaguePlayerPageTests(LeagueApiTestCase):
                 "career",
                 "awards",
                 "ratings_history",
+                # ANG-06-16 B3: the "This is me" gate; every other key and
+                # value this test pins is unchanged.
+                "can_link_self_insert",
             },
         )
         self.assertEqual(data["player"]["id"], self.player.id)
@@ -89,6 +92,24 @@ class LeaguePlayerPageTests(LeagueApiTestCase):
         self.api.put(f"/api/leagues/{self.league.id}/watch-list/{self.player.id}/")
         data = self.ok(self.api.get(_url(self.league.id, self.player.id)))
         self.assertTrue(data["watched"])
+
+    def test_can_link_self_insert_true_on_the_accounts_own_team(self) -> None:
+        # ANG-06-16 B3: mirrors the template's team.manager_id == user.id.
+        self.teams[0].manager = self.user_a
+        self.teams[0].save(update_fields=["manager"])
+        data = self.ok(self.api.get(_url(self.league.id, self.player.id)))
+        self.assertIs(data["can_link_self_insert"], True)
+
+    def test_can_link_self_insert_false_on_an_unmanaged_team(self) -> None:
+        # ANG-06-16 B3: ``ranked_career_league`` Teams carry no manager.
+        self.assertIsNone(self.teams[0].manager_id)
+        data = self.ok(self.api.get(_url(self.league.id, self.player.id)))
+        self.assertIs(data["can_link_self_insert"], False)
+
+    # ANG-06-16 B3, "another Account's Team": unreachable as a 200 -- the
+    # Player's Ownership root is its Team, so that Player is a 404
+    # (``test_another_accounts_player_is_404``). ``Player.team`` is non-null,
+    # so the "no Team" case cannot exist either.
 
     def test_seasons_newest_first_and_career_spans_league(self) -> None:
         newer = make_completed_season(

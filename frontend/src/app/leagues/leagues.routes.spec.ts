@@ -22,6 +22,12 @@ import { Playoffs } from './playoffs/playoffs';
 import { PowerRankings } from './power-rankings/power-rankings';
 import { StatisticalFeats } from './statistical-feats/statistical-feats';
 import { TeamStats } from './team-stats/team-stats';
+import { FreeAgents } from './free-agents/free-agents';
+import { LeaguePlayerDetail } from './league-player/league-player';
+import { LeagueTeamHistory } from './team-history/team-history';
+import { LeagueTeamRoster } from './team-roster/team-roster';
+import { LeagueTeamSchedule } from './team-schedule/team-schedule';
+import { WatchList } from './watch-list/watch-list';
 
 describe('Leagues routes', () => {
   let http: HttpTestingController;
@@ -106,6 +112,39 @@ describe('Leagues routes', () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/leagues/new');
       expect(harness.fixture.debugElement.query(By.directive(LeagueDashboard))).toBeNull();
+    });
+  });
+
+  describe('the League team and player screens (spec #428 F6)', () => {
+    beforeEach(async () => {
+      await signIn();
+    });
+
+    // Routing only: drop every load, so the screen tickets (#431-#435) never edit this file.
+    afterEach(() => http.match(() => true));
+
+    it.each([
+      ['/leagues/4/team/roster', LeagueTeamRoster, 'Roster - Laserforce Simulator'],
+      ['/leagues/4/team/schedule', LeagueTeamSchedule, 'Team Schedule - Laserforce Simulator'],
+      ['/leagues/4/team/history', LeagueTeamHistory, 'Team History - Laserforce Simulator'],
+      ['/leagues/4/players/free-agents', FreeAgents, 'Free Agents - Laserforce Simulator'],
+      ['/leagues/4/players/watch-list', WatchList, 'Watch List - Laserforce Simulator'],
+      ['/leagues/4/players/25', LeaguePlayerDetail, 'League Player - Laserforce Simulator'],
+    ])('resolves %s inside the League layout, with its page title', async (url, screen, title) => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl(url);
+      expect(routerUrl()).toBe(url);
+      expect(harness.fixture.debugElement.query(By.directive(screen))).not.toBeNull();
+      expect(harness.fixture.debugElement.query(By.directive(LeagueLayout))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe(title);
+    });
+
+    it('never reads players/free-agents or players/watch-list as a Player id', async () => {
+      const harness = await RouterTestingHarness.create();
+      await harness.navigateByUrl('/leagues/4/players/watch-list');
+      expect(harness.fixture.debugElement.query(By.directive(LeaguePlayerDetail))).toBeNull();
+      await harness.navigateByUrl('/leagues/4/players/free-agents');
+      expect(harness.fixture.debugElement.query(By.directive(LeaguePlayerDetail))).toBeNull();
     });
   });
 

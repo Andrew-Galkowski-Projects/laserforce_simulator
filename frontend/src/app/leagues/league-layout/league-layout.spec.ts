@@ -13,6 +13,13 @@ import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { leagueNav } from '../testing/league-fixtures';
+import { watchResult } from '../testing/league-players-fixtures';
+import {
+  pagedEnvelope,
+  playerRatingRow,
+  playerStatRow,
+  seasonScope,
+} from '../testing/league-stats-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
@@ -137,7 +144,7 @@ describe('League layout (spec #409 F4 / F5)', () => {
     ]);
   });
 
-  it('links Dashboard, History and the stats screens; every other entry is a Soon span (I1)', async () => {
+  it('links Dashboard, History, the stats and team / player screens; every other entry is a Soon span (I1)', async () => {
     await open();
     const links = [...(nav()?.querySelectorAll('a') ?? [])];
     expect(links.map((a) => [text(a), a.getAttribute('href')])).toEqual([
@@ -145,6 +152,11 @@ describe('League layout (spec #409 F4 / F5)', () => {
       ['Playoffs', '/leagues/1/playoffs'],
       ['History', '/leagues/1/history'],
       ['Power Rankings', '/leagues/1/power-rankings'],
+      ['Roster', '/leagues/1/team/roster'],
+      ['Schedule', '/leagues/1/team/schedule'],
+      ['History', '/leagues/1/team/history'],
+      ['Free Agents', '/leagues/1/players/free-agents'],
+      ['Watch List', '/leagues/1/players/watch-list'],
       ['Game Log', '/leagues/1/stats/game-log'],
       ['League Leaders', '/leagues/1/stats/league-leaders'],
       ['Player Ratings', '/leagues/1/stats/player-ratings'],
@@ -153,7 +165,7 @@ describe('League layout (spec #409 F4 / F5)', () => {
       ['Statistical Feats', '/leagues/1/stats/statistical-feats'],
     ]);
     const soon = [...(nav()?.querySelectorAll('span.soon') ?? [])];
-    expect(soon).toHaveLength(13);
+    expect(soon).toHaveLength(8);
     expect(soon.every((s) => text(s).endsWith('Soon'))).toBe(true);
   });
 
@@ -233,6 +245,35 @@ describe('League layout (spec #409 F4 / F5)', () => {
     await harness.fixture.whenStable();
     expect(page().querySelector('[role="alert"]')).toBeNull();
     expect(text(nav()?.querySelector('.league-nav__name'))).toBe('Metro League');
+  });
+
+  it('shares one WatchState across its screens: a ★ toggled on one stays on the next (F3)', async () => {
+    await open('/leagues/1/stats/player-stats');
+    http
+      .expectOne((req) => req.url === `${BASE}/leagues/1/player-stats/`)
+      .flush(
+        pagedEnvelope([playerStatRow({ watched: false })], 1, {
+          season_scope: seasonScope(),
+          team_options: [],
+        }),
+      );
+    await harness.fixture.whenStable();
+    const flag = (): HTMLButtonElement =>
+      page().querySelector<HTMLButtonElement>('app-player-cell button')!;
+    flag().click();
+    await harness.fixture.whenStable();
+    const put = http.expectOne(`${BASE}/leagues/1/watch-list/25/`);
+    expect(put.request.method).toBe('PUT');
+    put.flush({ data: watchResult(true), meta: {} });
+    await harness.fixture.whenStable();
+    expect(flag().getAttribute('aria-pressed')).toBe('true');
+
+    await harness.navigateByUrl('/leagues/1/stats/player-ratings');
+    http
+      .expectOne((req) => req.url === `${BASE}/leagues/1/player-ratings/`)
+      .flush(pagedEnvelope([playerRatingRow({ watched: false })], 1, { team_options: [] }));
+    await harness.fixture.whenStable();
+    expect(flag().getAttribute('aria-pressed')).toBe('true');
   });
 
   it('loads the new League when the :id changes', async () => {

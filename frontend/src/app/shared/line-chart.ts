@@ -117,6 +117,11 @@ export class LineChart {
   readonly xTitle = input('Time (s)');
   /** The y-axis title; none when unset. */
   readonly yTitle = input<string | undefined>(undefined);
+  /**
+   * A `count` axis's name for each x (the tooltip title and the tick labels), e.g. a Season name
+   * for 1..n; unset, the count itself. A `clock` axis ignores it (always mm:ss).
+   */
+  readonly xLabel = input<((x: number) => string) | undefined>(undefined);
 
   private readonly canvas = viewChild.required<ElementRef<HTMLCanvasElement>>('canvas');
   private chart: Chart<'line'> | null = null;
@@ -182,7 +187,9 @@ export class LineChart {
     const axis = { ticks: { color: theme.text, font }, grid: { color: theme.grid } };
     const title = (text: string) => ({ display: true, text, color: theme.text, font });
     const y = yMax === undefined ? { beginAtZero: true, ...axis } : { min: 0, max: yMax, ...axis };
-    const xLabel = (x: number): string => (isClock ? clock(x) : String(x));
+    const countLabel = this.xLabel();
+    const xLabel = (x: number): string =>
+      isClock ? clock(x) : countLabel ? countLabel(x) : String(x);
     return {
       type: 'line',
       data: {
@@ -210,7 +217,9 @@ export class LineChart {
             ...axis,
             ticks: isClock
               ? { ...axis.ticks, stepSize: 60, callback: (value) => clock(Number(value)) }
-              : { ...axis.ticks, precision: 0 },
+              : countLabel
+                ? { ...axis.ticks, precision: 0, callback: (value) => countLabel(Number(value)) }
+                : { ...axis.ticks, precision: 0 },
           },
           y: yTitle === undefined ? y : { ...y, title: title(yTitle) },
         },

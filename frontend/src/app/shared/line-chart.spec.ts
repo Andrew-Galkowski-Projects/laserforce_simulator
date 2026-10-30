@@ -247,6 +247,25 @@ describe('LineChart', () => {
       ) => string;
       expect(title([{ parsed: { x: 7, y: 0 } } as TooltipItem<'line'>])).toBe('7');
     });
+
+    it('names each count with [xLabel], in the tooltip title and on the ticks', async () => {
+      const names = ['Spring 2025', 'Fall 2025'];
+      const chart = await render({
+        datasets: [TREND],
+        maxSec: 2,
+        xAxis: 'count',
+        xLabel: (x: number) => names[x - 1] ?? String(x),
+      });
+      const tooltip = chart.config().options?.plugins?.tooltip;
+      const title = tooltip?.callbacks?.title as unknown as (
+        items: TooltipItem<'line'>[],
+      ) => string;
+      expect(title([{ parsed: { x: 2, y: 0 } } as TooltipItem<'line'>])).toBe('Fall 2025');
+      const tickLabel = chart.config().options?.scales?.['x']?.ticks?.callback as (
+        value: number,
+      ) => string;
+      expect(tickLabel(1)).toBe('Spring 2025');
+    });
   });
 
   it('passes its plugins inline and never registers them globally', async () => {

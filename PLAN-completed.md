@@ -7416,6 +7416,56 @@ Leaders, player stats, player ratings, team stats, statistical feats, game
  - **Text:** static text and empty states are copied word for word from the templates; a missing
    Team or winner shows "—".
 
+#### ANG-06-16 · [DONE] League team & player
+
+**[DONE] Shipped (2026-10-30).** Six League screens ported to Angular inside LeagueLayout (Team
+Roster, Team Schedule, Team History, League player detail, Free Agents, Watch List); the five TEAM /
+PLAYERS nav entries are live. The Watch flag is a real toggle (outline / filled star, WatchState per
+League visit) on every League table, and Player names link to the League player page. API:
+player_bio on roster rows, meta.team_options on roster / history / schedule, can_link_self_insert on
+the League player payload. Differed from the plan: the no-Season Team Schedule notice is new (Django
+404s); Team History's 'No history yet.' was not ported (unreachable); Remove All gained a confirm;
+the review added TeamPicker [allowAll]=false, injectStatsScreen { waitForSeason } + retry(),
+LeagueContext.noSeason and line-chart [xLabel]. Follow-up #436 unifies the four team/player load
+pipelines.
+
+Team roster, schedule, team history, league player detail, free
+
+ agents, watch list (+ the watch flag). API gap: `teams/<id>/roster/` sends only the Player ref,
+ role and watched flag; the template also shows age, height, home site, years playing, total games,
+ Overall rating and Potential.
+
+ Spec: #428
+
+ Settled (owner, 2026-10-30 grill):
+ - **Roster API:** rows gain `age`, `height`, `home_site`, `started_playing_age`, `total_games`,
+   `overall_rating`, `potential` (the `player_rating_rows` bio keys). MMR / Rank stay literal "-"
+   columns, as Player Ratings does.
+ - **Team pickers:** roster, history and schedule responses add `meta.team_options`
+   (`team_options_meta`, as the stats endpoints do).
+ - **Routes** (children of `LeagueLayout`): `team/roster`, `team/schedule`, `team/history` (each
+   `?team=`, default `nav.schedule_team`), `players/free-agents`, `players/watch-list`,
+   `players/:playerId`.
+ - **Watch flag:** `app-player-cell`'s star becomes the real toggle (`<button aria-pressed>`, `PUT` /
+   `DELETE` by current state, every cell for that Player updates) on every League table, the
+   ANG-06-15 screens included.
+ - **Name links:** `app-player-cell` links to `/leagues/:id/players/:playerId` on every League
+   table; the global career page stays reachable from player detail's "Career stats (global)".
+ - **Watch List:** un-starring leaves the row until reload (Django); Remove All confirms, then
+   clears the table.
+ - **History Seasons table:** sorted client-side, URL keys `?seasons_sort=&seasons_dir=` (default
+   year desc); no new API param.
+ - **Player detail:** full port, incl. the ratings-history chart (`app-line-chart`), This is me /
+   Unlink, and the three "Coming soon" stub cards.
+ - **Watch toggle failure:** the star keeps its state, the `apiMessage` shows in the `notify.ts`
+   snackbar, and the button is disabled while its request is in flight.
+ - **One flag:** `app-watch-flag`, used by `app-player-cell` and the player detail h1; watched
+   state in a League-scoped service `LeagueLayout` provides, seeded from rows, so every star
+   for a Player re-colours.
+ - **Round links:** schedule and member-night round links go to `/rounds/:id`.
+ - **Out of scope:** sign / release free agents; Trade / Trading Block / Prospects / Hall of Fame
+   (ANG-06-20); real MMR / Rank (STAT-PROXY-01); removing Django templates (ANG-08).
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

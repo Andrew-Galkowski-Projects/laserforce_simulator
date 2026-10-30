@@ -69,6 +69,39 @@ export const LEAGUES_ROUTES: Routes = [
         loadComponent: () => import('./playoffs/playoffs').then((m) => m.Playoffs),
         title: `Playoffs - ${APP_TITLE}`,
       },
+      // ANG-06-16: the League team and player screens, each lazily loaded from its own folder.
+      {
+        path: 'team/roster',
+        loadComponent: () => import('./team-roster/team-roster').then((m) => m.LeagueTeamRoster),
+        title: `Roster - ${APP_TITLE}`,
+      },
+      {
+        path: 'team/schedule',
+        loadComponent: () =>
+          import('./team-schedule/team-schedule').then((m) => m.LeagueTeamSchedule),
+        title: `Team Schedule - ${APP_TITLE}`,
+      },
+      {
+        path: 'team/history',
+        loadComponent: () => import('./team-history/team-history').then((m) => m.LeagueTeamHistory),
+        title: `Team History - ${APP_TITLE}`,
+      },
+      {
+        path: 'players/free-agents',
+        loadComponent: () => import('./free-agents/free-agents').then((m) => m.FreeAgents),
+        title: `Free Agents - ${APP_TITLE}`,
+      },
+      {
+        path: 'players/watch-list',
+        loadComponent: () => import('./watch-list/watch-list').then((m) => m.WatchList),
+        title: `Watch List - ${APP_TITLE}`,
+      },
+      {
+        path: 'players/:playerId',
+        loadComponent: () =>
+          import('./league-player/league-player').then((m) => m.LeaguePlayerDetail),
+        title: `League Player - ${APP_TITLE}`,
+      },
     ],
   },
 ];
