@@ -300,6 +300,27 @@ class SeedBrowserCheckLeagueTests(ClassTempMediaMixin, TestCase):
         self.assertEqual(len(player_page.json()["data"]["seasons"]), 3)
         self.assertIsNotNone(player_page.json()["data"]["career"])
 
+    def test_free_agents_api_lists_the_seeded_pool(self) -> None:
+        # ANG-06-16 retro: the Free Agents table needs a pool to draw.
+        league = League.objects.get(name=_LEAGUE_NAME)
+
+        response = _api_for_a().get(f"/api/leagues/{league.pk}/free-agents/")
+
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(response.json()["meta"]["count"], 3)
+
+    def test_player_page_has_a_ratings_history_line(self) -> None:
+        # ANG-06-16 retro: the ratings-history chart needs one point per Season
+        # and a line that moves.
+        league = League.objects.get(name=_LEAGUE_NAME)
+        player = league.current_team.slot_commander
+
+        response = _api_for_a().get(f"/api/leagues/{league.pk}/players/{player.pk}/")
+
+        history = response.json()["data"]["ratings_history"]
+        self.assertEqual(len(history), 3)
+        self.assertEqual(len({row["overall_rating"] for row in history}), 3)
+
 
 class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
     """``--league`` reruns and ``--clean``, each from its own seed or none."""
@@ -318,8 +339,9 @@ class SeedBrowserCheckLeagueCleanTests(TempMediaMixin, TestCase):
         self.assertFalse(Team.objects.exists())
         self.assertIn("Leagues: 1", output)
         # The League goes without taking A's Teams with it, so the rest of the
-        # line still counts them (teardown_league's orphan sweep would not).
-        self.assertIn("Teams: 4", output)
+        # line still counts them (teardown_league's orphan sweep would not):
+        # A's four Teams plus the free-agent pool Team (ANG-06-16 retro).
+        self.assertIn("Teams: 5", output)
 
     def test_rerun_refuses_and_leaves_one_league(self) -> None:
         _seed("--league")

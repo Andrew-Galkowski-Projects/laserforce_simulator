@@ -174,7 +174,11 @@ templates differ screen by screen, and ANG-06-15's spec said only "copied word
 for word", so an agent copied a sibling's "<League> — X" heading and kept
 pickers the template hides. Check every "one of" the spec writes against the
 template's `if` branches (ANG-06-15's Playoffs template shows the champion and
-the bracket together).
+the bracket together). Quote headers and empty-state text from the template file
+itself, never from a subagent's summary of it, and check each empty branch is
+reachable from the API response: ANG-06-16's spec took "Survival(s)" from a
+summary (the template says "Survival") and listed Team History's "No history
+yet.", which renders only when no Team resolves.
 
 When tickets will run in parallel, write each behaviour they share (input
 during a save, retry after a failed load, the dirty flag) once as a spec
@@ -234,11 +238,13 @@ spent 63k tokens on a 10-line change.
 For more tickets, implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
 another agent is still committing can branch from a stale tip, so confirm
-each one's base before starting the next. The agent resets its own worktree
-off `origin/main` as its first step; wait for that with one background call
-through the PowerShell tool (the Bash worktree guard refuses an `until` loop
-over `git`): `while ((git rev-parse --short <agent branch>) -eq '<origin/main
-sha>') { Start-Sleep 5 }`. Before starting tickets that run in
+each one's base before starting the next. The agent moves its own worktree
+off `origin/main` as its first step, sometimes onto a branch it names itself;
+wait for its worktree, not its branch, with one background call through the
+PowerShell tool (the Bash worktree guard refuses an `until` loop over `git`):
+`while (-not ((git worktree list) -match 'agent-<id>\s+<integration sha>')) {
+Start-Sleep 5 }` (ANG-06-16: a `rev-parse` wait on the agent's branch spun on a
+renamed one). Before starting tickets that run in
 parallel, prepare the integration tip yourself:
 
 - Grep it for every helper two of them will need, and move each into a neutral
@@ -262,6 +268,12 @@ parallel, prepare the integration tip yourself:
   target params type (`const p: PlayerStatsParams = statsApiParams(...)`):
   ANG-06-15's header comment claimed assignability it lacked, and three agents
   worked around it two ways.
+- For each existing kit helper a ticket will call (a screen loader, a picker),
+  check it against the spec's invariants and that ticket's screen, and add any
+  missing input on the integration tip first: a nav gate, a Retry, an option the
+  screen must hide. ANG-06-16's `injectStatsScreen` loaded before the nav and had
+  no Retry, and `TeamPicker` always offered "All Teams": five screens
+  hand-rolled around them, and the review fix pass cost 285k tokens.
 - For each new public seam method, grep what it calls (an `ApiClient` verb, a
   model method). Add anything missing to its shared module first, or the ticket
   that is barred from that file stops half-done (ANG-06a: `ApiClient.put`).
@@ -297,8 +309,9 @@ spec clicked into Create and left the real screen's Teams GET open.
 Add these constraints to every implementer prompt:
 
 - **First step:** confirm your worktree is based on the integration branch,
-  else `git reset --hard <integration branch>` in your own worktree. Agent
-  worktrees branch from `origin/main` by default. Then copy
+  else `git merge --ff-only <integration branch>` in your own worktree (the
+  auto-mode classifier refuses `git reset --hard`). Agent worktrees branch from
+  `origin/main` by default. Then copy
   `laserforce_simulator/.env` from the main checkout into your worktree (Django
   needs its `SECRET_KEY`); it stays uncommitted.
 - Follow `mattpocock-skills:tdd` at the spec's agreed seams: one failing
@@ -402,7 +415,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    full-fidelity Single Round on the configured "Browser Check Arena" map for
    map features; add `--league` for League features: a career, finance-enabled
    League with two completed Seasons and an active one at its playoffs (round
-   robin played, seeded bracket built, no bracket games yet); `--tournaments` for
+   robin played, seeded bracket built, no bracket games yet), a three-Player
+   free-agent pool and a ratings snapshot per Player per Season; `--tournaments` for
    Tournament features: one sandbox Tournament per format and stage) and
    remove it with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Wait with
