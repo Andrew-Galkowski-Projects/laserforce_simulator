@@ -11,6 +11,7 @@ from datetime import date
 from django.contrib.auth.models import AbstractBaseUser
 
 from matches.development import STAT_FIELDS
+from matches.league_services import _ensure_team_finances
 from matches.models import (
     GameRound,
     League,
@@ -39,6 +40,9 @@ _SLOTS = (
 )
 _WIN_PTS = 42000
 _LOSE_PTS = 31000
+# The managed Team's injured Player sits out this many games (Player
+# availability on Team Finances, ANG-06-17 retro).
+_INJURY_GAMES = 2
 
 
 def _add_round_states(game_round: GameRound) -> None:
@@ -211,6 +215,16 @@ def _ratings_history(seasons: list[Season], teams: list[Team]) -> None:
     PlayerSeasonRating.objects.bulk_create(rows)
 
 
+def _settled_finances(league: League, last_completed: Season, team: Team) -> None:
+    """The completed Seasons' ``TeamSeasonFinance`` rows and carried cash,
+    written by the real lazy ensure, plus one injured Player on ``team``
+    (ANG-06-17 retro: the finance screens' populated branches)."""
+    _ensure_team_finances(league, last_completed)
+    Player.objects.filter(pk=team.slot_scout_1_id).update(
+        games_unavailable=_INJURY_GAMES
+    )
+
+
 def seed_browser_check_league(
     manager: AbstractBaseUser, teams: list[Team]
 ) -> tuple[League, list[Season]]:
@@ -218,8 +232,9 @@ def seed_browser_check_league(
     two completed ranked round-robin Seasons (a different champion each) and
     one active Season at its playoffs (round robin played, bracket built,
     ANG-06-15 retro), a three-Player free-agent pool and a ratings snapshot per
-    Player per Season (ANG-06-16 retro). Returns the League and its Seasons,
-    oldest first."""
+    Player per Season (ANG-06-16 retro), and settled finances for both
+    completed Seasons plus one injured Player (ANG-06-17 retro). Returns the
+    League and its Seasons, oldest first."""
     league = League.objects.create(
         name=LEAGUE_NAME,
         mode="league",
@@ -240,6 +255,7 @@ def seed_browser_check_league(
         season.champion_team = order[0]
         season.save(update_fields=["champion_team"])
         seasons.append(season)
+    _settled_finances(league, seasons[-1], teams[0])
     seasons.append(_playoff_season(league, teams))
     _ratings_history(seasons, teams)
     return league, seasons

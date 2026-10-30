@@ -94,7 +94,12 @@ and player stats are non-empty; no simulator runs. ANG-06-16 retro additions:
 - **Free-agent pool:** the League's `free_agent_pool` is "Browser Check Free Agents", an A-owned
   Team holding three "FA <name>" copies of the first Team's Players, so Free Agents has a table.
 - **Ratings history:** every Player gets one `PlayerSeasonRating` per Season, Overall rising 2.0 a
-  Season up to the live rating, so the League player ratings-history chart draws a line. The rows are built by
+  Season up to the live rating, so the League player ratings-history chart draws a line.
+ANG-06-17 retro addition:
+- **Settled finances:** the real `_ensure_team_finances` writes a `TeamSeasonFinance` row per Team
+  for both completed Seasons and carries their profit into each Team's cash, and the first Team's
+  second scout is injured for 2 games, so Team Finances shows tiles, Season history and Player
+  availability with figures (League Finances' table stays `—`: it shows the active Season). The rows are built by
 `_browser_check_league.py` (a copy of the `league_api_fixtures.py` shapes: production code never
 imports test modules; the leading underscore keeps it out of the command list). The summary gains
 `League <id> (Browser Check League), Seasons <id>, <id>, <id> (completed, completed, active)`.

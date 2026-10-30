@@ -34,16 +34,23 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 ## Angular frontend
 
-- **Parity with the Django form it replaces.** An Angular form that ports a Django
-  form carries each widget's constraints (`min`, `max`, `maxlength`, `required`) on the
-  matching control. Flag a control missing one (ANG-06b shipped the Player profile
-  inputs without their bounds).
+- **Parity with the Django form and template it replaces.** An Angular form that ports
+  a Django form carries each widget's constraints (`min`, `max`, `step`, `maxlength`,
+  `required`) on the matching control, from the Form's fields and the template's
+  `<input>` attributes both. Flag a control missing one (ANG-06b shipped the Player
+  profile inputs without their bounds); check the template before flagging an extra one
+  (ANG-06-17's Ticket price `step="0.5"` lives only in the template).
 - **Wrapping field text.** A `mat-form-field` with a `mat-hint` or a server error
   (`applyApiErrors`) sets `subscriptSizing="dynamic"`, so a wrapped line pushes the
   next field down instead of overlapping it (ANG-06 item 7's invite hint and password
   rules). A grid or flex row of such fields sets `align-items: start`, so one field's long
   hint leaves its neighbour's outline alone (ANG-06-14's Conferences hint stretched "Number
-  of teams").
+  of teams"). Its row gap is at least 1rem, so a two-line hint clears the next row's
+  outlined label (ANG-06-17's Expense Settings had 0.25rem).
+- **Equal tiles share their rows.** A row of equal metric tiles is a `grid` with
+  `repeat(auto-fit, minmax(…))`, its minimum small enough that every tile fits one row
+  in the page area at 1280px (~1010px, ~810px beside the League nav). A flex row with a wide basis leaves the last tile alone
+  on a full-width row (ANG-06-17's Cash tile at 1280px, `flex: 1 1 8rem`).
 - **Name pickers get room.** A `mat-select` whose options are entity names ("Player
   (Team)", "#id - Red vs Blue") takes at least half the form's row, and a full row
   when the form is narrow, so the chosen label stays whole. Flag one that shares a
