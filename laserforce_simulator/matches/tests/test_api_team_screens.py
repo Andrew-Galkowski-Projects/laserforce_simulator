@@ -25,6 +25,24 @@ from matches.tests.league_api_fixtures import (
     make_teams,
     ranked_career_league,
 )
+from teams.models import Player
+
+# ANG-06-16 B1: the ``player_bio`` keys a roster row spreads.
+BIO_KEYS = {
+    "overall_rating",
+    "potential",
+    "age",
+    "height",
+    "home_site",
+    "started_playing_age",
+    "total_games",
+}
+
+
+def team_options(teams: list) -> list[dict]:
+    """ANG-06-16 B2: the expected ``meta.team_options`` -- the enrolled
+    Teams sorted by name, as ``{id, name}`` refs."""
+    return [{"id": t.id, "name": t.name} for t in sorted(teams, key=lambda t: t.name)]
 
 
 def _url(league_id: int, path: str) -> str:
@@ -50,12 +68,55 @@ class TeamRosterTests(LeagueApiTestCase):
         self.assertEqual(
             [(row["role"], row["player"]["id"]) for row in data["starters"]], expected
         )
+        # ANG-06-16 B1: each row also carries the Player's bio / rating
+        # values (``player_bio``); the starters-by-role order and the bench
+        # this test pins are unchanged.
         for row in data["starters"]:
-            self.assertEqual(set(row), {"role", "player", "watched"})
+            self.assertEqual(set(row), {"role", "player", "watched", *BIO_KEYS})
             self.assertFalse(row["watched"])
         self.assertEqual(
             [row["player"]["id"] for row in data["bench"]],
             [p.id for p in self.team.bench_players],
+        )
+        for row in data["bench"]:
+            self.assertEqual(set(row), {"player", "watched", *BIO_KEYS})
+
+    def test_roster_rows_carry_the_players_bio_values(self) -> None:
+        # ANG-06-16 B1: give one starter distinctive values so a wrong field
+        # (e.g. age sent as height) cannot pass.
+        starter = self.team.active_players[0]
+        Player.objects.filter(pk=starter.pk).update(
+            potential=88.25,
+            age=23,
+            height="5'11\"",
+            home_site="Site Q",
+            started_playing_age=14,
+            total_games=321,
+        )
+        starter.refresh_from_db()
+        data = self.ok(self.api.get(self.roster_url(self.team.id)))
+        row = next(r for r in data["starters"] if r["player"]["id"] == starter.id)
+        self.assertEqual(
+            {key: row[key] for key in BIO_KEYS},
+            {
+                # A computed property (the mean of the 19 stats).
+                "overall_rating": starter.overall_rating,
+                "potential": 88.25,
+                "age": 23,
+                "height": "5'11\"",
+                "home_site": "Site Q",
+                "started_playing_age": 14,
+                "total_games": 321,
+            },
+        )
+
+    def test_roster_meta_team_options_are_the_enrolled_teams_by_name(self) -> None:
+        # ANG-06-16 B2. ``ok()`` ignores ``meta``, so read the body directly.
+        make_teams("TRosOutsider", 1)  # Not enrolled: never an option.
+        response = self.api.get(self.roster_url(self.team.id))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.json()["meta"], {"team_options": team_options(self.teams)}
         )
 
     def test_roster_marks_watched_players(self) -> None:
@@ -138,6 +199,15 @@ class TeamHistoryTests(LeagueApiTestCase):
             ],
         )
 
+    def test_history_meta_team_options_are_the_enrolled_teams_by_name(self) -> None:
+        # ANG-06-16 B2. ``ok()`` ignores ``meta``, so read the body directly.
+        make_teams("THisOutsider", 1)  # Not enrolled: never an option.
+        response = self.api.get(self.history_url(self.team.id))
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.json()["meta"], {"team_options": team_options(self.teams)}
+        )
+
     def test_history_team_not_enrolled_is_404(self) -> None:
         outsider = make_teams("THisOut", 1)[0]
         self.errors(self.api.get(self.history_url(outsider.id)), 404)
@@ -208,6 +278,12 @@ class TeamHistoryPlayersTests(LeagueApiTestCase):
         self.assertEqual(row["last_season_year"], 2025)
         watched = {r["player"]["id"] for r in rows if r["watched"]}
         self.assertEqual(watched, {self.players[0].id})
+
+    def test_players_meta_has_no_team_options(self) -> None:
+        # ANG-06-16 B2: the paged ``history/players/`` stays as it was --
+        # only the page keys in ``meta``.
+        _, meta = self.ok_page(self.api.get(self.players_url(self.team.id)))
+        self.assertNotIn("team_options", meta)
 
     def test_players_ordering_descending_stat(self) -> None:
         rows, _ = self.ok_page(
