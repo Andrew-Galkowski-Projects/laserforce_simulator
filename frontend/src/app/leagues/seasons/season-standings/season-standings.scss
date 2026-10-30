@@ -1,0 +1,89 @@
+// Season Standings (spec #444): `--lf-*` tokens only, no colour literals. The tables use the
+// League stats table (`stats-page`): they scroll sideways and a Team name wraps only between words.
+@use '../../../shared/badges';
+@use '../../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--lf-font-heading);
+}
+
+.season-standings__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.season-standings__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+// The label always shows, so the colour is never the only signal.
+.season-standings__state {
+  @include badges.league-state;
+
+  text-transform: uppercase;
+}
+
+.season-standings__preview,
+.season-standings__empty {
+  @include stats-page.notice;
+
+  margin-bottom: 1rem;
+}
+
+.season-standings__error {
+  @include stats-page.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.season-standings__group {
+  margin-bottom: 1.5rem;
+}
+
+h2 {
+  margin: 0 0 0.5rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.125rem;
+  overflow-wrap: anywhere;
+}
+
+.stats-scroll {
+  @include stats-page.scroll;
+}
+
+.stats-table {
+  @include stats-page.table;
+
+  .muted {
+    color: var(--lf-text-muted);
+  }
+
+  // The managed Team's row: the tint is backed by the "You" badge (I4), never the only cue.
+  tbody tr.managed {
+    background: color-mix(in srgb, var(--lf-accent) 12%, transparent);
+  }
+}
+
+.you {
+  @include badges.you;
+}
+
+.season-standings__champion {
+  margin: 1rem 0 0;
+}
