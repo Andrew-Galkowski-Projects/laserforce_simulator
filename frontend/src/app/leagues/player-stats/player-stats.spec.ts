@@ -262,6 +262,18 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
       expect(headers()[3]).toBe('Points ↑');
     });
 
+    it('a new sort supersedes the request still in flight', async () => {
+      await open();
+      await click(header('mvp'));
+      const stale = statsRequest();
+      await click(header('accuracy'));
+      expect(stale.cancelled).toBe(true);
+      const fresh = playerStatRow({ player: { id: 30, name: 'Bolt', team: null } });
+      expect(await answer({ rows: [fresh] })).toEqual({ ...DEFAULT, ordering: '-accuracy' });
+      expect(q('#player-stats-row-30')).not.toBeNull();
+      expect(q('#player-stats-row-25')).toBeNull();
+    });
+
     it('sorts by Name, Team and GP too', async () => {
       await open();
       await click(header('name'));
