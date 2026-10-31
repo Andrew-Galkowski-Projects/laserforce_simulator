@@ -415,11 +415,9 @@ describe('Playback with a roundId input (spec #454)', () => {
 
   /** Answers Round `id`'s three GETs, its teams named after it. */
   async function answer(id: number): Promise<void> {
-    http
-      .expectOne(`${BASE}/rounds/${id}/`)
-      .flush({
-        data: roundDetail({ id, team_red_name: `Red ${id}`, team_blue_name: `Blue ${id}` }),
-      });
+    http.expectOne(`${BASE}/rounds/${id}/`).flush({
+      data: roundDetail({ id, team_red_name: `Red ${id}`, team_blue_name: `Blue ${id}` }),
+    });
     http.expectOne(`${BASE}/rounds/${id}/timeline/`).flush({ data: timeline(), meta: {} });
     http.expectOne(`${BASE}/rounds/${id}/playback/`).flush({ data: roundPlayback(), meta: {} });
     await fixture.whenStable();
