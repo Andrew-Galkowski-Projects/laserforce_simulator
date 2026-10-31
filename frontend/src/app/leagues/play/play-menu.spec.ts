@@ -320,10 +320,14 @@ describe('Play menu (spec #454)', () => {
       expect(labels()).toEqual([SET_UP]);
     });
 
-    it('offers Play Single Members Game and Play All once games are drawn', async () => {
+    it('offers Play Single Members Game, its Live game and Play All once games are drawn', async () => {
       await openWith(UNPLAYED);
       await openMenu();
-      expect(labels()).toEqual(['Play Single Members Game', 'Play All']);
+      expect(labels()).toEqual([
+        'Play Single Members Game',
+        'Single Members Game (Live)',
+        'Play All',
+      ]);
     });
 
     it('no member-night items off a member-night phase', async () => {
@@ -392,17 +396,113 @@ describe('Play menu (spec #454)', () => {
       await openWith(UNPLAYED);
       await openMenu();
       await click(item('Play All'));
-      http
-        .expectOne(`${BASE}/seasons/11/member-night/play/`)
-        .flush(
-          {
-            errors: [{ code: 'wrong_phase', message: 'Not a member night.', field: null }],
-            meta: {},
-          },
-          { status: 409, statusText: 'Conflict' },
-        );
+      http.expectOne(`${BASE}/seasons/11/member-night/play/`).flush(
+        {
+          errors: [{ code: 'wrong_phase', message: 'Not a member night.', field: null }],
+          meta: {},
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
       await fixture.whenStable();
       expect(text(alert())).toBe('Not a member night.');
+    });
+  });
+
+  describe('Live items (ANG-06-19c)', () => {
+    const LIVE_RR = playControls({ live_preview_available: true });
+    const LIVE_PLAYOFFS = playControls({
+      playoff_phase_active: true,
+      playoff_tournament_id: 40,
+      live_preview_available: true,
+    });
+    const UNPLAYED = playControls({
+      member_night_phase_active: true,
+      member_night_has_unplayed: true,
+    });
+
+    it('adds "One Week (Live)" after the round-robin trio with a live preview', async () => {
+      await openWith(LIVE_RR);
+      await openMenu();
+      expect(labels()).toEqual([
+        'Play One Week',
+        'Play Two Months',
+        'Play Until End of Season',
+        'One Week (Live)',
+      ]);
+    });
+
+    it('adds "Play Single Round (Live)" after the playoff trio with a live preview', async () => {
+      await openWith(LIVE_PLAYOFFS);
+      await openMenu();
+      expect(labels()).toEqual([
+        'Play Single Round',
+        'Play Two Months',
+        'Through Playoffs',
+        'Play Single Round (Live)',
+      ]);
+    });
+
+    it('no "(Live)" item in the playoffs without a live preview', async () => {
+      await openWith(playControls({ playoff_phase_active: true, playoff_tournament_id: 40 }));
+      await openMenu();
+      expect(labels()).not.toContain('Play Single Round (Live)');
+    });
+
+    it('no "Single Members Game (Live)" before member-night games are drawn', async () => {
+      await openWith(playControls({ member_night_phase_active: true }));
+      await openMenu();
+      expect(labels()).not.toContain('Single Members Game (Live)');
+    });
+
+    it.each<[string, string, PlayControls]>([
+      ['One Week (Live)', 'play-live/', LIVE_RR],
+      ['Play Single Round (Live)', 'play-live/', LIVE_PLAYOFFS],
+      ['Single Members Game (Live)', 'member-night/play-live/', UNPLAYED],
+    ])('%s POSTs seasons/11/%s', async (label, path, body) => {
+      await openWith(body);
+      await openMenu();
+      item(label)?.click();
+      await fixture.whenStable();
+      expect(http.expectOne(`${BASE}/seasons/11/${path}`).request.method).toBe('POST');
+    });
+
+    it.each<[string, PlayControls]>([
+      ['One Week (Live)', LIVE_RR],
+      ['Play Single Round (Live)', LIVE_PLAYOFFS],
+      ['Single Members Game (Live)', UNPLAYED],
+    ])('disables %s while busy (I1)', async (label, body) => {
+      await openWith(body);
+      TestBed.inject(PlayRun).run('play_week');
+      await fixture.whenStable();
+      await openMenu();
+      expect(disabled(item(label))).toBe(true);
+      // The playoffs and member nights have no Play One Week: only the round robin sent it.
+      http
+        .match(`${BASE}/seasons/11/play-week/`)
+        .forEach((req) =>
+          req.flush(
+            { errors: [{ code: 'x', message: 'Nope.', field: null }], meta: {} },
+            { status: 409, statusText: 'Conflict' },
+          ),
+        );
+      await fixture.whenStable();
+    });
+
+    it('shows a 409 no_live_cursor message in the alert (I3)', async () => {
+      await openWith(LIVE_RR);
+      await openMenu();
+      item('One Week (Live)')?.click();
+      http.expectOne(`${BASE}/seasons/11/play-live/`).flush(
+        {
+          errors: [
+            { code: 'no_live_cursor', message: 'No live game to play for your team.', field: null },
+          ],
+          meta: {},
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await fixture.whenStable();
+      expect(text(alert())).toBe('No live game to play for your team.');
     });
   });
 

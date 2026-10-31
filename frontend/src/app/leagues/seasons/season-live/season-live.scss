@@ -1,0 +1,71 @@
+// One Week (Live) (spec #454): `--lf-*` tokens only, no colour literals.
+@use '../../stats-shared/stats-page';
+
+:host {
+  @include stats-page.host;
+
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+h1 {
+  @include stats-page.heading;
+
+  margin-bottom: 0;
+}
+
+// Round 1 / Round 2 (`play-week-live-round-toggle`): the active one carries a check mark too,
+// so the state is not colour alone.
+.season-live__rounds {
+  display: inline-flex;
+  align-self: flex-start;
+  overflow: hidden;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+}
+
+.season-live__round {
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-left: 1px solid var(--lf-border);
+  background: transparent;
+  color: var(--lf-text-muted);
+  font: inherit;
+  cursor: pointer;
+
+  &:first-child {
+    border-left: 0;
+  }
+
+  &:hover,
+  &:focus-visible {
+    background: var(--lf-surface-alt);
+  }
+
+  &.is-active {
+    background: var(--lf-accent);
+    color: var(--lf-surface);
+    font-weight: 700;
+
+    &::before {
+      content: '\2713\00a0';
+    }
+  }
+}
+
+.season-live__footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.season-live__note {
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.season-live__empty {
+  @include stats-page.notice;
+}

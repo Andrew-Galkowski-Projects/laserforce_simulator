@@ -184,6 +184,16 @@ export interface SeasonPlayJobRef {
   status_url: string;
 }
 
+/**
+ * `POST seasons/{id}/play-live/` and `member-night/play-live/`: the manager's game, played
+ * now. `round_ids` is empty on a bye; `job` is the background run of the rest, if any.
+ */
+export interface LivePlayResult {
+  kind: string;
+  round_ids: number[];
+  job: SeasonPlayJobRef | null;
+}
+
 /** `GET seasons/{id}/play-jobs/{job}/` (`build_play_job_status`). */
 export interface SeasonPlayJobStatus {
   status: JobStatus;

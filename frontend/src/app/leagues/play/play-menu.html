@@ -56,6 +56,11 @@
             >
               {{ untilLabel() }}
             </button>
+            @if (c.live_preview_available) {
+              <button mat-menu-item type="button" [disabled]="locked()" (click)="live('season')">
+                One Week (Live)
+              </button>
+            }
           }
         }
         @case ('start_next_season') {
@@ -96,6 +101,11 @@
         <button mat-menu-item type="button" [disabled]="locked()" (click)="act('play_playoffs')">
           Through Playoffs
         </button>
+        @if (c.live_preview_available) {
+          <button mat-menu-item type="button" [disabled]="locked()" (click)="live('season')">
+            Play Single Round (Live)
+          </button>
+        }
       }
       @if (c.member_night_phase_active) {
         @if (!c.member_night_has_unplayed) {
@@ -115,6 +125,9 @@
             (click)="act('member_night_single')"
           >
             Play Single Members Game
+          </button>
+          <button mat-menu-item type="button" [disabled]="locked()" (click)="live('member_night')">
+            Single Members Game (Live)
           </button>
           <button
             mat-menu-item

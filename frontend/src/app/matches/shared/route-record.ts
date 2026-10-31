@@ -2,7 +2,7 @@
 import { Signal, inject, signal } from '@angular/core';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ActivatedRoute } from '@angular/router';
-import { EMPTY, Observable, catchError, switchMap } from 'rxjs';
+import { EMPTY, Observable, catchError, map, switchMap } from 'rxjs';
 import { ApiError } from '../../api/api-client';
 
 /** The route's record and its load state. */
@@ -24,17 +24,30 @@ export function loadRouteRecord<T>(
   noun: string,
   fetch: (id: number) => Observable<T>,
 ): RouteRecord<T> {
+  const ids = inject(ActivatedRoute).paramMap.pipe(map((params) => Number(params.get('id'))));
+  return loadRecord(noun, ids, fetch);
+}
+
+/**
+ * `loadRouteRecord` for any stream of ids: fetches `fetch(id)` for each id `ids` emits, with the
+ * same 404 / error states. Call in an injection context.
+ */
+export function loadRecord<T>(
+  noun: string,
+  ids: Observable<number>,
+  fetch: (id: number) => Observable<T>,
+): RouteRecord<T> {
   const record = signal<T | null>(null);
   const notFound = signal(false);
   const loadError = signal<string | null>(null);
 
-  inject(ActivatedRoute)
-    .paramMap.pipe(
-      switchMap((params) => {
+  ids
+    .pipe(
+      switchMap((id) => {
         record.set(null);
         notFound.set(false);
         loadError.set(null);
-        return fetch(Number(params.get('id'))).pipe(
+        return fetch(id).pipe(
           catchError((error: unknown) => {
             if (error instanceof ApiError && error.status === 404) {
               notFound.set(true);

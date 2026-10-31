@@ -435,6 +435,104 @@ describe('PlayRun (spec #454)', () => {
     });
   });
 
+  describe('Live actions (ANG-06-19c)', () => {
+    const LIVE = playControls({ live_preview_available: true });
+    const live = (round_ids: number[], job: string | null = null) => ({
+      data: {
+        kind: 'rr',
+        round_ids,
+        job: job && { job_id: job, season_id: 11, status_url: `/api/seasons/11/play-jobs/${job}/` },
+      },
+      meta: {},
+    });
+
+    it.each<['season' | 'member_night', string]>([
+      ['season', 'seasons/11/play-live/'],
+      ['member_night', 'seasons/11/member-night/play-live/'],
+    ])('%s POSTs %s and lands on the Live screen with its Rounds', async (source, path) => {
+      watched(LIVE);
+      const before = run.changed();
+      run.playLive(source);
+      expect(run.busy()).toBe(true);
+      const req = expectPost(path);
+      req.flush(live([31, 32]));
+      await settle();
+      expect(run.busy()).toBe(false);
+      expect(routerUrl()).toBe('/leagues/1/seasons/11/live?rounds=31,32');
+      expect(run.changed()).toBe(before + 1);
+      answerControls();
+    });
+
+    it('lands on the Season dashboard on a bye (no Rounds)', async () => {
+      watched(LIVE);
+      const before = run.changed();
+      run.playLive('season');
+      expectPost('seasons/11/play-live/').flush(live([]));
+      await settle();
+      expect(routerUrl()).toBe('/leagues/1/seasons/11');
+      expect(run.changed()).toBe(before + 1);
+      answerControls();
+    });
+
+    it('polls a returned Job as a background run', async () => {
+      watched(LIVE);
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.playLive('season');
+      expectPost('seasons/11/play-live/').flush(live([31], 'job-4'));
+      expect(run.progress()).toEqual({ completed: 0, total: 0 });
+      http.expectOne(jobUrl('job-4')).flush({ data: status({ completed: 1, total: 3 }), meta: {} });
+      expect(run.progress()).toEqual({ completed: 1, total: 3 });
+      await settle();
+      expect(routerUrl()).toBe('/leagues/1/seasons/11/live?rounds=31');
+      answerControls();
+    });
+
+    it('keeps polling the Job when the re-fetch after the POST names it', async () => {
+      watched(LIVE);
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.playLive('season');
+      expectPost('seasons/11/play-live/').flush(live([31], 'job-4'));
+      http.expectOne(jobUrl('job-4')).flush({ data: status({ completed: 1, total: 3 }), meta: {} });
+      await settle();
+      answerControls(playControls({ live_preview_available: true, active_play_job_id: 'job-4' }));
+      expect(run.progress()).toEqual({ completed: 1, total: 3 });
+      http.expectNone(jobUrl('job-4'));
+      vi.advanceTimersByTime(1000);
+      http.expectOne(jobUrl('job-4'));
+    });
+
+    it('shows a 409 no_live_cursor message and lands nowhere (I3)', async () => {
+      watched(LIVE);
+      run.playLive('season');
+      expectPost('seasons/11/play-live/').flush(
+        ...fail(409, 'no_live_cursor', 'No live game to play for your team.'),
+      );
+      await settle();
+      expect(run.error()).toBe('No live game to play for your team.');
+      expect(run.busy()).toBe(false);
+      expect(routerUrl()).toBe('/');
+    });
+
+    it('picks up a 409 play_in_progress Job', () => {
+      watched(LIVE);
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.playLive('member_night');
+      expectPost('seasons/11/member-night/play-live/').flush(
+        ...fail(409, 'play_in_progress', 'A play run is already in progress.', 'job:live-2'),
+      );
+      expect(run.error()).toBe('');
+      http.expectOne(jobUrl('live-2'));
+    });
+
+    it('is ignored while another action is in flight (I1)', () => {
+      watched(LIVE);
+      run.run('play_week');
+      run.playLive('season');
+      http.expectNone(`${BASE}/seasons/11/play-live/`);
+      expectPost('seasons/11/play-week/');
+    });
+  });
+
   describe('background runs', () => {
     /** `watch(1)`, fakes the poll timer, runs `action` and answers its POST with job `job-1`. */
     async function startRun(action: PlayAction = 'play_two_months', path = 'play-two-months') {

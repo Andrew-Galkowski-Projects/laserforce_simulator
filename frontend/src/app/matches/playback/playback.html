@@ -6,15 +6,21 @@
   @let r = rec.round;
   @let t = rec.timeline;
   @let p = rec.playback;
-  <div class="pb-pagehead">
-    <div>
-      <p class="pb-kicker">Playback</p>
-      <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+  @if (embedded()) {
+    <div class="pb-pagehead">
+      <h2>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h2>
     </div>
-    <div class="pb-actions">
-      <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+  } @else {
+    <div class="pb-pagehead">
+      <div>
+        <p class="pb-kicker">Playback</p>
+        <h1>{{ r.team_red_name }} vs {{ r.team_blue_name }}</h1>
+      </div>
+      <div class="pb-actions">
+        <a mat-stroked-button [routerLink]="['/rounds', r.id]">&larr; Back to Round</a>
+      </div>
     </div>
-  </div>
+  }
 
   <section class="pb-transport" aria-label="Playback controls">
     <div class="pb-controls">

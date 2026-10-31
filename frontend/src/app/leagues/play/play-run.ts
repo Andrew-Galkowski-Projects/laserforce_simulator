@@ -143,6 +143,32 @@ export class PlayRun {
     });
   }
 
+  /**
+   * Plays the manager's game now (One Week (Live), or a member-night game), then opens the Live
+   * screen on its Rounds; a bye (no Rounds) lands on the Season dashboard. A returned Job (the
+   * rest of the week) is polled as a background run.
+   */
+  playLive(source: 'season' | 'member_night'): void {
+    const target = this.target();
+    if (target === null) return;
+    const { leagueId, seasonId } = target;
+    const request =
+      source === 'season'
+        ? this.seasons.playLive(seasonId)
+        : this.seasons.memberNightPlayLive(seasonId);
+    this.send(request, (result) => {
+      if (result.job) this.startPolling(seasonId, result.job.job_id);
+      const dashboard = ['/leagues', leagueId, 'seasons', seasonId];
+      if (result.round_ids.length === 0) {
+        this.landThenRefresh(dashboard);
+        return;
+      }
+      void this.router
+        .navigate([...dashboard, 'live'], { queryParams: { rounds: result.round_ids.join(',') } })
+        .then(() => this.refresh());
+    });
+  }
+
   /** Asks the polled Job to stop after its current game, and keeps polling until it ends. */
   stop(): void {
     const job = this.job;
@@ -240,7 +266,8 @@ export class PlayRun {
         this._controls.set(controls);
         const jobId = controls.active_play_job_id;
         const season = controls.displayed_season;
-        if (jobId && season && !this.finished.has(jobId)) {
+        // Not a Job seen to end, nor the one already polled (a Live run's re-fetch names it).
+        if (jobId && season && !this.finished.has(jobId) && this.job?.jobId !== jobId) {
           this.startPolling(season.id, jobId);
         }
       },

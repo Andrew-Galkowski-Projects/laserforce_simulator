@@ -93,6 +93,11 @@ export class PlayMenu {
     this.run.run(action);
   }
 
+  /** A Live item: plays the manager's game and opens the One Week (Live) screen. */
+  protected live(source: 'season' | 'member_night'): void {
+    this.run.playLive(source);
+  }
+
   /** Asks which Sites in the member-night dialog; a confirmed choice draws the games. */
   protected setUpMemberNight(sites: MemberNightSite[]): void {
     this.dialog

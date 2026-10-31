@@ -233,6 +233,8 @@ src/
                           provides SeasonContext (season, seasonId, leagueId, requireSeasonId,
                           link(...screen)); children '' (the Season dashboard), standings,
                           schedule, awards, owner-evaluation, conferences, one folder each;
+                          ANG-06-19 adds live (season-live: ?rounds=<id>[,<id>], embeds
+                          app-playback through its optional roundId input);
                           season-load.ts (injectSeasonLoad: a screen's GET + Retry);
                           SeasonBreadcrumb above each sub-screen;
                           seasons/testing/ (season-fixtures, season-loads: releaseSeasonLayout,

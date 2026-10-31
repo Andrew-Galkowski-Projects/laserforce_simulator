@@ -33,6 +33,11 @@ h2 {
   gap: 0.75rem 1rem;
 }
 
+// Embedded (spec #454): the "<red> vs <blue>" title is an h2 under the host screen's h1.
+.pb-pagehead h2 {
+  font-size: 1.25rem;
+}
+
 .pb-kicker {
   margin: 0.25rem 0;
   color: var(--lf-text-muted);

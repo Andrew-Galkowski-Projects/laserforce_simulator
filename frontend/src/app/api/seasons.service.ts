@@ -5,6 +5,7 @@ import { Season, SeasonDashboard } from './leagues.models';
 import {
   ConferenceWrite,
   ConferencesState,
+  LivePlayResult,
   MemberNightState,
   OwnerEvaluation,
   SeasonAwards,
@@ -102,6 +103,16 @@ export class SeasonsService {
   /** Start a background drain of the playoffs. */
   playPlayoffs(id: number): Observable<SeasonPlayJobRef> {
     return this.api.post<SeasonPlayJobRef>(`seasons/${id}/play-playoffs/`, {});
+  }
+
+  /** One Week (Live): play the manager's game now, the rest of the week in the background. */
+  playLive(id: number): Observable<LivePlayResult> {
+    return this.api.post<LivePlayResult>(`seasons/${id}/play-live/`, {});
+  }
+
+  /** Play one member-night game for the manager to watch (`job` is always null). */
+  memberNightPlayLive(id: number): Observable<LivePlayResult> {
+    return this.api.post<LivePlayResult>(`seasons/${id}/member-night/play-live/`, {});
   }
 
   /** Ask the Active play run to stop after its current game (a no-op with none). */
