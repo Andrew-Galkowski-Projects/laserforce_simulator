@@ -185,6 +185,12 @@ When tickets will run in parallel, write each behaviour they share (input
 during a save, retry after a failed load, the dirty flag) once as a spec
 invariant, and cite it in every such ticket's acceptance criteria: ANG-06h's
 Sight Lines ignored canvas edits during a save and Zones & Bases lost them.
+An invariant that reloads or refreshes after an action names each landing
+case: the screen already open, a screen the action navigates to, and a screen
+that keeps its state. Each case gets a spec that counts the screen's GETs.
+ANG-06-19's I2 said "after every success … `changed` ticks", and a navigating
+action re-created the screen it had just landed on, so every GET went out
+twice. Only the Spec review caught it, and the fix pass cost 204k tokens.
 Also when tickets will run in parallel, give each parallel ticket its own
 module(s) at the seam (e.g. a package with one file per ticket) so
 implementers never append to the same file. Shared files caused every merge
@@ -301,6 +307,13 @@ parallel, prepare the integration tip yourself:
   registers **placeholder routes**, give their block in `app.routes.spec.ts`
   an `afterEach(() => http.match(() => true))`, so the screen tickets never
   edit that spec as their screens start loading data (ANG-06-9).
+- When a ticket adds a request to a layout or the Shell that every screen
+  under it makes (a toolbar or nav GET), add its release to the test kit on the
+  integration tip first, and call it from the existing `release*Loads`
+  helpers, so no screen spec changes. This holds for tickets that run one
+  after another too. ANG-06-19a's toolbar `play-controls/` GET took a
+  hand-written release in 25 League specs, and review moved them all into
+  `releaseLeagueChrome()`.
 - When a ticket adds a **required** field to a shared API model type, add the
   field to every shared spec fixture that builds that type first. Otherwise
   the ticket must edit fixtures another ticket owns (ANG-06d: `scoreboard`
@@ -316,7 +329,10 @@ commit, and leaves the target alone on a conflict. After each merge of a
 ticket that ran in parallel, run `npm --prefix frontend run test:ci` once
 (about 15 s, with no agent running Vitest), so a spec that opens a stub
 another ticket replaced fails at the merge that broke it: ANG-06-13a's list
-spec clicked into Create and left the real screen's Teams GET open.
+spec clicked into Create and left the real screen's Teams GET open. After
+every ticket merge that touches `frontend/`, run
+`npm --prefix frontend run format:check` too (about 5 s): ANG-06-19c's
+unformatted `playback.spec.ts` was caught only at `/pr-ready`.
 
 Add these constraints to every implementer prompt, after checking them against
 each ticket's acceptance criteria: a criterion overrides a blanket ban, so say
