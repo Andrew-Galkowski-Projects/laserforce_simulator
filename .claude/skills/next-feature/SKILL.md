@@ -201,7 +201,9 @@ tokens / 150k is the ticket count. A ported Angular screen with its spec and
 mutation runs costs about 160k tokens (ANG-06-10: one screen per ticket, 157k
 and 170k), so count screens before dividing. A ticket that adds API fields, a
 service and shared helpers before its screen costs about 230k (ANG-06-17a: 233k
-for one small screen). A task small enough for one session gets one ticket.
+for one small screen). A link-wiring ticket that also changes the seed costs
+about 200k (ANG-06-18g: 217k across five screens' specs and the seed tests). A
+task small enough for one session gets one ticket.
 Don't pad.
 
 Run every number an acceptance criterion names through the spec's rule before
@@ -211,9 +213,10 @@ ticket quotes (a fake-timer list, a fixture helper) against an existing spec
 that does the same: ANG-06-13b's #405 said to fake `setTimeout`, and rxjs
 `timer` polls on `setInterval`.
 
-Create each ticket as a sub-issue of the spec with native blocked-by edges,
-using the `gh api` fallbacks in `docs/agents/issue-tracker.md` (installed `gh`
-predates `--parent`).
+Create each ticket as a sub-issue of the spec with native blocked-by edges:
+write each body to a file, list the tickets in dependency order in a JSON file,
+and run `python scripts/publish_tickets.py <spec> <tickets.json>` (format in
+its header). A run that fails half way is finished by running it again.
 
 A **prototype** task (throwaway samples the owner picks from) adds two kinds of
 ticket. Prototype tickets target a `prototype/<task>` branch cut from the
@@ -266,7 +269,10 @@ parallel, prepare the integration tip yourself:
   tickets to copy, move every helper it defines on the component into the kit
   before they start: agents copy the example, helpers included (ANG-06-15's
   Team Stats defined `arrow`, `sortParams` and `pickSeason`; six screens copied
-  them, and the review fix pass cost 184k tokens). A kit whose output feeds each
+  them, and the review fix pass cost 184k tokens). Its load + Retry pipeline
+  counts as a helper: the foundation ticket ships it as an `inject*Load` kit
+  function, and the spec names it at the seam (ANG-06-18: four screens copied
+  the dashboard's constructor chain, and the fix pass cost 150k). A kit whose output feeds each
   ticket's service call gets a compile-time assignment test against every
   target params type (`const p: PlayerStatsParams = statsApiParams(...)`):
   ANG-06-15's header comment claimed assignability it lacked, and three agents
@@ -284,7 +290,10 @@ parallel, prepare the integration tip yourself:
   specs against the real screen: they assert *which* component routed (not
   the stub's text), and a spec that opens another ticket's screen releases
   that screen's requests before `verify()`. Otherwise every parallel ticket
-  breaks the earlier specs. Also check each stub's **inputs** against the
+  breaks the earlier specs. A kit helper that releases a stubbed screen's loads
+  matches every GET the screen may add later (the method, or the API prefix),
+  never an exact URL list: ANG-06-18's `releaseSeasonScreenLoads` missed
+  Standings' League GET, and five layout specs broke at the merge. Also check each stub's **inputs** against the
   ticket that replaces it: every acceptance criterion must be computable from
   them (ANG-06f: the map stub could not dim deactivated players). A slot for
   later work needs a caller that can fill it; a routed component gets no
@@ -309,7 +318,10 @@ ticket that ran in parallel, run `npm --prefix frontend run test:ci` once
 another ticket replaced fails at the merge that broke it: ANG-06-13a's list
 spec clicked into Create and left the real screen's Teams GET open.
 
-Add these constraints to every implementer prompt:
+Add these constraints to every implementer prompt, after checking them against
+each ticket's acceptance criteria: a criterion overrides a blanket ban, so say
+which in that ticket's prompt (ANG-06-18g's docs criterion met a "no docs"
+constraint and was skipped).
 
 - **First step:** confirm your worktree is based on the integration branch,
   else `git merge --ff-only <integration branch>` in your own worktree (the
@@ -420,7 +432,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    League with two completed Seasons and an active one at its playoffs (round
    robin played, seeded bracket built, no bracket games yet), a three-Player
    free-agent pool, a ratings snapshot per Player per Season, and settled finances
-   for both completed Seasons (cash, Season history, one injured Player); `--tournaments` for
+   for both completed Seasons (cash, Season history, one injured Player), plus a
+   sandbox League whose draft Season splits four Teams into two Conferences
+   (ANG-06-18: editable Conferences, draft Standings); `--tournaments` for
    Tournament features: one sandbox Tournament per format and stage) and
    remove it with `--clean` when done.
    Assert on `innerText` or the API response body, not a status code. Wait with
