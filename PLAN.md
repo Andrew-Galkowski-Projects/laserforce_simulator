@@ -101,44 +101,7 @@ below (13b, 14, 16); the item's grill confirms it.
 16. **[DONE] League team & player** (ANG-06-16, in `PLAN-completed.md`).
 17. **[DONE] League finances** (ANG-06-17, in `PLAN-completed.md`).
 18. **[DONE] Season screens** (ANG-06-18, in `PLAN-completed.md`).
-19. **Season play loop (ANG-06-19)** — play week / two months / until end / playoffs, status and cancel, the
-    live view, member nights. Replaces `seasons/play_week_live` and the play actions.
-    Spec: #454
-
-    Settled (grill, owner, 2026-10-30):
-    - **Facts.** Every play action already has an `/api/seasons/<id>/` endpoint, plus
-      `GET /api/leagues/<id>/play-controls/` (the 13 keys `topnav_play.html` branches on). No engine,
-      model or determinism change. Ownership is the owned-Season queryset (cross-Account 404).
-      Angular has no Play menu, no `SeasonsService` play methods and no shared job poller.
-    - **Play menu in the Shell toolbar**, shown on `/leagues/:id/**` routes only. ANG-06-20 adds only
-      Tools / Help beside it.
-    - **`play-controls` gains `displayed_season`** (a ref or null), so the menu knows which Season it
-      acts on. Update the exact-key-set tests (`league_api_fixtures.py:194`,
-      `test_api_play_live.py:40`).
-    - **Menu contents 1:1 with `topnav_play.html`**: the same branches, conditions and labels, Start
-      Season and Start Next Season included (career mode: a link to Owner Evaluation); a disabled
-      "Play" when the state is `none`.
-    - **Sync actions** (Start, One Week, Single Round, Single Members Game) navigate to the Season
-      dashboard and refresh the menu.
-    - **Background runs** (Two Months, Until End, Through Playoffs, playoff Two Months, member-night
-      Play All): the menu becomes Stop + "Running… {completed} / {total}" + a progress bar. It polls
-      `play-jobs/<id>` every 1000 ms; Stop POSTs `play-cancel` and keeps polling. On finish (also
-      cancelled) it refreshes the menu and reloads the open League / Season screen. On error it shows
-      `error` or "Play job failed.". On load it resumes polling `active_play_job_id`, and a 409
-      `play_in_progress` resumes polling that job.
-    - **No per-poll live standings** (Django's fragment patching): the screen reloads once, at the end.
-    - **Live view**: a new Season route carrying the round ids, a thin screen wrapping the existing
-      `Playback` component, with a Round 1 / Round 2 toggle for two rounds, Django's heading, the
-      "Back to dashboard" link and the footer text. A manager bye (no round ids) goes to the
-      dashboard. A non-null `job` is polled as above.
-    - **Member-night setup** is a dialog opened from "Set Up Member Night…", with the template's
-      checkboxes and text verbatim.
-    - **Success snackbars** (`notify.ts`) for Start Season and the three member-night flashes, only
-      where the response carries the numbers (checked at spec time).
-    - **A reusable play-job poll helper** plus generic Season job types; `tournament-play.ts` is left
-      alone.
-    - **Out of scope:** Tools / Help nav and the landing page (ANG-06-20), deleting the Django play
-      views (ANG-08), per-poll live standings, any engine change.
+19. **[DONE] Season play loop** (ANG-06-19, in `PLAN-completed.md`).
 20. **Landing & nav (ANG-06-20)** — landing page, the Shell's Tools / Help top-nav sections (Play ships
     with ANG-06-19), and one
     shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
