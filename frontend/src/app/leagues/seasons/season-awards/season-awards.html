@@ -1,0 +1,55 @@
+<app-season-breadcrumb />
+<div class="season-awards__header">
+  <h1>Awards</h1>
+  <a mat-stroked-button [routerLink]="context.link('standings')">Standings</a>
+</div>
+
+@if (loadError(); as message) {
+  <div class="stats-error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (awards(); as a) {
+  @if (!a.has_rounds) {
+    <p class="stats-notice" role="status">
+      No completed regular-season rounds yet — awards appear once the Season has been played.
+    </p>
+  } @else {
+    <div class="stats-scroll">
+      <table class="stats-table">
+        <thead>
+          <tr>
+            <th>Award</th>
+            <th>Winner</th>
+            <th>Team</th>
+            <th>Role</th>
+            <th class="num">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (row of rows(); track row.label) {
+            <tr>
+              <td>{{ row.label }}</td>
+              @if (row.winner; as w) {
+                <td class="name">
+                  {{ w.player_name }}
+                  @if (w.player_id === selfId()) {
+                    <span class="you">You</span>
+                  }
+                </td>
+                <td class="name">{{ w.team_name }}</td>
+                <td>{{ w.role }}</td>
+                <td class="num">{{ w.value.toFixed(row.places) }}</td>
+              } @else {
+                <td>—</td>
+                <td>—</td>
+                <td>—</td>
+                <td class="num">—</td>
+              }
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+}

@@ -144,11 +144,13 @@ describe('League layout (spec #409 F4 / F5)', () => {
     ]);
   });
 
-  it('links Dashboard, History, Finances, the stats and team / player screens; every other entry is a Soon span (I1)', async () => {
+  it('links Dashboard, Standings, Schedule, History, Finances, the stats and team / player screens; every other entry is a Soon span (I1)', async () => {
     await open();
     const links = [...(nav()?.querySelectorAll('a') ?? [])];
     expect(links.map((a) => [text(a), a.getAttribute('href')])).toEqual([
       ['Dashboard', '/leagues/1'],
+      ['Standings', '/leagues/1/seasons/11/standings'],
+      ['Schedule', '/leagues/1/seasons/11/schedule'],
       ['Playoffs', '/leagues/1/playoffs'],
       ['Finances', '/leagues/1/finances'],
       ['History', '/leagues/1/history'],
@@ -167,8 +169,19 @@ describe('League layout (spec #409 F4 / F5)', () => {
       ['Statistical Feats', '/leagues/1/stats/statistical-feats'],
     ]);
     const soon = [...(nav()?.querySelectorAll('span.soon') ?? [])];
-    expect(soon).toHaveLength(6);
+    expect(soon).toHaveLength(4);
     expect(soon.every((s) => text(s).endsWith('Soon'))).toBe(true);
+  });
+
+  it('leaves LEAGUE Standings and Schedule out of the nav while the League has no displayed Season', async () => {
+    await open('/leagues/1/history', leagueNav({ displayed_season: null }));
+    const league = [...(nav()?.querySelectorAll('ul.league-nav__list') ?? [])][1];
+    expect([...(league?.querySelectorAll('li') ?? [])].map((li) => text(li))).toEqual([
+      'Playoffs',
+      'Finances',
+      'History',
+      'Power Rankings',
+    ]);
   });
 
   it('marks the Dashboard entry active on the dashboard, and only it', async () => {

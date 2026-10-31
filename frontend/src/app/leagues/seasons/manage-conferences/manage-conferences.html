@@ -1,0 +1,148 @@
+<app-season-breadcrumb />
+<h1>Manage Conferences</h1>
+
+<p class="manage-conferences__intro">
+  Conferences partition this Season's teams into self-contained regional leagues that each play
+  their own round-robin and standings. Leave it empty for a single flat league (the default).
+</p>
+
+@if (loadError(); as message) {
+  <div class="manage-conferences__load-error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="retry()">Retry</button>
+  </div>
+} @else if (state(); as s) {
+  @if (s.teams.length === 0) {
+    <p class="manage-conferences__empty">No teams are enrolled in this Season yet.</p>
+  } @else if (maps(); as mapList) {
+    @if (s.editable) {
+      @if (saveErrors().length > 0) {
+        <div class="manage-conferences__errors" role="alert">
+          <ul>
+            @for (message of saveErrors(); track $index) {
+              <li>{{ message }}</li>
+            }
+          </ul>
+        </div>
+      }
+      <form class="manage-conferences__form" (submit)="$event.preventDefault(); save(s)">
+        <h2>Conferences</h2>
+        @for (row of rows(); track row.key) {
+          <div class="conference-row">
+            <div class="conference-row__name">
+              <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                <input
+                  matInput
+                  class="conference-name"
+                  placeholder="Conference name"
+                  aria-label="Conference name"
+                  [value]="row.name"
+                  [disabled]="busy()"
+                  (input)="rename(row.key, $any($event.target).value)"
+                />
+              </mat-form-field>
+              <button
+                mat-stroked-button
+                type="button"
+                [disabled]="busy()"
+                (click)="removeRow(row.key)"
+              >
+                Remove
+              </button>
+            </div>
+            <app-map-rotation-composer
+              [maps]="mapList"
+              [ids]="row.rotation"
+              [disabled]="busy()"
+              (idsChange)="setRotation(row.key, $event)"
+            />
+            <p class="conference-row__help">
+              Author-ordered rotation for this conference, used when Map mode is "Rotate by
+              Conference". A Round's map is <code>rotation[matchday % len(rotation)]</code>.
+              @if (s.map_mode === 'rotate_by_conference') {
+                <span class="conference-row__required"
+                  ><strong>Required:</strong> this Season's map mode needs at least 1 map per
+                  conference.</span
+                >
+              }
+            </p>
+          </div>
+        }
+        <button mat-stroked-button type="button" [disabled]="busy()" (click)="addRow()">
+          + Add conference
+        </button>
+
+        <h2>Team assignment</h2>
+        <div class="team-assignment__scroll">
+          <table class="team-assignment">
+            <thead>
+              <tr>
+                <th>Team</th>
+                <th>Conference</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (team of s.teams; track team.id) {
+                <tr>
+                  <td>{{ team.name }}</td>
+                  <td class="team-assignment__conference">
+                    <mat-form-field appearance="outline" subscriptSizing="dynamic">
+                      <select
+                        matNativeControl
+                        [attr.aria-label]="'Conference for ' + team.name"
+                        [disabled]="busy()"
+                        (change)="assign(team, $any($event.target).value)"
+                      >
+                        <option value="" [selected]="chosen(team) === null">Unassigned</option>
+                        @for (option of options(); track option.key) {
+                          <option [value]="option.key" [selected]="chosen(team) === option.key">
+                            {{ option.label }}
+                          </option>
+                        }
+                      </select>
+                    </mat-form-field>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div class="manage-conferences__actions">
+          <button mat-flat-button type="submit" [disabled]="busy()">Save Conferences</button>
+          <a mat-button [routerLink]="context.link()">Cancel</a>
+        </div>
+      </form>
+    } @else {
+      <div class="manage-conferences__readonly">
+        @for (card of lockedCards(); track card.id) {
+          <section class="conference-card">
+            <h2>{{ card.name }}</h2>
+            <ul class="conference-card__teams">
+              @for (team of card.teams; track team.id) {
+                <li>{{ team.name }}</li>
+              }
+            </ul>
+            <p class="conference-card__rotation-label">Map rotation</p>
+            @if (card.rotation.length > 0) {
+              <ol class="conference-card__rotation">
+                @for (name of card.rotation; track $index) {
+                  <li>{{ name }}</li>
+                }
+              </ol>
+            } @else {
+              <p class="conference-card__no-rotation">No rotation maps.</p>
+            }
+          </section>
+        } @empty {
+          <p class="manage-conferences__flat">
+            This Season has no conferences (single flat league).
+          </p>
+        }
+        <p class="manage-conferences__locked">
+          The conference partition is locked once the Season starts.
+        </p>
+      </div>
+    }
+  }
+}

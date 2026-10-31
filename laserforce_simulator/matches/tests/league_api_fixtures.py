@@ -182,7 +182,12 @@ LEAGUE_DASHBOARD_KEYS = DASHBOARD_BODY_KEYS | {
     "member_night_progress",
     "manager_awaiting_reassignment",
 }
-SEASON_DASHBOARD_KEYS = DASHBOARD_BODY_KEYS | {"season", "league"}
+# ANG-06-18a -- the Season dashboard also carries member-night progress.
+SEASON_DASHBOARD_KEYS = DASHBOARD_BODY_KEYS | {
+    "season",
+    "league",
+    "member_night_progress",
+}
 # Play-control keys owned by ANG-01d-2 -- must never leak into the 01d-1 payload.
 PLAY_CONTROL_KEYS = {
     "action_button_label",

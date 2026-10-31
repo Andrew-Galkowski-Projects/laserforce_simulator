@@ -228,6 +228,16 @@ src/
                           players/watch-list (watch-list) and players/:playerId (league-player);
                           ANG-06-17 adds finances (league-finances) and team/finances
                           (team-finances: the Expense Settings form).
+                          ANG-06-18 adds seasons/:seasonId (seasons/seasons.routes.ts,
+                          SEASON_ROUTES, lazily loaded): SeasonLayout loads the Season once and
+                          provides SeasonContext (season, seasonId, leagueId, requireSeasonId,
+                          link(...screen)); children '' (the Season dashboard), standings,
+                          schedule, awards, owner-evaluation, conferences, one folder each;
+                          season-load.ts (injectSeasonLoad: a screen's GET + Retry);
+                          SeasonBreadcrumb above each sub-screen;
+                          seasons/testing/ (season-fixtures, season-loads: releaseSeasonLayout,
+                          releaseSeasonScreenLoads). dashboard-cards/ (DashboardCards) is the
+                          body cards both dashboards share.
                           stats-shared/ is their kit (read each
                           file's header): stats-query.ts (URL state, I1 / I2), stats-screen.ts
                           (injectStatsScreen; `retry()`, and `{ waitForSeason: true }` to wait
@@ -241,7 +251,7 @@ src/
                           _stats-page.scss. watch/ (ANG-06-16): WatchState (provided by
                           LeagueLayout) and app-watch-flag, the star toggle (☆ off, ★ on).
                           league-nav.ts (LEAGUE_NAV_ENTRIES:
-                          23 entries, 17 live), soon-badge/ (app-soon-badge:
+                          23 entries, 19 live), soon-badge/ (app-soon-badge:
                           a not-yet-ported target as a disabled span, never an <a>),
                           league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
                           ConfirmDialog -> DELETE, shared by list + dashboard); testing/
@@ -255,7 +265,8 @@ src/
                           (teams, players, matches, rounds, maps, batch, tournaments:
                           TOURNAMENT_STATE_LABELS, TEAM_ASSEMBLY_LABELS; leagues: LeaguesService,
                           every League / Season model + label map; seasons: SeasonsService.start,
-                          ANG-06-14; league-stats: LeagueStatsService, one method per stats
+                          ANG-06-14, and one read per Season screen + replaceConferences,
+                          seasons.models.ts, ANG-06-18; league-stats: LeagueStatsService, one method per stats
                           screen, ANG-06-15; league-team: LeagueTeamService and league-players:
                           LeaguePlayersService, ANG-06-16; league-finances:
                           LeagueFinancesService, INJURY_POLICY_LABELS, ANG-06-17); testing/ holds

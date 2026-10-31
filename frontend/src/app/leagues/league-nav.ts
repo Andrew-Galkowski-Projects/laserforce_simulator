@@ -32,18 +32,37 @@ function live(
   return { key, label, section, link: (nav) => ['/leagues', nav.league.id, ...path], soon: false };
 }
 
-/** A screen not ported yet: ANG-06-17..20 turn these live. */
+/**
+ * A screen of the displayed Season: `/leagues/:id/seasons/<displayed_season.id>/<path>`; no link
+ * (so the layout hides the entry) while the League has no displayed Season.
+ */
+function season(key: string, label: string, path: string): LeagueNavEntry {
+  return {
+    key,
+    label,
+    section: 'league',
+    link: (nav) =>
+      nav.displayed_season
+        ? ['/leagues', nav.league.id, 'seasons', nav.displayed_season.id, path]
+        : null,
+    soon: false,
+  };
+}
+
+/** A screen not ported yet: ANG-06-19..20 turn these live. */
 function soon(section: LeagueNavSection, key: string, label: string): LeagueNavEntry {
   return { key, label, section, link: () => null, soon: true };
 }
 
 /**
  * Every League nav entry, in the Django sidebar's order (`_build_league_sidebar_links`,
- * league_views.py): 1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS + 6 STATS. Live: Dashboard and History
- * (ANG-06-14), Playoffs, Power Rankings and the six STATS entries (ANG-06-15), TEAM Roster /
- * Schedule / History and PLAYERS Free Agents / Watch List (ANG-06-16; the team screens pick their
- * Team from `?team=`, else the nav's `schedule_team`, so the links carry no query), LEAGUE and
- * TEAM Finances (ANG-06-17; shown in a finance-off League too, as in Django: the screen explains).
+ * league_views.py): 1 top + 6 LEAGUE + 4 TEAM + 6 PLAYERS + 6 STATS, 19 live and 4 Soon. Live:
+ * Dashboard and History (ANG-06-14), Playoffs, Power Rankings and the six STATS entries
+ * (ANG-06-15), TEAM Roster / Schedule / History and PLAYERS Free Agents / Watch List (ANG-06-16;
+ * the team screens pick their Team from `?team=`, else the nav's `schedule_team`, so the links
+ * carry no query), LEAGUE and TEAM Finances (ANG-06-17; shown in a finance-off League too, as in
+ * Django: the screen explains), LEAGUE Standings / Schedule (ANG-06-18; the displayed Season's
+ * screens, hidden while there is none). Soon: Trade, Trading Block, Prospects, Hall of Fame.
  */
 export const LEAGUE_NAV_ENTRIES: readonly LeagueNavEntry[] = [
   {
@@ -53,8 +72,8 @@ export const LEAGUE_NAV_ENTRIES: readonly LeagueNavEntry[] = [
     link: (nav) => ['/leagues', nav.league.id],
     soon: false,
   },
-  soon('league', 'standings', 'Standings'),
-  soon('league', 'schedule', 'Schedule'),
+  season('standings', 'Standings', 'standings'),
+  season('schedule', 'Schedule', 'schedule'),
   live('league', 'playoffs', 'Playoffs', ['playoffs']),
   live('league', 'finances', 'Finances', ['finances']),
   {

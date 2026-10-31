@@ -115,6 +115,11 @@ export const LEAGUES_ROUTES: Routes = [
           import('./team-finances/team-finances').then((m) => m.LeagueTeamFinances),
         title: `Team Finances - ${APP_TITLE}`,
       },
+      // ANG-06-18: the Season screens, one lazily loaded set under their own layout.
+      {
+        path: 'seasons/:seasonId',
+        loadChildren: () => import('./seasons/seasons.routes').then((m) => m.SEASON_ROUTES),
+      },
     ],
   },
 ];

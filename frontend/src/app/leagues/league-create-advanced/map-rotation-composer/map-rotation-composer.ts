@@ -25,6 +25,8 @@ export function rotationWire(ids: readonly (number | null)[]): string {
 export class MapRotationComposer {
   readonly maps = input.required<readonly ArenaMap[]>();
   readonly ids = model.required<(number | null)[]>();
+  /** Locks every row and button, e.g. while the host form saves (spec #444 I3). */
+  readonly disabled = input(false);
 
   protected add(): void {
     const first = this.maps()[0]?.id ?? null;

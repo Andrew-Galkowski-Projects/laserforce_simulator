@@ -367,11 +367,16 @@ def _run_sync_play(play: Callable[[], _T]) -> _T:
 
 
 def _season_dashboard_body(season: Season) -> dict:
-    """The ``GET /api/seasons/<id>/dashboard/`` body for ``season``."""
+    """The ``GET /api/seasons/<id>/dashboard/`` body for ``season``.
+
+    ANG-06-18a adds ``member_night_progress`` (the League dashboard's key).
+    """
+    body = build_dashboard_context(season, season.state)
     return {
         "season": season_ref(season),
         "league": league_ref(season.league),
-        **_dashboard_payload(season, season.state),
+        **_dashboard_payload(season, season.state, body),
+        "member_night_progress": body["member_night_progress"],
     }
 
 
@@ -493,10 +498,12 @@ class LeagueViewSet(
     def dashboard(self, request: Request, pk: str | None = None) -> Response:
         """The League dashboard body for its displayed Season.
 
-        ANG-06-14 B5 adds five League-only keys (the Season dashboard body is
-        unchanged): ``mode``, ``managed_team`` (career Leagues only, the
-        ``managed_team_id`` rule the HTML dashboard uses), ``has_owner_evaluations``,
-        ``member_night_progress`` and ``manager_awaiting_reassignment``.
+        ANG-06-14 B5 adds five keys beside the shared body: ``mode``,
+        ``managed_team`` (career Leagues only, the ``managed_team_id`` rule the
+        HTML dashboard uses), ``has_owner_evaluations``, ``member_night_progress``
+        and ``manager_awaiting_reassignment``. All but ``member_night_progress``
+        are League-only: since ANG-06-18 the Season dashboard returns
+        ``member_night_progress`` too.
         """
         league = self.get_object()
         displayed_season = pick_displayed_season(league)

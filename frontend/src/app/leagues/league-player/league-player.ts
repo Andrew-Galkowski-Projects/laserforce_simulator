@@ -12,7 +12,6 @@ import { ChartTheme, LineChart, LineSeries } from '../../shared/line-chart';
 import { notFoundOrError } from '../../shared/not-found-or-error';
 import { injectNotify } from '../../shared/notify';
 import { readToken } from '../../shared/read-token';
-import { SoonBadge } from '../soon-badge/soon-badge';
 import { LeagueContext } from '../stats-shared/league-context';
 import {
   RATING_STAT_KEYS,
@@ -107,11 +106,12 @@ interface RsRow {
  * `/leagues/:id/players/:playerId` (spec #428 Player detail, `leagues/player_detail.html`): the
  * League player page. The header (★, name, You badge, Career stats (global), This is me /
  * Unlink), the Overall and Potential cards, the 19 ratings, the Regular Season table, the
- * Coming-soon cards, the Ratings history chart + table and the Awards.
+ * Coming-soon cards, the Ratings history chart + table and the Awards (each Season name opens
+ * that Season's awards).
  */
 @Component({
   selector: 'app-league-player',
-  imports: [LineChart, MatAnchor, MatButton, RouterLink, SoonBadge, WatchFlag],
+  imports: [LineChart, MatAnchor, MatButton, RouterLink, WatchFlag],
   templateUrl: './league-player.html',
   styleUrl: './league-player.scss',
 })

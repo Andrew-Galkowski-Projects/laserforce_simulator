@@ -1,4 +1,6 @@
 // One row per rotation map: the picker takes the row ("Name pickers get room"), Remove after it.
+// In a narrow box (a Manage Conferences card at 768px) Remove wraps below, so the map name
+// keeps a full row instead of clipping.
 :host {
   display: flex;
   flex-direction: column;
@@ -8,12 +10,13 @@
 
 .rotation-row {
   display: flex;
+  flex-wrap: wrap;
   align-self: stretch;
   align-items: center;
   gap: 0.5rem;
 }
 
 .picker-wide {
-  flex: 1 1 auto;
+  flex: 1 1 16rem;
   min-width: 0;
 }

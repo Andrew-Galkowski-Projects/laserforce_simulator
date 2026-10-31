@@ -1,0 +1,58 @@
+// The Season dashboard (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+// The body cards are styled by the shared `DashboardCards` (`../../dashboard-cards/`).
+@use '../../../shared/alerts';
+@use '../../../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0;
+  font-family: var(--lf-font-heading);
+  overflow-wrap: anywhere;
+}
+
+p {
+  margin: 0 0 0.75rem;
+}
+
+.season-dashboard__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 1rem;
+}
+
+.season-dashboard__actions,
+.season-dashboard__links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+// The label always shows, so the colour is never the only signal.
+.season-dashboard__state {
+  @include badges.league-state;
+
+  text-transform: uppercase;
+}
+
+.season-dashboard__map-config {
+  color: var(--lf-text-muted);
+  font-size: 0.875rem;
+}
+
+.season-dashboard__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  justify-content: space-between;
+}

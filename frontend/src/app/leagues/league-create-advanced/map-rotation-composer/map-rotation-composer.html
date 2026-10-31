@@ -2,13 +2,13 @@
   <div class="rotation-row">
     <mat-form-field appearance="outline" subscriptSizing="dynamic" class="picker-wide">
       <mat-label>Rotation map</mat-label>
-      <mat-select [value]="id" (valueChange)="set(i, $event)">
+      <mat-select [value]="id" [disabled]="disabled()" (valueChange)="set(i, $event)">
         @for (map of maps(); track map.id) {
           <mat-option [value]="map.id">{{ map.name }}</mat-option>
         }
       </mat-select>
     </mat-form-field>
-    <button mat-button type="button" (click)="remove(i)">Remove map</button>
+    <button mat-button type="button" [disabled]="disabled()" (click)="remove(i)">Remove map</button>
   </div>
 }
-<button mat-stroked-button type="button" (click)="add()">+ Add map</button>
+<button mat-stroked-button type="button" [disabled]="disabled()" (click)="add()">+ Add map</button>
