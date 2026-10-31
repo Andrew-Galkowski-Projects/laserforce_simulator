@@ -51,7 +51,7 @@
       }
     }
     <div class="league-layout__page">
-      <!-- A new generation (PlayRun.changed) re-creates the outlet, so the screen loads again. -->
+      <!-- A new generation (PlayRun.screenStale) re-creates the outlet: the screen loads again. -->
       @for (g of [generation()]; track g) {
         <router-outlet />
       }

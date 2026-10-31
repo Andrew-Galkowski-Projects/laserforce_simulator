@@ -18,7 +18,6 @@ import { league, standingsRow } from '../../testing/league-fixtures';
 import { failure } from '../../testing/league-stats-fixtures';
 import { season, seasonStandings, seasonUrl } from '../testing/season-fixtures';
 import { releaseSeasonLayout } from '../testing/season-loads';
-import { releasePlayControls } from '../../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -41,8 +40,6 @@ describe('Season Standings (/leagues/:id/seasons/:seasonId/standings, spec #444)
   });
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
-    releasePlayControls();
     http.verify();
   });
 

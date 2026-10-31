@@ -1,5 +1,6 @@
 import { Routes } from '@angular/router';
 import { APP_TITLE } from '../../app-title';
+import { KEEP_ON_PLAY_CHANGE } from '../play/play-run';
 import { ManageConferences } from './manage-conferences/manage-conferences';
 import { OwnerEvaluation } from './owner-evaluation/owner-evaluation';
 import { SeasonAwards } from './season-awards/season-awards';
@@ -33,8 +34,14 @@ export const SEASON_ROUTES: Routes = [
         component: ManageConferences,
         title: `Manage Conferences - ${APP_TITLE}`,
       },
-      // Spec #454: `?rounds=<id>[,<id>]`, the Round(s) a Live play action just played.
-      { path: 'live', component: SeasonLive, title: `One Week (Live) - ${APP_TITLE}` },
+      // Spec #454: `?rounds=<id>[,<id>]`, the Round(s) a Live play action just played. Its
+      // results are final, so a finished play run does not re-create it.
+      {
+        path: 'live',
+        component: SeasonLive,
+        title: `One Week (Live) - ${APP_TITLE}`,
+        data: KEEP_ON_PLAY_CHANGE,
+      },
     ],
   },
 ];

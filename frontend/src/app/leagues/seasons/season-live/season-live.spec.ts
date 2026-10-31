@@ -14,7 +14,7 @@ import { Playback } from '../../../matches/playback/playback';
 import { roundDetail } from '../../../matches/testing/match-fixtures';
 import { roundPlayback } from '../../../matches/testing/playback-fixtures';
 import { timeline } from '../../../matches/testing/timeline-fixtures';
-import { releasePlayControls } from '../../testing/leagues-loads';
+
 import { seasonUrl } from '../testing/season-fixtures';
 import { releaseSeasonLayout } from '../testing/season-loads';
 import { SeasonLive } from './season-live';
@@ -42,8 +42,6 @@ describe('One Week (Live) (/leagues/:id/seasons/:seasonId/live, spec #454)', () 
   });
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
-    releasePlayControls();
     // A Round switch cancels the old Round's three GETs.
     http.verify({ ignoreCancelled: true });
   });

@@ -28,7 +28,7 @@ import {
   seasonScope,
 } from '../testing/league-stats-fixtures';
 import { WatchList } from './watch-list';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const WATCH = `${BASE}/leagues/1/watch-list/`;
@@ -68,7 +68,6 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
 
   afterEach(() => {
     document.querySelector('.cdk-overlay-container')?.remove();
-    releasePlayControls();
     http.verify();
   });
 
@@ -117,7 +116,7 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
 
   async function navigate(path: string, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await settle();
   }
 
@@ -316,7 +315,7 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
       // Before the nav: no Season to name yet, but both pickers are there.
       expect(seasonOptions()).toEqual([['career', 'Career']]);
       expect(q('#stats-rate-select')).not.toBeNull();
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       await settle();
       // The list is in flight: the nav's displayed Season, selected, plus Career.
       expect(seasonOptions()).toEqual([
@@ -492,7 +491,7 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
       await harness.navigateByUrl(PATH);
       await settle();
       http.expectNone((req) => req.url === WATCH);
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       await settle();
       expect(await answer()).toEqual(DEFAULT);
     });

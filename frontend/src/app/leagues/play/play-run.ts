@@ -1,5 +1,5 @@
 import { Injectable, inject, signal } from '@angular/core';
-import { Router } from '@angular/router';
+import { ActivatedRouteSnapshot, Data, NavigationExtras, Router } from '@angular/router';
 import { Observable, Subscription, map, switchMap, timer } from 'rxjs';
 import { ApiError } from '../../api/api-client';
 import { PlayControls, SeasonDashboard } from '../../api/leagues.models';
@@ -32,15 +32,43 @@ const JOB_FAILED_MESSAGE = 'Play job failed.';
 /** The `field` prefix of a 409 `play_in_progress`: `job:<id>` names the live run. */
 const JOB_FIELD_PREFIX = 'job:';
 
-type SyncAction = 'start_season' | 'play_week' | 'play_single_round';
-type BackgroundAction =
-  'play_two_months' | 'play_until_end' | 'play_playoffs' | 'member_night_play_all';
+/** The route `data` key `KEEP_ON_PLAY_CHANGE` sets. */
+const KEEP_KEY = 'keepOnPlayChange';
+
+/**
+ * Route `data` for a League screen that `screenStale` must not re-create: One Week (Live), whose
+ * replay is of final results, so a finished rest-of-week Job would only lose the viewer's place.
+ */
+export const KEEP_ON_PLAY_CHANGE: Data = { [KEEP_KEY]: true };
+
+/** Whether the deepest route under `route` is marked `KEEP_ON_PLAY_CHANGE`. */
+export function keepsOnPlayChange(route: ActivatedRouteSnapshot): boolean {
+  let deepest = route;
+  while (deepest.firstChild) deepest = deepest.firstChild;
+  return deepest.data[KEEP_KEY] === true;
+}
+
+/** The League and the Displayed Season an action targets (I4). */
+interface PlayTarget {
+  leagueId: number;
+  seasonId: number;
+}
+
+/** `/leagues/:id/seasons/:seasonId`: the Season dashboard's router commands. */
+function seasonCommands(leagueId: number, seasonId: number): (string | number)[] {
+  return ['/leagues', leagueId, 'seasons', seasonId];
+}
 
 /**
  * The Play menu's seam (spec #454): the only code that calls the Season play endpoints. It holds
  * the watched League's play controls, runs one action at a time (I1), polls a background run's
- * Job, and ticks `changed` after every success and every finished Job (I2), which reloads the
- * open League screen (`LeagueLayout`). Every action targets the Displayed Season (I4).
+ * Job, and re-fetches the controls and ticks `changed` after every success and every finished
+ * Job (I2). Every action targets the Displayed Season (I4).
+ *
+ * `LeagueLayout` reloads the League nav on each `changed` tick, and re-creates the open screen
+ * only on a `screenStale` tick: a finished Job, or an action whose landing left the URL as it was
+ * (the screen already open must show the new data). A landing on another URL ticks `changed`
+ * alone, since the router has just created that screen with fresh loads.
  */
 @Injectable({ providedIn: 'root' })
 export class PlayRun {
@@ -61,6 +89,8 @@ export class PlayRun {
   private readonly _error = signal('');
   /** I2: ticks after every successful action and every finished Job. */
   private readonly _changed = signal(0);
+  /** Ticks with `changed` when the open screen shows stale data and must be re-created. */
+  private readonly _screenStale = signal(0);
 
   readonly controls = this._controls.asReadonly();
   readonly busy = this._busy.asReadonly();
@@ -68,6 +98,24 @@ export class PlayRun {
   readonly stopRequested = this._stopRequested.asReadonly();
   readonly error = this._error.asReadonly();
   readonly changed = this._changed.asReadonly();
+  readonly screenStale = this._screenStale.asReadonly();
+
+  /** Each Play menu action, listed once: what it sends for `target` and where it lands. */
+  private readonly actions: Record<PlayAction, (target: PlayTarget) => void> = {
+    start_season: (t) =>
+      this.playSync(this.seasons.start(t.seasonId), t, (dashboard) =>
+        this.notify(seasonStartedMessage(dashboard)),
+      ),
+    play_week: (t) => this.playSync(this.seasons.playWeek(t.seasonId), t),
+    play_single_round: (t) => this.playSync(this.seasons.playSingleRound(t.seasonId), t),
+    play_two_months: (t) => this.playBackground(this.seasons.playTwoMonths(t.seasonId), t),
+    play_until_end: (t) => this.playBackground(this.seasons.playUntilEnd(t.seasonId), t),
+    play_playoffs: (t) => this.playBackground(this.seasons.playPlayoffs(t.seasonId), t),
+    member_night_play_all: (t) =>
+      this.playBackground(this.seasons.memberNightPlayAll(t.seasonId), t),
+    start_next_season: (t) => this.startNextSeason(t.leagueId),
+    member_night_single: (t) => this.playMemberNightSingle(t),
+  };
 
   private leagueId: number | null = null;
   private loading: Subscription | null = null;
@@ -93,34 +141,14 @@ export class PlayRun {
 
   run(action: PlayAction): void {
     const target = this.target();
-    if (target === null) return;
-    const { leagueId, seasonId } = target;
-    switch (action) {
-      case 'start_season':
-      case 'play_week':
-      case 'play_single_round':
-        this.runSync(action, leagueId, seasonId);
-        return;
-      case 'play_two_months':
-      case 'play_until_end':
-      case 'play_playoffs':
-      case 'member_night_play_all':
-        this.runBackground(action, seasonId);
-        return;
-      case 'start_next_season':
-        this.startNextSeason(leagueId);
-        return;
-      case 'member_night_single':
-        this.playMemberNightSingle(leagueId, seasonId);
-        return;
-    }
+    if (target !== null) this.actions[action](target);
   }
 
   /**
    * Reads the night's game counts (T total, U unplayed), plays one game, then says how far the
    * night is (Django `play_member_night_single`): P = T - U + 1 games done.
    */
-  private playMemberNightSingle(leagueId: number, seasonId: number): void {
+  private playMemberNightSingle({ leagueId, seasonId }: PlayTarget): void {
     const played = this.seasons
       .memberNight(seasonId)
       .pipe(
@@ -128,7 +156,7 @@ export class PlayRun {
       );
     this.send(played, (state) => {
       this.notify(memberNightPlayedMessage(state));
-      this.landThenRefresh(['/leagues', leagueId, 'seasons', seasonId]);
+      this.landThenRefresh(seasonCommands(leagueId, seasonId));
     });
   }
 
@@ -139,7 +167,7 @@ export class PlayRun {
     const { leagueId, seasonId } = target;
     this.send(this.seasons.setUpMemberNight(seasonId, sites), (dashboard) => {
       this.notify(memberNightSetUpMessage(dashboard, sites.length));
-      this.landThenRefresh(['/leagues', leagueId, 'seasons', seasonId]);
+      this.landThenRefresh(seasonCommands(leagueId, seasonId));
     });
   }
 
@@ -158,14 +186,14 @@ export class PlayRun {
         : this.seasons.memberNightPlayLive(seasonId);
     this.send(request, (result) => {
       if (result.job) this.startPolling(seasonId, result.job.job_id);
-      const dashboard = ['/leagues', leagueId, 'seasons', seasonId];
+      const dashboard = seasonCommands(leagueId, seasonId);
       if (result.round_ids.length === 0) {
         this.landThenRefresh(dashboard);
         return;
       }
-      void this.router
-        .navigate([...dashboard, 'live'], { queryParams: { rounds: result.round_ids.join(',') } })
-        .then(() => this.refresh());
+      this.landThenRefresh([...dashboard, 'live'], {
+        queryParams: { rounds: result.round_ids.join(',') },
+      });
     });
   }
 
@@ -183,38 +211,33 @@ export class PlayRun {
   }
 
   /** I1 + I4: the Displayed Season to act on, or null while another action holds the menu. */
-  private target(): { leagueId: number; seasonId: number } | null {
+  private target(): PlayTarget | null {
     const season = this.controls()?.displayed_season;
     if (this.leagueId === null || !season || this.busy() || this.progress() !== null) return null;
     return { leagueId: this.leagueId, seasonId: season.id };
   }
 
-  private runSync(action: SyncAction, leagueId: number, seasonId: number): void {
-    const requests: Record<SyncAction, () => Observable<SeasonDashboard>> = {
-      start_season: () => this.seasons.start(seasonId),
-      play_week: () => this.seasons.playWeek(seasonId),
-      play_single_round: () => this.seasons.playSingleRound(seasonId),
-    };
-    this.send(requests[action](), (dashboard) => {
-      if (action === 'start_season') this.notify(seasonStartedMessage(dashboard));
-      this.landThenRefresh(['/leagues', leagueId, 'seasons', seasonId]);
+  /** A synchronous play: its dashboard answer (passed to `then`), then the Season dashboard. */
+  private playSync(
+    request: Observable<SeasonDashboard>,
+    { leagueId, seasonId }: PlayTarget,
+    then?: (dashboard: SeasonDashboard) => void,
+  ): void {
+    this.send(request, (dashboard) => {
+      then?.(dashboard);
+      this.landThenRefresh(seasonCommands(leagueId, seasonId));
     });
   }
 
-  private runBackground(action: BackgroundAction, seasonId: number): void {
-    const requests: Record<BackgroundAction, () => Observable<SeasonPlayJobRef>> = {
-      play_two_months: () => this.seasons.playTwoMonths(seasonId),
-      play_until_end: () => this.seasons.playUntilEnd(seasonId),
-      play_playoffs: () => this.seasons.playPlayoffs(seasonId),
-      member_night_play_all: () => this.seasons.memberNightPlayAll(seasonId),
-    };
-    this.send(requests[action](), (ref) => this.startPolling(seasonId, ref.job_id));
+  /** A background run: polls the Job its answer names. */
+  private playBackground(request: Observable<SeasonPlayJobRef>, { seasonId }: PlayTarget): void {
+    this.send(request, (ref) => this.startPolling(seasonId, ref.job_id));
   }
 
   /** Django's `next_season` redirect: a draft goes to its Conferences, else its dashboard. */
   private startNextSeason(leagueId: number): void {
     this.send(this.leagues.nextSeason(leagueId), (next) => {
-      const base = ['/leagues', leagueId, 'seasons', next.id];
+      const base = seasonCommands(leagueId, next.id);
       this.landThenRefresh(next.state === 'draft' ? [...base, 'conferences'] : base);
     });
   }
@@ -247,12 +270,20 @@ export class PlayRun {
     });
   }
 
-  private landThenRefresh(commands: (string | number)[]): void {
-    void this.router.navigate(commands).then(() => this.refresh());
+  /**
+   * Navigates, then refreshes (I2). The open screen is stale only when the URL did not change
+   * (the router kept the screen); a new URL's screen was just created with fresh loads.
+   */
+  private landThenRefresh(commands: (string | number)[], extras?: NavigationExtras): void {
+    const before = this.router.url;
+    void this.router
+      .navigate(commands, extras)
+      .then(() => this.refresh(this.router.url === before));
   }
 
-  /** I2: re-fetch the controls and tick `changed`. */
-  private refresh(): void {
+  /** I2: re-fetch the controls and tick `changed`; with `stale`, tick `screenStale` too. */
+  private refresh(stale: boolean): void {
+    if (stale) this._screenStale.update((n) => n + 1);
     this._changed.update((n) => n + 1);
     this.loadControls();
   }
@@ -303,7 +334,8 @@ export class PlayRun {
     if (this.job !== null) this.finished.add(this.job.jobId);
     this.stopPolling();
     if (status.status === 'error') this._error.set(status.error ?? JOB_FAILED_MESSAGE);
-    this.refresh();
+    // The run changed the data under whichever screen is open.
+    this.refresh(true);
   }
 
   private schedulePoll(): void {

@@ -18,7 +18,7 @@ import { leagueFinanceRow, leagueFinances } from '../testing/league-finances-fix
 import { leagueNav } from '../testing/league-fixtures';
 import { failure } from '../testing/league-stats-fixtures';
 import { LeagueFinances } from './league-finances';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/finances';
@@ -44,7 +44,6 @@ describe('League Finances (/leagues/:id/finances, spec #439)', () => {
   });
 
   afterEach(() => {
-    releasePlayControls();
     http.verify();
   });
 
@@ -57,7 +56,7 @@ describe('League Finances (/leagues/:id/finances, spec #439)', () => {
 
   async function navigate(nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(PATH);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await harness.fixture.whenStable();
   }
 
@@ -89,7 +88,7 @@ describe('League Finances (/leagues/:id/finances, spec #439)', () => {
     await harness.navigateByUrl(PATH);
     expect(financeRequests()).toEqual([]);
     expect(text(q('[role="status"]'))).toBe('');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     await harness.fixture.whenStable();
     await answer();
   });

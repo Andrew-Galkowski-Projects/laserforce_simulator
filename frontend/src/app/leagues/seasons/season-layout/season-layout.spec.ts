@@ -9,13 +9,12 @@ import { environment } from '../../../../environments/environment';
 import { signIn } from '../../../api/testing/auth-fixtures';
 import { routes } from '../../../app.routes';
 import { authInterceptor } from '../../../auth/auth.interceptor';
-import { leagueNav } from '../../testing/league-fixtures';
 import { failure } from '../../testing/league-stats-fixtures';
+import { releaseLeagueChrome } from '../../testing/leagues-loads';
 import { SeasonAwards } from '../season-awards/season-awards';
 import { SeasonStandings } from '../season-standings/season-standings';
 import { season, seasonUrl } from '../testing/season-fixtures';
 import { releaseSeasonLayout, releaseSeasonScreenLoads } from '../testing/season-loads';
-import { releasePlayControls } from '../../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -39,8 +38,6 @@ describe('Season layout (spec #444 I1 / I2)', () => {
 
   afterEach(() => {
     releaseSeasonScreenLoads();
-    http.match((req) => req.url.endsWith('/nav/'));
-    releasePlayControls();
     http.verify();
   });
 
@@ -57,7 +54,7 @@ describe('Season layout (spec #444 I1 / I2)', () => {
 
   async function navigate(path = 'standings'): Promise<void> {
     await harness.navigateByUrl(seasonUrl(path));
-    http.match(`${BASE}/leagues/1/nav/`).forEach((r) => r.flush({ data: leagueNav(), meta: {} }));
+    releaseLeagueChrome();
   }
 
   it('loads the Season with GET seasons/{seasonId}/ and then renders the screen', async () => {

@@ -145,6 +145,46 @@ describe('PlayRun (spec #454)', () => {
     });
   });
 
+  describe('screenStale: whether the open screen must be re-created', () => {
+    it('does not tick when the landing opened another URL (the router created that screen)', async () => {
+      watched();
+      const before = run.screenStale();
+      run.run('play_week');
+      expectPost('seasons/11/play-week/').flush({ data: seasonDashboard(), meta: {} });
+      await settle();
+      expect(routerUrl()).toBe('/leagues/1/seasons/11');
+      expect(run.screenStale()).toBe(before);
+      answerControls();
+    });
+
+    it('ticks with changed when the landing URL was already open', async () => {
+      await TestBed.inject(Router).navigateByUrl('/leagues/1/seasons/11');
+      watched();
+      const stale = run.screenStale();
+      const changed = run.changed();
+      run.run('play_week');
+      expectPost('seasons/11/play-week/').flush({ data: seasonDashboard(), meta: {} });
+      await settle();
+      expect(run.screenStale()).toBe(stale + 1);
+      expect(run.changed()).toBe(changed + 1);
+      answerControls();
+    });
+
+    it('ticks when a Job finishes', () => {
+      watched();
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.run('play_two_months');
+      expectPost('seasons/11/play-two-months/').flush({
+        data: { job_id: 'job-1', season_id: 11, status_url: '' },
+        meta: {},
+      });
+      const before = run.screenStale();
+      http.expectOne(jobUrl('job-1')).flush({ data: status({ status: 'complete' }), meta: {} });
+      expect(run.screenStale()).toBe(before + 1);
+      answerControls();
+    });
+  });
+
   describe('Start Next Season', () => {
     it('lands on the new draft Season’s Conferences', async () => {
       watched(playControls({ action_button_state: 'start_next_season' }));

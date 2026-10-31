@@ -260,8 +260,10 @@ src/
                           (league-fixtures, league-stats-fixtures, league-team-fixtures,
                           league-players-fixtures, league-finances-fixtures, leagues-loads:
                           releaseLeaguesLoads, which also releases the stats, ANG-06-16 and
-                          finance GETs, and releaseLeagueTeamPlayerLoads, only the ANG-06-16
-                          and finance GETs; specs only)
+                          finance GETs, releaseLeagueTeamPlayerLoads, only the ANG-06-16
+                          and finance GETs, and releaseLeagueChrome, which answers the
+                          League nav/ and drops the Play menu's play-controls/, called right
+                          after a League screen spec's navigation; specs only)
     api/                  api-client.ts (ApiClient, ApiError, Page<T>, ListParams) and one
                           <resource>.service.ts + <resource>.models.ts per resource
                           (teams, players, matches, rounds, maps, batch, tournaments:

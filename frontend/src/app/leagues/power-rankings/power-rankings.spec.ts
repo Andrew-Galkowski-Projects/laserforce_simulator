@@ -20,9 +20,8 @@ import {
   scopedEnvelope,
   seasonScope,
 } from '../testing/league-stats-fixtures';
-import { leagueNav } from '../testing/league-fixtures';
 import { PowerRankings } from './power-rankings';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const RANKINGS = `${BASE}/leagues/1/power-rankings/`;
@@ -49,7 +48,6 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
   });
 
   afterEach(() => {
-    releasePlayControls();
     http.verify();
   });
 
@@ -86,7 +84,7 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
     scope?: SeasonScope,
   ): Promise<Record<string, string>> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     return answer(rows, scope);
   }
 
@@ -211,7 +209,7 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
   describe('lenient fallback (I2)', () => {
     it('drops a stale season, replacing the URL, and reloads', async () => {
       await harness.navigateByUrl('/leagues/1/power-rankings?season=99&sort=win_pct&dir=asc');
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       const navigate = vi.spyOn(TestBed.inject(Router), 'navigate');
       rankingsRequest().flush(...badParam('season'));
       await harness.fixture.whenStable();
@@ -223,7 +221,7 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
 
     it('drops an ordering the API rejects', async () => {
       await harness.navigateByUrl('/leagues/1/power-rankings?season=10&sort=win_pct&dir=desc');
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       rankingsRequest().flush(...badParam('ordering'));
       await harness.fixture.whenStable();
       expect(url()).toBe('/leagues/1/power-rankings?season=10');
@@ -251,7 +249,7 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
 
   it("shows any other failure in the error box with the server's message", async () => {
     await harness.navigateByUrl('/leagues/1/power-rankings');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     rankingsRequest().flush(...failure(500, 'Database is down.'));
     await harness.fixture.whenStable();
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
@@ -261,6 +259,7 @@ describe('Power Rankings (/leagues/:id/power-rankings, spec #417)', () => {
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl('/leagues/1/power-rankings');
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === RANKINGS);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

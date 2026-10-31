@@ -27,7 +27,7 @@ import {
   withTeamOptions,
 } from '../testing/league-team-fixtures';
 import { LeagueTeamHistory } from './team-history';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/history';
@@ -57,7 +57,6 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
   });
 
   afterEach(() => {
-    releasePlayControls();
     http.verify();
   });
 
@@ -95,7 +94,7 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
   /** Opens `path` and answers the layout's nav (no screen request answered). */
   async function openNav(path = PATH, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await stable();
   }
 

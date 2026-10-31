@@ -4,7 +4,14 @@
 // `leagues.models.ts`; `TeamRef` in `analytics.models.ts`. No mapping layer.
 import { TeamRef } from './analytics.models';
 import { JobStatus } from './batch.models';
-import { AwardWinner, LeagueRef, MapMode, SeasonRef, StandingsRow } from './leagues.models';
+import {
+  AwardWinner,
+  LeagueRef,
+  MapMode,
+  MemberNightSite,
+  SeasonRef,
+  StandingsRow,
+} from './leagues.models';
 
 /** `{id, name}`: a Conference (`conference_ref`). */
 export interface ConferenceRef {
@@ -185,11 +192,17 @@ export interface SeasonPlayJobRef {
 }
 
 /**
+ * `LivePlayResult.kind` (`league_play_services.py`): a round-robin game (a bye too), a playoff
+ * node, or a member-night game.
+ */
+export type LivePlayKind = 'rr' | 'playoff' | 'member_night';
+
+/**
  * `POST seasons/{id}/play-live/` and `member-night/play-live/`: the manager's game, played
  * now. `round_ids` is empty on a bye; `job` is the background run of the rest, if any.
  */
 export interface LivePlayResult {
-  kind: string;
+  kind: LivePlayKind;
   round_ids: number[];
   job: SeasonPlayJobRef | null;
 }
@@ -204,9 +217,7 @@ export interface SeasonPlayJobStatus {
 }
 
 /** One viable Site of `GET seasons/{id}/member-night/`, with the games drawn there. */
-export interface MemberNightSiteState {
-  site: string;
-  count: number;
+export interface MemberNightSiteState extends MemberNightSite {
   games: number;
 }
 

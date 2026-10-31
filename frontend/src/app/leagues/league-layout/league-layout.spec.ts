@@ -13,7 +13,8 @@ import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { PlayRun } from '../play/play-run';
-import { leagueNav, pageEnvelope, playControls } from '../testing/league-fixtures';
+import { season } from '../seasons/testing/season-fixtures';
+import { leagueNav, pageEnvelope, playControls, seasonDashboard } from '../testing/league-fixtures';
 import { watchResult } from '../testing/league-players-fixtures';
 import {
   pagedEnvelope,
@@ -321,6 +322,109 @@ describe('League layout (spec #409 F4 / F5)', () => {
     const after = page().querySelector('app-league-history');
     expect(after).not.toBeNull();
     expect(after).not.toBe(before);
+  });
+
+  describe('a play action that lands on a screen (spec #454 fix A / B)', () => {
+    const CONTROLS = `${BASE}/leagues/1/play-controls/`;
+    const SEASON = `${BASE}/seasons/11/`;
+    const DASHBOARD = `${BASE}/seasons/11/dashboard/`;
+    const ROUND = `${BASE}/rounds/31/`;
+    const count = (url: string): number => http.match((req) => req.url === url).length;
+
+    function answerControls(body = playControls()): void {
+      http.expectOne(CONTROLS).flush({ data: body, meta: {} });
+    }
+
+    /** Answers the reload a play change sends: the League nav and the controls. */
+    async function answerReload(): Promise<void> {
+      navRequest().flush({ data: leagueNav(), meta: {} });
+      answerControls();
+      await harness.fixture.whenStable();
+    }
+
+    /** Answers the Season layout's GET, so the Season screen under it is created. */
+    async function answerSeason(): Promise<void> {
+      http.expectOne(SEASON).flush({ data: season(), meta: {} });
+      await harness.fixture.whenStable();
+    }
+
+    async function openHistory(controls = playControls()): Promise<void> {
+      await open('/leagues/1/history');
+      http.expectOne((req) => req.url === `${BASE}/leagues/1/history/`).flush(pageEnvelope([]));
+      answerControls(controls);
+      await harness.fixture.whenStable();
+    }
+
+    async function playWeek(): Promise<void> {
+      TestBed.inject(PlayRun).run('play_week');
+      http.expectOne(`${BASE}/seasons/11/play-week/`).flush({ data: seasonDashboard(), meta: {} });
+      await harness.fixture.whenStable();
+    }
+
+    it('creates the Season dashboard once when the action lands there from another screen', async () => {
+      await openHistory();
+      await playWeek();
+      await answerReload();
+      expect(routerUrl()).toBe('/leagues/1/seasons/11');
+      // One Season GET (expectOne) and one dashboard GET: the screen was not created twice.
+      await answerSeason();
+      expect(count(DASHBOARD)).toBe(1);
+    });
+
+    it('re-creates the Season dashboard when the action is played from it', async () => {
+      await open('/leagues/1/seasons/11');
+      await answerSeason();
+      answerControls();
+      expect(count(DASHBOARD)).toBe(1);
+      const before = page().querySelector('app-season-dashboard');
+      expect(before).not.toBeNull();
+
+      await playWeek();
+      await answerReload();
+      await answerSeason();
+      expect(count(DASHBOARD)).toBe(1);
+      const after = page().querySelector('app-season-dashboard');
+      expect(after).not.toBeNull();
+      expect(after).not.toBe(before);
+    });
+
+    it('creates the Live screen once when a Live action lands there', async () => {
+      await openHistory(playControls({ live_preview_available: true }));
+      TestBed.inject(PlayRun).playLive('season');
+      http.expectOne(`${BASE}/seasons/11/play-live/`).flush({
+        data: { kind: 'rr', round_ids: [31], job: null },
+        meta: {},
+      });
+      await harness.fixture.whenStable();
+      await answerReload();
+      await answerSeason();
+      expect(count(ROUND)).toBe(1);
+      expect(routerUrl()).toBe('/leagues/1/seasons/11/live?rounds=31');
+    });
+
+    it('keeps the Live screen when a Job finishes on it; the nav and controls still reload', async () => {
+      await open('/leagues/1/seasons/11/live?rounds=31');
+      await answerSeason();
+      answerControls();
+      expect(count(ROUND)).toBe(1);
+      const before = page().querySelector('app-season-live');
+      expect(before).not.toBeNull();
+
+      TestBed.inject(PlayRun).run('play_two_months');
+      http.expectOne(`${BASE}/seasons/11/play-two-months/`).flush({
+        data: { job_id: 'job-1', season_id: 11, status_url: '' },
+        meta: {},
+      });
+      http.expectOne(`${BASE}/seasons/11/play-jobs/job-1/`).flush({
+        data: { status: 'complete', completed: 8, total: 8, cancelled: false, error: null },
+        meta: {},
+      });
+      await harness.fixture.whenStable();
+      await answerReload();
+      expect(count(SEASON)).toBe(0);
+      expect(count(ROUND)).toBe(0);
+      expect(page().querySelector('app-season-live')).toBe(before);
+    });
   });
 
   it('does not reload on its first look at PlayRun.changed', async () => {

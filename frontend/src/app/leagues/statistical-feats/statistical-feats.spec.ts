@@ -24,9 +24,8 @@ import {
   teamFeat,
   teamOptions,
 } from '../testing/league-stats-fixtures';
-import { leagueNav } from '../testing/league-fixtures';
 import { StatisticalFeats } from './statistical-feats';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const FEATS = `${BASE}/leagues/1/statistical-feats/`;
@@ -62,7 +61,6 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
   });
 
   afterEach(() => {
-    releasePlayControls();
     http.verify();
   });
 
@@ -103,7 +101,7 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
 
   async function navigate(path: string): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
   }
 
   async function open(path = PATH, reply: Reply = {}): Promise<Record<string, string>> {
@@ -443,6 +441,7 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl(PATH);
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === FEATS);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

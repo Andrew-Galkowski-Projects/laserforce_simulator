@@ -24,9 +24,8 @@ import {
   scopedEnvelope,
   seasonScope,
 } from '../testing/league-stats-fixtures';
-import { leagueNav } from '../testing/league-fixtures';
 import { LeagueLeaders } from './league-leaders';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const LEADERS = `${BASE}/leagues/1/leaders/`;
@@ -51,7 +50,6 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
   });
 
   afterEach(() => {
-    releasePlayControls();
     http.verify();
   });
 
@@ -89,7 +87,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
     scope?: SeasonScope,
   ): Promise<Record<string, string>> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     return answer(boards, scope);
   }
 
@@ -308,7 +306,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
 
   it('drops a stale season the API rejects, replacing the URL, and reloads (I2)', async () => {
     await harness.navigateByUrl(`${PATH}?season=99`);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate');
     leadersRequest().flush(...badParam('season'));
     await harness.fixture.whenStable();
@@ -344,7 +342,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
 
   it("shows any other failure in the error box with the server's message", async () => {
     await harness.navigateByUrl(PATH);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     leadersRequest().flush(...failure(500, 'Database is down.'));
     await harness.fixture.whenStable();
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
@@ -372,6 +370,7 @@ describe('League Leaders (/leagues/:id/stats/league-leaders, spec #417)', () => 
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl(PATH);
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === LEADERS);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

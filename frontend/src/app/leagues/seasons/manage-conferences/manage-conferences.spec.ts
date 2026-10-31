@@ -22,7 +22,6 @@ import { pageEnvelope } from '../../testing/league-fixtures';
 import { failure } from '../../testing/league-stats-fixtures';
 import { conferenceState, conferencesState, season, seasonUrl } from '../testing/season-fixtures';
 import { releaseSeasonLayout } from '../testing/season-loads';
-import { releasePlayControls } from '../../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const CONFERENCES_URL = `${BASE}/seasons/11/conferences/`;
@@ -59,8 +58,6 @@ describe('Manage Conferences (/leagues/:id/seasons/:seasonId/conferences, spec #
   });
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
-    releasePlayControls();
     http.verify();
   });
 

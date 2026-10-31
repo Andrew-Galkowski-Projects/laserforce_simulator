@@ -19,7 +19,6 @@ import { authInterceptor } from '../../auth/auth.interceptor';
 import { User } from '../../auth/user';
 import { stubCanvasContext } from '../../matches/testing/fake-canvas';
 import { LineChart } from '../../shared/line-chart';
-import { leagueNav } from '../testing/league-fixtures';
 import {
   leaguePlayer,
   leaguePlayerAward,
@@ -29,7 +28,7 @@ import {
   watchResult,
 } from '../testing/league-players-fixtures';
 import { failure } from '../testing/league-stats-fixtures';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/players/25';
@@ -63,7 +62,6 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
   afterEach(() => {
     restoreCanvas();
     document.querySelector('.cdk-overlay-container')?.remove();
-    releasePlayControls();
     http.verify();
   });
 
@@ -93,7 +91,7 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
   async function navigate(user: User = USER): Promise<void> {
     await setUp(user);
     await harness.navigateByUrl(PATH);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     await harness.fixture.whenStable();
   }
 

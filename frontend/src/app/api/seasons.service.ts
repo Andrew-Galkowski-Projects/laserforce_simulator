@@ -120,6 +120,7 @@ export class SeasonsService {
     return this.api.post<{ cancel_requested: boolean }>(`seasons/${id}/play-cancel/`, {});
   }
 
+  /** A background run's Job status (poll it until it is no longer `running`). */
   playJob(id: number, jobId: string): Observable<SeasonPlayJobStatus> {
     return this.api.get<SeasonPlayJobStatus>(`seasons/${id}/play-jobs/${jobId}/`);
   }

@@ -13,14 +13,8 @@ import { SELF_INSERT, USER, signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
 import { User } from '../../auth/user';
-import {
-  awardWinner,
-  historyRow,
-  league,
-  leagueNav,
-  pageEnvelope,
-} from '../testing/league-fixtures';
-import { releasePlayControls } from '../testing/leagues-loads';
+import { awardWinner, historyRow, league, pageEnvelope } from '../testing/league-fixtures';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const HISTORY = `${BASE}/leagues/1/history/`;
@@ -44,7 +38,6 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
   }
 
   afterEach(() => {
-    releasePlayControls();
     http.verify();
   });
 
@@ -54,7 +47,7 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
 
   /** The layout's nav load, answered (its spec covers it). */
   function flushNav(): void {
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
   }
 
   function flushLeague(): void {

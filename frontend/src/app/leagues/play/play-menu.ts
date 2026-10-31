@@ -8,11 +8,9 @@ import { MatProgressBar } from '@angular/material/progress-bar';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter, map } from 'rxjs';
 import { MemberNightSite } from '../../api/leagues.models';
+import { ROOMY } from '../../shared/breakpoints';
 import { MemberNightDialog, MemberNightDialogData } from './member-night-dialog';
 import { PlayAction, PlayRun } from './play-run';
-
-/** The Shell's `ROOMY`: at this width and wider the running label has room. */
-const ROOMY = '(min-width: 600px)';
 
 /** `/leagues/<numeric id>` or below; the id is group 1. */
 const LEAGUE_URL = /^\/leagues\/(\d+)(?=[/?#]|$)/;
