@@ -1,0 +1,29 @@
+:host {
+  display: contents;
+}
+
+.play-menu {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.play-menu__label {
+  font-size: 0.875rem;
+  color: var(--lf-text-muted);
+  white-space: nowrap;
+}
+
+.play-menu__bar {
+  width: 6rem;
+}
+
+.play-menu__error {
+  overflow: hidden;
+  max-width: 16rem;
+  font-size: 0.875rem;
+  color: var(--mat-sys-error);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

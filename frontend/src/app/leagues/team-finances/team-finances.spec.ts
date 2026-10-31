@@ -24,6 +24,7 @@ import { leagueNav } from '../testing/league-fixtures';
 import { failure } from '../testing/league-stats-fixtures';
 import { withTeamOptions } from '../testing/league-team-fixtures';
 import { LeagueTeamFinances } from './team-finances';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/finances';
@@ -59,7 +60,10 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>

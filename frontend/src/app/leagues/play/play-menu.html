@@ -1,0 +1,104 @@
+@if (leagueId(); as id) {
+  <div class="play-menu">
+    @if (run.progress(); as progress) {
+      <button
+        mat-stroked-button
+        type="button"
+        [disabled]="run.stopRequested()"
+        (click)="run.stop()"
+      >
+        Stop
+      </button>
+      @if (roomy()) {
+        <span class="play-menu__label">{{ progressLabel() }}</span>
+      }
+      <mat-progress-bar
+        class="play-menu__bar"
+        [mode]="progress.total > 0 ? 'determinate' : 'indeterminate'"
+        [value]="progressValue()"
+        aria-label="Play run progress"
+      />
+    } @else {
+      <button mat-button type="button" aria-label="Play" [matMenuTriggerFor]="play">
+        Play <span aria-hidden="true">&#9662;</span>
+      </button>
+    }
+    @if (run.error(); as message) {
+      <span class="play-menu__error" role="alert">{{ message }}</span>
+    }
+  </div>
+  <mat-menu #play="matMenu">
+    @if (controls(); as c) {
+      @switch (c.action_button_state) {
+        @case ('start_season') {
+          <button mat-menu-item type="button" [disabled]="locked()" (click)="act('start_season')">
+            Start Season
+          </button>
+        }
+        @case ('play_next') {
+          @if (!c.playoff_phase_active && !c.member_night_phase_active) {
+            <button mat-menu-item type="button" [disabled]="locked()" (click)="act('play_week')">
+              Play One Week
+            </button>
+            <button
+              mat-menu-item
+              type="button"
+              [disabled]="locked()"
+              (click)="act('play_two_months')"
+            >
+              Play Two Months
+            </button>
+            <button
+              mat-menu-item
+              type="button"
+              [disabled]="locked()"
+              (click)="act('play_until_end')"
+            >
+              {{ untilLabel() }}
+            </button>
+          }
+        }
+        @case ('start_next_season') {
+          @if (c.is_career_mode) {
+            <a
+              mat-menu-item
+              [disabled]="locked()"
+              [routerLink]="['/leagues', id, 'seasons', c.displayed_season!.id, 'owner-evaluation']"
+              >Start Next Season</a
+            >
+          } @else {
+            <button
+              mat-menu-item
+              type="button"
+              [disabled]="locked()"
+              (click)="act('start_next_season')"
+            >
+              Start Next Season
+            </button>
+          }
+        }
+        @default {
+          <button mat-menu-item type="button" disabled>Play</button>
+        }
+      }
+      @if (c.playoff_phase_active) {
+        <button
+          mat-menu-item
+          type="button"
+          [disabled]="locked()"
+          (click)="act('play_single_round')"
+        >
+          Play Single Round
+        </button>
+        <button mat-menu-item type="button" [disabled]="locked()" (click)="act('play_two_months')">
+          Play Two Months
+        </button>
+        <button mat-menu-item type="button" [disabled]="locked()" (click)="act('play_playoffs')">
+          Through Playoffs
+        </button>
+      }
+    } @else {
+      <button mat-menu-item type="button" disabled>Play</button>
+    }
+  </mat-menu>
+}

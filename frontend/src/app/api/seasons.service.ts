@@ -7,6 +7,8 @@ import {
   ConferencesState,
   OwnerEvaluation,
   SeasonAwards,
+  SeasonPlayJobRef,
+  SeasonPlayJobStatus,
   SeasonSchedule,
   SeasonStandings,
   StandingsParams,
@@ -72,5 +74,41 @@ export class SeasonsService {
    */
   start(seasonId: number): Observable<SeasonDashboard> {
     return this.api.post<SeasonDashboard>(`seasons/${seasonId}/start/`, {});
+  }
+
+  // --- ANG-06-19: the Play menu (each refused with a 409 `play_in_progress` during a run) ---
+
+  /** Play the next matchday; the dashboard after it. */
+  playWeek(id: number): Observable<SeasonDashboard> {
+    return this.api.post<SeasonDashboard>(`seasons/${id}/play-week/`, {});
+  }
+
+  /** Play one playoff bracket node; the dashboard after it. */
+  playSingleRound(id: number): Observable<SeasonDashboard> {
+    return this.api.post<SeasonDashboard>(`seasons/${id}/play-single-round/`, {});
+  }
+
+  /** Start a background run of the next 8 matchdays. */
+  playTwoMonths(id: number): Observable<SeasonPlayJobRef> {
+    return this.api.post<SeasonPlayJobRef>(`seasons/${id}/play-two-months/`, {});
+  }
+
+  /** Start a background run of the rest of the regular season. */
+  playUntilEnd(id: number): Observable<SeasonPlayJobRef> {
+    return this.api.post<SeasonPlayJobRef>(`seasons/${id}/play-until-end/`, {});
+  }
+
+  /** Start a background drain of the playoffs. */
+  playPlayoffs(id: number): Observable<SeasonPlayJobRef> {
+    return this.api.post<SeasonPlayJobRef>(`seasons/${id}/play-playoffs/`, {});
+  }
+
+  /** Ask the Active play run to stop after its current game (a no-op with none). */
+  playCancel(id: number): Observable<{ cancel_requested: boolean }> {
+    return this.api.post<{ cancel_requested: boolean }>(`seasons/${id}/play-cancel/`, {});
+  }
+
+  playJob(id: number, jobId: string): Observable<SeasonPlayJobStatus> {
+    return this.api.get<SeasonPlayJobStatus>(`seasons/${id}/play-jobs/${jobId}/`);
   }
 }

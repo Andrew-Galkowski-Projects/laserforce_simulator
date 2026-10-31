@@ -24,6 +24,7 @@ import {
 } from '../testing/league-stats-fixtures';
 import { leagueNav } from '../testing/league-fixtures';
 import { PlayerStats } from './player-stats';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const STATS = `${BASE}/leagues/1/player-stats/`;
@@ -59,7 +60,10 @@ describe('Player Stats (/leagues/:id/stats/player-stats, spec #417)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>

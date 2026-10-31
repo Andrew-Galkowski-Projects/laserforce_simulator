@@ -18,6 +18,19 @@ export function releaseLeaguesLoads(): void {
   );
 }
 
+/** The Shell's Play menu GET, sent on every `/leagues/<id>` URL (spec #454). */
+const PLAY_CONTROLS = new RegExp(`^${environment.apiBaseUrl}/leagues/\\d+/play-controls/$`);
+
+/**
+ * Releases the Play menu's `play-controls/` GETs, for a spec that renders the Shell on a League
+ * URL but tests the screen. Call before `http.verify()`.
+ */
+export function releasePlayControls(): void {
+  TestBed.inject(HttpTestingController).match(
+    (req) => req.method === 'GET' && PLAY_CONTROLS.test(req.url),
+  );
+}
+
 /**
  * The ANG-06-16 screens' GETs (spec #428): a Team's roster / schedule / history / history
  * players, the League player page, Free Agents and the Watch List; and the ANG-06-17 finance

@@ -532,10 +532,22 @@ class LeagueViewSet(
         url_name="play-controls",
     )
     def play_controls(self, request: Request, pk: str | None = None) -> Response:
-        """The structured play controls for the League's displayed Season."""
+        """The structured play controls for the League's displayed Season.
+
+        ANG-06-19 adds ``displayed_season`` here, not in ``build_play_controls``:
+        the HTML nav context merges every key of that helper.
+        """
         league = self.get_object()
+        displayed_season = pick_displayed_season(league)
         return Response(
-            play_services.build_play_controls(league, pick_displayed_season(league))
+            {
+                **play_services.build_play_controls(league, displayed_season),
+                "displayed_season": (
+                    season_ref(displayed_season)
+                    if displayed_season is not None
+                    else None
+                ),
+            }
         )
 
     @action(detail=True, methods=["get"], url_path="history", url_name="history")

@@ -28,6 +28,7 @@ import {
   seasonScope,
 } from '../testing/league-stats-fixtures';
 import { WatchList } from './watch-list';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const WATCH = `${BASE}/leagues/1/watch-list/`;
@@ -67,6 +68,7 @@ describe('Watch List (/leagues/:id/players/watch-list, spec #428)', () => {
 
   afterEach(() => {
     document.querySelector('.cdk-overlay-container')?.remove();
+    releasePlayControls();
     http.verify();
   });
 

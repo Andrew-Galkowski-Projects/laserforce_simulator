@@ -20,6 +20,7 @@ import {
   leagueNav,
   pageEnvelope,
 } from '../testing/league-fixtures';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const HISTORY = `${BASE}/leagues/1/history/`;
@@ -42,7 +43,10 @@ describe('League History (/leagues/:id/history, spec #409 F11)', () => {
     harness = await RouterTestingHarness.create();
   }
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const text = (el: Element | null | undefined): string =>

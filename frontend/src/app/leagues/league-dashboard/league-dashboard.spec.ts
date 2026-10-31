@@ -23,6 +23,7 @@ import {
   seasonDashboard,
   standingsSnippetRow,
 } from '../testing/league-fixtures';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -48,6 +49,7 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
     document.querySelector('.cdk-overlay-container')?.remove();
     // The League layout's nav load is its own spec's business.
     http.match((req) => req.url.endsWith('/nav/'));
+    releasePlayControls();
     http.verify();
   });
 

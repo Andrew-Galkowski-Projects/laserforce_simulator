@@ -27,6 +27,7 @@ import {
   withTeamOptions,
 } from '../testing/league-team-fixtures';
 import { LeagueTeamHistory } from './team-history';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/history';
@@ -55,7 +56,10 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>

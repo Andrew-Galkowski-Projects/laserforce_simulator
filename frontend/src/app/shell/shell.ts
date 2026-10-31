@@ -10,6 +10,7 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { map } from 'rxjs';
 import { APP_TITLE } from '../app-title';
 import { AuthService } from '../auth/auth.service';
+import { PlayMenu } from '../leagues/play/play-menu';
 import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
 import { injectNotify } from '../shared/notify';
 
@@ -33,6 +34,7 @@ const ROOMY = '(min-width: 600px)';
     MatSidenavContainer,
     MatSidenavContent,
     MatToolbar,
+    PlayMenu,
     RouterLink,
     RouterLinkActive,
     RouterOutlet,

@@ -29,6 +29,7 @@ import {
   watchResult,
 } from '../testing/league-players-fixtures';
 import { failure } from '../testing/league-stats-fixtures';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/players/25';
@@ -62,6 +63,7 @@ describe('League player (/leagues/:id/players/:playerId, spec #428)', () => {
   afterEach(() => {
     restoreCanvas();
     document.querySelector('.cdk-overlay-container')?.remove();
+    releasePlayControls();
     http.verify();
   });
 

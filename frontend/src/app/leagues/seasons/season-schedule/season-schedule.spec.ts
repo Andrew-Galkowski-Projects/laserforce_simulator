@@ -21,6 +21,7 @@ import {
   seasonUrl,
 } from '../testing/season-fixtures';
 import { releaseSeasonLayout } from '../testing/season-loads';
+import { releasePlayControls } from '../../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -65,6 +66,7 @@ describe('Season Schedule (/leagues/:id/seasons/:seasonId/schedule, spec #444)',
   afterEach(() => {
     Element.prototype.scrollIntoView = realScrollIntoView;
     http.match((req) => req.url.endsWith('/nav/'));
+    releasePlayControls();
     http.verify();
   });
 

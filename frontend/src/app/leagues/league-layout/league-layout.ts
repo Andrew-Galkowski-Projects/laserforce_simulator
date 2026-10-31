@@ -1,9 +1,9 @@
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { Component, DestroyRef, inject, signal } from '@angular/core';
-import { takeUntilDestroyed, toSignal } from '@angular/core/rxjs-interop';
+import { takeUntilDestroyed, toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { MatAnchor, MatButton } from '@angular/material/button';
 import { ActivatedRoute, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
-import { Subject, combineLatest, map, startWith, switchMap, tap } from 'rxjs';
+import { Subject, combineLatest, map, skip, startWith, switchMap, tap } from 'rxjs';
 import { LeagueNav } from '../../api/leagues.models';
 import { LeaguesService } from '../../api/leagues.service';
 import { notFoundOrError } from '../../shared/not-found-or-error';
@@ -13,6 +13,7 @@ import {
   LeagueNavEntry,
   LeagueNavSection,
 } from '../league-nav';
+import { PlayRun } from '../play/play-run';
 import { SoonBadge } from '../soon-badge/soon-badge';
 import { LeagueContext } from '../stats-shared/league-context';
 import { WatchState } from '../watch/watch-state';
@@ -69,10 +70,21 @@ export class LeagueLayout {
     { initialValue: false },
   );
 
+  /** Bumped on each `PlayRun.changed` tick; the template re-creates the routed screen on it. */
+  protected readonly generation = signal(0);
+
   private readonly reloads = new Subject<void>();
 
   constructor() {
     const leagues = inject(LeaguesService);
+    // Spec #454 "Reload on change": after a play action or a finished run, the nav and the open
+    // screen load again (Django's `window.location.reload()`). The first value is not a change.
+    toObservable(inject(PlayRun).changed)
+      .pipe(skip(1), takeUntilDestroyed())
+      .subscribe(() => {
+        this.generation.update((n) => n + 1);
+        this.reloads.next();
+      });
     combineLatest([inject(ActivatedRoute).paramMap, this.reloads.pipe(startWith(undefined))])
       .pipe(
         tap(([params]) => {

@@ -3,6 +3,7 @@
 // `StandingsRow`, `AwardWinner`, `SeasonRef`, `LeagueRef` and `MapMode` stay in
 // `leagues.models.ts`; `TeamRef` in `analytics.models.ts`. No mapping layer.
 import { TeamRef } from './analytics.models';
+import { JobStatus } from './batch.models';
 import { AwardWinner, LeagueRef, MapMode, SeasonRef, StandingsRow } from './leagues.models';
 
 /** `{id, name}`: a Conference (`conference_ref`). */
@@ -174,6 +175,22 @@ export interface ConferencesState {
   teams: TeamRef[];
   conferences: ConferenceState[];
   unassigned_team_ids: number[];
+}
+
+/** A background Season run's Job (`_job_ref`): poll `status_url` (`playJob`). */
+export interface SeasonPlayJobRef {
+  job_id: string;
+  season_id: number;
+  status_url: string;
+}
+
+/** `GET seasons/{id}/play-jobs/{job}/` (`build_play_job_status`). */
+export interface SeasonPlayJobStatus {
+  status: JobStatus;
+  completed: number;
+  total: number;
+  cancelled: boolean;
+  error: string | null;
 }
 
 /** One Conference of the `PUT seasons/{id}/conferences/` body (`ConferencePartitionForm`). */

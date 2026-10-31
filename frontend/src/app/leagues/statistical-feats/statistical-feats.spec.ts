@@ -26,6 +26,7 @@ import {
 } from '../testing/league-stats-fixtures';
 import { leagueNav } from '../testing/league-fixtures';
 import { StatisticalFeats } from './statistical-feats';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const FEATS = `${BASE}/leagues/1/statistical-feats/`;
@@ -60,7 +61,10 @@ describe('Statistical Feats (/leagues/:id/stats/statistical-feats, spec #417)', 
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>

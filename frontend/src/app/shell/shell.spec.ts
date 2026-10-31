@@ -273,6 +273,29 @@ describe('App shell (layout B)', () => {
     expect(routerUrl()).toBe('/maps');
   });
 
+  // ANG-06-19 (spec #454): the Play menu sits between the spacer and Account, on League URLs only.
+  it('shows the Play menu between the spacer and Account on a League URL', async () => {
+    await open('/leagues/1');
+    const toolbar = header()?.querySelector('mat-toolbar');
+    const order = [...(toolbar?.children ?? [])].map((el) =>
+      el.classList.contains('shell__spacer')
+        ? 'spacer'
+        : el.tagName === 'APP-PLAY-MENU'
+          ? 'play'
+          : el.getAttribute('aria-label') === 'Account'
+            ? 'account'
+            : null,
+    );
+    expect(order.filter((name) => name !== null)).toEqual(['spacer', 'play', 'account']);
+    http.expectOne(`${BASE}/leagues/1/play-controls/`);
+    expect(button('Play')).toBeDefined();
+  });
+
+  it('shows no Play menu off League URLs', async () => {
+    await open('/teams');
+    expect(button('Play')).toBeUndefined();
+  });
+
   it('keeps the sidebar open beside the page at 768px and wider, with no menu toggle', async () => {
     await open('/teams', 768);
     expect(sidenav()?.classList).toContain('mat-drawer-side');

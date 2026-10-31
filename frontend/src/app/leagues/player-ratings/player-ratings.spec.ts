@@ -24,6 +24,7 @@ import {
 } from '../testing/league-stats-fixtures';
 import { leagueNav } from '../testing/league-fixtures';
 import { PlayerRatings } from './player-ratings';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const RATINGS = `${BASE}/leagues/1/player-ratings/`;
@@ -76,7 +77,10 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>

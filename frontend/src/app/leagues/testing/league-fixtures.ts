@@ -14,6 +14,7 @@ import {
   LeagueTemplate,
   NewTeamCandidates,
   NextFixture,
+  PlayControls,
   Season,
   SeasonDashboard,
   SeasonPhase,
@@ -284,6 +285,27 @@ export function season(overrides: Partial<Season> = {}): Season {
     starting_map_rotation_ids_json: null,
     phases: [seasonPhase()],
     conferences: [],
+    ...overrides,
+  };
+}
+
+/** League 1's play controls: Season 11 in its round robin, nothing running (ANG-06-19). */
+export function playControls(overrides: Partial<PlayControls> = {}): PlayControls {
+  return {
+    action_button_label: 'Play Next',
+    action_button_state: 'play_next',
+    playoff_phase_active: false,
+    playoff_tournament_id: null,
+    playoff_completed: false,
+    has_following_tournament_phase: false,
+    following_tournament_is_final: false,
+    live_preview_available: false,
+    is_career_mode: false,
+    member_night_phase_active: false,
+    member_night_sites: [],
+    member_night_has_unplayed: false,
+    active_play_job_id: null,
+    displayed_season: { id: 11, name: 'Season 1' },
     ...overrides,
   };
 }

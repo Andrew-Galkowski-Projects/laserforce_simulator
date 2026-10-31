@@ -25,6 +25,7 @@ import {
   playerRatingRow,
 } from '../testing/league-stats-fixtures';
 import { FreeAgents } from './free-agents';
+import { releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const AGENTS = `${BASE}/leagues/1/free-agents/`;
@@ -83,7 +84,10 @@ describe('Free Agents (/leagues/:id/players/free-agents, spec #428)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>

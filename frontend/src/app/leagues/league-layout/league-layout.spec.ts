@@ -12,7 +12,8 @@ import { LeagueNav } from '../../api/leagues.models';
 import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
-import { leagueNav } from '../testing/league-fixtures';
+import { PlayRun } from '../play/play-run';
+import { leagueNav, pageEnvelope, playControls } from '../testing/league-fixtures';
 import { watchResult } from '../testing/league-players-fixtures';
 import {
   pagedEnvelope,
@@ -289,6 +290,44 @@ describe('League layout (spec #409 F4 / F5)', () => {
       .flush(pagedEnvelope([playerRatingRow({ watched: false })], 1, { team_options: [] }));
     await harness.fixture.whenStable();
     expect(flag().getAttribute('aria-pressed')).toBe('true');
+  });
+
+  // ANG-06-19 (spec #454): a finished play run reloads the open screen, as Django's
+  // `window.location.reload()` did.
+  it('re-sends the nav GET and re-creates the open screen when PlayRun.changed ticks', async () => {
+    await open('/leagues/1/history');
+    const historyUrl = `${BASE}/leagues/1/history/`;
+    http.expectOne((req) => req.url === historyUrl).flush(pageEnvelope([]));
+    http.expectOne(`${BASE}/leagues/1/play-controls/`).flush({ data: playControls(), meta: {} });
+    await harness.fixture.whenStable();
+    const before = page().querySelector('app-league-history');
+    expect(before).not.toBeNull();
+
+    TestBed.inject(PlayRun).run('play_two_months');
+    http.expectOne(`${BASE}/seasons/11/play-two-months/`).flush({
+      data: { job_id: 'job-1', season_id: 11, status_url: '' },
+      meta: {},
+    });
+    http.expectOne(`${BASE}/seasons/11/play-jobs/job-1/`).flush({
+      data: { status: 'complete', completed: 8, total: 8, cancelled: false, error: null },
+      meta: {},
+    });
+    await harness.fixture.whenStable();
+
+    navRequest().flush({ data: leagueNav(), meta: {} });
+    http.expectOne((req) => req.url === historyUrl);
+    http.expectOne(`${BASE}/leagues/1/play-controls/`);
+    await harness.fixture.whenStable();
+    const after = page().querySelector('app-league-history');
+    expect(after).not.toBeNull();
+    expect(after).not.toBe(before);
+  });
+
+  it('does not reload on its first look at PlayRun.changed', async () => {
+    await open('/leagues/1/history');
+    await harness.fixture.whenStable();
+    http.expectNone(`${BASE}/leagues/1/nav/`);
+    expect(http.match((req) => req.url === `${BASE}/leagues/1/history/`).length).toBe(1);
   });
 
   it('loads the new League when the :id changes', async () => {

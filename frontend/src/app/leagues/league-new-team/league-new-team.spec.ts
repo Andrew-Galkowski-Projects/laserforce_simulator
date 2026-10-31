@@ -12,7 +12,7 @@ import { NewTeamCandidates } from '../../api/leagues.models';
 import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
-import { releaseLeaguesLoads } from '../testing/leagues-loads';
+import { releaseLeaguesLoads, releasePlayControls } from '../testing/leagues-loads';
 import { leagueNav, newTeamCandidates, season } from '../testing/league-fixtures';
 
 const BASE = environment.apiBaseUrl;
@@ -36,7 +36,10 @@ describe('New-team picker (/leagues/:id/new-team, spec #409 F12)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    releasePlayControls();
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const screen = (): HTMLElement => page().querySelector<HTMLElement>('app-league-new-team')!;
