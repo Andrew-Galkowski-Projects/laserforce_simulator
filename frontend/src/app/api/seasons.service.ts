@@ -5,6 +5,7 @@ import { Season, SeasonDashboard } from './leagues.models';
 import {
   ConferenceWrite,
   ConferencesState,
+  MemberNightState,
   OwnerEvaluation,
   SeasonAwards,
   SeasonPlayJobRef,
@@ -110,5 +111,27 @@ export class SeasonsService {
 
   playJob(id: number, jobId: string): Observable<SeasonPlayJobStatus> {
     return this.api.get<SeasonPlayJobStatus>(`seasons/${id}/play-jobs/${jobId}/`);
+  }
+
+  // --- ANG-06-19b: member nights ---
+
+  /** The member-night phase's viable Sites and the games drawn so far. */
+  memberNight(id: number): Observable<MemberNightState> {
+    return this.api.get<MemberNightState>(`seasons/${id}/member-night/`);
+  }
+
+  /** Draw games for the chosen Sites (at least one); the dashboard after it. */
+  setUpMemberNight(id: number, sites: string[]): Observable<SeasonDashboard> {
+    return this.api.post<SeasonDashboard>(`seasons/${id}/member-night/`, { sites });
+  }
+
+  /** Play one member-night game; the dashboard after it. */
+  memberNightPlaySingle(id: number): Observable<SeasonDashboard> {
+    return this.api.post<SeasonDashboard>(`seasons/${id}/member-night/play-single/`, {});
+  }
+
+  /** Start a background run of every unplayed member-night game. */
+  memberNightPlayAll(id: number): Observable<SeasonPlayJobRef> {
+    return this.api.post<SeasonPlayJobRef>(`seasons/${id}/member-night/play/`, {});
   }
 }

@@ -2,10 +2,13 @@ import { BreakpointObserver } from '@angular/cdk/layout';
 import { Component, DestroyRef, computed, effect, inject } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { MatButton } from '@angular/material/button';
+import { MatDialog } from '@angular/material/dialog';
 import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { MatProgressBar } from '@angular/material/progress-bar';
 import { NavigationEnd, Router, RouterLink } from '@angular/router';
 import { filter, map } from 'rxjs';
+import { MemberNightSite } from '../../api/leagues.models';
+import { MemberNightDialog, MemberNightDialogData } from './member-night-dialog';
 import { PlayAction, PlayRun } from './play-run';
 
 /** The Shell's `ROOMY`: at this width and wider the running label has room. */
@@ -28,6 +31,7 @@ const LEAGUE_URL = /^\/leagues\/(\d+)(?=[/?#]|$)/;
 export class PlayMenu {
   protected readonly run = inject(PlayRun);
   private readonly router = inject(Router);
+  private readonly dialog = inject(MatDialog);
 
   private readonly url = toSignal(
     this.router.events.pipe(
@@ -87,5 +91,17 @@ export class PlayMenu {
 
   protected act(action: PlayAction): void {
     this.run.run(action);
+  }
+
+  /** Asks which Sites in the member-night dialog; a confirmed choice draws the games. */
+  protected setUpMemberNight(sites: MemberNightSite[]): void {
+    this.dialog
+      .open<MemberNightDialog, MemberNightDialogData, string[]>(MemberNightDialog, {
+        data: { sites },
+      })
+      .afterClosed()
+      .subscribe((chosen) => {
+        if (chosen?.length) this.run.setUpMemberNight(chosen);
+      });
   }
 }

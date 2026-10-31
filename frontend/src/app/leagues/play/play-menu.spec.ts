@@ -2,6 +2,7 @@ import { Component } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
+import { MATERIAL_ANIMATIONS } from '@angular/material/core';
 import { Router, provideRouter } from '@angular/router';
 import { environment } from '../../../environments/environment';
 import { PlayControls } from '../../api/leagues.models';
@@ -59,6 +60,8 @@ describe('Play menu (spec #454)', () => {
         provideRouter([{ path: '**', component: Blank }]),
         provideHttpClient(),
         provideHttpClientTesting(),
+        // jsdom fires no animationend, so the member-night dialog would never finish closing.
+        { provide: MATERIAL_ANIMATIONS, useValue: { animationsDisabled: true } },
       ],
     });
     http = TestBed.inject(HttpTestingController);
@@ -275,17 +278,131 @@ describe('Play menu (spec #454)', () => {
       await openWith(playControls());
       await openMenu();
       item('Play One Week')?.click();
+      http.expectOne(`${BASE}/seasons/11/play-week/`).flush(
+        {
+          errors: [{ code: 'season_not_active', message: 'Not active.', field: null }],
+          meta: {},
+        },
+        { status: 409, statusText: 'Conflict' },
+      );
+      await fixture.whenStable();
+      expect(text(alert())).toBe('Not active.');
+    });
+  });
+
+  describe('member nights (ANG-06-19b)', () => {
+    const SET_UP = 'Set Up Member Night…';
+    const CONFIRM = 'Confirm — Set Up Member Night';
+    const SETUP = playControls({
+      member_night_phase_active: true,
+      member_night_sites: [
+        { site: 'Downtown', count: 14 },
+        { site: 'Uptown', count: 12 },
+      ],
+    });
+    const UNPLAYED = playControls({
+      member_night_phase_active: true,
+      member_night_has_unplayed: true,
+    });
+
+    const dialog = (): HTMLElement | null => document.querySelector('mat-dialog-container');
+    const dialogButton = (label: string): HTMLButtonElement | undefined =>
+      [...(dialog()?.querySelectorAll('button') ?? [])].find((b) => text(b) === label);
+
+    async function click(el: HTMLElement | undefined): Promise<void> {
+      el?.click();
+      await fixture.whenStable();
+    }
+
+    it('offers only "Set Up Member Night…" while nothing is drawn', async () => {
+      await openWith(SETUP);
+      await openMenu();
+      expect(labels()).toEqual([SET_UP]);
+    });
+
+    it('offers Play Single Members Game and Play All once games are drawn', async () => {
+      await openWith(UNPLAYED);
+      await openMenu();
+      expect(labels()).toEqual(['Play Single Members Game', 'Play All']);
+    });
+
+    it('no member-night items off a member-night phase', async () => {
+      await openWith(playControls({ member_night_has_unplayed: true }));
+      await openMenu();
+      expect(labels()).not.toContain('Play All');
+      expect(labels()).not.toContain(SET_UP);
+    });
+
+    it('Set Up opens the Sites dialog; Confirm POSTs member-night/ with the Sites', async () => {
+      await openWith(SETUP);
+      await openMenu();
+      await click(item(SET_UP));
+      expect(text(dialog())).toContain('Downtown (14)');
+      expect(text(dialog())).toContain('Uptown (12)');
+      await click(dialogButton(CONFIRM));
+      const req = http.expectOne(`${BASE}/seasons/11/member-night/`);
+      expect(req.request.method).toBe('POST');
+      expect(req.request.body).toEqual({ sites: ['Downtown', 'Uptown'] });
+      req.flush({ data: seasonDashboard(), meta: {} });
+      await fixture.whenStable();
+      http.expectOne(CONTROLS_URL).flush({ data: UNPLAYED, meta: {} });
+    });
+
+    it('Cancel in the dialog sends nothing', async () => {
+      await openWith(SETUP);
+      await openMenu();
+      await click(item(SET_UP));
+      await click(dialogButton('Cancel'));
+      expect(dialog()).toBeNull();
+      http.expectNone(`${BASE}/seasons/11/member-night/`);
+    });
+
+    it('Play Single Members Game reads member-night/ first', async () => {
+      await openWith(UNPLAYED);
+      await openMenu();
+      await click(item('Play Single Members Game'));
+      expect(http.expectOne(`${BASE}/seasons/11/member-night/`).request.method).toBe('GET');
+    });
+
+    it('Play All POSTs member-night/play/', async () => {
+      await openWith(UNPLAYED);
+      await openMenu();
+      await click(item('Play All'));
+      expect(http.expectOne(`${BASE}/seasons/11/member-night/play/`).request.method).toBe('POST');
+    });
+
+    it.each([SETUP, UNPLAYED])('disables every member-night item while busy (I1)', async (body) => {
+      await openWith(body);
+      await openMenu();
+      TestBed.inject(PlayRun).run('play_week');
+      await fixture.whenStable();
+      await openMenu();
+      expect(items().length).toBeGreaterThan(0);
+      expect(items().every((el) => disabled(el))).toBe(true);
       http
         .expectOne(`${BASE}/seasons/11/play-week/`)
         .flush(
+          { errors: [{ code: 'x', message: 'Nope.', field: null }], meta: {} },
+          { status: 409, statusText: 'Conflict' },
+        );
+      await fixture.whenStable();
+    });
+
+    it('shows a 409 wrong_phase message in the alert (I3)', async () => {
+      await openWith(UNPLAYED);
+      await openMenu();
+      await click(item('Play All'));
+      http
+        .expectOne(`${BASE}/seasons/11/member-night/play/`)
+        .flush(
           {
-            errors: [{ code: 'season_not_active', message: 'Not active.', field: null }],
+            errors: [{ code: 'wrong_phase', message: 'Not a member night.', field: null }],
             meta: {},
           },
           { status: 409, statusText: 'Conflict' },
         );
       await fixture.whenStable();
-      expect(text(alert())).toBe('Not active.');
+      expect(text(alert())).toBe('Not a member night.');
     });
   });
 

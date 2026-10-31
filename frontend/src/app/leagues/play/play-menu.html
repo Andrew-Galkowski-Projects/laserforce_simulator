@@ -97,6 +97,35 @@
           Through Playoffs
         </button>
       }
+      @if (c.member_night_phase_active) {
+        @if (!c.member_night_has_unplayed) {
+          <button
+            mat-menu-item
+            type="button"
+            [disabled]="locked()"
+            (click)="setUpMemberNight(c.member_night_sites)"
+          >
+            Set Up Member Night…
+          </button>
+        } @else {
+          <button
+            mat-menu-item
+            type="button"
+            [disabled]="locked()"
+            (click)="act('member_night_single')"
+          >
+            Play Single Members Game
+          </button>
+          <button
+            mat-menu-item
+            type="button"
+            [disabled]="locked()"
+            (click)="act('member_night_play_all')"
+          >
+            Play All
+          </button>
+        }
+      }
     } @else {
       <button mat-menu-item type="button" disabled>Play</button>
     }

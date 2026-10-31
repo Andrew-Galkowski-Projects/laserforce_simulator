@@ -226,6 +226,215 @@ describe('PlayRun (spec #454)', () => {
     });
   });
 
+  describe('member nights (ANG-06-19b)', () => {
+    const MEMBER_NIGHT = playControls({
+      member_night_phase_active: true,
+      member_night_sites: [
+        { site: 'Downtown', count: 14 },
+        { site: 'Uptown', count: 12 },
+      ],
+    });
+    const UNPLAYED = playControls({
+      member_night_phase_active: true,
+      member_night_has_unplayed: true,
+    });
+
+    it('setUpMemberNight POSTs member-night/ with the Sites, lands and re-fetches', async () => {
+      watched(MEMBER_NIGHT);
+      const before = run.changed();
+      run.setUpMemberNight(['Downtown', 'Uptown']);
+      expect(run.busy()).toBe(true);
+      const req = expectPost('seasons/11/member-night/');
+      expect(req.request.body).toEqual({ sites: ['Downtown', 'Uptown'] });
+      req.flush({
+        data: seasonDashboard({ member_night_progress: { played: 0, total: 6 } }),
+        meta: {},
+      });
+      await settle();
+      expect(run.busy()).toBe(false);
+      expect(routerUrl()).toBe('/leagues/1/seasons/11');
+      expect(run.changed()).toBe(before + 1);
+      expect(snack).toHaveBeenCalledWith(
+        'Member night set up: 6 games drawn across 2 Sites.',
+        'Close',
+        expect.anything(),
+      );
+      answerControls(UNPLAYED);
+    });
+
+    it('says "Site" for one Site, and 0 games with no progress', async () => {
+      watched(MEMBER_NIGHT);
+      run.setUpMemberNight(['Downtown']);
+      expectPost('seasons/11/member-night/').flush({ data: seasonDashboard(), meta: {} });
+      await settle();
+      expect(snack).toHaveBeenCalledWith(
+        'Member night set up: 0 games drawn across 1 Site.',
+        'Close',
+        expect.anything(),
+      );
+      answerControls();
+    });
+
+    it('setUpMemberNight shows a 409 wrong_phase message (I3)', async () => {
+      watched(MEMBER_NIGHT);
+      run.setUpMemberNight(['Downtown']);
+      expectPost('seasons/11/member-night/').flush(
+        ...fail(409, 'wrong_phase', 'The Season is not on a member-night phase.'),
+      );
+      await settle();
+      expect(run.error()).toBe('The Season is not on a member-night phase.');
+      expect(routerUrl()).toBe('/');
+    });
+
+    it('setUpMemberNight is ignored while another action is in flight (I1)', () => {
+      watched(MEMBER_NIGHT);
+      run.run('play_week');
+      run.setUpMemberNight(['Downtown']);
+      http.expectNone(`${BASE}/seasons/11/member-night/`);
+      expectPost('seasons/11/play-week/');
+    });
+
+    /** Answers the pre-play `member-night/` GET with T games, U of them unplayed. */
+    function answerMemberNight(total: number, unplayed: number): void {
+      const req = http.expectOne(`${BASE}/seasons/11/member-night/`);
+      expect(req.request.method).toBe('GET');
+      req.flush({
+        data: {
+          season: { id: 11, name: 'Season 1' },
+          phase_active: true,
+          sites: [{ site: 'Downtown', count: 14, games: total }],
+          games_total: total,
+          games_unplayed: unplayed,
+        },
+        meta: {},
+      });
+    }
+
+    it('member_night_single GETs member-night/, then POSTs play-single and notifies P / T', async () => {
+      watched(UNPLAYED);
+      const before = run.changed();
+      run.run('member_night_single');
+      expect(run.busy()).toBe(true);
+      http.expectNone(`${BASE}/seasons/11/member-night/play-single/`);
+      answerMemberNight(6, 4);
+      expectPost('seasons/11/member-night/play-single/').flush({
+        data: seasonDashboard(),
+        meta: {},
+      });
+      await settle();
+      expect(run.busy()).toBe(false);
+      expect(routerUrl()).toBe('/leagues/1/seasons/11');
+      expect(run.changed()).toBe(before + 1);
+      expect(snack).toHaveBeenCalledWith(
+        'Member-night game played: 3 / 6 games done.',
+        'Close',
+        expect.anything(),
+      );
+      answerControls(UNPLAYED);
+    });
+
+    it('member_night_single on the last game says the night is complete', async () => {
+      watched(UNPLAYED);
+      run.run('member_night_single');
+      answerMemberNight(6, 1);
+      expectPost('seasons/11/member-night/play-single/').flush({
+        data: seasonDashboard(),
+        meta: {},
+      });
+      await settle();
+      expect(snack).toHaveBeenCalledWith(
+        'Member night complete: all 6 games played.',
+        'Close',
+        expect.anything(),
+      );
+      answerControls();
+    });
+
+    it('member_night_single shows a refused play and lands nowhere (I3)', async () => {
+      watched(UNPLAYED);
+      run.run('member_night_single');
+      answerMemberNight(6, 4);
+      expectPost('seasons/11/member-night/play-single/').flush(
+        ...fail(409, 'wrong_phase', 'Not a member night.'),
+      );
+      await settle();
+      expect(run.error()).toBe('Not a member night.');
+      expect(run.busy()).toBe(false);
+      expect(routerUrl()).toBe('/');
+      expect(snack).not.toHaveBeenCalled();
+    });
+
+    it('member_night_single shows a failed pre-play GET and sends no POST', async () => {
+      watched(UNPLAYED);
+      run.run('member_night_single');
+      http
+        .expectOne(`${BASE}/seasons/11/member-night/`)
+        .flush(...fail(404, 'not_found', 'Not found.'));
+      await settle();
+      expect(run.error()).toBe('Not found.');
+      expect(run.busy()).toBe(false);
+      http.expectNone(`${BASE}/seasons/11/member-night/play-single/`);
+    });
+
+    it('member_night_single picks up a 409 play_in_progress Job', async () => {
+      watched(UNPLAYED);
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.run('member_night_single');
+      answerMemberNight(6, 4);
+      expectPost('seasons/11/member-night/play-single/').flush(
+        ...fail(409, 'play_in_progress', 'A play run is already in progress.', 'job:live-3'),
+      );
+      expect(run.error()).toBe('');
+      expect(run.progress()).toEqual({ completed: 0, total: 0 });
+      http.expectOne(jobUrl('live-3'));
+    });
+
+    it('member_night_play_all POSTs member-night/play/ and polls its Job until it ends', async () => {
+      watched(UNPLAYED);
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.run('member_night_play_all');
+      expect(run.busy()).toBe(true);
+      expectPost('seasons/11/member-night/play/').flush({
+        data: { job_id: 'job-5', season_id: 11, status_url: '/api/seasons/11/play-jobs/job-5/' },
+        meta: {},
+      });
+      expect(run.busy()).toBe(false);
+      http.expectOne(jobUrl('job-5')).flush({ data: status({ completed: 2, total: 6 }), meta: {} });
+      expect(run.progress()).toEqual({ completed: 2, total: 6 });
+      run.stop();
+      expectPost('seasons/11/play-cancel/').flush({ data: { cancel_requested: true }, meta: {} });
+      vi.advanceTimersByTime(1000);
+      const before = run.changed();
+      http
+        .expectOne(jobUrl('job-5'))
+        .flush({ data: status({ status: 'complete', cancelled: true }), meta: {} });
+      expect(run.progress()).toBeNull();
+      expect(run.changed()).toBe(before + 1);
+      answerControls();
+    });
+
+    it('member_night_play_all picks up a 409 play_in_progress Job', () => {
+      watched(UNPLAYED);
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+      run.run('member_night_play_all');
+      expectPost('seasons/11/member-night/play/').flush(
+        ...fail(409, 'play_in_progress', 'A play run is already in progress.', 'job:live-8'),
+      );
+      expect(run.error()).toBe('');
+      http.expectOne(jobUrl('live-8'));
+    });
+
+    it('member_night_play_all shows a 409 wrong_phase message (I3)', () => {
+      watched(UNPLAYED);
+      run.run('member_night_play_all');
+      expectPost('seasons/11/member-night/play/').flush(
+        ...fail(409, 'wrong_phase', 'Not a member night.'),
+      );
+      expect(run.error()).toBe('Not a member night.');
+      expect(run.progress()).toBeNull();
+    });
+  });
+
   describe('background runs', () => {
     /** `watch(1)`, fakes the poll timer, runs `action` and answers its POST with job `job-1`. */
     async function startRun(action: PlayAction = 'play_two_months', path = 'play-two-months') {

@@ -193,6 +193,22 @@ export interface SeasonPlayJobStatus {
   error: string | null;
 }
 
+/** One viable Site of `GET seasons/{id}/member-night/`, with the games drawn there. */
+export interface MemberNightSiteState {
+  site: string;
+  count: number;
+  games: number;
+}
+
+/** `GET seasons/{id}/member-night/` (`build_member_night_state`). */
+export interface MemberNightState {
+  season: SeasonRef;
+  phase_active: boolean;
+  sites: MemberNightSiteState[];
+  games_total: number;
+  games_unplayed: number;
+}
+
 /** One Conference of the `PUT seasons/{id}/conferences/` body (`ConferencePartitionForm`). */
 export interface ConferenceWrite {
   name: string;

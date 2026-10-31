@@ -1,10 +1,10 @@
 import { Injectable, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { Observable, Subscription, timer } from 'rxjs';
+import { Observable, Subscription, map, switchMap, timer } from 'rxjs';
 import { ApiError } from '../../api/api-client';
 import { PlayControls, SeasonDashboard } from '../../api/leagues.models';
 import { LeaguesService } from '../../api/leagues.service';
-import { SeasonPlayJobRef, SeasonPlayJobStatus } from '../../api/seasons.models';
+import { MemberNightState, SeasonPlayJobRef, SeasonPlayJobStatus } from '../../api/seasons.models';
 import { SeasonsService } from '../../api/seasons.service';
 import { apiMessage } from '../../shared/api-message';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
@@ -33,7 +33,8 @@ const JOB_FAILED_MESSAGE = 'Play job failed.';
 const JOB_FIELD_PREFIX = 'job:';
 
 type SyncAction = 'start_season' | 'play_week' | 'play_single_round';
-type BackgroundAction = 'play_two_months' | 'play_until_end' | 'play_playoffs';
+type BackgroundAction =
+  'play_two_months' | 'play_until_end' | 'play_playoffs' | 'member_night_play_all';
 
 /**
  * The Play menu's seam (spec #454): the only code that calls the Season play endpoints. It holds
@@ -103,15 +104,43 @@ export class PlayRun {
       case 'play_two_months':
       case 'play_until_end':
       case 'play_playoffs':
+      case 'member_night_play_all':
         this.runBackground(action, seasonId);
         return;
       case 'start_next_season':
         this.startNextSeason(leagueId);
         return;
-      default:
-        // The member-night actions arrive with ANG-06-19b.
+      case 'member_night_single':
+        this.playMemberNightSingle(leagueId, seasonId);
         return;
     }
+  }
+
+  /**
+   * Reads the night's game counts (T total, U unplayed), plays one game, then says how far the
+   * night is (Django `play_member_night_single`): P = T - U + 1 games done.
+   */
+  private playMemberNightSingle(leagueId: number, seasonId: number): void {
+    const played = this.seasons
+      .memberNight(seasonId)
+      .pipe(
+        switchMap((state) => this.seasons.memberNightPlaySingle(seasonId).pipe(map(() => state))),
+      );
+    this.send(played, (state) => {
+      this.notify(memberNightPlayedMessage(state));
+      this.landThenRefresh(['/leagues', leagueId, 'seasons', seasonId]);
+    });
+  }
+
+  /** Draws member-night games for `sites`, then lands on the Season dashboard. */
+  setUpMemberNight(sites: string[]): void {
+    const target = this.target();
+    if (target === null) return;
+    const { leagueId, seasonId } = target;
+    this.send(this.seasons.setUpMemberNight(seasonId, sites), (dashboard) => {
+      this.notify(memberNightSetUpMessage(dashboard, sites.length));
+      this.landThenRefresh(['/leagues', leagueId, 'seasons', seasonId]);
+    });
   }
 
   /** Asks the polled Job to stop after its current game, and keeps polling until it ends. */
@@ -151,6 +180,7 @@ export class PlayRun {
       play_two_months: () => this.seasons.playTwoMonths(seasonId),
       play_until_end: () => this.seasons.playUntilEnd(seasonId),
       play_playoffs: () => this.seasons.playPlayoffs(seasonId),
+      member_night_play_all: () => this.seasons.memberNightPlayAll(seasonId),
     };
     this.send(requests[action](), (ref) => this.startPolling(seasonId, ref.job_id));
   }
@@ -260,6 +290,22 @@ export class PlayRun {
     this._progress.set(null);
     this._stopRequested.set(false);
   }
+}
+
+/** Django `member_night_setup`: T from the dashboard's progress (else 0), K = Sites sent. */
+function memberNightSetUpMessage(dashboard: SeasonDashboard, siteCount: number): string {
+  const games = dashboard.member_night_progress?.total ?? 0;
+  const sites = siteCount === 1 ? 'Site' : 'Sites';
+  return `Member night set up: ${games} games drawn across ${siteCount} ${sites}.`;
+}
+
+/** Django `play_member_night_single`, from the counts read before the game was played. */
+function memberNightPlayedMessage(state: MemberNightState): string {
+  const total = state.games_total;
+  const done = total - state.games_unplayed + 1;
+  return done < total
+    ? `Member-night game played: ${done} / ${total} games done.`
+    : `Member night complete: all ${total} games played.`;
 }
 
 function errorCode(failure: unknown): string | undefined {
