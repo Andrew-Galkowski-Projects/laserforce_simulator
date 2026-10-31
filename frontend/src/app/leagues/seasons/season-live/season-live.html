@@ -1,0 +1,33 @@
+<h1>One Week (Live) — {{ nav()?.league?.name }}</h1>
+
+@if (roundId(); as id) {
+  @if (roundIds().length === 2) {
+    <div class="season-live__rounds" role="group" aria-label="Round toggle">
+      @for (round of roundIds(); track $index) {
+        <button
+          type="button"
+          class="season-live__round"
+          [class.is-active]="selected() === $index"
+          [attr.aria-pressed]="selected() === $index"
+          (click)="selected.set($index)"
+        >
+          Round {{ $index + 1 }}
+        </button>
+      }
+    </div>
+  }
+  <app-playback [roundId]="id" />
+  <div class="season-live__footer">
+    <a mat-flat-button [routerLink]="context.link()">Back to dashboard</a>
+    <span class="season-live__note">
+      The rest of the week plays in the background — results are final.
+    </span>
+  </div>
+} @else {
+  <p class="season-live__empty" role="status">
+    No live game to watch — start one from the Play menu.
+  </p>
+  <div class="season-live__footer">
+    <a mat-flat-button [routerLink]="context.link()">Back to dashboard</a>
+  </div>
+}

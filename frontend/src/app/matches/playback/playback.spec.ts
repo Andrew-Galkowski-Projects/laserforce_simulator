@@ -1,4 +1,5 @@
-import { TestBed } from '@angular/core/testing';
+import { Component, signal } from '@angular/core';
+import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { By, Title } from '@angular/platform-browser';
@@ -390,5 +391,67 @@ describe('Playback (/rounds/:id/playback)', () => {
       await harness.fixture.whenStable();
       expect(text(page().querySelector('[role="alert"]'))).toContain('Could not load the Round.');
     });
+  });
+});
+
+/** Playback embedded by another screen (the One Week (Live) screen, spec #454). */
+@Component({
+  imports: [Playback],
+  template: `<app-playback [roundId]="roundId()" />`,
+})
+class EmbeddingHost {
+  readonly roundId = signal(31);
+}
+
+describe('Playback with a roundId input (spec #454)', () => {
+  let http: HttpTestingController;
+  let fixture: ComponentFixture<EmbeddingHost>;
+
+  afterEach(() => http.verify({ ignoreCancelled: true }));
+
+  const host = (): HTMLElement => fixture.nativeElement as HTMLElement;
+  const text = (el: Element | null | undefined): string =>
+    el?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+
+  /** Answers Round `id`'s three GETs, its teams named after it. */
+  async function answer(id: number): Promise<void> {
+    http.expectOne(`${BASE}/rounds/${id}/`).flush({
+      data: roundDetail({ id, team_red_name: `Red ${id}`, team_blue_name: `Blue ${id}` }),
+    });
+    http.expectOne(`${BASE}/rounds/${id}/timeline/`).flush({ data: timeline(), meta: {} });
+    http.expectOne(`${BASE}/rounds/${id}/playback/`).flush({ data: roundPlayback(), meta: {} });
+    await fixture.whenStable();
+  }
+
+  beforeEach(async () => {
+    TestBed.configureTestingModule({
+      providers: [provideRouter([]), provideHttpClient(), provideHttpClientTesting()],
+    });
+    http = TestBed.inject(HttpTestingController);
+    fixture = TestBed.createComponent(EmbeddingHost);
+    await fixture.whenStable();
+  });
+
+  it('loads the input Round, not the route :id', async () => {
+    http.expectNone(`${BASE}/rounds/0/`);
+    await answer(31);
+    expect(text(host().querySelector('h2'))).toBe('Red 31 vs Blue 31');
+  });
+
+  it('loads the new Round when the input changes', async () => {
+    await answer(31);
+    fixture.componentInstance.roundId.set(32);
+    await fixture.whenStable();
+    await answer(32);
+    expect(text(host().querySelector('h2'))).toBe('Red 32 vs Blue 32');
+  });
+
+  it('renders embedded: no kicker, no h1, no "Back to Round" link', async () => {
+    await answer(31);
+    expect(host().querySelector('.pb-kicker')).toBeNull();
+    expect(host().querySelector('h1')).toBeNull();
+    const links = [...host().querySelectorAll('a')].map((a) => text(a));
+    expect(links.some((label) => label.includes('Back to Round'))).toBe(false);
+    expect(links).toContain('Full event log');
   });
 });

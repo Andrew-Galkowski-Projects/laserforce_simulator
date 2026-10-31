@@ -21,8 +21,8 @@ import {
   seasonScope,
   teamStatRow,
 } from '../testing/league-stats-fixtures';
-import { leagueNav } from '../testing/league-fixtures';
 import { TeamStats } from './team-stats';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const STATS = `${BASE}/leagues/1/team-stats/`;
@@ -46,7 +46,9 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -83,7 +85,7 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
     scope?: SeasonScope,
   ): Promise<Record<string, string>> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     return answer(rows, scope);
   }
 
@@ -245,7 +247,7 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
   describe('lenient fallback (I2)', () => {
     it('drops a stale season the API rejects, replacing the URL, and reloads', async () => {
       await harness.navigateByUrl('/leagues/1/stats/team-stats?season=99&sort=avg_margin&dir=asc');
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       const navigate = vi.spyOn(TestBed.inject(Router), 'navigate');
       statsRequest().flush(...badParam('season'));
       await harness.fixture.whenStable();
@@ -258,7 +260,7 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
 
     it('drops an ordering the API rejects', async () => {
       await harness.navigateByUrl('/leagues/1/stats/team-stats?sort=avg_margin&dir=desc');
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       statsRequest().flush(...badParam('ordering'));
       await harness.fixture.whenStable();
       expect(url()).toBe('/leagues/1/stats/team-stats');
@@ -287,7 +289,7 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
 
   it("shows any other failure in the error box with the server's message", async () => {
     await harness.navigateByUrl('/leagues/1/stats/team-stats');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     statsRequest().flush(...failure(500, 'Database is down.'));
     await harness.fixture.whenStable();
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
@@ -298,6 +300,7 @@ describe('Team Stats (/leagues/:id/stats/team-stats, spec #417)', () => {
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl('/leagues/1/stats/team-stats');
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === STATS);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

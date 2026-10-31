@@ -25,6 +25,7 @@ import {
   playerRatingRow,
 } from '../testing/league-stats-fixtures';
 import { FreeAgents } from './free-agents';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const AGENTS = `${BASE}/leagues/1/free-agents/`;
@@ -83,7 +84,9 @@ describe('Free Agents (/leagues/:id/players/free-agents, spec #428)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -124,7 +127,7 @@ describe('Free Agents (/leagues/:id/players/free-agents, spec #428)', () => {
 
   async function navigate(path: string, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await harness.fixture.whenStable();
   }
 
@@ -368,7 +371,7 @@ describe('Free Agents (/leagues/:id/players/free-agents, spec #428)', () => {
       await harness.fixture.whenStable();
       http.expectNone((req) => req.url === AGENTS);
       expect(text(q('h1'))).toBe('Free Agents');
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       await harness.fixture.whenStable();
       expect(await answer()).toEqual(DEFAULT);
     });

@@ -101,9 +101,9 @@ below (13b, 14, 16); the item's grill confirms it.
 16. **[DONE] League team & player** (ANG-06-16, in `PLAN-completed.md`).
 17. **[DONE] League finances** (ANG-06-17, in `PLAN-completed.md`).
 18. **[DONE] Season screens** (ANG-06-18, in `PLAN-completed.md`).
-19. **Season play loop (ANG-06-19)** — play week / two months / until end / playoffs, status and cancel, the
-    live view, member nights. Replaces `seasons/play_week_live` and the play actions.
-20. **Landing & nav (ANG-06-20)** — landing page, the Shell's Play / Tools / Help top-nav sections, and one
+19. **[DONE] Season play loop** (ANG-06-19, in `PLAN-completed.md`).
+20. **Landing & nav (ANG-06-20)** — landing page, the Shell's Tools / Help top-nav sections (Play ships
+    with ANG-06-19), and one
     shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
     block, prospects, hall of fame) — no per-stub components. Replaces `core/landing`,
     `_partials/topnav_*`, `_placeholder`.

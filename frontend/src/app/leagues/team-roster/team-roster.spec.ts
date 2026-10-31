@@ -19,6 +19,7 @@ import { authInterceptor } from '../../auth/auth.interceptor';
 import { leagueNav } from '../testing/league-fixtures';
 import { failure } from '../testing/league-stats-fixtures';
 import { rosterRow, teamRoster, withTeamOptions } from '../testing/league-team-fixtures';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/roster';
@@ -41,7 +42,9 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -52,7 +55,7 @@ describe('Team Roster (/leagues/:id/team/roster, spec #428)', () => {
 
   async function navigate(path: string, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await harness.fixture.whenStable();
   }
 

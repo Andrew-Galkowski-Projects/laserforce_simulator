@@ -58,7 +58,6 @@ describe('Manage Conferences (/leagues/:id/seasons/:seasonId/conferences, spec #
   });
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
     http.verify();
   });
 

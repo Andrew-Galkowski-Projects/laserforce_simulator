@@ -50,6 +50,8 @@ CONTROL_KEYS = {
     "member_night_has_unplayed",
     "active_play_job_id",
 }
+# ANG-06-19: the API adds the Displayed Season beside ``build_play_controls``.
+API_CONTROL_KEYS = CONTROL_KEYS | {"displayed_season"}
 
 
 def live_url(pk: int) -> str:
@@ -266,7 +268,7 @@ class TestPlayControls(LeagueApiTestCase):
     def test_returns_the_structured_controls_for_the_displayed_season(self) -> None:
         Season.objects.filter(pk=self.season.pk).update(active_play_job_id="job-1")
         data = self.ok(self.api.get(controls_url(self.league.id)))
-        self.assertEqual(set(data), CONTROL_KEYS)
+        self.assertEqual(set(data), API_CONTROL_KEYS)
         self.assertEqual(data["action_button_state"], "play_next")
         self.assertEqual(data["action_button_label"], "Play Next")
         self.assertTrue(data["live_preview_available"])
@@ -280,6 +282,24 @@ class TestPlayControls(LeagueApiTestCase):
         data = self.ok(self.api.get(controls_url(league.id)))
         self.assertEqual(data["action_button_state"], "none")
         self.assertIsNone(data["active_play_job_id"])
+        self.assertIsNone(data["displayed_season"])
+
+    def test_displayed_season_is_the_active_seasons_ref(self) -> None:
+        data = self.ok(self.api.get(controls_url(self.league.id)))
+        self.assertEqual(data["displayed_season"], {"id": self.season.id, "name": "S1"})
+
+    def test_displayed_season_is_the_latest_completed_with_none_in_progress(
+        self,
+    ) -> None:
+        Season.objects.filter(pk=self.season.pk).update(state="completed")
+        later = Season.objects.create(
+            league=self.league,
+            name="S2",
+            start_date=date(2027, 6, 1),
+            state="completed",
+        )
+        data = self.ok(self.api.get(controls_url(self.league.id)))
+        self.assertEqual(data["displayed_season"], {"id": later.id, "name": "S2"})
 
     def test_member_night_sites_are_site_count_objects(self) -> None:
         league = make_league("CtlMnL", manager=self.user_a)

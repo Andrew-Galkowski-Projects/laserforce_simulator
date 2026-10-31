@@ -12,8 +12,8 @@ import { NewTeamCandidates } from '../../api/leagues.models';
 import { signIn } from '../../api/testing/auth-fixtures';
 import { routes } from '../../app.routes';
 import { authInterceptor } from '../../auth/auth.interceptor';
-import { releaseLeaguesLoads } from '../testing/leagues-loads';
-import { leagueNav, newTeamCandidates, season } from '../testing/league-fixtures';
+import { releaseLeagueChrome, releaseLeaguesLoads } from '../testing/leagues-loads';
+import { newTeamCandidates, season } from '../testing/league-fixtures';
 
 const BASE = environment.apiBaseUrl;
 const CANDIDATES = `${BASE}/leagues/1/new-team-candidates/`;
@@ -36,7 +36,9 @@ describe('New-team picker (/leagues/:id/new-team, spec #409 F12)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const screen = (): HTMLElement => page().querySelector<HTMLElement>('app-league-new-team')!;
@@ -53,7 +55,7 @@ describe('New-team picker (/leagues/:id/new-team, spec #409 F12)', () => {
 
   async function navigate(): Promise<TestRequest> {
     await harness.navigateByUrl('/leagues/1/new-team');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     return http.expectOne(CANDIDATES);
   }
 

@@ -12,6 +12,7 @@ import {
   LeagueNav,
   LeagueTemplate,
   NewTeamCandidates,
+  PlayControls,
   Season,
 } from './leagues.models';
 
@@ -58,6 +59,11 @@ export class LeaguesService {
 
   nav(id: number): Observable<LeagueNav> {
     return this.api.get<LeagueNav>(`leagues/${id}/nav/`);
+  }
+
+  /** The Play menu's state for the League's Displayed Season (ANG-06-19). */
+  playControls(leagueId: number): Observable<PlayControls> {
+    return this.api.get<PlayControls>(`leagues/${leagueId}/play-controls/`);
   }
 
   /** One History page (`page` is 1-based); the in-progress Season leads page 1 only. */

@@ -5,13 +5,15 @@ import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../../../environments/environment';
 import { LeagueNav, Season } from '../../../api/leagues.models';
 import { leagueNav } from '../../testing/league-fixtures';
+import { releaseLeagueChrome } from '../../testing/leagues-loads';
 import { season } from './season-fixtures';
 
 const BASE = environment.apiBaseUrl;
 
 /**
  * Answers `SeasonLayout`'s `GET seasons/{id}/` with `body` (the active Season 11 of League 1 by
- * default), and the League layout's `nav/` if it is still open, then waits for the render. A
+ * default), and releases the League chrome (`releaseLeagueChrome`: the `nav/` if it is still
+ * open, the Play menu's `play-controls/`), then waits for the render. A
  * Season screen's component only exists after this: the layout renders its outlet once the
  * Season has loaded. The screen's own GETs are left for the spec to answer.
  *
@@ -23,11 +25,8 @@ export async function releaseSeasonLayout(
   body: Season = season(),
   nav: LeagueNav = leagueNav(),
 ): Promise<void> {
-  const http = TestBed.inject(HttpTestingController);
-  http
-    .match((req) => req.method === 'GET' && req.url === `${BASE}/leagues/${body.league.id}/nav/`)
-    .forEach((req) => req.flush({ data: nav, meta: {} }));
-  http
+  releaseLeagueChrome(nav);
+  TestBed.inject(HttpTestingController)
     .expectOne((req) => req.method === 'GET' && req.url === `${BASE}/seasons/${body.id}/`)
     .flush({ data: body, meta: {} });
   await harness.fixture.whenStable();

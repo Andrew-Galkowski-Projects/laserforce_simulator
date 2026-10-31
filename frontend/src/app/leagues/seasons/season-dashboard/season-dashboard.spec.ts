@@ -40,7 +40,6 @@ describe('Season dashboard (/leagues/:id/seasons/:seasonId, spec #444)', () => {
   }
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
     http.verify();
   });
 

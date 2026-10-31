@@ -24,6 +24,7 @@ import {
 } from '../testing/league-stats-fixtures';
 import { leagueNav } from '../testing/league-fixtures';
 import { PlayerRatings } from './player-ratings';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const RATINGS = `${BASE}/leagues/1/player-ratings/`;
@@ -76,7 +77,9 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -120,7 +123,7 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
 
   async function navigate(path: string, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
   }
 
   /** Opens `path`, answers the layout's nav, and returns the first ratings request's params. */
@@ -520,12 +523,10 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
 
     it('shows no table before the League nav says whether there is a Season', async () => {
       await harness.navigateByUrl(PATH);
+      releasePlayControls();
       await answer();
       expect(q('#player-ratings-table')).toBeNull();
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({
-        data: leagueNav({ displayed_season: null }),
-        meta: {},
-      });
+      releaseLeagueChrome(leagueNav({ displayed_season: null }));
       await harness.fixture.whenStable();
       expect(text(q('#player-ratings-empty-notice'))).toBe(NO_SEASON);
       expect(q('#player-ratings-table')).toBeNull();
@@ -556,6 +557,7 @@ describe('Player Ratings (/leagues/:id/stats/player-ratings, spec #417)', () => 
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl(PATH);
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === RATINGS);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

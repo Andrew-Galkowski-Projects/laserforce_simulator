@@ -130,3 +130,30 @@ The manager-mode live surface over the LG-01d Play dropdown — a **"One Week (L
 **Scope-out (LOCKED).** No model change, no migration, no ADR, no engine-mechanics change, no Score Calibration re-baseline. No preview / commit / discard / retry. No server-side tick streaming. No watching non-manager games (only `current_team`'s game has a replay surface; the rest run headless in the background). No playoff-live when eliminated. No SIM-05 partial extraction (the playback JS is duplicated).
 
 **Locked names (quick index).** Views `matches.league_views.play_week_live` (POST 302 / 400 / 405) / `play_week_live_watch` (GET 200 / 400 / 405); cursor helpers `_resolve_live_cursor` / `_alive_playoff_node` / `_next_matchday_to_play`; engine `tournament_engine.play_specific_node(node)` (extracted from `play_next_node`); serializer `matches.views.round_playback_payload(game_round, *, include_movement=True)`; URLs `play_week_live` (`/seasons/<id>/play-week-live/`) / `play_week_live_watch` (`.../watch/`); session handoff `request.session["live_watch"]` = `{season_id, kind, round_ids}`; background task `play_season_task.delay(season_id, max_matchdays=1)`; context key `live_preview_available`; template `templates/seasons/play_week_live.html` (DOM ids above); tests `TestLg01iCursorDispatch` / `TestLg01iPlayWeekLive` / `TestLg01iLiveWatch` in `views_tests.py`, `TestLg01iDashboardEntry` in `test_league_dashboard.py` / `test_season_dashboard_view.py`.
+
+## ANG-06-19 Angular Season play loop (Play menu, background runs, member nights, One Week (Live))
+
+Spec #454, tickets #455-#457. The Angular SPA ports the `Play ▾` dropdown, the running-run progress and Stop, member nights and the Live screen.
+
+- **API.** `GET /api/leagues/<id>/play-controls/` adds `displayed_season`: a Season ref, or null. It is the newest Season not yet completed, else the latest completed one (GLOSSARY **Displayed Season**). Only the viewset adds it. `build_play_controls` is unchanged, because the HTML nav context processor shares it. Tests: `API_CONTROL_KEYS` in `matches/tests/test_api_play_live.py`.
+- **`PlayRun`** (`frontend/src/app/leagues/play/play-run.ts`, a root service) is the only caller of the Season play endpoints.
+  - It holds the watched League's controls and runs one action at a time (I1).
+  - It polls a background run's Job every 1 s (`POLL_MS`); a failed poll retries.
+  - A 409 `play_in_progress` polls the Job it names (`field: "job:<id>"`). A 409 `manager_fired` goes to `/leagues/<id>/new-team`.
+  - Errors show via `apiMessage`, or "Play job failed." (I3).
+  - Every action targets `displayed_season` (I4).
+- **Reload on change (I2).** After every success and every finished Job, `PlayRun` re-fetches the controls and ticks `changed`, and `LeagueLayout` reloads the League nav.
+  - The open screen is re-created only on a `screenStale` tick: a finished Job, or an action whose landing left the URL unchanged. The outlet is wrapped in `@for (g of [generation()]; track g)` for this.
+  - A screen reached on a new URL is not re-created, because the router just created it.
+  - A route with `data: KEEP_ON_PLAY_CHANGE` (the `live` route) is never re-created. This means a finished rest-of-week run doesn't reset the replay.
+- **Play menu** (`play-menu.ts`).
+  - It sits in the Shell toolbar, on `/leagues/<n>` routes only. Its branches and labels are verbatim from `topnav_play.html`.
+  - While a run polls, it shows Stop, "Running… c / t" (at 600px and wider: `ROOMY` in `shared/breakpoints.ts`) and a progress bar.
+  - In career mode, Start Next Season links to Owner Evaluation. Otherwise a returned draft goes to Manage Conferences.
+- **Member nights** (`member-night-dialog.ts`). "Set Up Member Night…" opens a Site picker: an "All Sites" box, one box per Site with its player count, and the empty state "No Site has enough players (need 12+).".
+- **One Week (Live)** (`seasons/season-live/`).
+  - Route `/leagues/:id/seasons/:seasonId/live?rounds=<id>[,<id>]`, titled `One Week (Live) - <app title>`.
+  - It embeds `<app-playback [roundId]>`, with a Round 1 / Round 2 toggle for a two-Round game.
+  - Empty state: "No live game to watch — start one from the Play menu.".
+  - `LivePlayKind` is `'rr' | 'playoff' | 'member_night'`. A bye returns `rr` with no Rounds and lands on the Season dashboard.
+- **Spec helpers.** `releaseLeagueChrome()` and `releasePlayControls()` live in `leagues/testing/leagues-loads.ts`. Call them right after the navigation.

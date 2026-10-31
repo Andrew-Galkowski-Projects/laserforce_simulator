@@ -22,8 +22,8 @@ import {
   seasonScope,
   teamOptions,
 } from '../testing/league-stats-fixtures';
-import { leagueNav } from '../testing/league-fixtures';
 import { GameLog } from './game-log';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const LOG = `${BASE}/leagues/1/game-log/`;
@@ -47,7 +47,9 @@ describe('Game Log (/leagues/:id/stats/game-log, spec #417)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -83,7 +85,7 @@ describe('Game Log (/leagues/:id/stats/game-log, spec #417)', () => {
     scope?: SeasonScope,
   ): Promise<Record<string, string>> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     return answer(rows, scope);
   }
 
@@ -237,14 +239,14 @@ describe('Game Log (/leagues/:id/stats/game-log, spec #417)', () => {
   describe('lenient fallback (I2)', () => {
     async function reject(path: string, field: string): Promise<void> {
       await harness.navigateByUrl(path);
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       logRequest().flush(...badParam(field));
       await harness.fixture.whenStable();
     }
 
     it('drops a stale season, replacing the URL, and reloads', async () => {
       await harness.navigateByUrl('/leagues/1/stats/game-log?season=99');
-      http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+      releaseLeagueChrome();
       const navigate = vi.spyOn(TestBed.inject(Router), 'navigate');
       logRequest().flush(...badParam('season'));
       await harness.fixture.whenStable();
@@ -290,7 +292,7 @@ describe('Game Log (/leagues/:id/stats/game-log, spec #417)', () => {
 
   it("shows any other failure in the error box with the server's message", async () => {
     await harness.navigateByUrl('/leagues/1/stats/game-log');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     logRequest().flush(...failure(500, 'Database is down.'));
     await harness.fixture.whenStable();
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
@@ -300,6 +302,7 @@ describe('Game Log (/leagues/:id/stats/game-log, spec #417)', () => {
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl('/leagues/1/stats/game-log');
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === LOG);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

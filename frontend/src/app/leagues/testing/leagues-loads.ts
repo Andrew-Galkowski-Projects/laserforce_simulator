@@ -2,6 +2,8 @@
 import { TestBed } from '@angular/core/testing';
 import { HttpTestingController } from '@angular/common/http/testing';
 import { environment } from '../../../environments/environment';
+import { LeagueNav } from '../../api/leagues.models';
+import { leagueNav } from './league-fixtures';
 
 /** The resources a Leagues screen reads on load: its own, plus the create form's map picker. */
 const LOADED = ['leagues', 'seasons', 'maps'].map((r) => `${environment.apiBaseUrl}/${r}/`);
@@ -16,6 +18,36 @@ export function releaseLeaguesLoads(): void {
   TestBed.inject(HttpTestingController).match(
     (req) => req.method === 'GET' && LOADED.some((prefix) => req.url.startsWith(prefix)),
   );
+}
+
+/** The Shell's Play menu GET, sent on every `/leagues/<id>` URL (spec #454). */
+const PLAY_CONTROLS = new RegExp(`^${environment.apiBaseUrl}/leagues/\\d+/play-controls/$`);
+
+/**
+ * Releases the Play menu's `play-controls/` GETs, for a spec that renders the Shell on a League
+ * URL but tests the screen. Call before `http.verify()`.
+ */
+export function releasePlayControls(): void {
+  TestBed.inject(HttpTestingController).match(
+    (req) => req.method === 'GET' && PLAY_CONTROLS.test(req.url),
+  );
+}
+
+/** The League layout's `nav/` GET. */
+const LEAGUE_NAV = new RegExp(`^${environment.apiBaseUrl}/leagues/\\d+/nav/$`);
+
+/**
+ * Releases the League chrome around a League screen: answers every open League `nav/` GET with
+ * `nav` (the screens read it: League name, displayed Season) and drops the Shell Play menu's
+ * `play-controls/` GETs. Call it right after the navigation, before any assertion (a failed
+ * assertion then can't leave them open); calling it again, or with nothing open, is harmless.
+ */
+export function releaseLeagueChrome(nav: LeagueNav = leagueNav()): void {
+  const http = TestBed.inject(HttpTestingController);
+  http
+    .match((req) => req.method === 'GET' && LEAGUE_NAV.test(req.url))
+    .forEach((req) => req.flush({ data: nav, meta: {} }));
+  releasePlayControls();
 }
 
 /**

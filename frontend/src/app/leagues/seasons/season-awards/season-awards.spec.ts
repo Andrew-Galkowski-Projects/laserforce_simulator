@@ -40,7 +40,6 @@ describe('Season Awards (/leagues/:id/seasons/:seasonId/awards, spec #444)', () 
   }
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
     http.verify();
   });
 

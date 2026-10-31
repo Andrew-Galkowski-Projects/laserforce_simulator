@@ -17,12 +17,12 @@ import { User } from '../../auth/user';
 import {
   deleteSummary,
   leagueDashboard,
-  leagueNav,
   leaderRow,
   season,
   seasonDashboard,
   standingsSnippetRow,
 } from '../testing/league-fixtures';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 
@@ -46,8 +46,6 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
 
   afterEach(() => {
     document.querySelector('.cdk-overlay-container')?.remove();
-    // The League layout's nav load is its own spec's business.
-    http.match((req) => req.url.endsWith('/nav/'));
     http.verify();
   });
 
@@ -81,9 +79,7 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
   async function open(body: LeagueDashboard = leagueDashboard(), user: User = USER) {
     await setUp(user);
     await harness.navigateByUrl(`/leagues/${body.league.id}`);
-    http
-      .match(`${BASE}/leagues/${body.league.id}/nav/`)
-      .forEach((r) => r.flush({ data: leagueNav(), meta: {} }));
+    releaseLeagueChrome();
     dashboardRequest(body.league.id).flush({ data: body, meta: {} });
     await harness.fixture.whenStable();
   }
@@ -91,6 +87,7 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
   it("loads the dashboard with GET leagues/{id}/dashboard/ and shows the League's name", async () => {
     await setUp();
     await harness.navigateByUrl('/leagues/1');
+    releaseLeagueChrome();
     const req = dashboardRequest();
     expect(req.request.method).toBe('GET');
     req.flush({ data: leagueDashboard(), meta: {} });
@@ -156,7 +153,7 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
     async function failLoad(status: number, message: string): Promise<void> {
       await setUp();
       await harness.navigateByUrl('/leagues/1');
-      http.match(`${BASE}/leagues/1/nav/`).forEach((r) => r.flush({ data: leagueNav(), meta: {} }));
+      releaseLeagueChrome();
       dashboardRequest().flush(...fail(status, message));
       await harness.fixture.whenStable();
     }
@@ -184,7 +181,7 @@ describe('League dashboard (/leagues/:id, spec #409 F10)', () => {
     it('loads the new League when the :id changes', async () => {
       await open();
       await harness.navigateByUrl('/leagues/2');
-      http.match(`${BASE}/leagues/2/nav/`).forEach((r) => r.flush({ data: leagueNav(), meta: {} }));
+      releaseLeagueChrome();
       dashboardRequest(2).flush({
         data: leagueDashboard({ league: { id: 2, name: 'Rival' } }),
         meta: {},

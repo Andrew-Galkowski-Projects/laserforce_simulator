@@ -64,7 +64,6 @@ describe('Season Schedule (/leagues/:id/seasons/:seasonId/schedule, spec #444)',
 
   afterEach(() => {
     Element.prototype.scrollIntoView = realScrollIntoView;
-    http.match((req) => req.url.endsWith('/nav/'));
     http.verify();
   });
 

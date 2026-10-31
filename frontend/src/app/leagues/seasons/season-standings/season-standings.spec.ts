@@ -40,7 +40,6 @@ describe('Season Standings (/leagues/:id/seasons/:seasonId/standings, spec #444)
   });
 
   afterEach(() => {
-    http.match((req) => req.url.endsWith('/nav/'));
     http.verify();
   });
 

@@ -24,6 +24,7 @@ import { leagueNav } from '../testing/league-fixtures';
 import { failure } from '../testing/league-stats-fixtures';
 import { withTeamOptions } from '../testing/league-team-fixtures';
 import { LeagueTeamFinances } from './team-finances';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/finances';
@@ -59,7 +60,9 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -73,7 +76,7 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
 
   async function navigate(path = PATH, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await harness.fixture.whenStable();
   }
 
@@ -103,7 +106,7 @@ describe('Team Finances (/leagues/:id/team/finances, spec #439)', () => {
     await harness.navigateByUrl(PATH);
     expect(financeRequests()).toEqual([]);
     expect(text(q('[role="status"]'))).toBe('');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     await harness.fixture.whenStable();
     await answer();
   });

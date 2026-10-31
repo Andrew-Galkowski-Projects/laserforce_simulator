@@ -12,12 +12,12 @@ import {
 import { LeaguesService } from '../../api/leagues.service';
 import { SeasonsService } from '../../api/seasons.service';
 import { apiMessage } from '../../shared/api-message';
-import { countOf } from '../../shared/count-of';
 import { GENERIC_ERROR_MESSAGE } from '../../shared/form-errors';
 import { notFoundOrError } from '../../shared/not-found-or-error';
 import { injectNotify } from '../../shared/notify';
 import { DashboardCards, DashboardLink } from '../dashboard-cards/dashboard-cards';
 import { LeagueDelete, canDeleteLeague } from '../league-delete';
+import { seasonStartedMessage } from '../season-started';
 
 /**
  * `/leagues/:id` (spec #409 F10): the League dashboard, ported from `leagues/dashboard.html`.
@@ -72,10 +72,9 @@ export class LeagueDashboard {
 
   /** Start Season: says how many Rounds were scheduled (`league_views.start_season`), reloads. */
   protected start(seasonId: number): void {
-    this.write(this.seasons.start(seasonId), (started) => {
-      const rounds = countOf(started.round_count_total, 'Round');
-      this.notify(`${started.season.name} started — ${rounds} scheduled.`);
-    });
+    this.write(this.seasons.start(seasonId), (started) =>
+      this.notify(seasonStartedMessage(started)),
+    );
   }
 
   /** Start next Season (UXP-18 auto-start), then reload; a fired Manager goes to the picker. */

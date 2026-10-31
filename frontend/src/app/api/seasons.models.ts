@@ -3,7 +3,15 @@
 // `StandingsRow`, `AwardWinner`, `SeasonRef`, `LeagueRef` and `MapMode` stay in
 // `leagues.models.ts`; `TeamRef` in `analytics.models.ts`. No mapping layer.
 import { TeamRef } from './analytics.models';
-import { AwardWinner, LeagueRef, MapMode, SeasonRef, StandingsRow } from './leagues.models';
+import { JobStatus } from './batch.models';
+import {
+  AwardWinner,
+  LeagueRef,
+  MapMode,
+  MemberNightSite,
+  SeasonRef,
+  StandingsRow,
+} from './leagues.models';
 
 /** `{id, name}`: a Conference (`conference_ref`). */
 export interface ConferenceRef {
@@ -174,6 +182,52 @@ export interface ConferencesState {
   teams: TeamRef[];
   conferences: ConferenceState[];
   unassigned_team_ids: number[];
+}
+
+/** A background Season run's Job (`_job_ref`): poll `status_url` (`playJob`). */
+export interface SeasonPlayJobRef {
+  job_id: string;
+  season_id: number;
+  status_url: string;
+}
+
+/**
+ * `LivePlayResult.kind` (`league_play_services.py`): a round-robin game (a bye too), a playoff
+ * node, or a member-night game.
+ */
+export type LivePlayKind = 'rr' | 'playoff' | 'member_night';
+
+/**
+ * `POST seasons/{id}/play-live/` and `member-night/play-live/`: the manager's game, played
+ * now. `round_ids` is empty on a bye; `job` is the background run of the rest, if any.
+ */
+export interface LivePlayResult {
+  kind: LivePlayKind;
+  round_ids: number[];
+  job: SeasonPlayJobRef | null;
+}
+
+/** `GET seasons/{id}/play-jobs/{job}/` (`build_play_job_status`). */
+export interface SeasonPlayJobStatus {
+  status: JobStatus;
+  completed: number;
+  total: number;
+  cancelled: boolean;
+  error: string | null;
+}
+
+/** One viable Site of `GET seasons/{id}/member-night/`, with the games drawn there. */
+export interface MemberNightSiteState extends MemberNightSite {
+  games: number;
+}
+
+/** `GET seasons/{id}/member-night/` (`build_member_night_state`). */
+export interface MemberNightState {
+  season: SeasonRef;
+  phase_active: boolean;
+  sites: MemberNightSiteState[];
+  games_total: number;
+  games_unplayed: number;
 }
 
 /** One Conference of the `PUT seasons/{id}/conferences/` body (`ConferencePartitionForm`). */

@@ -27,6 +27,7 @@ import {
   withTeamOptions,
 } from '../testing/league-team-fixtures';
 import { LeagueTeamHistory } from './team-history';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/history';
@@ -55,7 +56,9 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -91,7 +94,7 @@ describe('Team History (/leagues/:id/team/history, spec #428)', () => {
   /** Opens `path` and answers the layout's nav (no screen request answered). */
   async function openNav(path = PATH, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await stable();
   }
 

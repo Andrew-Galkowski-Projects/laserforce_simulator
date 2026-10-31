@@ -388,3 +388,32 @@ export interface Season {
   phases: SeasonPhase[];
   conferences: Conference[];
 }
+
+/** A Site viable for a member night: its name (`''` = no Site) and player count. */
+export interface MemberNightSite {
+  site: string;
+  count: number;
+}
+
+/**
+ * `GET leagues/{id}/play-controls/` (ANG-06-19): the Play menu's state for the League's
+ * Displayed Season, `build_play_controls` plus `displayed_season` (null with no Season).
+ */
+export interface PlayControls {
+  action_button_label: string;
+  /** Which branch the Play menu shows. */
+  action_button_state: 'none' | 'start_season' | 'play_next' | 'start_next_season';
+  playoff_phase_active: boolean;
+  playoff_tournament_id: number | null;
+  playoff_completed: boolean;
+  has_following_tournament_phase: boolean;
+  following_tournament_is_final: boolean;
+  live_preview_available: boolean;
+  is_career_mode: boolean;
+  member_night_phase_active: boolean;
+  member_night_sites: MemberNightSite[];
+  member_night_has_unplayed: boolean;
+  /** The Season's Active play run, when one is going. */
+  active_play_job_id: string | null;
+  displayed_season: SeasonRef | null;
+}

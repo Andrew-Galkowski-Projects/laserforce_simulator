@@ -7,7 +7,12 @@ import { LeaguePlayersService } from '../../api/league-players.service';
 import { LeagueTeamService } from '../../api/league-team.service';
 import { LeaguesService } from '../../api/leagues.service';
 import { teamFinancesUpdate } from './league-finances-fixtures';
-import { releaseLeagueTeamPlayerLoads, releaseLeaguesLoads } from './leagues-loads';
+import { leagueNav } from './league-fixtures';
+import {
+  releaseLeagueChrome,
+  releaseLeagueTeamPlayerLoads,
+  releaseLeaguesLoads,
+} from './leagues-loads';
 
 describe('leagues-loads (spec #428 F9, spec #439)', () => {
   let http: HttpTestingController;
@@ -56,6 +61,26 @@ describe('leagues-loads (spec #428 F9, spec #439)', () => {
     expect(left[0]).toMatch(/^GET .*\/leagues\/4\/nav\/$/);
     expect(left[1]).toMatch(/^PUT .*\/leagues\/4\/watch-list\/25\/$/);
     expect(left[2]).toMatch(/^PATCH .*\/leagues\/4\/teams\/3\/finances\/$/);
+  });
+
+  it('releaseLeagueChrome answers the nav, drops play-controls and leaves the screen GETs', async () => {
+    const leagues = TestBed.inject(LeaguesService);
+    const nav = firstValueFrom(leagues.nav(4));
+    void firstValueFrom(leagues.playControls(4)).catch(() => undefined);
+    void firstValueFrom(leagues.playControls(4)).catch(() => undefined);
+    void firstValueFrom(
+      TestBed.inject(LeaguePlayersService).freeAgents(4, { page: 1, page_size: 10 }),
+    );
+    releaseLeagueChrome(leagueNav({ league: { id: 4, name: 'Rival', mode: 'sandbox' } }));
+    expect((await nav).league.name).toBe('Rival');
+    const left = http.match(() => true).map((r) => r.request.url);
+    expect(left).toHaveLength(1);
+    expect(left[0]).toMatch(/\/leagues\/4\/free-agents\/$/);
+  });
+
+  it('releaseLeagueChrome with nothing open does nothing', () => {
+    releaseLeagueChrome();
+    http.verify();
   });
 
   it('releaseLeaguesLoads still releases every League GET, the new screens included', () => {

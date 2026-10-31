@@ -1,13 +1,14 @@
-import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
+import { Component, DestroyRef, Signal, computed, inject, input, signal } from '@angular/core';
+import { toObservable } from '@angular/core/rxjs-interop';
 import { MatAnchor, MatIconButton } from '@angular/material/button';
 import { MatSlider, MatSliderThumb } from '@angular/material/slider';
-import { RouterLink } from '@angular/router';
-import { forkJoin } from 'rxjs';
+import { ActivatedRoute, RouterLink } from '@angular/router';
+import { Observable, distinctUntilChanged, forkJoin, map, of, switchMap } from 'rxjs';
 import { PlaybackSnapshot, Side, TimelinePlayer } from '../../api/rounds.models';
 import { RoundsService } from '../../api/rounds.service';
 import { tickClock } from '../shared/clock';
 import { RecordNotFound } from '../shared/record-not-found';
-import { loadRouteRecord } from '../shared/route-record';
+import { loadRecord } from '../shared/route-record';
 import { PlaybackFeed } from './playback-feed/playback-feed';
 import { PlaybackMap } from './playback-map/playback-map';
 import { PlaybackScoreboard } from './playback-scoreboard/playback-scoreboard';
@@ -44,12 +45,22 @@ const TICKS_PER_STEP = 0.2;
 export class Playback {
   private readonly rounds = inject(RoundsService);
 
-  protected readonly load = loadRouteRecord('Round', (id) =>
-    forkJoin({
-      round: this.rounds.get(id),
-      timeline: this.rounds.timeline(id),
-      playback: this.rounds.playback(id),
-    }),
+  /**
+   * The Round to play back when another screen embeds this one (One Week (Live), spec #454);
+   * unset, the route's `:id`. Set, the header is embedded: no kicker or "Back to Round", an h2.
+   */
+  readonly roundId = input<number | undefined>(undefined);
+  protected readonly embedded = computed(() => this.roundId() !== undefined);
+
+  protected readonly load = loadRecord(
+    'Round',
+    roundIds(this.roundId, inject(ActivatedRoute)),
+    (id) =>
+      forkJoin({
+        round: this.rounds.get(id),
+        timeline: this.rounds.timeline(id),
+        playback: this.rounds.playback(id),
+      }),
   );
   protected readonly sides: Side[] = ['red', 'blue'];
 
@@ -154,4 +165,13 @@ export class Playback {
   protected playersOn(players: readonly TimelinePlayer[], side: Side): TimelinePlayer[] {
     return players.filter((p) => p.side === side);
   }
+}
+
+/** The Round ids to load: the `roundId` input's while it is set, else the route's `:id`s. */
+function roundIds(roundId: Signal<number | undefined>, route: ActivatedRoute): Observable<number> {
+  const routeIds = route.paramMap.pipe(map((params) => Number(params.get('id'))));
+  return toObservable(roundId).pipe(
+    switchMap((id) => (id === undefined ? routeIds : of(id))),
+    distinctUntilChanged(),
+  );
 }

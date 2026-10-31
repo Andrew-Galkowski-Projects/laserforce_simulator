@@ -24,8 +24,8 @@ import {
   seasonScope,
   worldsQualifier,
 } from '../testing/league-stats-fixtures';
-import { leagueNav } from '../testing/league-fixtures';
 import { Playoffs } from './playoffs';
+import { releaseLeagueChrome, releasePlayControls } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PLAYOFFS = `${BASE}/leagues/1/playoffs/`;
@@ -48,7 +48,9 @@ describe('Playoffs (/leagues/:id/playoffs, spec #417)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -83,7 +85,7 @@ describe('Playoffs (/leagues/:id/playoffs, spec #417)', () => {
     scope?: SeasonScope,
   ): Promise<Record<string, string>> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     return answer(data, scope);
   }
 
@@ -356,7 +358,7 @@ describe('Playoffs (/leagues/:id/playoffs, spec #417)', () => {
 
   it('drops a stale season the API rejects, replacing the URL, and reloads (I2)', async () => {
     await harness.navigateByUrl('/leagues/1/playoffs?season=99');
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     const navigate = vi.spyOn(TestBed.inject(Router), 'navigate');
     playoffsRequest().flush(...badParam('season'));
     await harness.fixture.whenStable();
@@ -369,7 +371,7 @@ describe('Playoffs (/leagues/:id/playoffs, spec #417)', () => {
 
   it("shows any other failure in the error box with the server's message", async () => {
     await harness.navigateByUrl(PATH);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: leagueNav(), meta: {} });
+    releaseLeagueChrome();
     playoffsRequest().flush(...failure(500, 'Database is down.'));
     await harness.fixture.whenStable();
     expect(text(q('[role="alert"]'))).toBe('Database is down.');
@@ -380,6 +382,7 @@ describe('Playoffs (/leagues/:id/playoffs, spec #417)', () => {
   it("shows the layout's not-found state for another Account's League (I7)", async () => {
     await harness.navigateByUrl(PATH);
     http.expectOne(`${BASE}/leagues/1/nav/`).flush(...failure(404, 'Not found.'));
+    releasePlayControls();
     http.match((req) => req.url === PLAYOFFS);
     await harness.fixture.whenStable();
     expect(text(page().querySelector('h1'))).toBe('League not found');

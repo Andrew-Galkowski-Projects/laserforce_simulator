@@ -14,6 +14,7 @@ import { OwnerEvaluation } from './owner-evaluation/owner-evaluation';
 import { SeasonAwards } from './season-awards/season-awards';
 import { SeasonDashboard } from './season-dashboard/season-dashboard';
 import { SeasonLayout } from './season-layout/season-layout';
+import { SeasonLive } from './season-live/season-live';
 import { SeasonSchedule } from './season-schedule/season-schedule';
 import { SeasonStandings } from './season-standings/season-standings';
 import { seasonUrl } from './testing/season-fixtures';
@@ -47,6 +48,7 @@ describe('Season routes (/leagues/:id/seasons/:seasonId/..., spec #444)', () => 
     ['awards', SeasonAwards, 'Season Awards - Laserforce Simulator'],
     ['owner-evaluation', OwnerEvaluation, 'Owner Evaluation - Laserforce Simulator'],
     ['conferences', ManageConferences, 'Manage Conferences - Laserforce Simulator'],
+    ['live', SeasonLive, 'One Week (Live) - Laserforce Simulator'],
   ])(
     'resolves seasons/11/%s to its screen inside both layouts, with its page title',
     async (path, screen, title) => {

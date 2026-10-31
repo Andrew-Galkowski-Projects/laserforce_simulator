@@ -22,6 +22,7 @@ import {
   withTeamOptions,
 } from '../testing/league-team-fixtures';
 import { LeagueTeamSchedule } from './team-schedule';
+import { releaseLeagueChrome } from '../testing/leagues-loads';
 
 const BASE = environment.apiBaseUrl;
 const PATH = '/leagues/1/team/schedule';
@@ -44,7 +45,9 @@ describe('Team Schedule (/leagues/:id/team/schedule, spec #428)', () => {
     harness = await RouterTestingHarness.create();
   });
 
-  afterEach(() => http.verify());
+  afterEach(() => {
+    http.verify();
+  });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
   const q = (selector: string): HTMLElement | null =>
@@ -54,7 +57,7 @@ describe('Team Schedule (/leagues/:id/team/schedule, spec #428)', () => {
 
   async function navigate(path = PATH, nav: LeagueNav = leagueNav()): Promise<void> {
     await harness.navigateByUrl(path);
-    http.expectOne(`${BASE}/leagues/1/nav/`).flush({ data: nav, meta: {} });
+    releaseLeagueChrome(nav);
     await harness.fixture.whenStable();
   }
 

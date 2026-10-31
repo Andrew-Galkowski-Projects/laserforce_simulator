@@ -10,14 +10,13 @@ import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { map } from 'rxjs';
 import { APP_TITLE } from '../app-title';
 import { AuthService } from '../auth/auth.service';
+import { PlayMenu } from '../leagues/play/play-menu';
+import { ROOMY } from '../shared/breakpoints';
 import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
 import { injectNotify } from '../shared/notify';
 
 /** At this width and wider the sidebar sits beside the page; below it is a drawer (ADR-0043). */
 const WIDE = '(min-width: 768px)';
-
-/** At this width and wider the account button has room for the email. */
-const ROOMY = '(min-width: 600px)';
 
 /** ADR-0043 layout B: the signed-in frame (header + sidebar) around every page but `/login`. */
 @Component({
@@ -33,6 +32,7 @@ const ROOMY = '(min-width: 600px)';
     MatSidenavContainer,
     MatSidenavContent,
     MatToolbar,
+    PlayMenu,
     RouterLink,
     RouterLinkActive,
     RouterOutlet,
