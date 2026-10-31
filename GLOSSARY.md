@@ -380,6 +380,10 @@ _Avoid_: exposing raw Celery states (`PENDING`, `SUCCESS`, …) in the polling J
 The one play **Job** a **Season** may have in flight at a time (a Play Season, Play Playoffs, or Member-night job, including the rest-of-week run started by **One Week (Live)**). While a Season has an Active play run, every play action on it is refused, whether it would run in the foreground or the background. A run stops being active when its Job ends or is **stopped**. Its **Job id** remains a capability token for polling (ADR-0040).
 _Avoid_: "running job" when the Job's Celery status is meant. A Job's status can read `running` after its result expires, but the Season no longer has an Active play run.
 
+**Displayed Season**:
+The one **Season** of a **League** that the League's screens and play controls show and advance: the newest Season not yet completed (draft or active), else the latest completed one. Every play action applies to the Displayed Season.
+_Avoid_: "current Season" (a League may hold a draft and a completed Season with no active one); assuming it is always the newest row.
+
 ### Analytics and review
 
 **Round scoreboard**:
