@@ -16,6 +16,8 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 Installed `gh` is 2.92, which predates `--parent` / `--add-sub-issue` (2.94+): use the `gh api .../sub_issues` fallback below.
 
+**Publish a spec's tickets** with `python scripts/publish_tickets.py <spec> <tickets.json>`: it creates each issue (`ready-for-agent`), makes it a sub-issue and adds its blocked-by edges, and a re-run skips what already exists. The JSON format is in its header.
+
 ## PLAN.md and GitHub Issues
 
 `PLAN.md` stays the **roadmap**: it orders the work and holds each task's ID (e.g. `ANG-01d-2`). GitHub Issues hold the **spec** and **tickets** for the task currently in flight.

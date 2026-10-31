@@ -56,7 +56,11 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   when the form is narrow, so the chosen label stays whole. Flag one that shares a
   row with short filters. The flex recipe is `.h2h-picker__wide` in
   `frontend/src/app/shared/head-to-head/h2h-page.scss` (ANG-06-9's H2H and Compare
-  pickers clipped names at 1280px and 768px).
+  pickers clipped names at 1280px and 768px). A `mat-form-field` holds at
+  least 180px inside (`.mat-mdc-form-field-infix`), which no outer `min-width`
+  lowers: in a table cell inside a narrow card, plan for the table to scroll
+  sideways or for the cell to stack before choosing a form field (ANG-06-18's
+  Team assignment scrolls at 768px).
 
 - **Names in a scrolling table stay whole.** In a table that scrolls sideways, a
   header or cell holding a name wraps only between words and sets a `min-width`
