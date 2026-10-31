@@ -18,6 +18,12 @@ repos:
         args: [-shellcheck=]
   - repo: local
     hooks:
+      # CI's frontend job runs `format:check`; this catches it at commit time.
+      - id: prettier
+        name: prettier --check (frontend)
+        entry: npx --prefix frontend prettier --check --ignore-unknown --ignore-path frontend/.prettierignore
+        language: system
+        files: ^frontend/
       - id: check-encoding
         name: check encoding (mojibake / non-UTF-8)
         entry: python scripts/check_encoding.py
