@@ -1,4 +1,7 @@
-"""UX-02 — the "You" badge and link / unlink buttons on League / Season / Round pages.
+"""UX-02 — the "You" badge and link / unlink buttons on League / Season pages.
+
+ANG-08 D2 deleted the Round box-score and compare-rounds HTML pages (and their
+badge tests); the League / Season classes below are ANG-08 D3's.
 
 Seam contract: `.claude/worktrees/ux-02-seam-contract.md` §5 (tag), §6
 (buttons on the League player page), §8 (badge coverage — rows 6, 10, 13, 16,
@@ -209,48 +212,15 @@ class TestLeagueLeaders(_LeagueFixture):
 
 
 # ===========================================================================
-# Round box score
+# Round scoreboard row shape (ANG-08 D2 deleted the Round / compare HTML pages
+# whose badge tests stood here)
 # ===========================================================================
 
 
-class TestGameRoundDetail(_LeagueFixture):
-    def test_badge_present_when_linked(self) -> None:
-        self._link_star()
-        html = self._get(reverse("game_round_detail", args=[self.game_round.id]))
-        self.assertIn(BADGE, html)
-
-    def test_badge_present_for_blue_side(self) -> None:
-        # A Self-insert on the blue side (an owned Team playing blue).
-        Team.objects.filter(pk=self.away.pk).update(manager=self.me)
-        set_self_insert(self.me, self.weak)
-        html = self._get(reverse("game_round_detail", args=[self.game_round.id]))
-        self.assertIn(BADGE, html)
-
+class TestPlayerRowKeys(TestCase):
     def test_player_row_keys_still_28(self) -> None:
         self.assertEqual(len(PLAYER_ROW_KEYS), 28)
         self.assertNotIn("player_id", PLAYER_ROW_KEYS)
-
-
-# ===========================================================================
-# Round comparison
-# ===========================================================================
-
-
-class TestCompareRounds(_LeagueFixture):
-    def test_badge_present_when_linked(self) -> None:
-        second = _make_round(
-            self.home,
-            self.away,
-            [
-                (self.star, "red", "scout", 20, 3, 4000),
-                (self.weak, "blue", "heavy", 4, 10, 900),
-            ],
-            season=self.season,
-        )
-        self._link_star()
-        url = reverse("compare_rounds")
-        html = self._get(f"{url}?round_a={self.game_round.id}&round_b={second.id}")
-        self.assertIn(BADGE, html)
 
 
 # ===========================================================================
@@ -351,7 +321,6 @@ class TestUnlinkedAccountSeesNoBadge(_LeagueFixture):
             reverse("league_player_detail", args=[self.league.id, self.star.id]),
             f"{roster}?team_id={self.home.id}",
             reverse("stats_league_leaders", args=[self.league.id]),
-            reverse("game_round_detail", args=[self.game_round.id]),
             f"{finances}?team_id={self.home.id}",
         ]
 

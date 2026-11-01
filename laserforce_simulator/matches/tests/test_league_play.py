@@ -1604,3 +1604,197 @@ class TestConf01PlaySeasonTaskStampsConference(TestCase):
             play_season_task.delay(season.id, max_matchdays=None)
         for match in Match.objects.filter(season=season):
             self.assertIsNone(match.conference_id)
+
+
+# ===========================================================================
+# LG-01i — the live-cursor helpers in ``matches.league_play_services``.
+# Moved from ``views_tests.py`` when ANG-08 D2 deleted that file.
+# ===========================================================================
+
+
+from matches.models import BracketNode as _Lg01iBracketNode  # noqa: E402
+from matches.models import SeasonPhase as _Lg01iSeasonPhase  # noqa: E402
+
+_LG01I_FAST_TICKS = 20
+
+
+def _lg01i_rr_season(prefix: str, n: int = 2, *, manager_idx: int | None = 0):
+    """An ``active`` n-team Season whose League ``current_team`` is the
+    ``manager_idx``-th team. Returns ``(season, teams)``.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    season.start_season()
+    season.refresh_from_db()
+    if manager_idx is not None:
+        league.current_team = teams[manager_idx]
+        league.save(update_fields=["current_team"])
+    return season, teams
+
+
+def _lg01i_built_playoff_season(prefix: str, n: int = 4):
+    """An ``active`` Season whose RR is complete and whose tournament phase is
+    built + active. Returns ``(season, teams, tournament_phase)``; the test
+    picks the manager from a participant of an undecided node.
+    """
+    league = League.objects.create(name=f"{prefix} League")
+    season = Season.objects.create(
+        league=league, name="S1", start_date=date(2026, 1, 1)
+    )
+    teams = []
+    for i in range(n):
+        t, _ = make_team_with_slots(f"{prefix}{i}")
+        teams.append(t)
+        season.teams.add(t)
+    _Lg01iSeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")
+    tournament_phase = _Lg01iSeasonPhase.objects.create(
+        season=season, ordinal=2, phase_type="tournament"
+    )
+    season.start_season()
+    season.refresh_from_db()
+    league.current_team = teams[0]
+    league.save(update_fields=["current_team"])
+    # Play every RR fixture via the real simulator (auto-builds the
+    # tournament phase on RR completion).
+    by_id = {t.id: t for t in teams}
+    sim = BatchSimulator()
+    with patch.object(BatchSimulator, "ROUND_TICKS", _LG01I_FAST_TICKS):
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            for fixture in fixtures:
+                sim.simulate_scheduled_round(
+                    season,
+                    by_id[fixture.team_a_id],
+                    by_id[fixture.team_b_id],
+                    fixture.round_number,
+                    season_phase=phase if phase.pk is not None else None,
+                )
+    season.refresh_from_db()
+    tournament_phase.refresh_from_db()
+    return season, teams, tournament_phase
+
+
+def _lg01i_undecided_nodes(tournament):
+    return _Lg01iBracketNode.objects.filter(
+        tournament=tournament,
+        winner__isnull=True,
+        is_bye=False,
+        team_a__isnull=False,
+        team_b__isnull=False,
+    )
+
+
+def _lg01i_alive_team(tournament, teams):
+    """A Team in an undecided, non-bye, both-slots-filled node (ALIVE)."""
+    node = _lg01i_undecided_nodes(tournament).order_by("bracket_round", "position")
+    node = node.first()
+    assert node is not None, "expected at least one undecided playoff node"
+    by_id = {t.id: t for t in teams}
+    return by_id[node.team_a_id], node
+
+
+def _lg01i_eliminated_team(tournament, teams):
+    """A Team in no undecided node, or None when every team is still alive."""
+    alive_ids = set()
+    for node in _lg01i_undecided_nodes(tournament):
+        alive_ids.add(node.team_a_id)
+        alive_ids.add(node.team_b_id)
+    for t in teams:
+        if t.id not in alive_ids:
+            return t
+    return None
+
+
+class TestLg01iCursorDispatch(TestCase):
+    """``resolve_live_cursor(season)`` + ``alive_playoff_node(tournament,
+    team)`` — the cursor-resolution helpers (§5 / §5a)."""
+
+    def _resolve(self, season):
+        from matches.league_play_services import resolve_live_cursor
+
+        return resolve_live_cursor(season)
+
+    def test_rr_cursor_when_current_team_in_next_matchday(self):
+        season, _teams = _lg01i_rr_season("CurRR", n=2, manager_idx=0)
+        cursor = self._resolve(season)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor["kind"], "rr")
+
+    def test_none_when_no_current_team(self):
+        season, _teams = _lg01i_rr_season("CurNone", n=2, manager_idx=None)
+        # No current_team set.
+        season.league.current_team = None
+        season.league.save(update_fields=["current_team"])
+        self.assertIsNone(self._resolve(season))
+
+    def test_rr_bye_when_current_team_has_a_bye(self):
+        # Odd N ⇒ one team byes each matchday. The next matchday's fixtures
+        # exclude exactly one team; set that team as current_team.
+        season, teams = _lg01i_rr_season("CurBye", n=3, manager_idx=0)
+        # Determine which team is NOT in the next matchday's fixtures.
+        in_next = set()
+        for phase, fixtures in season.scheduled_fixtures_by_phase():
+            # first unplayed matchday
+            if not fixtures:
+                continue
+            first_md = min(f.matchday for f in fixtures)
+            for f in fixtures:
+                if f.matchday == first_md:
+                    in_next.add(f.team_a_id)
+                    in_next.add(f.team_b_id)
+            break
+        bye_team = next((t for t in teams if t.id not in in_next), None)
+        self.assertIsNotNone(bye_team, "odd-N matchday should leave one team idle")
+        season.league.current_team = bye_team
+        season.league.save(update_fields=["current_team"])
+        cursor = self._resolve(season)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor["kind"], "rr_bye")
+
+    def test_playoff_cursor_when_current_team_alive(self):
+        season, teams, tp = _lg01i_built_playoff_season("CurPlayAlive", n=4)
+        tp.refresh_from_db()
+        alive_team, _node = _lg01i_alive_team(tp.tournament, teams)
+        season.league.current_team = alive_team
+        season.league.save(update_fields=["current_team"])
+        cursor = self._resolve(season)
+        self.assertIsNotNone(cursor)
+        self.assertEqual(cursor["kind"], "playoff")
+
+    def test_none_when_current_team_eliminated_in_playoff(self):
+        season, teams, tp = _lg01i_built_playoff_season("CurPlayElim", n=4)
+        tp.refresh_from_db()
+        elim = _lg01i_eliminated_team(tp.tournament, teams)
+        if elim is None:
+            self.skipTest("no eliminated team in this (non-deterministic) bracket")
+        season.league.current_team = elim
+        season.league.save(update_fields=["current_team"])
+        self.assertIsNone(self._resolve(season))
+
+    def test_alive_playoff_node_returns_node_for_participant(self):
+        from matches.league_play_services import alive_playoff_node
+
+        season, teams, tp = _lg01i_built_playoff_season("AlivePlayNode", n=4)
+        tp.refresh_from_db()
+        alive_team, node = _lg01i_alive_team(tp.tournament, teams)
+        resolved = alive_playoff_node(tp.tournament, alive_team)
+        self.assertIsNotNone(resolved)
+        self.assertIn(alive_team.id, (resolved.team_a_id, resolved.team_b_id))
+        # Pinned to a Series that has not started (game-1 cursor).
+        self.assertEqual(resolved.series_matches.count(), 0)
+
+    def test_alive_playoff_node_returns_none_for_eliminated(self):
+        from matches.league_play_services import alive_playoff_node
+
+        season, teams, tp = _lg01i_built_playoff_season("AliveElimNode", n=4)
+        tp.refresh_from_db()
+        elim = _lg01i_eliminated_team(tp.tournament, teams)
+        if elim is None:
+            self.skipTest("no eliminated team in this (non-deterministic) bracket")
+        self.assertIsNone(alive_playoff_node(tp.tournament, elim))

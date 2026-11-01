@@ -29,86 +29,8 @@ RETIRED_LG01H_LEAGUE_IDS = (
 # page (ANG-08 D1).
 
 
-# ---------------------------------------------------------------------------
-# TestLg01kSandboxModeTopbar
-# ---------------------------------------------------------------------------
-
-# ANG-08 D1: the Teams / Players / Maps URL names are deleted, so base.html
-# renders their links as literal paths until it goes in D3.
-SANDBOX_PAGE = "/matches/"
-
-
-class TestLg01kSandboxModeTopbar(TestCase):
-    """GET ``/matches/`` (sandbox mode) renders the 6 flat sandbox anchors
-    plus ``Tools ▾`` + ``Help ▾``. NO ``League ▾`` dropdown anywhere.
-    """
-
-    def test_sandbox_mode_renders_6_flat_links(self) -> None:
-        response = self.client.get(SANDBOX_PAGE)
-        self.assertEqual(response.status_code, 200)
-        body = response.content.decode()
-        # The 6 flat sandbox link anchors (scope to the exact navbar
-        # anchor markup so sidebar / page-body labels cannot
-        # false-positive).
-        self.assertIn('<a class="nav-link" href="/teams/">', body)
-        self.assertIn(
-            '<a class="nav-link" id="player-list-nav-link" href="/players/">', body
-        )
-        self.assertIn(
-            f'<a class="nav-link" href="{reverse("match_list")}">',
-            body,
-        )
-        self.assertIn(
-            f'<a class="nav-link" href="{reverse("simulate_batch")}">',
-            body,
-        )
-        self.assertIn('<a class="nav-link" href="/teams/create/">', body)
-        self.assertIn('<a class="nav-link" href="/maps/">', body)
-        # Players link DOM id preserved from LG-01a.
-        self.assertContains(response, 'id="player-list-nav-link"')
-        # Tools / Help toggles present.
-        self.assertContains(response, 'id="tools-nav-link"')
-        self.assertContains(response, 'id="help-nav-link"')
-        # Every league-mode-only DOM id ABSENT.
-        for dom_id in (
-            "dashboard-nav-link",
-            "league-nav-link",
-            "team-nav-link",
-            "players-nav-link",
-            "stats-nav-link",
-        ):
-            self.assertNotContains(response, f'id="{dom_id}"')
-        # Retired LG-01h League toggle id ABSENT.
-        self.assertNotContains(response, 'id="leagues-nav-link"')
-
-    def test_sandbox_mode_tools_before_help(self) -> None:
-        """LG-01k swaps the LG-01h Help-then-Tools order to
-        Tools-then-Help across all 3 modes.
-        """
-        response = self.client.get(SANDBOX_PAGE)
-        body = response.content.decode()
-        tools_idx = body.find('id="tools-nav-link"')
-        help_idx = body.find('id="help-nav-link"')
-        self.assertGreaterEqual(tools_idx, 0, "tools-nav-link not rendered")
-        self.assertGreaterEqual(help_idx, 0, "help-nav-link not rendered")
-        self.assertLess(
-            tools_idx,
-            help_idx,
-            "tools-nav-link must render BEFORE help-nav-link " "(LG-01k order swap)",
-        )
-
-    def test_sandbox_mode_no_league_dropdown(self) -> None:
-        """The LG-01h ``League ▾`` dropdown is removed from sandbox mode
-        entirely — the U+25BE toggle text must not appear.
-        """
-        response = self.client.get(SANDBOX_PAGE)
-        self.assertEqual(response.status_code, 200)
-        body = response.content.decode()
-        self.assertNotIn(
-            "League ▾",
-            body,
-            "League toggle text (U+25BE) leaked into sandbox-mode topnav",
-        )
+# The LG-01k sandbox-mode top-bar tests went with the last sandbox page
+# (``/matches/``, ANG-08 D2): no surviving page renders the sandbox branch.
 
 
 # ---------------------------------------------------------------------------
@@ -204,9 +126,11 @@ class TestLg01kLeagueModeTopbar(TestCase):
         navbar_slice = body[start_idx:slice_end]
         # Every sandbox flat-anchor marker absent from the navbar slice.
         for anchor in (
+            # ANG-08 D3: literal paths, the Matches / Batch URL names are
+            # deleted (D2).
             '<a class="nav-link" href="/teams/">',
-            f'<a class="nav-link" href="{reverse("match_list")}">',
-            f'<a class="nav-link" href="{reverse("simulate_batch")}">',
+            '<a class="nav-link" href="/matches/">',
+            '<a class="nav-link" href="/matches/simulate-batch/">',
             '<a class="nav-link" href="/teams/create/">',
             '<a class="nav-link" href="/maps/">',
         ):

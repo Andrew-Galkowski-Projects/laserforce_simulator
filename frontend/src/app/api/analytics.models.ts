@@ -76,8 +76,7 @@ export interface TeamH2HDetailRow {
   score_str: string;
   /** The winning Team's name, or "—". */
   winner_name: string;
-  /** The Django page; the SPA links by `match_id` / `round_id` instead. */
-  detail_url: string;
+  /** The SPA links a row by `match_id` / `round_id`. */
   match_id: number | null;
   round_id: number | null;
   is_simulated: boolean;
@@ -145,7 +144,6 @@ export interface PlayerH2HDetailRow {
   tags_b_to_a: number;
   /** "Player A", "Player B" or "Tie". */
   winner_label: string;
-  detail_url: string;
   is_simulated: boolean;
 }
 

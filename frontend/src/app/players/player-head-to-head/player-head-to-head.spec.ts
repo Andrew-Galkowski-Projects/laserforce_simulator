@@ -81,7 +81,6 @@ function h2h(fields: Partial<PlayerH2HData> = {}): PlayerH2HData {
         tags_a_to_b: 3,
         tags_b_to_a: 1,
         winner_label: 'Player A',
-        detail_url: '/matches/round/55/',
         is_simulated: true,
       },
     ],

@@ -10,7 +10,6 @@ import pytest
 
 from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
 from matches.forms import (
-    BatchSimulateForm,
     CreateLeagueForm,
     MatchSetupForm,
     SingleRoundSetupForm,
@@ -79,7 +78,6 @@ class TestSimulationReadyMaps:
 
         querysets = [
             MatchSetupForm().fields["arena_map"].queryset,
-            BatchSimulateForm().fields["arena_map"].queryset,
             CreateLeagueForm().fields["map_pool"].queryset,
         ]
 

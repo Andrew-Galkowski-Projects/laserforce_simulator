@@ -1726,7 +1726,7 @@ def play_week_live_watch(request, season_id: int) -> HttpResponse:
             request, season, "No live game to watch — start one from the Play menu."
         )
 
-    from matches.views import round_playback_payload
+    from matches.services import round_playback_payload
 
     by_id = {
         gr.id: gr

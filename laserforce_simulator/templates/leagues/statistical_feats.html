@@ -137,7 +137,8 @@
                                             {% endif %}
                                         </td>
                                     {% endfor %}
-                                    <td><a href="{% url 'game_round_detail' row.round_id %}">View round</a></td>
+                                    {# ANG-08 D3: literal path, `game_round_detail` is deleted (D2). #}
+                                    <td><a href="/matches/game-round/{{ row.round_id }}/">View round</a></td>
                                 </tr>
                                 {% endfor %}
                             </tbody>
@@ -181,7 +182,8 @@
                                     </div>
                                     {% if rec.round_id %}
                                         <div class="small">
-                                            <a href="{% url 'game_round_detail' rec.round_id %}">View round</a>
+                                            {# ANG-08 D3: literal path, `game_round_detail` is deleted (D2). #}
+                                            <a href="/matches/game-round/{{ rec.round_id }}/">View round</a>
                                         </div>
                                     {% endif %}
                                 </li>

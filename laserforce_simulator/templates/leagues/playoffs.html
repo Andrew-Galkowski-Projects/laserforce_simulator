@@ -42,7 +42,8 @@
 
                 {% if bracket.champion %}
                 <div id="league-playoffs-champion-{{ bracket.key }}" class="alert alert-success">
-                    Champion: <strong><a href="{% url 'team_match_history' bracket.champion.id %}">{{ bracket.champion.name }}</a></strong>
+                    {# ANG-08 D3: literal paths here and below, `team_match_history` / `match_detail` are deleted (D2). #}
+                    Champion: <strong><a href="/matches/team/{{ bracket.champion.id }}/history/">{{ bracket.champion.name }}</a></strong>
                 </div>
                 {% endif %}
 
@@ -67,11 +68,11 @@
                                 <div class="card-body p-2">
                                     <div>
                                         {% if node.seed_a %}<small class="text-muted">[{{ node.seed_a }}]</small>{% endif %}
-                                        {% if node.team_a %}<a href="{% url 'team_match_history' node.team_a.id %}">{{ node.team_a.name }}</a>{% else %}—{% endif %}
+                                        {% if node.team_a %}<a href="/matches/team/{{ node.team_a.id }}/history/">{{ node.team_a.name }}</a>{% else %}—{% endif %}
                                     </div>
                                     <div>
                                         {% if node.seed_b %}<small class="text-muted">[{{ node.seed_b }}]</small>{% endif %}
-                                        {% if node.team_b %}<a href="{% url 'team_match_history' node.team_b.id %}">{{ node.team_b.name }}</a>{% else %}—{% endif %}
+                                        {% if node.team_b %}<a href="/matches/team/{{ node.team_b.id }}/history/">{{ node.team_b.name }}</a>{% else %}—{% endif %}
                                     </div>
                                     {% if node.is_bye %}
                                     <div><small class="text-muted">Bye</small></div>
@@ -83,7 +84,7 @@
                                     <div>
                                         {% for game in node.games %}
                                         <div>
-                                            <a href="{% url 'match_detail' game.match_id %}">Game {{ game.game_number }}</a>
+                                            <a href="/matches/{{ game.match_id }}/">Game {{ game.game_number }}</a>
                                             <small class="match-score">{{ game.score_a }}–{{ game.score_b }}</small>
                                         </div>
                                         {% endfor %}
@@ -91,7 +92,7 @@
                                     {% endif %}
                                     {% endif %}
                                     {% if node.winner %}
-                                    <div><strong>Winner: <a href="{% url 'team_match_history' node.winner.id %}">{{ node.winner.name }}</a></strong></div>
+                                    <div><strong>Winner: <a href="/matches/team/{{ node.winner.id }}/history/">{{ node.winner.name }}</a></strong></div>
                                     {% endif %}
                                 </div>
                             </div>
@@ -114,7 +115,7 @@
                         {% for q in worlds_qualifiers %}
                         <tr id="league-playoffs-worlds-row-{{ q.seed }}">
                             <td>{{ q.seed }}</td>
-                            <td id="league-playoffs-worlds-team-{{ q.seed }}"><a href="{% url 'team_match_history' q.team_id %}">{{ q.team_name }}</a></td>
+                            <td id="league-playoffs-worlds-team-{{ q.seed }}"><a href="/matches/team/{{ q.team_id }}/history/">{{ q.team_name }}</a></td>
                             <td id="league-playoffs-worlds-conference-{{ q.seed }}">{{ q.conference_name }}</td>
                             <td id="league-playoffs-worlds-provenance-{{ q.seed }}">{{ q.provenance_label }}</td>
                         </tr>

@@ -306,8 +306,9 @@ class TestSelfInsertContextProcessor(_SelfInsertFixture):
 
     def test_keys_reach_rendered_page_context(self) -> None:
         set_self_insert(self.me, self.my_player)
-        # ANG-08 D1: `team_list` is gone; any page still on base.html will do.
-        response = self.client.get(reverse("match_list"))
+        # ANG-08 D1 / D2: `team_list` and `match_list` are gone; any page still
+        # on base.html will do (D3 deletes this context processor with it).
+        response = self.client.get(reverse("league_list"))
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context["self_insert_player_id"], self.my_player.id)
         self.assertEqual(response.context["self_insert_player"].pk, self.my_player.pk)

@@ -454,24 +454,8 @@ class TestNavPlayDropdownPollPath(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestNavPlayDropdownOffLeague(TestCase):
-    """Off-league (sandbox / start ``app_mode``) pages render NO
-    ``play-nav-link`` / ``topbar-play-*`` ids."""
-
-    def _assert_no_play_nav(self, body: str) -> None:
-        self.assertNotIn('id="play-nav-link"', body)
-        self.assertNotIn('id="topbar-play-dropdown"', body)
-        self.assertNotIn("topbar-play-", body)
-
-    def test_sandbox_match_list_has_no_play_nav(self) -> None:
-        # Pin a league in session to prove the play keys are STILL absent
-        # off-league (the dropdown only renders in the league branch).
-        # ANG-08 D1: was `team_list`; the start-mode landing case went with
-        # the landing page.
-        league, _season, _teams = _make_active_season("NavOffSandbox", n_teams=2)
-        _pin_league(self.client, league)
-        body = self.client.get(reverse("match_list")).content.decode()
-        self._assert_no_play_nav(body)
+# The off-league (sandbox) no-Play-nav case went with the last sandbox page
+# (``/matches/``, ANG-08 D2).
 
 
 # ---------------------------------------------------------------------------

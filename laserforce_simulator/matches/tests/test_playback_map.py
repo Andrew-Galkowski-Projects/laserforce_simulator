@@ -1,17 +1,16 @@
-"""Tests for the round-playback map overlay on the events screen.
+"""Tests for the round-playback map overlay (``matches.playback``).
 
 The overlay reconstructs each player's corridor-faithful route from the
 persisted ``event_type="movement"`` ``GameEvent`` rows (MOVE-01 stores only the
 Advance's start + end cell) using the simulator's own A* (``astar_path``), and
-ships ``{"zone_size", "players": [...]}`` to ``game_round_events.html`` for the
-canvas overlay drawn on the processed map PNG. Map-less rounds (3-zone
-fallback) yield ``None`` and fall back to the scoreboard + live feed only.
+ships ``{"zone_size", "players": [...]}`` for the canvas overlay drawn on the
+processed map PNG. Map-less rounds (3-zone fallback) yield ``None``. ANG-08
+deleted the HTML events screen these tests also drove.
 """
 
 from __future__ import annotations
 
-from django.test import Client, TestCase
-from django.urls import reverse
+from django.test import TestCase
 
 from core.models import (
     ArenaMap,
@@ -22,7 +21,6 @@ from core.models import (
 )
 from matches.models import GameEvent, GameRound, PlayerRoundState
 from matches.tests.conftest import make_team_with_slots
-from conftest import get_shared_manager
 from matches.playback import build_playback_map
 
 
@@ -274,51 +272,3 @@ class TestSimulationPersistsRoute(TestCase):
             route = m.metadata["route"]
             self.assertIsInstance(route, list)
             self.assertEqual(route[-1], [m.metadata["end_row"], m.metadata["end_col"]])
-
-
-class TestEventsScreenOverlay(TestCase):
-    def test_map_round_renders_canvas_and_data(self) -> None:
-        arena_map, zone_size = _make_arena_map("PbView")
-        gr, red_players, _b = _round(arena_map, zone_size, prefix="PbView")
-        commander = red_players["commander"]
-        PlayerRoundState.objects.create(
-            game_round=gr,
-            player=commander,
-            team_color="red",
-            role="commander",
-            cell_row=0,
-            cell_col=0,
-        )
-        _move(gr, commander, 4, (0, 0), (0, 2))
-
-        url = reverse("game_round_events", kwargs={"round_id": gr.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        body = client.get(url).content.decode("utf-8")
-        self.assertIn('id="pb-map-canvas"', body)
-        self.assertIn('id="pb-map-bg"', body)
-        # UXP-06: the route payload is served by the events data endpoint,
-        # not inlined into the page.
-        self.assertNotIn('id="pb-map-data"', body)
-        data_url = reverse("game_round_events_data", kwargs={"round_id": gr.id})
-        pb_map = client.get(data_url).json()["playback_map"]
-        self.assertEqual(pb_map["zone_size"], zone_size)
-        self.assertEqual([p["id"] for p in pb_map["players"]], [commander.id])
-        self.assertIn('id="pb-live-feed"', body)
-        # Scoreboard + feed are matched-height columns (sized client-side).
-        self.assertIn('id="pb-scoreboard-col"', body)
-        self.assertIn('id="pb-feed-card"', body)
-
-    def test_map_less_round_shows_notice_no_canvas(self) -> None:
-        gr, _r, _b = _round(None, None, prefix="PbViewNoMap")
-        url = reverse("game_round_events", kwargs={"round_id": gr.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        body = client.get(url).content.decode("utf-8")
-        self.assertIn('id="pb-no-map-notice"', body)
-        self.assertNotIn('id="pb-map-canvas"', body)
-        data_url = reverse("game_round_events_data", kwargs={"round_id": gr.id})
-        self.assertIsNone(client.get(data_url).json()["playback_map"])
-        # The live feed is still present for map-less rounds.
-        self.assertIn('id="pb-live-feed"', body)
-        self.assertIn('id="pb-feed-card"', body)

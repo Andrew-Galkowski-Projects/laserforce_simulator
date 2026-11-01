@@ -35,7 +35,6 @@ _HEATMAP_KEYS = {
     "has_map",
     "arena_map",
     "zone_size",
-    "processed_image_url",
     "cell_occupancy_json",
     "player_roster",
 }
@@ -166,7 +165,6 @@ class TestHeatmap(_AnalyticsTestCase):
         self.assertEqual(data["round_id"], game_round.pk)
         self.assertFalse(data["has_map"])
         self.assertIsNone(data["arena_map"])
-        self.assertIsNone(data["processed_image_url"])
         self.assertIsInstance(data["cell_occupancy_json"], dict)
         self.assertEqual(len(data["player_roster"]), 12)
         for entry in data["player_roster"]:
@@ -186,12 +184,11 @@ class TestHeatmap(_AnalyticsTestCase):
         response = self.get(f"/api/rounds/{game_round.pk}/heatmap/")
         self.assertEqual(response.status_code, 200, response.content)
         data = response.json()["data"]
+        self.assertEqual(set(data), _HEATMAP_KEYS)
         self.assertTrue(data["has_map"])
         self.assertEqual(
             data["arena_map"], {"id": arena_map.pk, "name": arena_map.name}
         )
-        self.assertIsInstance(data["processed_image_url"], str)
-        self.assertTrue(data["processed_image_url"])
 
     def test_upgrades_scores_round_to_full(self) -> None:
         game_round = _saved_round(self.red, self.blue)

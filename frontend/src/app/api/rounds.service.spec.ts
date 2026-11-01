@@ -345,7 +345,6 @@ describe('RoundsService', () => {
       has_map: true,
       arena_map: { id: 7, name: 'Warehouse' },
       zone_size: 20,
-      processed_image_url: '/maps/7/processed-image/',
       cell_occupancy_json: { '11': { '2,3': 40 } },
       player_roster: [{ id: 11, name: 'Ace', role: 'commander', team_color: 'red' }],
     };

@@ -29,7 +29,7 @@ derives ownership from its parent (see `accounts-ownership.md`).
 - `models.py` — every model above plus `PlayerSeasonRating`, `OwnerEvaluation`, `TeamSeasonFinance`, `TournamentPlayerEntry`, `WatchedPlayer`.
 - `simulation/` — `BatchSimulator`, the sole engine: `round_loop.py` (per-tick), `entrypoints.py` (simulate/run/save/replay), `persistence.py` (`flush_to_db`).
 - `sim_helpers/` — pure engine helpers (see Sub-packages).
-- `views.py` — sandbox match / round / batch / analytics HTML views.
+- `views.py` — only the League "Soon" `coming_soon` view and `_FEATURE_REGISTRY` (ANG-08 D2 deleted the sandbox match / round / batch / tournament HTML views; D3 deletes the rest).
 - `league_views.py` — League + Season HTML views, play loop, rollover, owner evaluation.
 - `league_screens/` — one module per League sidebar screen (thin; logic in `league_screen_services.py`).
 - `tournament_views/` — sandbox Tournament HTML views, one module per area (`list_create`, `detail`, `setup`, `draw`, `play`); thin, logic in `tournament_services/`.

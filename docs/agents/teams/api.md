@@ -7,7 +7,7 @@ Moved verbatim from `laserforce_simulator/teams/CLAUDE.md`; the app index there 
 
 **Analytics reads (ANG-01b).** Model instances are flattened to refs — `team_ref = {id, name}`,
 `player_ref = {id, name, team: team_ref | null}`; builder output is passed through verbatim
-(including `detail_list[*].detail_url`, an HTML path). Query params are **strict** param Forms bound
+(`detail_list` rows carry `match_id` / `round_id`; ANG-08 dropped `detail_url`). Query params are **strict** param Forms bound
 via `plain_form_data(Form, request.query_params)` + `validate_form_or_raise` (the HTML pages keep their
 lenient parsing): missing id ⇒ `required`, non-int / bad date ⇒ `invalid`, id < 1 / negative
 `threshold` ⇒ `min_value`, bad `provenance` / `role` / `display` ⇒ `invalid_choice`, the same id twice

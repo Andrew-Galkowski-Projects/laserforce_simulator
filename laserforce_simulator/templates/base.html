@@ -71,14 +71,14 @@
                         {# NAV-01 — ONE relocated poll block (league branch only). #}
                         {% include "_partials/topnav_play_script.html" %}
                     {% elif app_mode == "sandbox" %}
-                        {# ANG-08 D2/D3: literal paths for the Teams / Players / Maps URL names deleted in D1. #}
+                        {# ANG-08 D3: literal paths, the Teams / Players / Maps (D1) and Matches / Batch / Tournaments (D2) URL names are deleted. #}
                         <a class="nav-link" href="/teams/">Teams</a>
                         <a class="nav-link" id="player-list-nav-link" href="/players/">Players</a>
-                        <a class="nav-link" href="{% url 'match_list' %}">Matches</a>
-                        <a class="nav-link" href="{% url 'simulate_batch' %}">Batch Sim</a>
+                        <a class="nav-link" href="/matches/">Matches</a>
+                        <a class="nav-link" href="/matches/simulate-batch/">Batch Sim</a>
                         <a class="nav-link" href="/teams/create/">Create Team</a>
                         <a class="nav-link" href="/maps/">Maps</a>
-                        <a class="nav-link" id="tournaments-nav-link" href="{% url 'tournament_list' %}">Tournaments</a>
+                        <a class="nav-link" id="tournaments-nav-link" href="/tournaments/">Tournaments</a>
                         {% include "_partials/topnav_tools_help.html" %}
                     {% else %}
                         {% include "_partials/topnav_tools_help.html" %}

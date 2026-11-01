@@ -76,18 +76,19 @@
                                 <tr id="game-log-row-{{ row.round_id }}">
                                     <td>{{ row.matchday }}</td>
                                     <td>{{ row.date_played|date:"Y-m-d" }}</td>
+                                    {# ANG-08 D3: literal paths, `game_round_detail` is deleted (D2). #}
                                     <td>
-                                        <a href="{% url 'game_round_detail' row.round_id %}">
+                                        <a href="/matches/game-round/{{ row.round_id }}/">
                                             {% if row.team_red %}{{ row.team_red.name }}{% else %}—{% endif %}
                                         </a>
                                     </td>
                                     <td>
-                                        <a href="{% url 'game_round_detail' row.round_id %}">
+                                        <a href="/matches/game-round/{{ row.round_id }}/">
                                             {% if row.team_blue %}{{ row.team_blue.name }}{% else %}—{% endif %}
                                         </a>
                                     </td>
                                     <td class="text-center">
-                                        <a href="{% url 'game_round_detail' row.round_id %}">{{ row.red_points }}–{{ row.blue_points }}</a>
+                                        <a href="/matches/game-round/{{ row.round_id }}/">{{ row.red_points }}–{{ row.blue_points }}</a>
                                     </td>
                                     <td>{% if row.winner %}{{ row.winner.name }}{% else %}—{% endif %}</td>
                                 </tr>

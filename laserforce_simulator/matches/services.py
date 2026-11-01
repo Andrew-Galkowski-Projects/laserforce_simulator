@@ -1,12 +1,9 @@
-"""ANG-01b — Match / Round domain services shared by the HTML views and the API.
+"""ANG-01b — Match / Round domain services behind the API.
 
 Sandbox create validation, batch-team resolution, and the six read-only
 ``build_*`` builders behind RES-03 (missile log), RES-04 (heatmap), RV-01
 (compare rounds), RV-03 (round report), HX-03 (team head-to-head) and HX-04
-(player head-to-head). The HTML views delegate here so both surfaces run one
-code path; HTML output stays byte-identical.
-
-This module must NOT import ``matches.views`` (``matches.views`` imports it).
+(player head-to-head). ANG-08 deleted the HTML views that also called them.
 """
 
 from __future__ import annotations
@@ -17,7 +14,6 @@ from typing import TYPE_CHECKING
 
 from django.db.models import Q, QuerySet
 from django.http import Http404
-from django.urls import reverse
 from django.utils.text import slugify
 
 from accounts.permissions import owned_queryset, stamp_manager
@@ -443,7 +439,6 @@ def _build_detail_list(
                 "team_b_score": team_b_total,
                 "score_str": f"{team_a_total} - {team_b_total}",
                 "winner_name": winner_name,
-                "detail_url": reverse("match_detail", args=[match_id]),
                 "match_id": match_id,
                 "round_id": None,
                 "is_simulated": m["is_simulated"],
@@ -467,7 +462,6 @@ def _build_detail_list(
                 "team_b_score": b,
                 "score_str": f"{a} - {b}",
                 "winner_name": winner_name,
-                "detail_url": reverse("game_round_detail", args=[r["round_id"]]),
                 "match_id": None,
                 "round_id": r["round_id"],
                 "is_simulated": r["is_simulated"],
@@ -688,7 +682,7 @@ def _build_player_h2h_detail_list(rounds_list: list[dict]) -> list[dict]:
     Sorted by ``date_played`` desc, then ``round_id`` desc. Each row is
     ``{round_id, date_played, role_a, role_b, player_a_team_score,
     player_b_team_score, score_str, tags_a_to_b, tags_b_to_a,
-    winner_label, detail_url, is_simulated}``.
+    winner_label, is_simulated}``.
     """
     ordered = sorted(
         rounds_list,
@@ -717,7 +711,6 @@ def _build_player_h2h_detail_list(rounds_list: list[dict]) -> list[dict]:
                 "tags_a_to_b": r["tags_a_to_b"],
                 "tags_b_to_a": r["tags_b_to_a"],
                 "winner_label": winner_label,
-                "detail_url": reverse("game_round_detail", args=[r["round_id"]]),
                 "is_simulated": r["is_simulated"],
             }
         )
@@ -825,11 +818,6 @@ def build_heatmap(game_round: GameRound) -> dict:
 
     has_map = game_round.arena_map_id is not None
     arena_map = game_round.arena_map if has_map else None
-    # ANG-08 D2: the `processed_image` URL name went with core/urls.py (D1);
-    # a literal path until D2 drops the `processed_image_url` field.
-    processed_image_url = (
-        f"/maps/{arena_map.pk}/processed-image/" if arena_map else None
-    )
 
     # Roster: red first then blue, each ordered by (role, name).
     player_states = list(game_round.player_states.select_related("player").all())
@@ -854,7 +842,6 @@ def build_heatmap(game_round: GameRound) -> dict:
         "has_map": has_map,
         "arena_map": arena_map,
         "zone_size": game_round.zone_size,
-        "processed_image_url": processed_image_url,
     }
 
 

@@ -33,7 +33,6 @@ from matches.models import (
     Tournament,
 )
 from matches.tests.conftest import make_team_with_slots
-from teams.models import Team
 
 User = get_user_model()
 
@@ -404,97 +403,9 @@ class TestLeagueCreateViewStamps(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestTournamentCreateStamps(TestCase):
-    """§6.4 #7 — `tournament_create` stamps the Tournament and its Teams."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.teams = [make_team_with_slots(f"TC{n}")[0] for n in range(4)]
-
-    def test_post_stamps_the_tournament(self) -> None:
-        response = self.client.post(
-            reverse("tournament_create"),
-            {"name": "Stamped Cup", "teams": [t.id for t in self.teams]},
-        )
-        self.assertIn(response.status_code, (200, 302))
-        tourney = Tournament.objects.get(name="Stamped Cup")
-        self.assertEqual(tourney.manager_id, get_shared_manager().pk)
-
-    def test_a_second_account_gets_its_own_stamp(self) -> None:
-        other = User.objects.create_user(
-            email="tourney-other@example.com", password="Str0ng-Passphrase-9"
-        )
-        self.client.force_login(other)
-        self.client.post(
-            reverse("tournament_create"),
-            {"name": "Other Cup", "teams": [t.id for t in self.teams]},
-        )
-        self.assertEqual(Tournament.objects.get(name="Other Cup").manager_id, other.pk)
-
-    def test_generated_teams_are_stamped_too(self) -> None:
-        """§6.2 — `tournament_create` passes `manager=manager_or_none(request)`."""
-        before = set(Team.objects.values_list("id", flat=True))
-        self.client.post(
-            reverse("tournament_create"),
-            {"name": "Generated Cup", "generate_count": "4"},
-        )
-        created = Team.objects.exclude(id__in=before)
-        self.assertTrue(created.exists())
-        for team in created:
-            with self.subTest(team=team.name):
-                self.assertEqual(team.manager_id, get_shared_manager().pk)
-
-
-class TestSandboxCreateViewsStamp(TestCase):
-    """§6.4 #9 / #10 — post-hoc `stamp_manager` on the `BatchSimulator` output.
-
-    The sandbox create views never construct the row themselves; they delegate
-    to `BatchSimulator` and stamp what comes back. `manager` is deliberately
-    NOT threaded through the simulator (§6.5).
-    """
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.red, _ = make_team_with_slots("SandRed")
-        self.blue, _ = make_team_with_slots("SandBlue")
-
-    def test_create_match_stamps_the_match(self) -> None:
-        from unittest.mock import patch
-
-        from matches.simulation import BatchSimulator
-
-        before = set(Match.objects.values_list("id", flat=True))
-        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
-            self.client.post(
-                reverse("create_match"),
-                {
-                    "team_red": self.red.id,
-                    "team_blue": self.blue.id,
-                    "match_type": "friendly",
-                },
-            )
-        created = Match.objects.exclude(id__in=before)
-        self.assertTrue(created.exists())
-        for match in created:
-            with self.subTest(match=match.pk):
-                self.assertEqual(match.manager_id, get_shared_manager().pk)
-
-    def test_create_single_round_stamps_the_game_round(self) -> None:
-        from unittest.mock import patch
-
-        from matches.simulation import BatchSimulator
-
-        before = set(GameRound.objects.values_list("id", flat=True))
-        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
-            self.client.post(
-                reverse("create_single_round"),
-                {"team_red": self.red.id, "team_blue": self.blue.id},
-            )
-        created = GameRound.objects.exclude(id__in=before)
-        self.assertTrue(created.exists())
-        for game_round in created:
-            with self.subTest(round=game_round.pk):
-                self.assertEqual(game_round.manager_id, get_shared_manager().pk)
+# ANG-08 D2: the Tournament / Match / single-Round create-view stamping tests
+# went with those HTML views; the API create stamps are pinned in
+# test_api_tournaments_create.py and test_api_match_create.py.
 
 
 # ---------------------------------------------------------------------------
@@ -594,83 +505,8 @@ class TestLeagueListScoping(TestCase):
         self.assertEqual(set(context["archived_leagues"]), {self.theirs_archived})
 
 
-class TestTournamentListScoping(TestCase):
-    """§7 — `tournament_list`."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.me = get_shared_manager()
-        self.other = User.objects.create_user(
-            email="tl-other@example.com", password="Str0ng-Passphrase-9"
-        )
-        self.mine = Tournament.objects.create(name="TL Mine", manager=self.me)
-        self.theirs = Tournament.objects.create(name="TL Theirs", manager=self.other)
-        self.open_cup = Tournament.objects.create(name="TL Open")
-
-    def test_own_and_unmanaged_tournaments_are_listed(self) -> None:
-        listed = set(self.client.get(reverse("tournament_list")).context["tournaments"])
-        self.assertEqual(listed, {self.mine, self.open_cup})
-
-    def test_isolation_holds_in_the_reverse_direction(self) -> None:
-        self.client.force_login(self.other)
-        listed = set(self.client.get(reverse("tournament_list")).context["tournaments"])
-        self.assertEqual(listed, {self.theirs, self.open_cup})
-
-
-class TestMatchListScoping(TestCase):
-    """§7 — `match_list` uses the two conditional-root predicates."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.me = get_shared_manager()
-        self.other = User.objects.create_user(
-            email="ml-other@example.com", password="Str0ng-Passphrase-9"
-        )
-        self.red, _ = make_team_with_slots("MLRed")
-        self.blue, _ = make_team_with_slots("MLBlue")
-
-        self.mine = Match.objects.create(
-            team_red=self.red, team_blue=self.blue, manager=self.me
-        )
-        self.theirs = Match.objects.create(
-            team_red=self.red, team_blue=self.blue, manager=self.other
-        )
-        self.open_match = Match.objects.create(team_red=self.red, team_blue=self.blue)
-
-        self.my_round = GameRound.objects.create(round_number=1, manager=self.me)
-        self.their_round = GameRound.objects.create(round_number=1, manager=self.other)
-        self.open_round = GameRound.objects.create(round_number=1)
-
-    def test_own_and_unmanaged_matches_are_listed(self) -> None:
-        listed = set(self.client.get(reverse("match_list")).context["matches"])
-        self.assertEqual(listed, {self.mine, self.open_match})
-
-    def test_another_accounts_match_is_not_listed(self) -> None:
-        listed = set(self.client.get(reverse("match_list")).context["matches"])
-        self.assertNotIn(self.theirs, listed)
-
-    def test_own_and_unmanaged_standalone_rounds_are_listed(self) -> None:
-        listed = set(self.client.get(reverse("match_list")).context["detailed_rounds"])
-        self.assertEqual(listed, {self.my_round, self.open_round})
-
-    def test_isolation_holds_in_the_reverse_direction(self) -> None:
-        self.client.force_login(self.other)
-        context = self.client.get(reverse("match_list")).context
-        self.assertEqual(set(context["matches"]), {self.theirs, self.open_match})
-        self.assertEqual(
-            set(context["detailed_rounds"]), {self.their_round, self.open_round}
-        )
-
-    def test_season_match_is_scoped_through_its_league(self) -> None:
-        league = League.objects.create(name="ML League", manager=self.other)
-        season = Season.objects.create(
-            league=league, name="S1", start_date=date(2026, 1, 1)
-        )
-        their_season_match = Match.objects.create(
-            team_red=self.red, team_blue=self.blue, season=season
-        )
-        listed = set(self.client.get(reverse("match_list")).context["matches"])
-        self.assertNotIn(their_season_match, listed)
+# ANG-08 D2: the `tournament_list` / `match_list` HTML scoping tests went with
+# those views; TestApiQuerysetScoping below pins the API list scoping.
 
 
 # ---------------------------------------------------------------------------

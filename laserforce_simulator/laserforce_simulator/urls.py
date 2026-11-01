@@ -22,8 +22,6 @@ from core import views as core_views
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/", include("laserforce_simulator.api_urls")),
-    path("matches/", include("matches.urls")),
-    path("tournaments/", include("matches.tournament_urls")),
     path("seasons/", include("matches.season_urls")),
     path("leagues/", include("matches.league_urls")),
     # UXP-02: uploaded media in dev (DEBUG) and on the self-hosted stack

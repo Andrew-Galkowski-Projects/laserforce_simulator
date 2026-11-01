@@ -234,7 +234,6 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
                     else None
                 ),
                 "zone_size": payload["zone_size"],
-                "processed_image_url": payload["processed_image_url"],
                 "cell_occupancy_json": payload["cell_occupancy_json"],
                 "player_roster": payload["player_roster"],
             }

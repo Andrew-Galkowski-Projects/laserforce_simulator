@@ -14,7 +14,6 @@ import importlib
 from django.apps import apps as global_apps
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.test import TestCase
-from django.urls import reverse
 
 from rest_framework.exceptions import APIException
 
@@ -175,31 +174,6 @@ class GuardTests(TestCase):
     def test_remaining_errors_are_exceptions(self) -> None:
         for cls in (NoPlayableNodeError, BrokerUnavailableError):
             self.assertTrue(issubclass(cls, Exception))
-
-
-class HtmlLabelTests(TestCase):
-    def test_list_page_shows_random_draw_label(self) -> None:
-        Tournament.objects.create(
-            name="Pool RRDE",
-            format="round_robin_double_elim",
-            team_assembly="player_pool",
-        )
-        response = self.client.get(reverse("tournament_list"))
-        self.assertContains(response, "Random Draw")
-
-    def test_detail_page_shows_format_label(self) -> None:
-        t = Tournament.objects.create(
-            name="Pool RRDE",
-            format="round_robin_double_elim",
-            team_assembly="player_pool",
-        )
-        response = self.client.get(reverse("tournament_detail", args=[t.id]))
-        self.assertContains(response, 'id="tournament-format-label"')
-        self.assertContains(response, "Random Draw")
-
-    def test_create_form_offers_player_pool_draw(self) -> None:
-        response = self.client.get(reverse("tournament_create"))
-        self.assertContains(response, '<option value="player_pool">Player pool draw')
 
 
 class TranslatorTests(TestCase):
