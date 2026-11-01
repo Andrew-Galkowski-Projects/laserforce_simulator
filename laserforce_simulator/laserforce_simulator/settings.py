@@ -13,6 +13,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 import sys
 from datetime import timedelta
 from pathlib import Path
+from wsgiref.headers import Headers
 
 import dj_database_url
 from decouple import Csv, config
@@ -189,6 +190,26 @@ MEDIA_ROOT = BASE_DIR / "media"
 # UXP-02: let Django itself serve MEDIA_ROOT when DEBUG is off and no R2 is
 # configured (the self-hosted stack). Fly uses R2; dev uses static() in urls.py.
 SERVE_MEDIA = config("SERVE_MEDIA", default=False, cast=bool)
+
+# ANG-10 (ADR-0049): the built Angular SPA. The Docker image sets it to
+# /srv/spa; unset (runserver, pytest) means no SPA and "/" is a 404. WhiteNoise
+# serves the bundle's files; core.spa.spa_index answers "/" and deep links.
+SPA_ROOT = config("SPA_ROOT", default=None, cast=lambda v: Path(v) if v else None)
+WHITENOISE_ROOT = SPA_ROOT
+# Angular's outputHashing names: main-774TPCF3.js, chunk-C_1nWhzy.js, fonts.
+# This replaces WhiteNoise's default test, which marks a manifest storage's
+# hashed collectstatic names immutable; plain StaticFilesStorage has none.
+# Moving STORAGES["staticfiles"] to a manifest storage must revisit it.
+WHITENOISE_IMMUTABLE_FILE_TEST = r"-[A-Za-z0-9_-]{8}\.(?:js|css|woff2?)$"
+
+
+def _spa_index_no_cache(headers: Headers, path: str, url: str) -> None:
+    """A direct /index.html is revalidated too, so a redeploy's bundle is picked up."""
+    if url == "/index.html":
+        headers["Cache-Control"] = "no-cache"
+
+
+WHITENOISE_ADD_HEADERS_FUNCTION = _spa_index_no_cache
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

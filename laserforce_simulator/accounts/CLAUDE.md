@@ -174,9 +174,12 @@ so the gate sends anonymous visitors there; there is no `LOGIN_REDIRECT_URL` /
 live URLconf. Adding an exemption means adding it to that test's allowlist, a deliberate security
 decision. There are two kinds:
 
-- **HTML views** are exempt only through an explicit `login_not_required`. The one exemption is the
-  Admin login: `HTML_EXEMPT_VIEWS == {"django.contrib.admin.sites.login"}`. Every other HTML route
-  (the rest of `/admin/`, `/media/`) stays gated and 302s to `/admin/login/?next=...`.
+- **HTML views** are exempt only through an explicit `login_not_required`. The exemptions are the
+  Admin login and, since ANG-10 (ADR-0049), the SPA shell: `HTML_EXEMPT_VIEWS ==
+  {"django.contrib.admin.sites.login", "core.spa.spa_index", "core.spa.app_redirect"}` (the SPA's
+  `index.html` and the `/app/` redirect carry no data; the SPA signs in through the API). Every
+  other HTML route (the rest of `/admin/`, `/media/`) stays gated and 302s to
+  `/admin/login/?next=...`.
 - **Every DRF view is exempt automatically.** DRF 3.15+ `APIView.as_view()` sets
   `login_required = False` itself, and the API views also carry
   `@method_decorator(login_not_required, name="dispatch")` (redundant under DRF 3.15+). The API is

@@ -19,8 +19,8 @@ auth** below.
 - **Angular 22** (22.2.x), scaffolded with `npx -p @angular/cli@22 ng new`. The CLI is a
   `devDependency`: run it as `npx ng ...` or through the npm scripts, never a global install.
 - **Standalone components, zoneless change detection, signals.** No NgModules, no `zone.js`.
-- **No SSR.** `ng build` writes plain static files to `dist/frontend/browser/` (served by nginx at
-  `/` in the Docker stacks: see **Served from Docker** below).
+- **No SSR.** `ng build` writes plain static files to `dist/frontend/browser/` (served by Django at
+  `/` in the Docker image: see **Served from Docker** below).
 - **Angular Material** (and the CDK), Material 3, themed from the app's `--lf-*` tokens and
   following the OS light/dark setting. See **Theme** below and
   [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md).
@@ -429,28 +429,26 @@ CORS allow-list (ANG-02) has exactly `http://localhost:4200`, so open the app on
 `127.0.0.1`. Both dev origins are the same site, so the `SameSite=Lax` refresh cookie (ADR-0041)
 still travels.
 
-## Served from Docker (ANG-07, ANG-08)
+## Served from Docker (ANG-10)
 
-[ADR-0047](../docs/adr/0047-spa-at-root-django-api-and-admin-only.md): the Docker stacks put nginx
-in front of Django. It serves the SPA at `/` and proxies only `/api/`, `/admin/`, `/static/` and
-`/media/` (and `/admin` without the slash) to `${DJANGO_UPSTREAM}`, so the SPA is same-origin with
-the API and needs no CORS. Every other path is the SPA: an old Django page path falls into its `**`
-route. A link from the ADR-0046 days, `/app/<path>`, gets a 301 to `/<path>` with the query kept.
+[ADR-0049](../docs/adr/0049-django-serves-the-spa-in-every-deploy.md): Django serves the SPA in
+every deploy (the compose stacks, Fly.io, and the Desktop App through the same settings); there
+is no nginx. Django keeps `/api/`, `/admin/`, `/static/` and `/media/` (ADR-0047's split), so the
+SPA is same-origin with the API and needs no CORS. Every other path is the SPA: an old Django page
+path falls into its `**` route. A link from the ADR-0046 days, `/app/<path>`, gets a 301 to
+`/<path>` with the query kept.
 
-- `frontend/Dockerfile` builds with the default base href (`/`, from `src/index.html`), the same
-  as `ng serve` and the CI build.
-- `frontend/nginx/default.conf.template` is rendered by the nginx image's envsubst. It sets
-  `no-cache` on `index.html` and `immutable` on hashed `js` / `css` / fonts, falls back to
-  `/index.html` for deep links, and allows 20 MB bodies (map uploads). The proxy forwards
-  `Host $http_host` and the incoming `X-Forwarded-Proto`, and resolves the upstream per request.
-- **Location order is load-bearing.** Regex locations match in file order, so the Django proxy
-  regex sits _before_ the hashed-asset regex (`\.(js|css|woff2?)$`). Swapped, Admin's own
-  `/static/admin/...js` / `.css` would be looked up in the SPA root and 404, and Admin renders
-  unstyled. `location ^~ /app/` is a prefix match that stops the regex search, so `/app/main-*.js`
-  still redirects.
-- `scripts/smoke_nginx.sh` is its test (CI `docker` job; running it locally:
+- The root `Dockerfile`'s node stage builds with the default base href (`/`, from
+  `src/index.html`), the same as `ng serve` and the CI build, into `/srv/spa`, pre-compressed
+  (`whitenoise.compress`), and sets `SPA_ROOT=/srv/spa`.
+- **`outputPath.media` is `fonts`** (`angular.json`): Angular's default `media/` folder collided
+  with Django's `/media/` uploads path, and the fonts 404'd behind nginx. Never point it back.
+- WhiteNoise serves the bundle's files (`WHITENOISE_ROOT = SPA_ROOT`): hashed `js` / `css` / fonts
+  `immutable`, `index.html` `no-cache`. `core/spa.py` answers `/` and deep links with
+  `index.html` and does the `/app/` redirect (`laserforce_simulator/core/CLAUDE.md`).
+- `scripts/smoke_spa.sh` is its test (CI `docker` job; running it locally:
   [`docs/agents/ci.md`](../docs/agents/ci.md)). `docker compose up` serves it on
-  <http://localhost:8080/>.
+  <http://localhost:8000/>.
 
 ## Windows notes
 
@@ -461,5 +459,4 @@ route. A link from the ADR-0046 days, `/app/<path>`, gets a 301 to `/<path>` wit
 - `core.autocrlf` is on, so a Windows checkout has CRLF endings. `.prettierrc` sets
   `endOfLine: auto` so `format:check` passes on both Windows and the Linux CI runner.
 - `node_modules/`, `dist/` and `.angular/cache/` are ignored by `frontend/.gitignore`; never
-  stage them. The root `.dockerignore` excludes the whole of `frontend/` from the Django image;
-  `frontend/.dockerignore` keeps the same three out of the nginx image's build context.
+  stage them. The root `.dockerignore` keeps the same three out of the image's build context.

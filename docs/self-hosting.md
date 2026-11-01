@@ -1,23 +1,25 @@
 # Self-hosting on a home PC with Tailscale Funnel
 
-The Fly.io deploy (`fly.toml`) is still the canonical deploy. This is the alternative: the whole
-stack runs on one machine under Docker, and Tailscale Funnel publishes it at a free, stable
-HTTPS URL. You need no domain, no router port-forwarding, and your home IP stays hidden.
+This is the canonical deploy. The whole stack runs on one machine under Docker, and Tailscale
+Funnel publishes it at a free, stable HTTPS URL. You need no domain, no router port-forwarding,
+and your home IP stays hidden. The Fly.io deploy (`fly.toml`) is optional and currently off: CI
+deploys there only once a `FLY_API_TOKEN` repo secret is set, and it runs the same image.
 
 ```
-browser --HTTPS--> Tailscale Funnel --tunnel--> tailscale container --HTTP--> nginx (:80)
-                                                                              /api/ /admin/ /static/ /media/ -> app (gunicorn :8000)
-                                                                              else  -> the Angular SPA
+browser --HTTPS--> Tailscale Funnel --tunnel--> tailscale container --HTTP--> app (gunicorn :8000)
+                                                                              /api/ /admin/ /static/ /media/ -> Django
+                                                                              else  -> the Angular SPA (index.html)
                                                                               worker (Celery)
                                                                               db (Postgres 16), redis
 ```
 
-nginx is the front door (ADR-0047): the Angular SPA is at `https://<name>.<tailnet>.ts.net/`, and
-only `/api/`, `/admin/`, `/static/` and `/media/` are proxied to the app. An old `/app/<path>` link
-redirects to `/<path>`.
+Django serves the SPA itself (ADR-0049): the image builds the Angular bundle into `/srv/spa`, and
+the Angular SPA is at `https://<name>.<tailnet>.ts.net/`, with every deep link falling back to
+`index.html`. `/api/`, `/admin/`, `/static/` and `/media/` are Django's own. An old `/app/<path>`
+link redirects to `/<path>`.
 
-Files: `docker-compose.selfhost.yml`, `deploy/tailscale/serve.json`, `.env.selfhost.example`,
-`frontend/Dockerfile` (the nginx image) and `frontend/nginx/default.conf.template`.
+Files: `docker-compose.selfhost.yml`, `deploy/tailscale/serve.json`, `.env.selfhost.example` and
+the root `Dockerfile`.
 
 ## The URL
 
@@ -65,9 +67,9 @@ docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml exec app 
     python laserforce_simulator/manage.py createsuperuser
 ```
 
-The app container runs `migrate` on every start (`entrypoint.sh`); the worker skips it. Django is
-also reachable at <http://localhost:8000/admin/> (and `/api/`) on the PC itself, bound to loopback
-only (Django directly, without nginx or the SPA).
+The app container runs `migrate` on every start (`entrypoint.sh`); the worker skips it. The app
+is also reachable at <http://localhost:8000/> (the SPA, `/api/` and `/admin/`) on the PC itself,
+bound to loopback only.
 
 Then, once the node appears under *Machines* in the admin console:
 
@@ -95,7 +97,8 @@ is always single-use.
 | Task | Command |
 |---|---|
 | Update to the latest `main` | `git pull` then `dc up -d --build` |
-| Logs | `dc logs -f app worker nginx` |
+| First update after ANG-10 (nginx removed) | `git pull`, `dc up -d --build --remove-orphans` (drops the old nginx container), then `dc restart tailscale` (re-reads `serve.json`, now proxying to `app:8000`) |
+| Logs | `dc logs -f app worker` |
 | Funnel status / URL | `dc exec tailscale tailscale funnel status` |
 | Back up the DB | `dc exec -T db pg_dump -U laserforce laserforce > backup.sql` |
 | Restore a backup | `dc exec -T db psql -U laserforce laserforce < backup.sql` |

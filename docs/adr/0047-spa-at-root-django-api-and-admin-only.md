@@ -3,6 +3,8 @@
 **Status:** Accepted (ANG-08, 2026-10-31). Supersedes
 [ADR-0046](0046-spa-at-app-prefix-behind-nginx-front-door.md). In the Desktop App, Django
 (WhiteNoise) serves the SPA instead of nginx: [ADR-0048](0048-desktop-app-go-pyinstaller-in-process-jobs.md).
+The nginx part is superseded by [ADR-0049](0049-django-serves-the-spa-in-every-deploy.md): Django
+serves the SPA in every deploy; the URL split below stands.
 
 ANG-08 deletes every Django template view, so nothing collides with the Angular routes any more.
 The nginx front door now serves the built SPA at `/` (no `--base-href /app/`), with deep links
@@ -31,6 +33,8 @@ Admin can still use the DRF browsable API.
 ## Consequences
 
 - **Fly.io serves the API and Admin only, with no UI**, until a follow-up task serves the SPA there.
+  ANG-10 did ([ADR-0049](0049-django-serves-the-spa-in-every-deploy.md)): one image serves the
+  SPA on Fly and in the compose stacks.
 - A Django URL name used in a `reverse()` must be an API, Admin or media route; the API fields that
   reversed HTML names (`detail_url`, `season_url`, `processed_image_url`) are removed.
 - CI's docker job and `scripts/smoke_nginx.sh` probe `/admin/login/` for Django readiness, CSRF and

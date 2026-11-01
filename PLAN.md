@@ -126,25 +126,14 @@ ANG-08 (remove Django template views) is **[DONE]**; see `PLAN-completed.md`.
 
 ANG-09 (Investigate a standalone single-player executable) is **[DONE]**; see `PLAN-completed.md`.
 
-### ANG-10 · [NOT STARTED] Serve the SPA on Fly.io
-
-Since ANG-08, Fly.io serves the API and Django Admin only, with no UI
-([ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md) Consequences: "Fly.io serves
-the API and Admin only, with no UI, until a follow-up task serves the SPA there"). Only the Docker
-stacks (`docker-compose.yml`, `docker-compose.selfhost.yml`) put the nginx front door
-(`frontend/Dockerfile`) in front of Django. Decide how the Fly deploy serves the built SPA at `/`
-with the same split as nginx (`/api/`, `/admin/`, `/static/`, `/media/` to Django, every other path
-to the SPA with an `index.html` fallback), e.g. an nginx process in the Fly machine, a second Fly app,
-or WhiteNoise serving the bundle. Then update `fly.toml`, the CI deploy step and the docs (README,
-`docs/self-hosting.md`'s "Fly.io is the canonical deploy" note). Needs its own grill; record the
-choice in an ADR if it differs from ADR-0047's nginx split.
+ANG-10 (serve the SPA from Django in every deploy) is **[DONE]**; see `PLAN-completed.md`.
 
 ### DESK-01 · [NOT STARTED] Desktop App code in `main`, with tests
 
 From ANG-09 ([ADR-0048](docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)); the
 `spike/ang-09` branch has working versions to start from. Merge the desktop settings and URLconf
-(WhiteNoise SPA serving with the `index.html` fallback, in-process Celery worker thread, SQLite in
-the app-data folder, file logging), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
+(in-process Celery worker thread, SQLite in the app-data folder, file logging; the SPA serving
+comes from ANG-10, so the desktop settings only set `SPA_ROOT` to the bundled folder), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
 the one local Account), the single-use launch-code sign-in, and `desktop` on `accounts/me/`. The
 SPA hides Sign out, Change password, Register and the invite screens when `desktop` is set, and
 shows an in-app notice after a reset. Needs its own grill: the login-exemption guard's allowlist,
@@ -328,12 +317,12 @@ top of this file. Phase 8 is the critical path. Everything else is an unschedule
 
 **Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
 so is the look (ANG-04b, ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker
-front door (ANG-07) and the template removal (ANG-08: the SPA is served at /, ADR-0047). Remaining,
+front door (ANG-07), the template removal (ANG-08: the SPA is served at /, ADR-0047) and Django
+serving the SPA in every deploy (ANG-10, ADR-0049). Remaining,
 in order:
 
 ```
-ANG-10  Serve the SPA on Fly.io (Fly is API + Admin only until then)   <- NOW
-  -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
+LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
@@ -361,6 +350,9 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Per-stat-per-role weight tuning** (STAT-02 follow-up) — granular multipliers per stat per role;
   deferred until baseline simulation data exists to inform the values
 - **Google/OAuth social login** (UX-01) — deferred from Phase 6; email/password only for now
+- **Map upload size limit** (ANG-10, 2026-11-01) — nginx capped request bodies at 20 MB; with
+  Django serving every deploy directly, gunicorn and Django set no cap on file uploads. A size check
+  in the map upload form is the fix
 - **Revoke refresh tokens on password change** (ANG-03) — a password change keeps the Account's
   outstanding refresh tokens valid until they expire (7 days). Blacklisting every `OutstandingToken`
   for the Account on change is the fix; access tokens already expire within 15 minutes

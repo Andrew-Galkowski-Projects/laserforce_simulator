@@ -1,5 +1,6 @@
-# Self-hosted stack: nginx + Django + Celery + Postgres + Redis, published to the
-# internet by Tailscale Funnel at https://<TS_HOSTNAME>.<tailnet>.ts.net.
+# Self-hosted stack: Django (serving the SPA too, ADR-0049) + Celery + Postgres +
+# Redis, published to the internet by Tailscale Funnel at
+# https://<TS_HOSTNAME>.<tailnet>.ts.net.
 # Setup and day-two commands: docs/self-hosting.md.
 #
 #   docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml up -d --build
@@ -75,14 +76,6 @@ services:
     depends_on:
       - app
 
-  # ADR-0047: the front door Funnel publishes. The SPA at /, with /api/, /admin/,
-  # /static/ and /media/ proxied to app.
-  nginx:
-    build: ./frontend
-    restart: unless-stopped
-    depends_on:
-      - app
-
   tailscale:
     image: tailscale/tailscale:stable
     restart: unless-stopped
@@ -97,7 +90,7 @@ services:
       - tsstate:/var/lib/tailscale
       - ./deploy/tailscale:/config:ro
     depends_on:
-      - nginx
+      - app
 
 volumes:
   pgdata:
