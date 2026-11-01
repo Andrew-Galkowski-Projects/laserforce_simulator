@@ -196,6 +196,13 @@ module(s) at the seam (e.g. a package with one file per ticket) so
 implementers never append to the same file. Shared files caused every merge
 conflict in the last run.
 
+A **removal** spec (deleting views, modules or test files) gives a
+port-or-delete verdict per test class, not per file: ANG-08's verdicts covered
+files, and `views_tests.py` went with League play cases no verdict had read.
+Before the spec moves a helper out of a module being deleted, grep its callers
+outside the deleted code; none means delete it, not move it (ANG-08 moved
+`_coerce_sort` / `_coerce_dir` with no caller, and review sent them back).
+
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
 
@@ -209,6 +216,10 @@ and 170k), so count screens before dividing. A ticket that adds API fields, a
 service and shared helpers before its screen costs about 230k (ANG-06-17a: 233k
 for one small screen). A link-wiring ticket that also changes the seed costs
 about 200k (ANG-06-18g: 217k across five screens' specs and the seed tests). A
+deletion ticket costs about 400k per app area it clears (ANG-08: 352k, 400k and
+617k for the League one), so give the League area two tickets. A docs-sweep
+ticket edits the docs itself, with no subagents (ANG-08j: 353k plus about 2.4M
+across nine prune agents it spawned); say so in its body. A
 task small enough for one session gets one ticket.
 Don't pad.
 
@@ -332,7 +343,11 @@ another ticket replaced fails at the merge that broke it: ANG-06-13a's list
 spec clicked into Create and left the real screen's Teams GET open. After
 every ticket merge that touches `frontend/`, run
 `npm --prefix frontend run format:check` too (about 5 s): ANG-06-19c's
-unformatted `playback.spec.ts` was caught only at `/pr-ready`.
+unformatted `playback.spec.ts` was caught only at `/pr-ready`. After merging a
+ticket that deletes tests, run `python scripts/deleted_tests.py <tip before the
+merge>` and match every line it prints to a spec verdict or a ported test; an
+unmatched one is a port before the next deletion ticket starts (ANG-08's
+`views_tests.py` lost 11 League play behaviours this way).
 
 Add these constraints to every implementer prompt, after checking them against
 each ticket's acceptance criteria: a criterion overrides a blanket ban, so say

@@ -4,7 +4,9 @@ A module-level ``_name`` def or class in one of the given files is dead when no
 Python file in the repo references it. A reference is a name, an attribute, or
 an identifier inside a string (``mock.patch("pkg.mod._name")`` targets count).
 An ``import`` alone does not: a re-export with no caller is still dead (the
-PERF-01 review found ``_team_winp_for_season`` kept alive only by one). ruff's
+PERF-01 review found ``_team_winp_for_season`` kept alive only by one). Nor does
+a test: a production def that only test files reference is dead too (ANG-08
+moved ``_coerce_sort`` with its tests and no caller). ruff's
 F401 / F811 set cannot see this, and CODING_STANDARDS.md bans dead code.
 
 It is a warning (exit 0): a name reached only through ``getattr`` is a false
@@ -50,14 +52,40 @@ def used_names(source: str) -> set[str]:
     return used
 
 
-def unused(defs: dict[str, list[tuple[str, int]]], used: set[str]) -> list[str]:
-    """One report line per private def in ``defs`` that ``used`` lacks."""
-    return [
-        f"{path}:{line}: {name} has no references (dead code?)"
-        for path, found in defs.items()
-        for name, line in found
-        if name not in used
-    ]
+def is_test_file(path: str | Path) -> bool:
+    """A test module, a ``conftest.py`` or any file under a ``tests`` package."""
+    path = Path(path)
+    return (
+        "tests" in path.parts[:-1]
+        or path.name.startswith("test_")
+        or path.name.endswith("_tests.py")
+        or path.name == "conftest.py"
+    )
+
+
+def unused(
+    defs: dict[str, list[tuple[str, int]]],
+    used: set[str],
+    used_by_code: set[str],
+) -> list[str]:
+    """One report line per dead private def in ``defs``.
+
+    ``used`` is every reference in the repo and ``used_by_code`` those outside
+    test files. A production def that only tests reference is dead (ANG-08:
+    ``_coerce_sort`` moved with its tests and no caller); a test file's own
+    helper is live when its tests use it.
+    """
+    lines = []
+    for path, found in defs.items():
+        test_file = is_test_file(path)
+        for name, line in found:
+            if name not in used:
+                lines.append(f"{path}:{line}: {name} has no references (dead code?)")
+            elif not test_file and name not in used_by_code:
+                lines.append(
+                    f"{path}:{line}: {name} is referenced only by tests (dead code?)"
+                )
+    return lines
 
 
 def _repo_sources() -> list[Path]:
@@ -86,11 +114,15 @@ def main(argv: list[str]) -> int:
     if not any(defs.values()):
         return 0
     used: set[str] = set()
+    used_by_code: set[str] = set()
     for path in _repo_sources():
         source = _read(path)
         if source is not None:
-            used |= used_names(source)
-    for line in unused(defs, used):
+            names = used_names(source)
+            used |= names
+            if not is_test_file(path.relative_to(_REPO)):
+                used_by_code |= names
+    for line in unused(defs, used, used_by_code):
         print(line)
     return 0
 
