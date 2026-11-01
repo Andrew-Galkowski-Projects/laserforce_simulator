@@ -54,6 +54,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   plus the heading): Edit has no size limit, and a worktree session's guard
   refuses the shell splice anyway. Line endings need no care: `core.autocrlf`
   is on and the index stores LF, so a CRLF/LF flip never reaches a commit.
+- **Pipe only quick commands into `Select-Object -Last N`.** The pipe holds every
+  line until the command exits, so a long run that hangs shows nothing until the
+  timeout (ANG-09 lost 600 s this way). Run a long script with `python -u` and
+  `run_in_background`, then read its output file while it runs.
 
 ## Browser Sessions (Chrome DevTools MCP)
 
