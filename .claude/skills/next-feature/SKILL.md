@@ -154,6 +154,9 @@ client. Every new public name, signature and return shape at the seam goes in
 the spec's Implementation Decisions. Every `login_not_required` view the spec
 adds lists its hostile inputs (a redirect target, a path) in Testing Decisions:
 ANG-10's `app_redirect` spec had none, and review found an open redirect.
+A settings module the spec adds gets a Testing Decision that imports it and
+pins every value that changes behaviour: DESK-01's smoke test passed with jobs
+switched to eager, since the job still completes.
 Grep each name the spec cites that already
 exists (a model field, a service method) before publishing: ANG-06a's spec said
 `currentUser().player` where the field is `self_insert`. For every HTTP assertion
@@ -276,6 +279,11 @@ integration worktree, under the implementer constraints below (the red pairing
 for every Implementation Decision included), and comment the commit on the
 ticket. Step 8's review still gives it fresh eyes. PERF-03's implementer agent
 spent 63k tokens on a 10-line change.
+
+A departure from the spec (a rename, a changed default, an extra UI rule) is a
+comment on the spec issue when it is decided, by you or an implementer, so the
+Spec reviewer reads it there: DESK-01's four reached the issue only through the
+PR body.
 
 For more tickets, implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
@@ -518,7 +526,9 @@ verify installs and runtime claims. Tell the Spec reviewer to search for
 parameterised tests (`it.each`, `@pytest.mark.parametrize`, `subTest`)
 before reporting a test missing (ANG-06e's false P1), and both reviewers to
 quote the grep or line behind any finding about what a file contains or lacks
-(PERF-02's false "durations file predates the split"). When the code diff
+(PERF-02's false "durations file predates the split"), and the line that
+produces any runtime behaviour a finding claims (DESK-01's false "a PENDING job
+fails at once": `celery_state_to_job_status` maps PENDING to `running`). When the code diff
 (`git diff origin/main...HEAD --shortstat -- . ":!*.md" ":!*test_*.py" ":!*.spec.ts"`) is under about 150
 changed lines, spawn both reviewers with `model: sonnet`: TEST-01's two default
 reviewers spent 138k tokens on 60 lines for one nit. Show both reports. Fix the
@@ -572,7 +582,11 @@ the mergeable state and `result: pass|fail` (exit 0 / 1; 2 = timeout).
 Every job must have **started**: a timeout, a
 run with no jobs, or one GitHub reports as "a workflow file issue", is a
 broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
-red job as in Step 7 and report it to the owner with the PR link.
+red job as in Step 7 and report it to the owner with the PR link. When the
+owner reports a red or unmergeable PR, run `ci_timings.py <run-id>` (each
+shard's pytest line) and `gh pr view <n> --json mergeable,mergeStateStatus`
+first: a raw shard log mixes in the Postgres service's expected
+`duplicate key` errors (DESK-01).
 A task that changes CI time reads each run with
 `<main checkout>/.venv/Scripts/python.exe scripts/ci_timings.py <run-id>` (every job,
 each shard's pytest line, coverage total, run start to `test-result`) and

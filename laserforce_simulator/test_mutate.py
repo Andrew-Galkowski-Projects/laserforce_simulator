@@ -251,6 +251,24 @@ class FailedTestsTests(TestCase):
             ["app/tests/test_x.py::T::test_a", "app/test_y.py::test_b"],
         )
 
+    def test_reads_a_test_that_errors_in_setup(self) -> None:
+        """A fixture that fails prints ``ERROR <id>``, not ``FAILED`` (DESK-01: a
+        launcher that died before its ready line was reported BROKEN)."""
+        output = (
+            r"ERROR app\tests\test_smoke.py::test_launch - AssertionError: no LF_READY"
+            "\n"
+            "1 error in 4.20s\n"
+        )
+        self.assertEqual(
+            mutate.failed_tests(output), ["app/tests/test_smoke.py::test_launch"]
+        )
+
+    def test_a_collection_error_names_no_test(self) -> None:
+        # ``ERROR <file>`` with no ``::`` is an import / collection failure: a
+        # mutation that does not load, so it stays BROKEN.
+        output = "ERROR app/tests/test_x.py\n1 error in 0.30s\n"
+        self.assertEqual(mutate.failed_tests(output), [])
+
     def test_reads_subtest_failures(self) -> None:
         """A failing ``subTest`` prints ``(<params>) SUBFAIL <id>``, not ``FAILED``
         (ANG-08: such a caught mutation was reported BROKEN)."""

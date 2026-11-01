@@ -23,8 +23,9 @@ Usage::
 
 ``--run`` takes the words after ``--`` as the whole command (Vitest:
 ``npm --prefix frontend exec -- ng test --watch=false --include=<spec>``), run
-with ``NO_COLOR=1``. Failed tests are read from pytest's ``FAILED`` and
-``SUBFAIL`` (a failing ``subTest``) lines and Vitest's ``FAIL`` lines.
+with ``NO_COLOR=1``. Failed tests are read from pytest's ``FAILED``, ``ERROR``
+(a fixture that failed for one test) and ``SUBFAIL`` (a failing ``subTest``)
+lines and Vitest's ``FAIL`` lines.
 """
 
 from __future__ import annotations
@@ -58,18 +59,26 @@ _PYTEST_SUBFAIL = re.compile(r"^\(.*\) SUBFAIL (\S+)")
 
 
 def failed_tests(output: str) -> list[str]:
-    """Failed tests from pytest's ``FAILED <id> - <reason>`` and ``SUBFAIL`` lines or
-    Vitest's ``FAIL`` lines."""
+    """Failed tests from pytest's ``FAILED <id> - <reason>``, ``ERROR <id>`` and
+    ``SUBFAIL`` lines or Vitest's ``FAIL`` lines.
+
+    An ``ERROR`` line counts only with a test id (``::``): a fixture that failed
+    for that test. ``ERROR <file>`` alone is a collection error, which names no
+    test, so the mutation stays ``BROKEN``.
+    """
     failed = []
     for line in output.splitlines():
-        if line.startswith("FAILED "):
-            failed.append(
-                line.removeprefix("FAILED ").split(" - ", 1)[0].replace("\\", "/")
-            )
-        elif match := _PYTEST_SUBFAIL.match(line):
-            failed.append(match.group(1).replace("\\", "/"))
-        elif match := _VITEST_FAIL.match(line):
-            failed.append(match.group(1))
+        for prefix in ("FAILED ", "ERROR "):
+            if line.startswith(prefix):
+                node_id = line.removeprefix(prefix).split(" - ", 1)[0]
+                if prefix == "FAILED " or "::" in node_id:
+                    failed.append(node_id.replace("\\", "/"))
+                break
+        else:
+            if match := _PYTEST_SUBFAIL.match(line):
+                failed.append(match.group(1).replace("\\", "/"))
+            elif match := _VITEST_FAIL.match(line):
+                failed.append(match.group(1))
     return failed
 
 
