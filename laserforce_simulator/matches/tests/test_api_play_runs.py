@@ -84,6 +84,19 @@ class TestPlayTwoMonths(LeagueApiTestCase):
         self.season.refresh_from_db()
         self.assertEqual(self.season.active_play_job_id, "live-job")
 
+    def test_a_schedule_inside_two_months_plays_out_and_completes(self) -> None:
+        # ANG-08 (#464, ported from views_tests.py TestLg01dPlayTwoMonths):
+        # N=2 is 2 matchdays of 1 Round, inside the 8-matchday budget.
+        season = active_season(
+            make_league("PtmAllL", manager=self.user_a), make_teams("PtmAll", 2)
+        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-two-months")))
+        self.assertEqual(GameRound.objects.filter(match__season=season).count(), 2)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)
+
     def test_draft_season_is_409_season_not_active(self) -> None:
         draft = Season.objects.create(
             league=self.league, name="S2", start_date=date(2027, 1, 1)
@@ -246,6 +259,41 @@ class TestPlayJobs(LeagueApiTestCase):
                 "total": 0,
                 "cancelled": False,
                 "error": None,
+            },
+        )
+
+    # --- ANG-08 (#464): ported from views_tests.py TestLg01dPlayStatus ------
+
+    def _status(self, job: "_FakeJob") -> dict:
+        season = active_season(
+            make_league("PjStL", manager=self.user_a), make_teams("PjSt", 2)
+        )
+        with patch("matches.league_play_services.AsyncResult", return_value=job):
+            return self.ok(self.api.get(action(season.id, "play-jobs/abc")))
+
+    def test_progress_reads_running_with_completed_and_total(self) -> None:
+        data = self._status(_FakeJob("PROGRESS", info={"completed": 5, "total": 12}))
+        self.assertEqual(
+            data,
+            {
+                "status": "running",
+                "completed": 5,
+                "total": 12,
+                "cancelled": False,
+                "error": None,
+            },
+        )
+
+    def test_failure_reads_error_with_the_str_of_its_info(self) -> None:
+        data = self._status(_FakeJob("FAILURE", info=Exception("boom")))
+        self.assertEqual(
+            data,
+            {
+                "status": "error",
+                "completed": 0,
+                "total": 0,
+                "cancelled": False,
+                "error": "boom",
             },
         )
 
