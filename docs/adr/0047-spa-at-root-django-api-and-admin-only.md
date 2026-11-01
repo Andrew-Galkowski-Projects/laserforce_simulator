@@ -33,6 +33,8 @@ Admin can still use the DRF browsable API.
 ## Consequences
 
 - **Fly.io serves the API and Admin only, with no UI**, until a follow-up task serves the SPA there.
+  ANG-10 did ([ADR-0049](0049-django-serves-the-spa-in-every-deploy.md)): one image serves the
+  SPA on Fly and in the compose stacks.
 - A Django URL name used in a `reverse()` must be an API, Admin or media route; the API fields that
   reversed HTML names (`detail_url`, `season_url`, `processed_image_url`) are removed.
 - CI's docker job and `scripts/smoke_nginx.sh` probe `/admin/login/` for Django readiness, CSRF and

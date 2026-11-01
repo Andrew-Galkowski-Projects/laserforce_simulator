@@ -7798,6 +7798,75 @@ uploaded at run time (no bundled map data); PDF export is server-side (reportlab
 18. **Requirements:** `requirements-desktop.txt` on the spike branch only; a runtime / dev split
     is an ADR follow-up.
 
+### ANG-10 · [DONE] Serve the SPA from Django in every deploy
+
+Spec: #482
+
+**[DONE] Shipped (2026-11-01).** Broadened from Fly-only to every deploy (ADR-0049). Django serves
+the built SPA from SPA_ROOT: WhiteNoise serves the bundle (hashed files immutable, index.html
+no-cache, gzip and brotli pre-compressed at build), and core/spa.py answers / and deep links with
+index.html and 301s /app/<path> (leading slashes stripped, after review found an open redirect). The
+root Dockerfile builds the SPA into /srv/spa, so one image serves the self-host stack, dev compose
+(now :8000 only) and Fly. nginx is deleted and Tailscale proxies to app:8000. Found: Angular emitted
+the fonts under /media/, which nginx sent to Django, so the fonts had 404'd since ANG-08;
+outputPath.media is now fonts. scripts/smoke_spa.sh (23 checks) replaces smoke_nginx.sh. The
+login-exemption guard allowlists the two SPA views. Docs name the self-host stack canonical; Fly
+stays off (no FLY_API_TOKEN).
+
+**Broadened (owner, 2026-11-01):** covers local hosting, Fly.io and the Desktop App, not Fly alone.
+
+Settled in the grill (owner, 2026-11-01):
+
+- **Local hosting** means the two compose stacks: `docker-compose.selfhost.yml` (Tailscale Funnel)
+  and `docker-compose.yml` (dev). The `ng serve` + `runserver` dev loop is unchanged and out of scope.
+- **One serving method: Django serves the SPA everywhere.** WhiteNoise serves the bundle and a
+  catch-all view answers deep links with `index.html` (the ANG-09 spike's method). The root
+  `Dockerfile` gains a node stage that builds the SPA into the image, so one image serves Fly and
+  both compose stacks. nginx (`frontend/Dockerfile`, its template) leaves both stacks; Tailscale
+  proxies straight to `app:8000`.
+- **DESK-01 reuses it.** ANG-10 lands the SPA serving in `main` with tests; DESK-01 only points the
+  setting at the bundled folder.
+- **Fly stays dormant.** No `FLY_API_TOKEN` secret, so CI's deploy steps skip. ANG-10 makes the
+  image Fly-ready and proves it with CI's docker smoke on the same image; no live Fly deploy.
+- **The self-host stack becomes the canonical Hosted deploy**; Fly is documented as optional and
+  currently off (`docs/self-hosting.md`, `README.md`, `CLAUDE.md` Database section).
+- **ADR-0049** ("Django serves the SPA in every deploy") supersedes only ADR-0047's nginx part; its
+  URL split stays. ADR-0047 and ADR-0048 point to it.
+- **`SPA_ROOT` setting** from the environment, default unset (`runserver` / pytest unchanged, `/` is
+  404). The image sets `SPA_ROOT=/srv/spa`, outside `/app`, because the dev stack mounts `.:/app`.
+  The catch-all view is always routed in the root `urls.py`, 404s while `SPA_ROOT` is unset, is
+  `login_not_required`, and never answers `api/`, `admin/`, `static/` or `media/` (an unknown
+  `/api/xyz` stays Django's own 404, never `index.html`).
+- **`/app` and `/app/<path>` 301 to `/` and `/<path>`**, query kept, as a Django redirect.
+- **nginx caching parity:** `index.html` `no-cache`; hashed `.js` / `.css` / `.woff2` immutable for a
+  year; the Docker build pre-compresses the bundle (`python -m whitenoise.compress`).
+- **Upload size cap deferred** (nginx's 20 MB goes with nginx): a Deferred Items line.
+- **Dev compose:** `app` on :8000 serves SPA, API and Admin; :8080 goes.
+- **CI smoke** on the app image at :8000 replaces `scripts/smoke_nginx.sh` (deleted): `/` and a deep
+  link return `index.html`, `/api/accounts/me/` returns JSON, `/admin/login/` 200, a hashed bundle
+  file is `immutable`, `/app/teams/` 301s to `/teams/`.
+- **Browser check** runs the self-host stack under a separate compose project, without Tailscale,
+  on a loopback port. The owner's live stack is not touched; the PR gives the redeploy command.
+- Fact: the root `.dockerignore` excludes `frontend/` (ANG-07); it must now exclude only
+  `frontend/node_modules`, `dist` and `.angular`.
+- **The bundle's fonts move off `/media/`.** Angular emits them to `media/`, which collides with
+  Django's uploads path; nginx's Django regex came first, so fonts have 404'd in the Docker stacks
+  since ANG-08. `angular.json` sets `outputPath.media` to `fonts`; the smoke checks a font is 200
+  and immutable.
+
+The original brief, kept for context:
+
+Since ANG-08, Fly.io serves the API and Django Admin only, with no UI
+([ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md) Consequences: "Fly.io serves
+the API and Admin only, with no UI, until a follow-up task serves the SPA there"). Only the Docker
+stacks (`docker-compose.yml`, `docker-compose.selfhost.yml`) put the nginx front door
+(`frontend/Dockerfile`) in front of Django. Decide how the Fly deploy serves the built SPA at `/`
+with the same split as nginx (`/api/`, `/admin/`, `/static/`, `/media/` to Django, every other path
+to the SPA with an `index.html` fallback), e.g. an nginx process in the Fly machine, a second Fly app,
+or WhiteNoise serving the bundle. Then update `fly.toml`, the CI deploy step and the docs (README,
+`docs/self-hosting.md`'s "Fly.io is the canonical deploy" note). Needs its own grill; record the
+choice in an ADR if it differs from ADR-0047's nginx split.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)
