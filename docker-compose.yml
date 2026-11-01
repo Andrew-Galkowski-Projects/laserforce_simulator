@@ -13,6 +13,7 @@ services:
       timeout: 5s
       retries: 5
 
+  # ADR-0049: app serves the SPA, API and Admin together at http://localhost:8000/.
   app:
     build: .
     ports:
@@ -26,15 +27,6 @@ services:
     depends_on:
       db:
         condition: service_healthy
-
-  # ADR-0047: the front door. The SPA at http://localhost:8080/, with /api/,
-  # /admin/, /static/ and /media/ proxied to app; app's own 8000 stays published.
-  nginx:
-    build: ./frontend
-    ports:
-      - "8080:80"
-    depends_on:
-      - app
 
 volumes:
   postgres_data:

@@ -25,8 +25,12 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.settings import api_settings
 
 # ANG-08 D1: the Admin login is the only Django login page left (ADR-0047).
+# ANG-10 (ADR-0049): the SPA's index.html and the /app/ redirect carry no data;
+# the SPA signs in through the API, so an anonymous visitor must reach them.
 HTML_EXEMPT_VIEWS = {
     "django.contrib.admin.sites.login",
+    "core.spa.spa_index",
+    "core.spa.app_redirect",
 }
 
 ANONYMOUS_API_VIEWS = {
@@ -100,17 +104,28 @@ def _routes(patterns: list[Any], prefix: str = "") -> Iterator[str]:
             yield route
 
 
-def test_django_serves_only_admin_api_and_media() -> None:
-    # ANG-08 (ADR-0047): the SPA owns every other path.
+def test_django_serves_only_admin_api_media_and_the_spa_routes() -> None:
+    # ANG-08 (ADR-0047): the SPA owns every other path. ANG-10 (ADR-0049):
+    # Django serves it, through exactly these two routes and nothing else.
     allowed = ("admin/", "api/", "^media/")
+    spa_routes = {
+        r"^app(?:/(?P<path>.*))?$",
+        r"^(?!(?:api|admin|static|media)/|admin$).*$",
+    }
     stray = [
-        r for r in _routes(get_resolver().url_patterns) if not r.startswith(allowed)
+        r
+        for r in _routes(get_resolver().url_patterns)
+        if not r.startswith(allowed) and r not in spa_routes
     ]
     assert stray == []
 
 
-def test_the_admin_login_is_the_only_html_exemption() -> None:
-    assert HTML_EXEMPT_VIEWS == {"django.contrib.admin.sites.login"}
+def test_the_html_exemptions_are_the_admin_login_and_the_spa_shell() -> None:
+    assert HTML_EXEMPT_VIEWS == {
+        "django.contrib.admin.sites.login",
+        "core.spa.spa_index",
+        "core.spa.app_redirect",
+    }
 
 
 @pytest.mark.django_db

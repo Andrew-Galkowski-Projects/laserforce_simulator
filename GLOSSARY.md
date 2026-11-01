@@ -452,7 +452,7 @@ A downloadable build of the app that runs on one person's machine, for one **Acc
 _Avoid_: "standalone", "offline", "exe" (say Desktop App); "standalone" already means a **Single Round** in older docs.
 
 **Hosted**:
-The deploy that serves many **Accounts** from a server — Fly.io or the Docker stacks — as opposed to the **Desktop App**.
+The deploy that serves many **Accounts** from a server — the self-host stack (the canonical one), or optionally Fly.io — as opposed to the **Desktop App**.
 _Avoid_: "online version", "web version" (the Desktop App also renders in a browser).
 
 **Ownership root**:

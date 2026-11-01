@@ -25,15 +25,17 @@ frontend -------------------------------------------------^
 - **`test-result`**: `if: always()`. It is green only when `lint`, every shard and
   `coverage` succeeded. `docker` needs it. If branch protection is ever added,
   require `test-result`, never a shard, so the shard count can change freely.
-- **`docker`**: needs `test-result` and `frontend`. It builds the Django image and smoke-tests it
-  on Postgres (`curl` on `:8000/admin/login/`, since Django serves no `/`), then, in the same step
-  while that container is up, runs `bash scripts/smoke_nginx.sh` (ANG-07, ANG-08). That builds
-  `frontend/Dockerfile`, runs nginx on `--network host` (`:8080`, upstream `127.0.0.1:8000`) and
-  asserts response bodies: the SPA at `/` with `<base href="/">` and its cache headers, the
-  deep-link fallback, the `/app/<path>` 301, `/api/` proxied (a 401 envelope), a 2 MB upload, the
-  forwarded `Host` / `X-Forwarded-Proto` (CSRF against `/admin/login/`), and the per-request
-  upstream DNS. Run it locally against a `runserver 0.0.0.0:8001` with `NETWORK=bridge
-  DJANGO_UPSTREAM=host.docker.internal:8001`. On `main` the job then deploys to Fly.io.
+- **`docker`**: needs `test-result` and `frontend`. It builds the image (its node stage builds the
+  SPA, ADR-0049) and smoke-tests it on Postgres (`curl` on `:8000/admin/login/` until ready), then,
+  in the same step while that container is up, runs `bash scripts/smoke_spa.sh` (ANG-10). It
+  asserts response bodies and headers on `:8000`: the SPA at `/` with `<base href="/">` and
+  `no-cache`, the deep-link fallback, the main bundle `immutable` and gzip, a font under `/fonts/`
+  `immutable`, `/api/` reaching Django (a 401 envelope) and an unknown `/api/` path a 404 that is
+  not the SPA, the `/app/<path>` 301, Admin's `/static/` stylesheet, and CSRF / `X-Forwarded-Proto`
+  against `/admin/login/`. Run it locally against the image: `docker run -d -p 8000:8000 -e
+  SECRET_KEY=x -e DATABASE_URL=sqlite:////tmp/smoke.db <image>`, then `bash scripts/smoke_spa.sh`
+  (`BASE=` for another port). On `main` the job then deploys to Fly.io, but only when a
+  `FLY_API_TOKEN` secret is set; none is, so those steps skip.
 
 ## The durations file
 

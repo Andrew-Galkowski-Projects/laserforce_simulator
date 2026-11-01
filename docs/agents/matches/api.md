@@ -642,7 +642,7 @@ cross-origin with cookies. Config only: `settings.py` plus `django-cors-headers`
   - an anonymous preflight;
   - a CSRF-enforcing cross-origin write, trusted and untrusted.
 - **Out of scope.** JWT (ANG-03), cookie SameSite / Secure changes, HTTPS hardening, a production
-  origin, and nginx (ANG-07).
+  origin, and same-origin serving (ANG-07, now ADR-0049).
 
 ## ANG-03 JWT authentication
 

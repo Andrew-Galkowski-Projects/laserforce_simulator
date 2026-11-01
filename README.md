@@ -35,8 +35,7 @@ A Django API with an Angular front end that simulates competitive [Laserforce](h
 - SQLite (default); PostgreSQL in production via `dj-database-url`
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
-- `whitenoise` for production static file serving directly from Django
-- nginx (`frontend/Dockerfile`) as the Docker stacks' front door: it serves the built Angular SPA at `/` and proxies `/api/`, `/admin/`, `/static/` and `/media/` to Django, which serves no pages of its own (ADR-0047). Fly.io serves only the API and Django Admin for now, with no UI
+- `whitenoise` for production static file serving directly from Django, including the built Angular SPA at `/` (`SPA_ROOT`; every deep link falls back to `index.html`), so one image serves the SPA, `/api/` and `/admin/` in every deploy (ADR-0049)
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
 - `djangorestframework` + `django-filter` for the JSON API at `/api/`
 - `django-cors-headers` so the Angular dev server (`http://localhost:4200`) can call `/api/` cross-origin. Set `CORS_ALLOWED_ORIGINS` (comma-separated) to change the allowed origins; the default is the dev server under `DEBUG` and none otherwise. `Content-Disposition` is exposed, so the SPA can name its downloads.
@@ -44,7 +43,7 @@ A Django API with an Angular front end that simulates competitive [Laserforce](h
 - `reportlab` + `matplotlib` for the round report PDF and its charts (rendered server-side, Agg, no `pyplot`)
 - `psycopg2-binary` for PostgreSQL support in production (CI runs tests against `postgres:16`)
 - pytest + pytest-django for testing, with Codecov coverage reporting; CI splits the suite across 4 runners with `pytest-split`
-- Docker (multi-stage `python:3.12-slim`); `docker-compose.yml` for local dev with PostgreSQL; deployed to Fly.io via CI on push to `main`
+- Docker (multi-stage: `node:24-alpine` builds the SPA, `python:3.12-slim` runs Django); `docker-compose.yml` for local dev with PostgreSQL; `docker-compose.selfhost.yml` is the canonical deploy. Fly.io (`fly.toml`) is optional and currently off: CI deploys there on push to `main` only once a `FLY_API_TOKEN` secret is set
 
 ## Getting Started
 
@@ -125,20 +124,19 @@ http://localhost:8000/admin/; it has no pages of its own. For the UI, start the 
 cp laserforce_simulator/.env.example laserforce_simulator/.env
 # Edit .env and set a real SECRET_KEY
 
-# Start nginx + app + PostgreSQL
+# Start app + PostgreSQL
 docker compose up
 
 # (first run) migrations are applied automatically by entrypoint.sh
 ```
 
-Then open http://localhost:8080/ in your browser: the Angular SPA, with `/api/` and `/admin/`
-proxied to Django on the same origin. Django is also reachable directly at
-http://localhost:8000/admin/. An old `/app/<path>` link redirects to `/<path>`.
+Then open http://localhost:8000/ in your browser: Django serves the Angular SPA, `/api/` and
+`/admin/` on the same origin (ADR-0049). An old `/app/<path>` link redirects to `/<path>`.
 
 ### Option C — self-host on a home PC (public HTTPS URL)
 
-`docker-compose.selfhost.yml` runs nginx (the SPA at `/`), the app, a Celery worker, Postgres and Redis, and publishes them
-at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
+The canonical deploy. `docker-compose.selfhost.yml` runs the app (serving the SPA at `/`), a Celery worker, Postgres and
+Redis, and publishes them at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
 [docs/self-hosting.md](docs/self-hosting.md).
 
 ### Frontend (Angular)
@@ -271,7 +269,7 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 
 ## URL Reference
 
-The SPA's screens (served at `/` by nginx, or at http://localhost:4200/ by the dev server):
+The SPA's screens (served at `/` by Django in the Docker image, or at http://localhost:4200/ by the dev server):
 
 | URL | Description |
 |-----|-------------|
