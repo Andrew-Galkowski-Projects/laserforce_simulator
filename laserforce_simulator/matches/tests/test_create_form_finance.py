@@ -73,6 +73,7 @@ class TestCreateLeagueFormFinanceField(TestCase):
 class TestCreateLeagueFinanceDomId(TestCase):
     """The create page renders the ``league-create-finance-enabled`` DOM id."""
 
+    # ANG-08 D3: HTML-only
     def test_finance_enabled_dom_id_rendered(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
@@ -84,6 +85,7 @@ class TestCreateLeagueFinanceDomId(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestCreateLeaguePersistsFinanceEnabled(TestCase):
     """A checked POST persists ``League.finance_enabled=True``; an unchecked POST
     persists ``False`` (the default)."""
