@@ -124,6 +124,44 @@ class TestPlayerCareer(_CareerTestCase):
         self.assertTrue(data["per_role_with_benchmarks"])
         self.assertIsInstance(data["trend"], list)
 
+    def test_per_role_rows_carry_the_fifteen_stat_rows(self) -> None:
+        """HX-01b: each per-role row carries the 15 ordered ``stat_rows`` (the
+        Angular career table reads them; their HTML-page test went in ANG-08)."""
+        self.play_one_round()
+        data = self.career(self.player.pk, threshold=0).json()["data"]
+        row = data["per_role_with_benchmarks"][0]
+        stat_rows = row["stat_rows"]
+        self.assertEqual(
+            [r["key"] for r in stat_rows],
+            [
+                "avg_points",
+                "tag_ratio",
+                "avg_survival_ticks",
+                "avg_accuracy_pct",
+                "avg_sp_earned",
+                "mvp",
+                "tags_made",
+                "times_tagged",
+                "final_lives",
+                "resupplies_given",
+                "missiles_landed",
+                "specials_used",
+                "follow_up_shots",
+                "reaction_shots",
+                "combo_resupply_count",
+            ],
+        )
+        by_key = {r["key"]: r for r in stat_rows}
+        self.assertEqual(by_key["avg_points"]["label"], "Avg points")
+        # An HX-01 key reuses the per-role row's own value.
+        self.assertEqual(by_key["avg_points"]["player_value"], float(row["avg_points"]))
+        # A stat with no benchmark population has no benchmark cell...
+        self.assertIsNone(by_key["tag_ratio"]["benchmark"])
+        # ...and a benchmarked one is placed against its population.
+        tags = by_key["tags_made"]
+        self.assertIsNotNone(tags["benchmark"])
+        self.assertTrue(tags["benchmark"]["qualified"])
+
     def test_params_echoed(self) -> None:
         data = self.career(self.player.pk, threshold=3, display="median").json()["data"]
         self.assertEqual(data["min_rounds"], 3)

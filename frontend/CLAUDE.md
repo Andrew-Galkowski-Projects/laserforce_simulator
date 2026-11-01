@@ -444,7 +444,7 @@ route. A link from the ADR-0046 days, `/app/<path>`, gets a 301 to `/<path>` wit
   `/index.html` for deep links, and allows 20 MB bodies (map uploads). The proxy forwards
   `Host $http_host` and the incoming `X-Forwarded-Proto`, and resolves the upstream per request.
 - **Location order is load-bearing.** Regex locations match in file order, so the Django proxy
-  regex sits *before* the hashed-asset regex (`\.(js|css|woff2?)$`). Swapped, Admin's own
+  regex sits _before_ the hashed-asset regex (`\.(js|css|woff2?)$`). Swapped, Admin's own
   `/static/admin/...js` / `.css` would be looked up in the SPA root and 404, and Admin renders
   unstyled. `location ^~ /app/` is a prefix match that stops the regex search, so `/app/main-*.js`
   still redirects.
