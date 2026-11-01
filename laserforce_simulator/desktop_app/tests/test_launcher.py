@@ -8,6 +8,7 @@ migration.
 from __future__ import annotations
 
 import re
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -82,6 +83,30 @@ def test_a_failed_upgrade_moves_the_database_aside_and_starts_fresh(
         "Your saved data could not be upgraded (RuntimeError). "
         f"It was moved to {backup.name} and a fresh database was started."
     )
+
+
+def test_a_corrupt_database_left_open_by_the_failure_is_still_moved_aside(
+    tmp_path: Path,
+) -> None:
+    # Found in the DESK-01 browser check: Django's SQLite connect() fails on a
+    # file that is not a database after sqlite3 has opened it, and the open
+    # handle lives on in the exception's frames. Windows refuses to move an
+    # open file, so the reset must drop the failure before moving.
+    db = _db(tmp_path, b"not a sqlite database" * 100)
+    calls = []
+
+    def migrate() -> None:
+        calls.append(1)
+        if len(calls) == 1:
+            leaked = sqlite3.connect(db)
+            leaked.execute("select 1 from sqlite_master")  # file is not a database
+
+    notice = launcher.migrate_or_reset(tmp_path, migrate)
+
+    assert len(calls) == 2
+    assert notice is not None and "(DatabaseError)" in notice
+    [backup] = list(tmp_path.glob("db.sqlite3.*.bak"))
+    assert backup.read_bytes() == b"not a sqlite database" * 100
 
 
 def test_a_failing_fresh_database_re_raises(tmp_path: Path) -> None:

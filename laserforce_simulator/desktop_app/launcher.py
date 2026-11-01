@@ -13,6 +13,7 @@ requests; the smoke test waits for it.
 
 from __future__ import annotations
 
+import gc
 import os
 import secrets
 import shutil
@@ -83,16 +84,22 @@ def migrate_or_reset(data: Path, migrate: Callable[[], None]) -> str | None:
     except Exception as exc:  # noqa: BLE001 - any failed upgrade resets
         if not db.exists() or db.stat().st_size == 0:
             raise
-        connections.close_all()
-        backup = data / f"db.sqlite3.{time.strftime('%Y%m%d-%H%M%S')}.bak"
-        shutil.move(db, backup)
-        for suffix in ("-wal", "-shm"):
-            Path(f"{db}{suffix}").unlink(missing_ok=True)
-        migrate()
-        return (
-            f"Your saved data could not be upgraded ({exc.__class__.__name__}). "
-            f"It was moved to {backup.name} and a fresh database was started."
-        )
+        failure = exc.__class__.__name__
+    # Outside the except block: a connect() that failed half way leaves its
+    # sqlite3 handle open in the traceback's frames, out of close_all()'s
+    # reach, and Windows refuses to move an open file. Leaving the block
+    # drops the traceback; the collect closes the handle.
+    connections.close_all()
+    gc.collect()
+    backup = data / f"db.sqlite3.{time.strftime('%Y%m%d-%H%M%S')}.bak"
+    shutil.move(db, backup)
+    for suffix in ("-wal", "-shm"):
+        Path(f"{db}{suffix}").unlink(missing_ok=True)
+    migrate()
+    return (
+        f"Your saved data could not be upgraded ({failure}). "
+        f"It was moved to {backup.name} and a fresh database was started."
+    )
 
 
 def local_account() -> User:
