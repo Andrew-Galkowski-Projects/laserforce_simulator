@@ -1,5 +1,5 @@
 import { BreakpointObserver } from '@angular/cdk/layout';
-import { Component, computed, inject } from '@angular/core';
+import { Component, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
 import { MatButton, MatIconButton } from '@angular/material/button';
 import { MatListItem, MatNavList } from '@angular/material/list';
@@ -67,6 +67,20 @@ export class Shell {
     { initialValue: false },
   );
   protected readonly initial = computed(() => this.user()?.email.charAt(0).toUpperCase() ?? '');
+
+  /** DESK-01: the Desktop App hides Change password and Sign out (one Local Account, no password). */
+  protected readonly desktop = computed(() => this.user()?.desktop ?? false);
+  /** In the Desktop App the menu holds only the Self-insert items, so with none it is not shown. */
+  protected readonly showAccount = computed(() => !this.desktop() || !!this.user()?.self_insert);
+  private readonly noticeDismissed = signal(false);
+  /** The Desktop App's reset notice, until dismissed (dismissal lasts until a reload). */
+  protected readonly notice = computed(() =>
+    this.noticeDismissed() ? null : (this.user()?.desktop_notice ?? null),
+  );
+
+  protected dismissNotice(): void {
+    this.noticeDismissed.set(true);
+  }
 
   protected unlinkSelfInsert(): void {
     this.auth.unlinkSelfInsert().subscribe({

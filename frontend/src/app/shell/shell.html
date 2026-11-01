@@ -16,7 +16,9 @@
     <app-play-menu />
     <button mat-button type="button" [matMenuTriggerFor]="tools">Tools</button>
     <button mat-button type="button" [matMenuTriggerFor]="help">Help</button>
-    @if (roomy()) {
+    @if (!showAccount()) {
+      <!-- The Desktop App with no Self-insert: the account menu would be empty. -->
+    } @else if (roomy()) {
       <button
         mat-button
         type="button"
@@ -59,8 +61,10 @@
     <a mat-menu-item [routerLink]="['/teams', player.team, 'players', player.id]">My player</a>
     <button mat-menu-item type="button" (click)="unlinkSelfInsert()">Unlink Self-insert</button>
   }
-  <a mat-menu-item routerLink="/account/password">Change password</a>
-  <button mat-menu-item type="button" (click)="signOut()">Sign out</button>
+  @if (!desktop()) {
+    <a mat-menu-item routerLink="/account/password">Change password</a>
+    <button mat-menu-item type="button" (click)="signOut()">Sign out</button>
+  }
 </mat-menu>
 <mat-sidenav-container class="shell__body">
   <mat-sidenav #nav [mode]="wide() ? 'side' : 'over'" [opened]="wide()" class="shell__nav">
@@ -111,6 +115,12 @@
   </mat-sidenav>
   <mat-sidenav-content>
     <main class="shell__main">
+      @if (notice(); as text) {
+        <div class="shell__notice" role="status">
+          <span class="shell__notice-text">{{ text }}</span>
+          <button mat-button type="button" (click)="dismissNotice()">Dismiss</button>
+        </div>
+      }
       <router-outlet />
     </main>
   </mat-sidenav-content>

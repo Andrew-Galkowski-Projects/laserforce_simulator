@@ -451,6 +451,14 @@ _Avoid_: calling an Account an **Owner** (the **Owner** is the fictional boss wh
 A downloadable build of the app that runs on one person's machine, for one **Account**, with no hosted server — the single-player modes only. The opposite of the **Hosted** deploy.
 _Avoid_: "standalone", "offline", "exe" (say Desktop App); "standalone" already means a **Single Round** in older docs.
 
+**Launch code**:
+A single-use secret the **Desktop App** mints each time it starts and opens the browser with; spending it signs the browser in as the **Local Account**. There is no password sign-in in the Desktop App.
+_Avoid_: "token" (the JWT access and refresh tokens are different things), "magic link".
+
+**Local Account**:
+The one **Account** a **Desktop App** has, created on first launch; it has no usable password and every row the Desktop App makes belongs to it.
+_Avoid_: "desktop user", "default user".
+
 **Hosted**:
 The deploy that serves many **Accounts** from a server — the self-host stack (the canonical one), or optionally Fly.io — as opposed to the **Desktop App**.
 _Avoid_: "online version", "web version" (the Desktop App also renders in a browser).

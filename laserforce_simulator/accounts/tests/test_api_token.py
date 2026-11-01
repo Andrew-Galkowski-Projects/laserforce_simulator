@@ -93,6 +93,11 @@ class LoginTests(_Base):
     def test_cookie_is_not_secure_in_debug(self) -> None:
         self.assertFalse(self._login().cookies[COOKIE]["secure"])
 
+    @override_settings(DEBUG=False, REFRESH_COOKIE_SECURE=False)
+    def test_cookie_is_not_secure_when_the_setting_is_off(self) -> None:
+        # DESK-01: the Desktop App runs DEBUG off over plain http://127.0.0.1.
+        self.assertFalse(self._login().cookies[COOKIE]["secure"])
+
     def test_login_updates_last_login(self) -> None:
         self.assertIsNone(self.user.last_login)
         self._login()
@@ -150,6 +155,11 @@ class RefreshTests(_Base):
         self._assert_refresh_cookie(cookie)
         access = response.json()["data"]["access"]
         self.assertEqual(self._me_with(access).status_code, 200)
+
+    @override_settings(DEBUG=False, REFRESH_COOKIE_SECURE=False)
+    def test_rotated_cookie_is_not_secure_when_the_setting_is_off(self) -> None:
+        response = self._refresh_with(self.old_refresh_cookie)
+        self.assertFalse(response.cookies[COOKIE]["secure"])
 
     def test_new_cookie_refreshes_again(self) -> None:
         new = self._refresh_with(self.old_refresh_cookie).cookies[COOKIE].value

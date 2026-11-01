@@ -669,7 +669,8 @@ The API accepts a JWT as well as the session. `djangorestframework-simplejwt` (`
   | POST | `token/logout/` | `api_token_logout` | Blacklists a valid cookie's token, always deletes the cookie, 204 — also with no cookie, a bad one, or twice. |
 
 - **Refresh cookie.** `REFRESH_COOKIE_NAME = "refresh_token"`, `REFRESH_COOKIE_PATH = "/api/token/"`;
-  `HttpOnly`, `SameSite=Lax`, `Secure = not DEBUG` (read per request), `Max-Age` = the refresh
+  `HttpOnly`, `SameSite=Lax`, `Secure = REFRESH_COOKIE_SECURE and not DEBUG` (read per request;
+  the setting defaults to `True`, the Desktop App sets `False`, DESK-01), `Max-Age` = the refresh
   lifetime. The refresh token never appears in a response body.
 - **Envelope.** simplejwt's `InvalidToken` / `AuthenticationFailed` carry a
   `{"detail", "code", "messages"}` dict; `envelope_exception_handler` collapses it to **one** error

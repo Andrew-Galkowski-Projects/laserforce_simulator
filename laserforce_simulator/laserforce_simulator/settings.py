@@ -258,6 +258,13 @@ SIMPLE_JWT = {
     "UPDATE_LAST_LOGIN": True,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+# DESK-01: the refresh cookie is Secure only when this is on and DEBUG is off.
+# The Desktop App turns it off: it runs DEBUG off over plain http://127.0.0.1.
+REFRESH_COOKIE_SECURE = True
+
+# DESK-01 (ADR-0048): True only under desktop_app.settings. It reaches the SPA
+# as `desktop` on accounts/me/, which hides the Account screens.
+DESKTOP_APP = False
 
 # --- API-03: Celery + Redis (ADR-0013) ---
 # Auto-detect pytest: pytest-django loads Django settings during plugin

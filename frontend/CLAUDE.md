@@ -103,7 +103,10 @@ src/
                           HELP_MENU, ANG-06-20), the "Account" menu: My player / Unlink
                           Self-insert when linked, Change password, Sign out; the email, or its
                           initial below 600px) + mat-sidenav (side >= 768px, over drawer below);
-                          toolbar colours via mat.toolbar-overrides
+                          toolbar colours via mat.toolbar-overrides. DESK-01: when `desktop` is
+                          set, the menu drops Change password / Sign out, the Account button
+                          hides while no Self-insert is linked, and `desktop_notice` shows as a
+                          dismissible alert above the page
     login/                sign-in form; returnUrl honoured only when it is an in-app path;
                           LoginNavigationState / REGISTERED_STATE ("Account created" notice)
     register/             invite-only sign-up (ANG-06 item 7): invite from ?invite=, register
@@ -285,7 +288,8 @@ src/
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     shared/testing/       spec helpers: poll-timers.ts (POLL_TIMERS), spaced-text.ts (spacedText)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
-                          auth.guard.ts (authGuard, signedOutGuard, HOME_URL),
+                          auth.guard.ts (authGuard, signedOutGuard, HOME_URL; hostedOnlyGuard:
+                          /account/password goes home in the Desktop App, DESK-01),
                           auth.tokens.ts (TOKEN_PATH, SKIP_AUTH_REFRESH), user.ts
     theme/                theme-tokens.ts (LF_TOKENS) + theme.spec.ts
 ```

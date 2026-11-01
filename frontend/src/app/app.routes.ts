@@ -1,6 +1,6 @@
 import { Routes } from '@angular/router';
 import { APP_TITLE } from './app-title';
-import { authGuard, signedOutGuard } from './auth/auth.guard';
+import { authGuard, hostedOnlyGuard, signedOutGuard } from './auth/auth.guard';
 
 /**
  * `/login` and `/register` are the only open routes; everything else is a child of the layout-B `Shell`
@@ -61,6 +61,7 @@ export const routes: Routes = [
         path: 'account/password',
         loadComponent: () =>
           import('./account/password-change/password-change').then((m) => m.PasswordChange),
+        canActivate: [hostedOnlyGuard],
         title: `Change password - ${APP_TITLE}`,
       },
       {

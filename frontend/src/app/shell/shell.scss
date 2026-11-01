@@ -1,4 +1,5 @@
 @use '@angular/material' as mat;
+@use '../shared/alerts';
 
 :host {
   display: flex;
@@ -82,6 +83,22 @@ mat-toolbar {
 .shell__main {
   padding: 1.5rem 1rem;
   color: var(--lf-text);
+}
+
+// DESK-01: the Desktop App's reset notice, above the routed page.
+.shell__notice {
+  @include alerts.notice;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.shell__notice-text {
+  flex: 1 1 20rem;
+  overflow-wrap: anywhere;
 }
 
 @media (min-width: 768px) {

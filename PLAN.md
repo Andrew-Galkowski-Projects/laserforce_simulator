@@ -128,16 +128,7 @@ ANG-09 (Investigate a standalone single-player executable) is **[DONE]**; see `P
 
 ANG-10 (serve the SPA from Django in every deploy) is **[DONE]**; see `PLAN-completed.md`.
 
-### DESK-01 · [NOT STARTED] Desktop App code in `main`, with tests
-
-From ANG-09 ([ADR-0048](docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)); the
-`spike/ang-09` branch has working versions to start from. Merge the desktop settings and URLconf
-(in-process Celery worker thread, SQLite in the app-data folder, file logging; the SPA serving
-comes from ANG-10, so the desktop settings only set `SPA_ROOT` to the bundled folder), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
-the one local Account), the single-use launch-code sign-in, and `desktop` on `accounts/me/`. The
-SPA hides Sign out, Change password, Register and the invite screens when `desktop` is set, and
-shows an in-app notice after a reset. Needs its own grill: the login-exemption guard's allowlist,
-and where the launcher lives.
+DESK-01 (desktop App code in `main`, with tests) is **[DONE]**; see `PLAN-completed.md`.
 
 ### DESK-02 · [NOT STARTED] Desktop App build in CI
 

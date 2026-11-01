@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from django.conf import settings
 from django.contrib.auth.decorators import login_not_required
+from django.http.response import HttpResponseBase
 from django.utils.decorators import method_decorator
 from rest_framework import exceptions, status, views
 from rest_framework.permissions import AllowAny
@@ -31,13 +32,14 @@ REFRESH_COOKIE_NAME = "refresh_token"
 REFRESH_COOKIE_PATH = "/api/token/"
 
 
-def _set_refresh_cookie(response: Response, refresh: str) -> None:
+def set_refresh_cookie(response: HttpResponseBase, refresh: str) -> None:
+    """The ``refresh_token`` cookie; also set by the Desktop App's launch code."""
     response.set_cookie(
         REFRESH_COOKIE_NAME,
         refresh,
         max_age=int(jwt_settings.REFRESH_TOKEN_LIFETIME.total_seconds()),
         path=REFRESH_COOKIE_PATH,
-        secure=not settings.DEBUG,
+        secure=settings.REFRESH_COOKIE_SECURE and not settings.DEBUG,
         httponly=True,
         samesite="Lax",
     )
@@ -46,7 +48,7 @@ def _set_refresh_cookie(response: Response, refresh: str) -> None:
 def _access_response(tokens: dict[str, str]) -> Response:
     """200 ``{"access"}``; the refresh token goes only into the cookie."""
     response = Response({"access": tokens["access"]})
-    _set_refresh_cookie(response, tokens["refresh"])
+    set_refresh_cookie(response, tokens["refresh"])
     return response
 
 
