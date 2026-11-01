@@ -74,6 +74,12 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
   only a colour token: specs read text, so only a screenshot catches it (ANG-06-16's
   Watch-flag star read the same grey-blue on and off, and Team History's on-team
   mark was a tint alone).
+- **Muted content in a disabled control keeps full opacity.** Material fades a
+  disabled control (`.mat-mdc-menu-item[disabled]` sets `opacity: 0.38`), and the
+  fade stacks on content that already reads as muted, such as an `app-soon-badge`.
+  Flag a disabled Material control holding muted content without an opacity
+  override: specs read text, so only a screenshot catches it (ANG-06-20's Tools /
+  Help items; the fix is `.shell__soon-item` in `shell/shell.scss`).
 
 ## Tests
 

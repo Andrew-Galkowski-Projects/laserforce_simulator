@@ -15,6 +15,7 @@ import { signIn } from '../api/testing/auth-fixtures';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
 import { league, pageEnvelope } from '../leagues/testing/league-fixtures';
+import { spacedText } from '../shared/testing/spaced-text';
 import { Landing } from './landing';
 
 const BASE = environment.apiBaseUrl;
@@ -41,17 +42,7 @@ describe('Landing (/, spec #460)', () => {
   });
 
   const page = (): HTMLElement => harness.routeNativeElement as HTMLElement;
-  /** The element's text nodes joined by one space (jsdom's `textContent` runs siblings together). */
-  function text(el: Element | null | undefined): string {
-    if (!el) return '';
-    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
-    const parts: string[] = [];
-    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-      const part = node.textContent?.replace(/\s+/g, ' ').trim();
-      if (part) parts.push(part);
-    }
-    return parts.join(' ');
-  }
+  const text = spacedText;
 
   function activeRequest(pageNo = 1): TestRequest {
     return http.expectOne(
