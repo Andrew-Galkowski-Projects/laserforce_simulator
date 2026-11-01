@@ -316,8 +316,9 @@ Shell sidenav lists **Leagues** first):
 **League nav** (`leagues/league-nav.ts`): `LEAGUE_NAV_ENTRIES`, 23 entries in the Django sidebar's
 order (1 top + LEAGUE 6 + TEAM 4 + PLAYERS 6 + STATS 6). ANG-06-14 shipped Dashboard and History
 live; ANG-06-15..18 turned more live (see their sections). Since ANG-06-18, 19 are live and 4 (Trade,
-Trading Block, Prospects, Hall of Fame) render through `leagues/soon-badge` (`app-soon-badge`: a
-disabled `<span>` with a "Soon" badge, never an `<a>`) until ANG-06-20. The dashboard's and
+Trading Block, Prospects, Hall of Fame) render through `shared/soon-badge` (`app-soon-badge`: a
+disabled `<span>` with a "Soon" badge, never an `<a>`). They stay Soon entries: ANG-06-20 ruled out
+a shared "Coming soon" route (spec #460), so they wait for their own features. The dashboard's and
 History's Season links ("View bracket", the Season name, "Manage Conferences", member-night "View
 results", Awards) went live with ANG-06-18; "View all leaders" links to League Leaders since
 ANG-06-15.
@@ -494,7 +495,7 @@ stay until ANG-08.
   - An un-starred row stays until reload.
 
 **Out of scope.** Sign / release free agents, Trade / Trading Block / Prospects / Hall of Fame
-(ANG-06-20), real MMR / Rank (STAT-PROXY-01), template removal (ANG-08). Follow-up #436: one
+(still Soon entries after ANG-06-20), real MMR / Rank (STAT-PROXY-01), template removal (ANG-08). Follow-up #436: one
 nav-gated load helper for Roster / Schedule / History / League player.
 
 ## ANG-06-17 League finances in Angular

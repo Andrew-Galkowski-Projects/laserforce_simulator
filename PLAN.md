@@ -102,37 +102,7 @@ below (13b, 14, 16); the item's grill confirms it.
 17. **[DONE] League finances** (ANG-06-17, in `PLAN-completed.md`).
 18. **[DONE] Season screens** (ANG-06-18, in `PLAN-completed.md`).
 19. **[DONE] Season play loop** (ANG-06-19, in `PLAN-completed.md`).
-20. **Landing & nav (ANG-06-20)** — landing page, the Shell's Tools / Help top-nav sections (Play ships
-    with ANG-06-19), and one
-    shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
-    block, prospects, hall of fame) — no per-stub components. Replaces `core/landing`,
-    `_partials/topnav_*`, `_placeholder`.
-
-    Spec: #460
-
-    Settled (grill, owner, 2026-10-31):
-    - **No backend change.** In Progress reads `GET /api/leagues/?state=active` (default `-id`,
-      already `owned_queryset`-scoped like the Django `landing` view; `active_season` is `{id, name}`).
-    - **Landing route.** The Shell's `''` child renders a new `Landing` screen (no more redirect to
-      `/teams`); `HOME_URL` becomes `/`, so sign-in lands there. Route `title` is `APP_TITLE`; the h1
-      is `Laserforce Simulator` (matches the toolbar and tab, not Django's "Laserforce Manager").
-    - **Landing content** copies `core/landing.html`: three mode cards (Sandbox -> `/teams`,
-      Single-player League -> `/leagues`, Multiplayer greyed, not a link, "Coming soon" badge) with
-      the template's card text; an "In Progress" h2 with one card per active League (every page via
-      `listAll`, newest first: name, `Season: <name>` or `No active season`, the `league-state`
-      badge, link `/leagues/:id`), hidden when there are none. A load failure shows an error box
-      with Retry; the mode cards still render.
-    - **No shared "Coming soon" route** (supersedes the line above). The spec #409 I1 rule holds: a
-      stub is a disabled item with the Soon badge, never a link. Tools / Help menu items are
-      disabled; the four League Soon entries stay as they are. No `ComingSoon` component.
-    - **Tools / Help** are Material menu buttons in the Shell toolbar beside the Play menu, Tools
-      then Help, on every screen, with Django's items in Django's order (Tools: Achievements,
-      Screenshot, Enable Debug Mode, Reset DB; Help: Overview, Changes, Custom Rosters, Debugging,
-      LOL GM Forums, Zen GM Forums). Text buttons at every width; the 768px check confirms the fit.
-    - **Brand link.** The toolbar title links to `/`.
-    - **Out:** removing any Django template or URL (ANG-08), any backend / API change, the
-      `blocker` text, Multiplayer, any working Tools feature, sidenav changes, Django's sandbox
-      top links.
+20. **[DONE] Landing & nav** (ANG-06-20, in `PLAN-completed.md`).
 
 Settled (owner, 2026-10-25): ANG-08 stays blocked until 7-20 are all `[DONE]` (no per-area
 template removal in between); Phase 3.5 (LFS-01 / LFS-02) waits until after all of ANG-06.

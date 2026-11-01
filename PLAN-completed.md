@@ -7606,6 +7606,49 @@ Play week / two months / until end / playoffs, status and cancel, the
  - **Out of scope:** Tools / Help nav and the landing page (ANG-06-20), deleting the Django play
    views (ANG-08), per-poll live standings, any engine change.
 
+#### ANG-06-20 · [DONE] Landing & nav
+
+**[DONE] Shipped (2026-10-31).** Landing page at / (mode cards plus an In Progress card per active
+League, load error with Retry), HOME_URL moved from /teams to /, the toolbar title links home, and
+Tools / Help menus sit after the Play menu with every item a disabled Soon entry. Departed from the
+plan: no shared Coming soon route or component (owner, grill 2026-10-31: the spec #409 I1
+no-dead-link rule holds, and the Django placeholder showed only the label), so the four League Soon
+entries stay disabled spans. SoonBadge moved to shared/soon-badge/ with a badges.soon mixin. No
+backend change. Spec #460, ticket #461. This was the last open ANG-06 item, so ANG-08 is unblocked.
+
+Landing page, the Shell's Tools / Help top-nav sections (Play ships
+
+ with ANG-06-19), and one
+ shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
+ block, prospects, hall of fame) — no per-stub components. Replaces `core/landing`,
+ `_partials/topnav_*`, `_placeholder`.
+
+ Spec: #460
+
+ Settled (grill, owner, 2026-10-31):
+ - **No backend change.** In Progress reads `GET /api/leagues/?state=active` (default `-id`,
+   already `owned_queryset`-scoped like the Django `landing` view; `active_season` is `{id, name}`).
+ - **Landing route.** The Shell's `''` child renders a new `Landing` screen (no more redirect to
+   `/teams`); `HOME_URL` becomes `/`, so sign-in lands there. Route `title` is `APP_TITLE`; the h1
+   is `Laserforce Simulator` (matches the toolbar and tab, not Django's "Laserforce Manager").
+ - **Landing content** copies `core/landing.html`: three mode cards (Sandbox -> `/teams`,
+   Single-player League -> `/leagues`, Multiplayer greyed, not a link, "Coming soon" badge) with
+   the template's card text; an "In Progress" h2 with one card per active League (every page via
+   `listAll`, newest first: name, `Season: <name>` or `No active season`, the `league-state`
+   badge, link `/leagues/:id`), hidden when there are none. A load failure shows an error box
+   with Retry; the mode cards still render.
+ - **No shared "Coming soon" route** (supersedes the line above). The spec #409 I1 rule holds: a
+   stub is a disabled item with the Soon badge, never a link. Tools / Help menu items are
+   disabled; the four League Soon entries stay as they are. No `ComingSoon` component.
+ - **Tools / Help** are Material menu buttons in the Shell toolbar beside the Play menu, Tools
+   then Help, on every screen, with Django's items in Django's order (Tools: Achievements,
+   Screenshot, Enable Debug Mode, Reset DB; Help: Overview, Changes, Custom Rosters, Debugging,
+   LOL GM Forums, Zen GM Forums). Text buttons at every width; the 768px check confirms the fit.
+ - **Brand link.** The toolbar title links to `/`.
+ - **Out:** removing any Django template or URL (ANG-08), any backend / API change, the
+   `blocker` text, Multiplayer, any working Tools feature, sidenav changes, Django's sandbox
+   top links.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

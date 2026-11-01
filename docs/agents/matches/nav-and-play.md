@@ -157,3 +157,38 @@ Spec #454, tickets #455-#457. The Angular SPA ports the `Play ▾` dropdown, the
   - Empty state: "No live game to watch — start one from the Play menu.".
   - `LivePlayKind` is `'rr' | 'playoff' | 'member_night'`. A bye returns `rr` with no Rounds and lands on the Season dashboard.
 - **Spec helpers.** `releaseLeagueChrome()` and `releasePlayControls()` live in `leagues/testing/leagues-loads.ts`. Call them right after the navigation.
+
+## ANG-06-20 Angular landing page and Tools / Help menus
+
+Spec #460, ticket #461. Ports `core/landing.html` and `_partials/topnav_tools_help.html`. Frontend
+only; the Django landing view, template and placeholder URLs stay until ANG-08.
+
+- **Landing** (`frontend/src/app/landing/`, `Landing`) is the Shell's `''` child, titled
+  `APP_TITLE`. Its h1 is `Laserforce Simulator`, matching the toolbar and the tab rather than
+  Django's "Laserforce Manager".
+  - Mode cards: Sandbox (`#mode-card-sandbox`, links to `/teams`), Single-player League
+    (`#mode-card-league`, links to `/leagues`), and Multiplayer (`#mode-card-multiplayer`, a
+    `<div aria-disabled="true">` with a "Coming soon" badge, never a link).
+  - In Progress (`#in-progress-leagues`) shows one card per League from `GET /api/leagues/?state=active`
+    (`listAll`, newest first, scoped by `owned_queryset`). Each card has the name, `Season: <name>` or
+    `No active season`, and the `league-state` badge, and links to `/leagues/:id`. The section is
+    hidden when the list is empty.
+  - A failed load shows `apiMessage(error, GENERIC_ERROR_MESSAGE)` and Retry. The mode cards still
+    render.
+- **`HOME_URL` is `/`** (`auth/auth.guard.ts`). Sign-in, register, a signed-in visit to
+  `/login` or `/register`, and the `'**'` redirect all land on the landing page. An anonymous `/`
+  goes to `/login?returnUrl=%2F`.
+- **Shell.** The title is an `<a routerLink="/">`. Tools then Help sit after the Play menu, on
+  every URL. Their items come from `shell/stub-menus.ts` (`TOOLS_MENU`, `HELP_MENU`, in Django's
+  order). Each item is a disabled `mat-menu-item` holding `app-soon-badge`, never a link
+  (spec #409 I1). `.shell__soon-item` drops Material's 0.38 disabled fade, so the items read like
+  the League nav's Soon entries.
+- **No shared "Coming soon" route** (owner, grill 2026-10-31). The Django placeholder page shows
+  only the label. The four League Soon entries (Trade, Trading Block, Prospects, Hall of Fame)
+  stay disabled spans.
+- **`SoonBadge` moved to `shared/soon-badge/`.** Its badge style is the `badges.soon` mixin
+  (`shared/_badges.scss`), which the Multiplayer badge shares.
+- **Spec helpers.** A spec that lands on `/` while signed in releases the landing page's GET with
+  `releaseLeaguesLoads()` (`leagues/testing/leagues-loads.ts`).
+- **Out of scope:** removing Django templates or URLs (ANG-08), any backend change, the
+  registry's `blocker` text, Multiplayer, any working Tools item, and sidenav changes.
