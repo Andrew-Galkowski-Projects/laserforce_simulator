@@ -23,8 +23,8 @@ Usage::
 
 ``--run`` takes the words after ``--`` as the whole command (Vitest:
 ``npm --prefix frontend exec -- ng test --watch=false --include=<spec>``), run
-with ``NO_COLOR=1``. Failed tests are read from pytest's ``FAILED`` and Vitest's
-``FAIL`` lines.
+with ``NO_COLOR=1``. Failed tests are read from pytest's ``FAILED`` and
+``SUBFAIL`` (a failing ``subTest``) lines and Vitest's ``FAIL`` lines.
 """
 
 from __future__ import annotations
@@ -53,16 +53,21 @@ class Outcome(NamedTuple):
 
 # Vitest: `` FAIL  |<project>| <file> > <describe> > <test>``.
 _VITEST_FAIL = re.compile(r"^\s*FAIL\s+(?:\|[^|]+\|\s+)?(.+?)\s*$")
+# pytest, a failing ``subTest``: ``(<params>) SUBFAIL <id> - <reason>``.
+_PYTEST_SUBFAIL = re.compile(r"^\(.*\) SUBFAIL (\S+)")
 
 
 def failed_tests(output: str) -> list[str]:
-    """Failed tests from pytest's ``FAILED <id> - <reason>`` lines or Vitest's ``FAIL`` lines."""
+    """Failed tests from pytest's ``FAILED <id> - <reason>`` and ``SUBFAIL`` lines or
+    Vitest's ``FAIL`` lines."""
     failed = []
     for line in output.splitlines():
         if line.startswith("FAILED "):
             failed.append(
                 line.removeprefix("FAILED ").split(" - ", 1)[0].replace("\\", "/")
             )
+        elif match := _PYTEST_SUBFAIL.match(line):
+            failed.append(match.group(1).replace("\\", "/"))
         elif match := _VITEST_FAIL.match(line):
             failed.append(match.group(1))
     return failed

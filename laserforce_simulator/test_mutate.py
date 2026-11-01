@@ -250,3 +250,16 @@ class FailedTestsTests(TestCase):
             mutate.failed_tests(output),
             ["app/tests/test_x.py::T::test_a", "app/test_y.py::test_b"],
         )
+
+    def test_reads_subtest_failures(self) -> None:
+        """A failing ``subTest`` prints ``(<params>) SUBFAIL <id>``, not ``FAILED``
+        (ANG-08: such a caught mutation was reported BROKEN)."""
+        output = (
+            "=========================== short test summary info ===========================\n"
+            r"(raw=2) SUBFAIL app\tests\test_x.py::T::test_sub - AssertionError: 2 != 1"
+            "\n"
+            "1 failed, 1 passed, 1 subtests passed in 0.06s\n"
+        )
+        self.assertEqual(
+            mutate.failed_tests(output), ["app/tests/test_x.py::T::test_sub"]
+        )

@@ -40,7 +40,8 @@ The script:
    rename it, or say in the PR why the word is right there.
    `scripts/check_unused_private.py` (the `dead-code` row) flags a
    module-level `_private` def or class in a changed file that nothing in the
-   repo references; an `import` alone is not a use. WARN as well: delete it,
+   repo references; an `import` alone is not a use, and a production def only
+   tests reference is dead too. WARN as well: delete it,
    or say why it stays (reached only through `getattr`).
    `scripts/check_sqlite_json_lookups.py` (the `sqlite` row, also in CI's
    lint step) FAILs on a JSONField `__contains` / `__contained_by` lookup:
