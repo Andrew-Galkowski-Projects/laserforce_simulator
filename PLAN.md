@@ -126,7 +126,52 @@ ANG-08 (remove Django template views) is **[DONE]**; see `PLAN-completed.md`.
 
 ANG-09 (Investigate a standalone single-player executable) is **[DONE]**; see `PLAN-completed.md`.
 
-### ANG-10 · [NOT STARTED] Serve the SPA on Fly.io
+### ANG-10 · [IN PROGRESS] Serve the SPA from Django in every deploy
+
+Spec: #482
+
+**Broadened (owner, 2026-11-01):** covers local hosting, Fly.io and the Desktop App, not Fly alone.
+
+Settled in the grill (owner, 2026-11-01):
+
+- **Local hosting** means the two compose stacks: `docker-compose.selfhost.yml` (Tailscale Funnel)
+  and `docker-compose.yml` (dev). The `ng serve` + `runserver` dev loop is unchanged and out of scope.
+- **One serving method: Django serves the SPA everywhere.** WhiteNoise serves the bundle and a
+  catch-all view answers deep links with `index.html` (the ANG-09 spike's method). The root
+  `Dockerfile` gains a node stage that builds the SPA into the image, so one image serves Fly and
+  both compose stacks. nginx (`frontend/Dockerfile`, its template) leaves both stacks; Tailscale
+  proxies straight to `app:8000`.
+- **DESK-01 reuses it.** ANG-10 lands the SPA serving in `main` with tests; DESK-01 only points the
+  setting at the bundled folder.
+- **Fly stays dormant.** No `FLY_API_TOKEN` secret, so CI's deploy steps skip. ANG-10 makes the
+  image Fly-ready and proves it with CI's docker smoke on the same image; no live Fly deploy.
+- **The self-host stack becomes the canonical Hosted deploy**; Fly is documented as optional and
+  currently off (`docs/self-hosting.md`, `README.md`, `CLAUDE.md` Database section).
+- **ADR-0049** ("Django serves the SPA in every deploy") supersedes only ADR-0047's nginx part; its
+  URL split stays. ADR-0047 and ADR-0048 point to it.
+- **`SPA_ROOT` setting** from the environment, default unset (`runserver` / pytest unchanged, `/` is
+  404). The image sets `SPA_ROOT=/srv/spa`, outside `/app`, because the dev stack mounts `.:/app`.
+  The catch-all view is always routed in the root `urls.py`, 404s while `SPA_ROOT` is unset, is
+  `login_not_required`, and never answers `api/`, `admin/`, `static/` or `media/` (an unknown
+  `/api/xyz` stays Django's own 404, never `index.html`).
+- **`/app` and `/app/<path>` 301 to `/` and `/<path>`**, query kept, as a Django redirect.
+- **nginx caching parity:** `index.html` `no-cache`; hashed `.js` / `.css` / `.woff2` immutable for a
+  year; the Docker build pre-compresses the bundle (`python -m whitenoise.compress`).
+- **Upload size cap deferred** (nginx's 20 MB goes with nginx): a Deferred Items line.
+- **Dev compose:** `app` on :8000 serves SPA, API and Admin; :8080 goes.
+- **CI smoke** on the app image at :8000 replaces `scripts/smoke_nginx.sh` (deleted): `/` and a deep
+  link return `index.html`, `/api/accounts/me/` returns JSON, `/admin/login/` 200, a hashed bundle
+  file is `immutable`, `/app/teams/` 301s to `/teams/`.
+- **Browser check** runs the self-host stack under a separate compose project, without Tailscale,
+  on a loopback port. The owner's live stack is not touched; the PR gives the redeploy command.
+- Fact: the root `.dockerignore` excludes `frontend/` (ANG-07); it must now exclude only
+  `frontend/node_modules`, `dist` and `.angular`.
+- **The bundle's fonts move off `/media/`.** Angular emits them to `media/`, which collides with
+  Django's uploads path; nginx's Django regex came first, so fonts have 404'd in the Docker stacks
+  since ANG-08. `angular.json` sets `outputPath.media` to `fonts`; the smoke checks a font is 200
+  and immutable.
+
+The original brief, kept for context:
 
 Since ANG-08, Fly.io serves the API and Django Admin only, with no UI
 ([ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md) Consequences: "Fly.io serves
@@ -143,8 +188,8 @@ choice in an ADR if it differs from ADR-0047's nginx split.
 
 From ANG-09 ([ADR-0048](docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)); the
 `spike/ang-09` branch has working versions to start from. Merge the desktop settings and URLconf
-(WhiteNoise SPA serving with the `index.html` fallback, in-process Celery worker thread, SQLite in
-the app-data folder, file logging), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
+(in-process Celery worker thread, SQLite in the app-data folder, file logging; the SPA serving
+comes from ANG-10, so the desktop settings only set `SPA_ROOT` to the bundled folder), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
 the one local Account), the single-use launch-code sign-in, and `desktop` on `accounts/me/`. The
 SPA hides Sign out, Change password, Register and the invite screens when `desktop` is set, and
 shows an in-app notice after a reset. Needs its own grill: the login-exemption guard's allowlist,
@@ -361,6 +406,9 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Per-stat-per-role weight tuning** (STAT-02 follow-up) — granular multipliers per stat per role;
   deferred until baseline simulation data exists to inform the values
 - **Google/OAuth social login** (UX-01) — deferred from Phase 6; email/password only for now
+- **Map upload size limit** (ANG-10, 2026-11-01) — nginx capped request bodies at 20 MB; with
+  Django serving every deploy directly, gunicorn and Django set no cap on file uploads. A size check
+  in the map upload form is the fix
 - **Revoke refresh tokens on password change** (ANG-03) — a password change keeps the Account's
   outstanding refresh tokens valid until they expire (7 days). Blacklisting every `OutstandingToken`
   for the Account on change is the fix; access tokens already expire within 15 minutes

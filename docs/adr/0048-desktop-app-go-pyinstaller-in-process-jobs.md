@@ -58,7 +58,8 @@ nearly half the build (map upload only); the first release is unsigned, so Smart
   case reset to `.bak` with a notice.
 - **Django serves the SPA (ADR-0047).** There is no nginx: WhiteNoise serves the built SPA at `/`
   (`WHITENOISE_ROOT`, index file on), and a catch-all view answers deep links with `index.html`.
-  Django still owns `/api/` and `/media/`. ANG-10 (the SPA on Fly.io) can reuse this.
+  Django still owns `/api/` and `/media/`. ANG-10 made this the method for every deploy
+  ([ADR-0049](0049-django-serves-the-spa-in-every-deploy.md)).
 
 ## Measurements
 

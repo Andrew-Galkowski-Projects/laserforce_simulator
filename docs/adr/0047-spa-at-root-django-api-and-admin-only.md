@@ -3,6 +3,8 @@
 **Status:** Accepted (ANG-08, 2026-10-31). Supersedes
 [ADR-0046](0046-spa-at-app-prefix-behind-nginx-front-door.md). In the Desktop App, Django
 (WhiteNoise) serves the SPA instead of nginx: [ADR-0048](0048-desktop-app-go-pyinstaller-in-process-jobs.md).
+The nginx part is superseded by [ADR-0049](0049-django-serves-the-spa-in-every-deploy.md): Django
+serves the SPA in every deploy; the URL split below stands.
 
 ANG-08 deletes every Django template view, so nothing collides with the Angular routes any more.
 The nginx front door now serves the built SPA at `/` (no `--base-href /app/`), with deep links
