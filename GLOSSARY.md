@@ -448,7 +448,7 @@ A registered human identity that logs in — `accounts.User`, a custom `Abstract
 _Avoid_: calling an Account an **Owner** (the **Owner** is the fictional boss who judges the **Manager**, never a login); using "user" as a domain noun where the **Manager** relationship is meant.
 
 **Desktop App**:
-A downloadable build of the app that runs on one person's machine, for one **Account**, with no hosted server — the single-player modes only. Investigated by ANG-09; the opposite of the **Hosted** deploy.
+A downloadable build of the app that runs on one person's machine, for one **Account**, with no hosted server — the single-player modes only. The opposite of the **Hosted** deploy.
 _Avoid_: "standalone", "offline", "exe" (say Desktop App); "standalone" already means a **Single Round** in older docs.
 
 **Hosted**:

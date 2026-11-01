@@ -15,7 +15,10 @@ code was written (PLAN.md ANG-09, grill decision 5).
 
 ## Decision
 
-**Go.** The Desktop App is built as:
+**Go, with four caveats:** build on a python.org CPython, not conda (Consequences); OpenCV is
+nearly half the build (map upload only); the first release is unsigned, so SmartScreen warns
+(Distribution); and sight-line compute has an app bug that blocks new maps on either deploy
+(Consequences). The Desktop App is built as:
 
 1. **PyInstaller, one-folder**, from a runtime-only requirements list. The build bundles the
    Django API, the production Angular build and every native dependency (OpenCV, numpy,
@@ -33,10 +36,15 @@ code was written (PLAN.md ANG-09, grill decision 5).
    at a desktop sign-in URL. That view spends the code, sets the ordinary ANG-03 `refresh_token`
    cookie and redirects to `/`, where the SPA's `restoreSession` signs in through the normal JWT
    path. A reused code is a 403. No SPA auth change.
-5. **One SPA build for both deploys.** `accounts/me/` carries `desktop: true` in the Desktop App;
-   the SPA hides the Account screens when it is set.
+5. **One SPA build for both deploys.** `accounts/me/` carries `desktop: true` in the Desktop App,
+   and the SPA hides the Account screens when it is set: Sign out (the account menu), Change
+   password (`/account/password` and its menu entry), and the signed-out `/login` and `/register`
+   pages, which become unreachable. Invites live in Django Admin, which the Desktop App does not
+   link. The spike hides Sign out only; the rest is follow-up 1.
 6. **The default browser is the shell** for the first release. A pywebview (WebView2) window
-   worked unfrozen in the spike and is the follow-up (below).
+   worked unfrozen in the spike: the launcher printed `LF_READY 1.11` and the window's self-test
+   `LF_WEBVIEW_OK 5.41` (seconds from process start), once the SPA showed the signed-in landing
+   page. It is the follow-up (below).
 
 ### Desktop-only exceptions
 
@@ -45,7 +53,9 @@ code was written (PLAN.md ANG-09, grill decision 5).
   the dev-server case ADR-0025 already supports. Postgres stays canonical for the Hosted deploy.
 - **Upgrades (ADR-0004).** If `migrate` fails on an existing database, the launcher moves it to
   `db.sqlite3.<timestamp>.bak`, starts a fresh one and says so. It never rewrites migration
-  history. Tested with the UX-01 `InconsistentMigrationHistory` case.
+  history. Both paths were tested: a v2 build with one extra migration (a real `ALTER TABLE`)
+  upgraded a v1 data folder and kept its League, and the UX-01 `InconsistentMigrationHistory`
+  case reset to `.bak` with a notice.
 - **Django serves the SPA (ADR-0047).** There is no nginx: WhiteNoise serves the built SPA at `/`
   (`WHITENOISE_ROOT`, index file on), and a catch-all view answers deep links with `index.html`.
   Django still owns `/api/` and `/media/`. ANG-10 (the SPA on Fly.io) can reuse this.
@@ -53,15 +63,18 @@ code was written (PLAN.md ANG-09, grill decision 5).
 ## Measurements
 
 Owner's machine, Windows 11, Python 3.11, 2026-11-01. "Unfrozen" is the same launcher and
-settings run from source, standing in for the dev server.
+settings run from source under waitress, standing in for the dev server (`runserver` was not
+timed). Times come from `desktop/measure.py` and `desktop/upgrade_check.py` on the spike branch;
+sizes from `desktop/build.ps1`. Cold start is timed to the first `GET /` that returns the SPA's
+`index.html`; the browser check then showed the signed-in landing page.
 
 | Go bar | Result | |
 |---|---|---|
 | Zipped one-folder build ~200 MB or less | **99.8 MB** zip (234 MB unpacked) | pass |
-| Cold start to a usable screen ~15 s or less | **4.2-6.6 s** first launch (includes `migrate` on an empty database); **0.8-0.9 s** relaunch | pass |
-| Single Round no slower than 1.5x | frozen 0.33-0.48 s vs unfrozen 0.28-0.37 s (~1.2x; no seed, three Rounds each). Seeded 50-Round batch: **4.2 s vs 4.3 s** | pass |
+| Cold start to a usable screen ~15 s or less | **4.2-5.3 s** first launch, which includes `migrate` on an empty database (4.0 s in the default `%LOCALAPPDATA%` folder); **0.94 s** relaunch; **3.2 s** first launch of an upgrade that applies a migration | pass |
+| Single Round no slower than 1.5x | frozen 0.33-0.48 s vs unfrozen 0.28-0.37 s (~1.2x). A Single Round takes no seed, so these are three unseeded Rounds each. Seeded 50-Round batch (`master_seed` 12345): **4.2 s vs 4.3 s** | pass |
 | No broker, Docker or Postgres | in-process worker thread + SQLite | pass |
-| An upgrade keeps or deliberately resets data without a crash | relaunch kept the League; broken history went to `.bak` with a notice | pass |
+| An upgrade keeps or deliberately resets data without a crash | a v2 build with a new migration kept the League; broken history went to `.bak` with a notice | pass |
 
 Smoke checks in the frozen build:
 
@@ -69,8 +82,10 @@ Smoke checks in the frozen build:
   thread and finished the Season in 3.9-4.7 s, with progress `1/10` ... `10/10` visible while it ran.
 - **Batch of 50:** the process pool starts under `freeze_support` and finishes with progress.
 - **Round report PDF:** 200, ~300 KB.
-- **Map upload:** upload and OpenCV zone detection work. Sight-line compute returned a 500 in both
-  frozen and unfrozen runs. That is an app bug, not a packaging one (see Consequences).
+- **Map upload:** upload and OpenCV zone detection work. Sight-line compute returned a 500 with
+  both sample maps (Syracuse unfrozen, San Marcos frozen); the Desktop App log has the same
+  `KeyError: 0` traceback both times. It is an app bug, not a packaging one (see Consequences),
+  so the full-fidelity Round on an uploaded map stays untested.
 - **Browser:** opens signed in with no sign-in screen; Sign out hidden; a deep link and a reload
   both land signed in.
 
@@ -80,10 +95,11 @@ Pillow 13 MB, the SPA 2 MB. OpenCV only serves map upload and zone detection.
 ## Considered options
 
 - **Packaging.** *PyInstaller* (chosen): it handled Django once the dynamic imports were listed.
-  *Nuitka*: compiled C is smaller and starts faster, but builds take far longer and Django's
-  string imports need the same hand-listing; kept as the fallback, not needed. *Briefcase*: builds
-  an MSI installer, but it targets BeeWare apps and has no Django story; it would mean more glue
-  for less.
+  *Nuitka* (not tried): it compiles to C, which usually means a smaller build and faster start at
+  the cost of much longer builds, and Django's string imports would need the same hand-listing.
+  Kept as the fallback; PyInstaller hit no blocker. *Briefcase* (paper only, as agreed): builds an
+  MSI installer, but it is made for BeeWare apps and documents no Django path, so it would need
+  more glue for no gain.
 - **Jobs.** *In-process Celery worker thread* (chosen). *Eager mode*: works with no code, but
   blocks the request for a whole Season and shows no progress. *A custom thread-pool dispatcher*:
   replaces Celery calls on both deploys for no gain.
@@ -102,10 +118,11 @@ Pillow 13 MB, the SPA 2 MB. OpenCV only serves map upload and zone detection.
   check against the Releases API is enough, because ADR-0004 lets an upgrade reset the data.
 - **Signing.** An unsigned download gets the SmartScreen "Windows protected your PC" warning until
   it builds up reputation. Options: ship unsigned with a "More info, then Run anyway" note (first
-  release); an OV certificate (a few hundred dollars a year, and since 2024 no instant reputation,
-  EV included); or Azure Trusted Signing, a monthly subscription that signs from CI. Check
-  eligibility and price when buying. The recommendation is unsigned plus the note first, then
-  Trusted Signing.
+  release); buy an OV or EV code-signing certificate, a yearly cost (our understanding, not checked
+  in this spike: Microsoft no longer gives EV certificates instant SmartScreen reputation, so
+  neither skips the warm-up); or Azure Trusted Signing, a monthly subscription that signs from CI.
+  None of these prices or eligibility rules were checked here; check them when buying. The
+  recommendation is unsigned plus the note first, then Trusted Signing.
 - **macOS / Linux.** PyInstaller does not cross-build, so each OS needs its own build machine (a CI
   runner). macOS needs an Apple Developer membership to sign and notarise, or Gatekeeper blocks
   the app. Linux needs no signing (a tarball or AppImage). Both are feasible and both are later.
