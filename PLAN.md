@@ -122,54 +122,7 @@ items above are scoped. *Done 2026-10-25: items 7-20 above.*
 
 ANG-07 (serve Angular from Docker) is **[DONE]**; see `PLAN-completed.md`.
 
-### ANG-08 · Remove Django template views
-
-Spec: #464
-
-Once each Angular view is verified, delete the corresponding Django template file and its
-HTML-serving view function. Keep the API endpoint. Update URL routing to remove the old path.
-The app should have zero `.html` template files by the end of this phase, except Django Admin
-(which is a permanent exception and stays indefinitely).
-
-**Settled (owner grill, 2026-10-31):**
-1. **Verified** = each ANG-06 item's own browser check. No fresh parity pass; all templates go
-   in one task.
-2. **SPA moves from `/app/` to `/`** in this task: no `--base-href /app/`, nginx serves the SPA at
-   `/` with an `index.html` fallback and proxies only `/api/`, `/admin/`, `/static/`, `/media/` to
-   Django. ADR-0047 supersedes ADR-0046.
-3. **Old links:** nginx 301s `/app/<x>` to `/<x>`. No per-path redirects for old Django URLs; they
-   fall into the SPA's `**` route (ADR-0004: data is disposable).
-4. **Fly.io** becomes API + Admin only; serving the SPA there is a follow-up PLAN.md task.
-5. **Whole legacy surface goes**, including the non-HTML views that only the template JS used
-   (batch-sim / map-editor / play-run JSON, `play_status` snippets, watch toggle, tournament
-   play-all, CSV template, PDF export, every POST-redirect action). Helpers other code imports
-   through view modules move to services first (`build_batch_status_response`,
-   `build_save_status_response`, `int_or_none`, `teams.views._SORT_KEYS`, the League re-exports,
-   `core.views._seed_defaults` / `_get_image_local_path`). URLs left: `/admin/`, `/api/`,
-   `/media/`.
-6. **Template-only support code goes:** the four custom context processors, both templatetags
-   modules (`team_extras`, `self_insert_tags`) and their tests, `BatchSimulateForm`,
-   `EmailAuthenticationForm`, `laserforce_simulator/assets/` and `STATICFILES_DIRS`. `APP_DIRS`,
-   WhiteNoise and `collectstatic` stay (Admin, DRF).
-7. **API fields built from HTML URL names are dropped** (the SPA uses none): h2h `detail_url`,
-   League History `season_url`, round heatmap `processed_image_url`, in the API and in
-   `frontend/src/app/api/*.models.ts`, with their pinning tests updated.
-8. **Tests:** delete HTML-only tests; tests guarding shared logic (ownership stamping, setup-form
-   scoping, play-run guards / cancel, next-season, reassign, League delete, member night, playoffs
-   drain, map-in-use guard) get any case the API tests lack ported to an API test first; tests
-   importing helpers through view modules are repointed; `test_login_exempt_surfaces.py` updated.
-   The spec lists a port-or-delete verdict per shared-logic file.
-9. **Auth:** keep `SessionAuthentication` (browsable API for Admin-logged-in staff) and
-   `LoginRequiredMiddleware`; `LOGIN_URL` = `admin:login`, login / logout redirects point at
-   non-HTML targets; the Admin invite link becomes the SPA's `/register?invite=<token>`.
-10. **CI / smoke:** the docker job polls `/admin/login/`; `smoke_nginx.sh` checks `/` serves the
-    SPA with `<base href="/">`, a deep link falls back, `/app/x` 301s to `/x`, and CSRF / Host /
-    X-Forwarded-Proto run against `/admin/login/`; `test_https_proxy.py` moves to `/admin/login/`.
-11. **Docs** describing the HTML views are rewritten or cut in this task (app `CLAUDE.md`s, root
-    `CLAUDE.md`, `docs/agents/**`, `README.md`, `docs/self-hosting.md`, `CODING_STANDARDS.md`'s
-    template-parity rule). Past ADRs stay; ADR-0046 is marked superseded.
-12. **Out of scope:** new Angular screens or behaviour, the "Soon" items, the SPA on Fly,
-    dropping `SessionAuthentication`, any model or migration change.
+ANG-08 (remove Django template views) is **[DONE]**; see `PLAN-completed.md`.
 
 ### ANG-09 · [NOT STARTED] Investigate a standalone single-player executable
 
@@ -350,12 +303,12 @@ Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found
 top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
 
 **Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
-so is the look (ANG-04b, ADR-0043), the client layer (ANG-05), every screen (ANG-06) and the Docker
-front door (ANG-07). Remaining, in order:
+so is the look (ANG-04b, ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker
+front door (ANG-07) and the template removal (ANG-08: the SPA is served at /, ADR-0047). Remaining,
+in order:
 
 ```
-ANG-08  Remove Django template views (Admin stays; the SPA is served at /, ADR-0047)   <- NOW
-  -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
+ANG-09  Standalone single-player executable spike (go / no-go ADR)   <- NOW
   -> ANG-10  Serve the SPA on Fly.io (Fly is API + Admin only until then)
     -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
 ```
