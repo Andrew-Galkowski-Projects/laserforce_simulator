@@ -167,6 +167,42 @@ class WatchPlayerDeleteTests(LeagueApiTestCase):
         self.errors(self.anon.delete(f"/api/leagues/{self.league.id}/watch-list/"), 401)
 
 
+class WatchListPerLeagueIsolationTests(LeagueApiTestCase):
+    """ANG-08e (port of test_watch_toggle's per-League isolation): the same
+    Player watched in League A and League B are two independent entries."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.league_a, _, teams_a = ranked_career_league(
+            "WLIsoA", 2, manager=self.user_a
+        )
+        self.league_b, _, _ = ranked_career_league("WLIsoB", 2, manager=self.user_a)
+        self.player = teams_a[0].active_players[0]
+        # The Player is a free agent in League B, so B accepts the watch too.
+        self.league_b.free_agent_pool = teams_a[0]
+        self.league_b.save(update_fields=["free_agent_pool"])
+
+    def _watched(self, league) -> list[int]:
+        return list(
+            WatchedPlayer.objects.filter(
+                account=self.user_a, league=league
+            ).values_list("player_id", flat=True)
+        )
+
+    def test_put_in_a_does_not_touch_b(self) -> None:
+        self.ok(self.api.put(_player_url(self.league_a.id, self.player.id)))
+        self.assertEqual(self._watched(self.league_a), [self.player.id])
+        self.assertEqual(self._watched(self.league_b), [])
+
+    def test_delete_in_a_leaves_b_intact(self) -> None:
+        self.ok(self.api.put(_player_url(self.league_a.id, self.player.id)))
+        self.ok(self.api.put(_player_url(self.league_b.id, self.player.id)))
+        data = self.ok(self.api.delete(_player_url(self.league_a.id, self.player.id)))
+        self.assertFalse(data["watched"])
+        self.assertEqual(self._watched(self.league_a), [])
+        self.assertEqual(self._watched(self.league_b), [self.player.id])
+
+
 STAT_ROW_KEYS = {"player", "watched", "team", "role", "games", "stats"}
 STATS_KEYS = {
     "points_scored",

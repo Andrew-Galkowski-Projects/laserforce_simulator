@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from matches.models import Tournament
 from matches.tests.league_api_fixtures import LeagueApiTestCase, make_teams
+from teams.models import Player
 
 LIST_URL = "/api/tournaments/"
 
@@ -49,6 +50,32 @@ class TournamentCreatePresetTests(LeagueApiTestCase):
             sorted(p["team"]["id"] for p in data["participants"]), sorted(ids)
         )
         self.assertEqual(sorted(p["seed"] for p in data["participants"]), [1, 2, 3, 4])
+
+    def test_preset_field_is_seeded_by_talent(self) -> None:
+        # ANG-08e (port of test_tournament_views' default-seeding case): seed 1
+        # is the strongest Team by mean active-player rating, whatever the
+        # order the Teams were posted in.
+        teams = make_teams("Talent", 4, manager=self.user_a)
+        for rating, team in zip((20, 80, 50, 65), teams):
+            Player.objects.filter(team=team).update(player_awareness=rating)
+        data = self.ok(
+            self.api.post(
+                LIST_URL,
+                {
+                    "name": "Talent Cup",
+                    "format": "single_elimination",
+                    "teams": [t.id for t in teams],
+                },
+                format="json",
+            ),
+            201,
+        )
+        by_seed = sorted(data["participants"], key=lambda p: p["seed"])
+        self.assertEqual([p["seed"] for p in by_seed], [1, 2, 3, 4])
+        self.assertEqual(
+            [p["team"]["id"] for p in by_seed],
+            [teams[1].id, teams[3].id, teams[2].id, teams[0].id],
+        )
 
     def test_each_format_preset_201(self) -> None:
         ids = self._team_ids()
