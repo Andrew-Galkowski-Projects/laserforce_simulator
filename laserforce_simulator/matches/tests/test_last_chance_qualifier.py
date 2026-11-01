@@ -647,6 +647,8 @@ class TestTournamentsForPhaseOrder(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: ported -> test_api_sync_play.py::
+# TestPlaySingleRoundSeedsTheLastChanceBracket
 class TestPlaySingleRoundIsNeverADeadClick(TestCase):
     """§6.3 — the click that resolves the LAST Regional-playoff node would
     otherwise leave every regional bracket ``completed`` and the Last-chance
@@ -876,6 +878,7 @@ class TestUnbackfilledRegionalRowReadRule(TestCase):
         self.assertEqual([q.team_id for q in tier1], [self.groups[0][0].id])
         self.assertEqual(tier1[0].provenance, PROVENANCE_CHAMPION)
 
+    # ANG-08 D3: ported -> test_api_feats_playoffs.py::RegionalPlayoffsTests
     def test_the_blank_row_renders_with_the_unsuffixed_key(self) -> None:
         response = self.client.get(
             reverse("league_playoffs", kwargs={"league_id": self.season.league_id})

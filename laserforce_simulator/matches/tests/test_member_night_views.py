@@ -26,6 +26,7 @@ from django.contrib.messages import get_messages
 from django.test import TestCase
 from django.urls import reverse
 
+from matches import league_play_services
 from matches.member_night import MAX_GAMES, MIN_GAMES
 from matches.models import League, Match, Season, SeasonPhase
 from matches.simulation import BatchSimulator
@@ -88,11 +89,18 @@ def _post_setup(client, season, sites=("SiteA",)):
     )
 
 
+def _service_setup(season, sites=("SiteA",)) -> int:
+    """ANG-08d -- draw the member night through the service, not the HTML view,
+    so the task classes survive the template views' removal (ANG-08 D3)."""
+    return league_play_services.setup_member_night(season, list(sites))
+
+
 # ===========================================================================
 # member_night_setup
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only (API setup: test_api_member_night.py::TestMemberNightSetup)
 class TestMemberNightSetup(TestCase):
     """``member_night_setup`` POST — draws games, creates drawn Teams + unplayed
     Match shells stamped ``season`` + ``season_phase=mn``, 302 to the dashboard."""
@@ -167,6 +175,8 @@ class TestMemberNightSetup(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: ported -> test_api_member_night.py::TestMemberNightSetup::
+# test_drawn_teams_borrow_six_distinct_enrolled_players
 class TestMemberNightDrawnTeamShape(TestCase):
     """Each drawn Team is ``roster_errors``-valid (borrowed Players, no "does not
     belong" error) and its 6 slot FKs reference the REAL enrolled Players."""
@@ -216,6 +226,7 @@ class TestMemberNightDrawnTeamShape(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only (API: test_api_member_night.py::TestMemberNightPlayAll)
 class TestPlayMemberNight(TestCase):
     """``play_member_night`` POST → 202 ``{job_id, season_id}`` when an unplayed
     member-night Match exists; 409 otherwise; 405 on GET."""
@@ -256,7 +267,7 @@ class TestPlayMemberNightTaskDrain(TestCase):
 
     def _setup_with_shells(self, prefix: str):
         _league, season, teams, mn = _member_night_active_season(prefix)
-        _post_setup(self.client, season)
+        _service_setup(season)
         return season, teams, mn
 
     def test_drains_all_shells_to_completed(self) -> None:
@@ -341,7 +352,7 @@ class TestPlayMemberNightTaskCancel(TestCase):
         from matches.tasks import play_member_night_task
 
         _league, season, _teams, mn = _member_night_active_season("MnCancelTop")
-        _post_setup(self.client, season)
+        _service_setup(season)
         n = Match.objects.filter(season_phase=mn).count()
 
         with patch.object(_tasks, "_play_cancel_requested", lambda sid: True):
@@ -360,7 +371,7 @@ class TestPlayMemberNightTaskCancel(TestCase):
         from matches.tasks import play_member_night_task
 
         _league, season, _teams, mn = _member_night_active_season("MnCancelMid")
-        _post_setup(self.client, season)
+        _service_setup(season)
         n = Match.objects.filter(season_phase=mn).count()
         self.assertGreaterEqual(n, MIN_GAMES)  # >= 5 shells ⇒ a mid-run cancel
         season.active_play_job_id = "job-mid"
@@ -404,6 +415,7 @@ class TestPlayMemberNightTaskCancel(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only (API: test_api_member_night.py::TestMemberNightPlaySingle)
 class TestPlayMemberNightSingle(TestCase):
     """``play_member_night_single`` POST drains exactly ONE unplayed shell, 302s
     to the dashboard, leaves the rest unplayed; 405 on GET; dashboard-error when
@@ -472,6 +484,7 @@ class TestPlayMemberNightSingle(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only (API progress: test_api_seasons.py member_night_progress)
 class TestMemberNightDashboardCard(TestCase):
     """Once a member night is set up, both dashboards show its progress and
     link to the results section of the Season Schedule."""
@@ -521,6 +534,7 @@ class TestMemberNightDashboardCard(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only (API: test_api_member_night.py::TestMemberNightPlayLive)
 class TestPlayMemberNightLive(TestCase):
     """``play_member_night_live`` drains ONE shell at ``fidelity="full"``, stashes
     the 2 Round ids in the ``live_watch`` session (``kind="member_night"``), and
@@ -578,6 +592,9 @@ class TestPlayMemberNightLive(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: ported -> test_api_seasons.py::TestSeasonSchedule::
+# test_member_night_games_are_listed_after_setup and
+# test_api_member_night.py::TestMemberNightTeamScheduleAppearances
 class TestMemberNightScheduleSurfaces(TestCase):
     """LG-07 — member-night games surface on the League schedule (per
     member_night phase) and on the Team schedule (games where one of the Team's
@@ -629,6 +646,7 @@ class TestMemberNightScheduleSurfaces(TestCase):
         )
 
 
+# ANG-08 D3: HTML-only
 class TestMemberNightScoreboard(TestCase):
     """LG-07 — a member-night game's Round scoreboard shows the borrowed Players.
 
@@ -674,6 +692,7 @@ def _draft_member_night_season(prefix: str) -> Season:
 _PLAY_VIEWS = ("play_member_night_single", "play_member_night_live")
 
 
+# ANG-08 D3: HTML-only (API guards: test_api_member_night.py)
 class TestMemberNightGuards(TestCase):
     """The HTML member-night views delegate to ``league_play_services``: a
     non-active Season re-renders the 400 dashboard; a live Active play run gives

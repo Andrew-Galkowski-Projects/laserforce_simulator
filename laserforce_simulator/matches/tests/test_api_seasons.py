@@ -357,6 +357,29 @@ class TestSeasonSchedule(LeagueApiTestCase):
         self.assertTrue(all(f["played"] for f in fixtures))
         self.assertTrue(all(f["game_round_id"] for f in fixtures))
 
+    def test_member_night_games_are_listed_after_setup(self) -> None:
+        # ANG-08d (ported from test_member_night_views.py): the drawn games
+        # appear under their member-night phase ordinal, unplayed.
+        season = mn_season(make_league("SchMnL", manager=self.user_a), "SchMn")
+        phase = season.current_phase()
+        self.ok(
+            self.api.post(
+                f"/api/seasons/{season.id}/member-night/", {"sites": ["SiteA"]}
+            )
+        )
+        shell_ids = list(
+            Match.objects.filter(season_phase=phase)
+            .order_by("id")
+            .values_list("id", flat=True)
+        )
+        self.assertTrue(shell_ids)
+        data = self.ok(self.api.get(action(season.id, "schedule")))
+        sections = data["member_night_games"]
+        self.assertEqual([s["ordinal"] for s in sections], [phase.ordinal])
+        games = sections[0]["games"]
+        self.assertEqual([g["match_id"] for g in games], shell_ids)
+        self.assertFalse(any(g["is_completed"] for g in games))
+
     def test_single_team_has_no_matchdays(self) -> None:
         teams = make_teams("SchOne", 1)
         draft = make_open_season(make_league("SchOneL", manager=self.user_a), teams)

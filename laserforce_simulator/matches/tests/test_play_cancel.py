@@ -275,6 +275,7 @@ class TestPlayPlayoffsTaskCancel(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only (the API cancel is test_api_play_runs.py::TestPlayCancel)
 class TestPlayCancelView(TestCase):
     """``play_cancel`` — POST → 200 ``{cancelled: True, season_id}`` AND the
     flag persisted; GET → 405; missing Season → 404.
@@ -318,6 +319,7 @@ class TestPlayCancelView(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: ported -> test_api_play_runs.py::TestEnqueueRecordsTheRun
 class TestEnqueueSetsRunState(TestCase):
     """A ``play_two_months`` / ``play_until_end`` / ``play_playoffs`` POST sets
     ``Season.active_play_job_id`` to the returned ``job_id`` and clears
@@ -417,6 +419,8 @@ class TestEnqueueSetsRunState(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only, except the two `cancelled` cases: ported ->
+# test_api_play_runs.py::TestPlayJobReadsCancelled
 class TestPlayStatusExtendedJson(TestCase):
     """``play_status`` JSON carries the existing 5 keys PLUS ``standings``
     (HTML str), ``leaders`` (``{points, tags, ratio}`` dict), ``cancelled``
@@ -548,6 +552,7 @@ class TestPlayStatusExtendedJson(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only
 class TestPlayStatusPartialStatsViewSide(TestCase):
     """With M of N fixtures committed, ``play_status``'s ``standings`` /
     ``leaders`` reflect the committed rows — derived view-side via
@@ -648,6 +653,7 @@ class TestPlayStatusPartialStatsViewSide(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: HTML-only
 class TestTopnavPlayStopControl(TestCase):
     """The league-branch ``Play ▾`` topnav renders ``#topbar-play-stop`` (a
     POST form to ``play_cancel``) when ``active_play_job_id`` is set, and NOT
