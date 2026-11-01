@@ -142,6 +142,16 @@ class TestPlayLiveRoundRobin(LeagueApiTestCase):
             {"season_id": self.season.id, "max_matchdays": 1},
         )
 
+    def test_the_rest_of_the_matchday_plays_in_the_background(self) -> None:
+        # ANG-08 (#464, ported from views_tests.py TestLg01iPlayWeekLive):
+        # N=4 puts 2 fixtures on matchday 1; under eager Celery the background
+        # run plays the other one -- and only that matchday.
+        data = self.ok(self.post_live())
+        rounds = GameRound.objects.filter(match__season=self.season)
+        self.assertEqual(rounds.count(), 2)
+        other = rounds.exclude(pk__in=data["round_ids"]).get()
+        self.assertNotIn(self.teams[0].id, (other.team_red_id, other.team_blue_id))
+
     def test_returned_rounds_replay_through_the_events_endpoint(self) -> None:
         data = self.ok(self.post_live())
         events, meta = self.ok_page(
@@ -234,6 +244,19 @@ class TestPlayLivePlayoff(LeagueApiTestCase):
             self.assertIn(self.teams[0].id, (gr.team_red_id, gr.team_blue_id))
             self.assertEqual(gr.fidelity, "full")
         self.assertEqual(set(data["job"]), JOB_REF_KEYS)
+
+    def test_the_managers_bracket_node_gets_a_winner(self) -> None:
+        # ANG-08 (#464, ported from views_tests.py TestLg01iPlayWeekLive). The
+        # background run is stubbed, so only the live commit can resolve it.
+        tournament = self.season.current_phase().tournament
+        node = league_play_services.alive_playoff_node(tournament, self.teams[0])
+        self.assertIsNotNone(node)
+        self.assertIsNone(node.winner_id)
+        with stub_background_job():
+            with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+                self.ok(self.api.post(live_url(self.season.id)))
+        node.refresh_from_db()
+        self.assertIn(node.winner_id, (node.team_a_id, node.team_b_id))
 
 
 class TestLivePlayResult(LeagueApiTestCase):

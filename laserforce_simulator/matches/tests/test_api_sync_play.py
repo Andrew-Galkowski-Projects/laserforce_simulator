@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import patch
 
-from matches.models import BracketNode, GameRound, Season
+from matches.models import BracketNode, GameRound, Season, SeasonPhase
 from matches.simulation import BatchSimulator
 from matches.tests.league_api_fixtures import (
     LeagueApiTestCase,
@@ -136,6 +136,98 @@ class TestPlayWeek(LeagueApiTestCase):
             self.anon.post(action(foreign.id, "play-week")), 401, "not_authenticated"
         )
         self.assertFalse(GameRound.objects.exists())
+
+    # --- ANG-08 (#464): ported from views_tests.py TestLg01dPlayWeek ---------
+
+    def test_a_second_click_plays_the_next_matchday(self) -> None:
+        # N=3: one fixture per matchday (the third Team has a bye).
+        season = active_season(self.league, make_teams("PwNext", 3))
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-week")))
+            self.assertEqual(GameRound.objects.filter(match__season=season).count(), 1)
+            self.ok(self.api.post(action(season.id, "play-week")))
+        rounds = GameRound.objects.filter(match__season=season).select_related("match")
+        self.assertEqual(rounds.count(), 2)
+        # Two different fixtures, not the first one played twice.
+        played = {
+            (frozenset({gr.match.team_red_id, gr.match.team_blue_id}), gr.round_number)
+            for gr in rounds
+        }
+        self.assertEqual(len(played), 2)
+
+    def test_a_mid_matchday_failure_rolls_back_the_whole_matchday(self) -> None:
+        # N=4: matchday 1 holds 2 fixtures; the second one raises.
+        season = active_season(self.league, make_teams("PwAtomic", 4))
+        original = BatchSimulator.simulate_scheduled_round
+        calls = {"n": 0}
+
+        def raises_on_second(sim, season_, team_a, team_b, round_number, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise ValueError("mid-matchday failure")
+            return original(sim, season_, team_a, team_b, round_number, **kwargs)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            with patch.object(
+                BatchSimulator, "simulate_scheduled_round", raises_on_second
+            ):
+                self.errors(self.api.post(action(season.id, "play-week")), 400)
+        self.assertEqual(calls["n"], 2)
+        self.assertFalse(GameRound.objects.filter(match__season=season).exists())
+
+    def test_a_completed_season_is_409_season_not_active(self) -> None:
+        season = active_season(self.league, make_teams("PwDone", 2))
+        Season.objects.filter(pk=season.pk).update(state="completed")
+        self.error(
+            self.api.post(action(season.id, "play-week")), 409, "season_not_active"
+        )
+        self.assertFalse(GameRound.objects.filter(match__season=season).exists())
+
+
+class TestPlayWeekMultiRr(LeagueApiTestCase):
+    """ANG-08 (#464, ported from views_tests.py TestLg02c2PlayWeekMultiRr):
+    on a two-round-robin Season, One Week advances one global matchday and
+    crosses from RR1 into RR2 once RR1 is played out. N=2: each RR phase
+    spans 2 matchdays of 1 Round each."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.season = active_season(
+            make_league("PwMrrL", manager=self.user_a),
+            make_teams("PwMrr", 2),
+            phases=("round_robin", "round_robin"),
+        )
+        self.rr1, self.rr2 = SeasonPhase.objects.filter(season=self.season).order_by(
+            "ordinal"
+        )
+
+    def _click(self, times: int = 1) -> None:
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(times):
+                self.ok(self.api.post(action(self.season.id, "play-week")))
+
+    def _rounds_in(self, phase: SeasonPhase) -> int:
+        return GameRound.objects.filter(match__season_phase=phase).count()
+
+    def test_one_click_plays_one_matchday_attributed_to_rr1(self) -> None:
+        self._click()
+        self.assertEqual(self._rounds_in(self.rr1), 1)
+        self.assertEqual(self._rounds_in(self.rr2), 0)
+
+    def test_the_click_after_rr1_is_exhausted_lands_on_rr2(self) -> None:
+        self._click(2)
+        self.season.refresh_from_db()
+        self.assertTrue(self.season._phase_complete(self.rr1))
+        self.assertEqual(self._rounds_in(self.rr2), 0)
+        self._click()
+        self.assertEqual(self._rounds_in(self.rr1), 2)
+        self.assertEqual(self._rounds_in(self.rr2), 1)
+
+    def test_the_season_stays_active_partway_through_rr2(self) -> None:
+        self._click(3)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+        self.assertIsNone(self.season.champion_team_id)
 
 
 class TestPlaySingleRound(LeagueApiTestCase):
