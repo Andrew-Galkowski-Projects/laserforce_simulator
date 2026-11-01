@@ -1,8 +1,8 @@
 """FIN-04 — DB tests for the per-fixture injury resolver (seam contract §4 / §6 / §8).
 
 Django ``TestCase`` exercising the two module-level play-loop helpers
-``matches.league_views.resolve_injuries_for_fixture(season, team_red, team_blue)``
-and ``matches.league_views.restore_after_fixture(token)`` plus the
+``matches.league_play_services.resolve_injuries_for_fixture(season, team_red, team_blue)``
+and ``matches.league_play_services.restore_after_fixture(token)`` plus the
 ``games_unavailable`` rollover reset and the health expense line.
 
 What is pinned here (schema-level outcomes ONLY — roster validity,
@@ -46,7 +46,7 @@ from unittest import mock
 from django.test import TestCase
 
 from matches.injury import PLAY_HURT_STAT_PENALTY
-from matches.league_views import (
+from matches.league_play_services import (
     resolve_injuries_for_fixture,
     restore_after_fixture,
 )
@@ -623,7 +623,7 @@ class TestNextSeasonResetsGamesUnavailable(TestCase):
     resets ``games_unavailable = 0`` over the developing set."""
 
     def test_rollover_zeroes_counter_over_developing_set(self) -> None:
-        from matches.league_views import _develop_league_for_new_season
+        from matches.league_services import _develop_league_for_new_season
 
         team = _make_team("NsT")
         opp = _make_team("NsO")
@@ -726,7 +726,7 @@ class TestHealthCostFlowsIntoProfit(TestCase):
         return league, team, s1
 
     def test_health_cost_snapshot_present_and_positive(self) -> None:
-        from matches.league_views import _ensure_team_finances
+        from matches.league_services import _ensure_team_finances
 
         league, team, s1 = self._completed_season_league()
         # A non-neutral health budget so the cost line is clearly non-trivial.
@@ -738,7 +738,7 @@ class TestHealthCostFlowsIntoProfit(TestCase):
 
     def test_health_cost_equals_level_to_amount(self) -> None:
         from matches.finance import level_to_amount
-        from matches.league_views import _ensure_team_finances
+        from matches.league_services import _ensure_team_finances
 
         league, team, s1 = self._completed_season_league()
         team.budget_health = 80
@@ -748,7 +748,7 @@ class TestHealthCostFlowsIntoProfit(TestCase):
         self.assertAlmostEqual(row.health_cost, level_to_amount(80), places=4)
 
     def test_higher_health_budget_lowers_profit(self) -> None:
-        from matches.league_views import _ensure_team_finances
+        from matches.league_services import _ensure_team_finances
 
         # Two structurally-identical leagues, differing only in the manager
         # team's health budget; the higher budget yields a lower profit.

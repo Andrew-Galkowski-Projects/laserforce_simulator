@@ -25,7 +25,7 @@ from datetime import date
 
 from django.test import TestCase
 
-from matches.league_views import (
+from matches.league_services import (
     _ensure_owner_evaluations,
     _ensure_team_finances,
 )

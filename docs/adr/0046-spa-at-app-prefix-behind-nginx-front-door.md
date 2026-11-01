@@ -1,6 +1,7 @@
 # Until ANG-08, the SPA is served at `/app/` by an nginx front door that proxies everything else to Django
 
-**Status:** Accepted (ANG-07, 2026-10-25). Refines ADR-0042's "ANG-07 serves it from nginx on the
+**Status:** Superseded by [ADR-0047](0047-spa-at-root-django-api-and-admin-only.md) (ANG-08,
+2026-10-31). Accepted (ANG-07, 2026-10-25). Refines ADR-0042's "ANG-07 serves it from nginx on the
 same origin as `/api/`": still the same origin, now under a prefix.
 
 The Django template views stay live until ANG-08, and they own `/`, `/teams/`, `/matches/`,

@@ -205,7 +205,6 @@ PLAY_CONTROL_KEYS = {
 HISTORY_ROW_KEYS = {
     "season_id",
     "season_name",
-    "season_url",
     "start_date",
     "teams_enrolled",
     "matches_played",

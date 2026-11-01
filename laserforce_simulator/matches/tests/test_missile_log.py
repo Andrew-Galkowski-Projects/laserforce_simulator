@@ -11,13 +11,9 @@ import re
 from unittest.mock import patch
 
 import pytest
-from django.test import Client
-from django.urls import reverse
 
-from matches.models import GameEvent, GameRound
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
-from conftest import get_shared_manager
 
 # Production-source extensions scanned by the legacy-literal guard (test #13).
 # Listed at module top so a future reader can see the scope at a glance.
@@ -285,50 +281,6 @@ class TestRes03TickSemantics:
                 f"range [0, {ticks}]"
             )
 
-    # bug-class: tick-vs-seconds
-    def test_missile_log_template_renders_mmss_via_divide_by_two(self):
-        """The missile-log row template renders ``timestamp / 2`` as mm:ss
-        (TIME-01 boundary). We pin this by constructing a single ``missiled``
-        ``GameEvent`` at tick 124 (= 62 s = 01:02) and asserting that the
-        rendered missile-log section shows ``01:02`` rather than ``02:04``.
-        """
-        red, players = make_team_with_slots("Res03TickRed")
-        blue, blue_players = make_team_with_slots("Res03TickBlue")
-        gr = GameRound.objects.create(round_number=1, team_red=red, team_blue=blue)
-        GameEvent.objects.create(
-            game_round=gr,
-            timestamp=124,
-            event_type="missiled",
-            actor=players["heavy"],
-            target=blue_players["scout"],
-            points_awarded=500,
-            description="heavy hits scout with missile",
-            metadata={
-                "result": "hit",
-                "friendly_fire": False,
-                "actor_role": "heavy",
-                "target_role": "scout",
-            },
-        )
-        client = Client()
-        client.force_login(get_shared_manager())
-        # Dedicated endpoint locked by RES-03 grill (URL name "missile_log",
-        # path /matches/game-round/<id>/missile-log/).
-        url = reverse("missile_log", kwargs={"round_id": gr.id})
-        resp = client.get(url)
-        assert (
-            resp.status_code == 200
-        ), f"missile-log endpoint returned {resp.status_code}; expected 200"
-        body = resp.content.decode("utf-8")
-        assert "01:02" in body, (
-            "missile-log timestamp must render as 01:02 (tick 124 ÷ 2 = 62s "
-            "= 01:02); got body without '01:02'"
-        )
-        assert "02:04" not in body, (
-            "missile-log must NOT render tick 124 as 02:04 — that's the "
-            "seconds-treated-as-ticks bug class"
-        )
-
 
 # ---------------------------------------------------------------------------
 # Section 4 — Down / respawn semantics
@@ -460,170 +412,6 @@ class TestRes03DownAndRespawn:
             "Down after resolution must not re-fire a 'missiled' event; "
             "actor's pending-lock state was not cleared"
         )
-
-
-# ---------------------------------------------------------------------------
-# Section 5 — View / template layer
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.django_db
-class TestRes03MissileLogView:
-    """RES-03 surfaces a missile log in the existing events view (filter by
-    event_type=missiled) OR at a dedicated ``/matches/game-round/<id>/
-    missile-log/`` endpoint. The implementation is free to pick either
-    shape; these tests adapt to whichever resolves at URL-resolution time.
-    """
-
-    def setup_method(self):
-        self.red, self.players = make_team_with_slots("Res03ViewRed")
-        self.blue, self.blue_players = make_team_with_slots("Res03ViewBlue")
-        self.gr = GameRound.objects.create(
-            round_number=1, team_red=self.red, team_blue=self.blue
-        )
-        # Three missiled rows: two hits (one cross-team, one friendly fire),
-        # one miss. fired = 3, hit = 2, eff = 66.67%.
-        GameEvent.objects.create(
-            game_round=self.gr,
-            timestamp=50,
-            event_type="locking",
-            actor=self.players["heavy"],
-            target=self.blue_players["scout"],
-            points_awarded=0,
-            description="heavy locks scout",
-            metadata={"actor_role": "heavy", "target_role": "scout"},
-        )
-        GameEvent.objects.create(
-            game_round=self.gr,
-            timestamp=56,
-            event_type="missiled",
-            actor=self.players["heavy"],
-            target=self.blue_players["scout"],
-            points_awarded=500,
-            description="heavy hits scout with missile",
-            metadata={
-                "result": "hit",
-                "friendly_fire": False,
-                "actor_role": "heavy",
-                "target_role": "scout",
-            },
-        )
-        GameEvent.objects.create(
-            game_round=self.gr,
-            timestamp=110,
-            event_type="missiled",
-            actor=self.players["heavy"],
-            target=self.players["ammo"],
-            points_awarded=500,
-            description="heavy hits ammo with missile (friendly fire)",
-            metadata={
-                "result": "hit",
-                "friendly_fire": True,
-                "actor_role": "heavy",
-                "target_role": "ammo",
-            },
-        )
-        GameEvent.objects.create(
-            game_round=self.gr,
-            timestamp=180,
-            event_type="missiled",
-            actor=self.players["heavy"],
-            target=self.blue_players["medic"],
-            points_awarded=0,
-            description="heavy misses medic with missile",
-            metadata={
-                "result": "miss",
-                "friendly_fire": False,
-                "actor_role": "heavy",
-                "target_role": "medic",
-            },
-        )
-        # A tag to make sure the filter actually excludes non-missiled rows.
-        GameEvent.objects.create(
-            game_round=self.gr,
-            timestamp=200,
-            event_type="tag",
-            actor=self.players["heavy"],
-            target=self.blue_players["scout"],
-            points_awarded=100,
-            description="heavy tags scout",
-            metadata={},
-        )
-
-    def _missile_log_url(self) -> str:
-        # Dedicated endpoint locked by RES-03 grill (URL name "missile_log").
-        return reverse("missile_log", kwargs={"round_id": self.gr.id})
-
-    # bug-class: CLI/flag wiring
-    def test_missile_log_view_filter_querystring_renders_only_missiled_rows(self):
-        """The missile-log surface renders rows for ``missiled`` events and
-        omits unrelated events (``tag``). If the implementation chose a
-        dedicated endpoint, that endpoint shows only ``missiled`` rows; if
-        it chose the existing events view filtered by querystring, the same
-        property must hold.
-        """
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(self._missile_log_url())
-        assert resp.status_code == 200
-        body = resp.content.decode("utf-8")
-        # The missiled rows must show; the tag row must NOT show in the
-        # missile-log section.
-        assert "heavy hits scout with missile" in body
-        assert "heavy misses medic with missile" in body
-        assert "heavy tags scout" not in body, (
-            "missile log surface must hide non-missile event rows; tag row "
-            "leaked through"
-        )
-
-    # bug-class: happy path
-    def test_missile_summary_efficiency_pct_equals_hits_over_fired_view_side(
-        self,
-    ):
-        """View-side summary: fired = count(missiled), hit = count(result=hit),
-        efficiency = hits / fired * 100. Friendly-fire hits count as hits.
-        For this fixture: fired=3, hit=2, eff=66.67%.
-        """
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(self._missile_log_url())
-        assert resp.status_code == 200
-        body = resp.content.decode("utf-8")
-        # Be lenient on formatting: accept "66.7", "66.67", or "67"
-        # (rounded), but the fired/hit counts must be present verbatim.
-        assert re.search(r"\bfired\b[^0-9]*3\b", body, flags=re.IGNORECASE), (
-            "summary must report fired=3 for this fixture; substring "
-            "'fired ... 3' not found in response"
-        )
-        assert re.search(r"\bhit\b[^0-9]*2\b", body, flags=re.IGNORECASE), (
-            "summary must report hit=2 for this fixture; substring "
-            "'hit ... 2' not found in response"
-        )
-        assert re.search(r"6[67](\.\d+)?\s*%", body), (
-            "summary must report efficiency around 66.67%; no '66.67%' / "
-            "'66.7%' / '67%' found"
-        )
-
-    # bug-class: happy path
-    def test_friendly_fire_row_carries_distinguishing_css_class(self):
-        """Friendly-fire rows are rendered with a distinguishing CSS class
-        (``friendly-fire`` is the locked-in marker). The cross-team hit
-        row must NOT carry that class.
-        """
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(self._missile_log_url())
-        body = resp.content.decode("utf-8")
-        assert "friendly-fire" in body, (
-            "friendly-fire row must carry a CSS class containing "
-            "'friendly-fire'; not found anywhere in the response"
-        )
-        # Sanity: cross-team hit description must not appear inside a
-        # friendly-fire-class element. We require the friendly-fire class
-        # token and the friendly-fire description ('hits ammo') to coexist.
-        assert (
-            "hits ammo with missile" in body
-        ), "friendly-fire fixture row description missing from response"
 
 
 # ---------------------------------------------------------------------------

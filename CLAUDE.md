@@ -237,7 +237,10 @@ The `/code-review` Standards reviewer reads `CODING_STANDARDS.md`.
 
 ## Architecture
 
-Django 5.2 app that simulates competitive laser tag (Laserforce) matches. The root URL serves the `teams` app as the homepage. Four Django apps: `accounts`, `teams`, `matches`, and `core`.
+Django 5.2 app that simulates competitive laser tag (Laserforce) matches. Django is API + Admin
+only: it serves `/api/`, `/admin/` and `/media/` and renders no pages of its own. The Angular SPA
+(`frontend/`) is the UI, served by nginx at `/` ([ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md)).
+Four Django apps: `accounts`, `teams`, `matches`, and `core`.
 
 ### Data Model Hierarchy
 
@@ -250,13 +253,12 @@ Match (2 rounds, winner by rounds then points)
 
 ### App Guides
 
-Django templates live in `laserforce_simulator/templates/<app>/`, not per app.
 The test harness is `laserforce_simulator/laserforce_simulator/testing.py`.
 
-- [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) — the `accounts` app (UX-01): the custom `User` (the **Account**), the `manager` ownership seam in `accounts/permissions.py`, the `/accounts/` auth URLs, and `claim_unmanaged`
-- [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/teams/` URLs
+- [`laserforce_simulator/accounts/CLAUDE.md`](laserforce_simulator/accounts/CLAUDE.md) — the `accounts` app (UX-01): the custom `User` (the **Account**), the `manager` ownership seam in `accounts/permissions.py`, the login gate, Invites, and `claim_unmanaged`
+- [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/api/teams/` and `/api/players/`
 - [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) — index for Match/GameRound, the simulation engine, Leagues, tournaments and the API; feature detail in `docs/agents/matches/`
-- [`laserforce_simulator/core/CLAUDE.md`](laserforce_simulator/core/CLAUDE.md) — Map editor, zone/LOS processing, `/maps/` URLs, `/api/maps/` (list, multipart upload, delete, editor actions)
+- [`laserforce_simulator/core/CLAUDE.md`](laserforce_simulator/core/CLAUDE.md) — Maps, zone/LOS processing, `/api/maps/` (list, multipart upload, delete, editor actions), `serve_media`
 - [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — the Angular 22 SPA (ANG-04, ADR-0042): npm commands, stack, the `apiBaseUrl` rule, the Windows BOM note
 
 ### REST API

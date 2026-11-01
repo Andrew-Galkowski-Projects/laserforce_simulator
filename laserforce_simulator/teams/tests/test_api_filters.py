@@ -2,7 +2,7 @@
 
 ``TeamFilterSet`` (``name``, free-agent default exclusion,
 ``include_free_agents``), ``PlayerFilterSet`` (``team``, ``name``) and the
-player ordering over exactly the 23 LG-00c ``_SORT_KEYS``. Filters are
+player ordering over exactly the 23 LG-00c ``PLAYER_SORT_KEYS``. Filters are
 list-only: detail lookups ignore query params.
 
 Boolean filters are lenient (an unparseable value is treated as absent) — no
@@ -19,7 +19,7 @@ from conftest import get_shared_manager
 from matches.models import League
 from teams.api_views import PlayerViewSet
 from teams.models import Player, Team, get_free_agents_team
-from teams.views import _SORT_KEYS
+from teams.services import PLAYER_SORT_KEYS
 
 User = get_user_model()
 
@@ -204,11 +204,11 @@ class TestPlayerOrdering(_FilterTestCase):
         )
 
     def test_ordering_fields_equal_sort_keys(self) -> None:
-        self.assertEqual(set(PlayerViewSet.ordering_fields), set(_SORT_KEYS))
+        self.assertEqual(set(PlayerViewSet.ordering_fields), set(PLAYER_SORT_KEYS))
         self.assertEqual(len(set(PlayerViewSet.ordering_fields)), 23)
 
     def test_every_sort_key_accepted_both_directions(self) -> None:
-        for key in _SORT_KEYS:
+        for key in PLAYER_SORT_KEYS:
             for term in (key, f"-{key}"):
                 with self.subTest(ordering=term):
                     response = self.api.get("/api/players/", {"ordering": term})

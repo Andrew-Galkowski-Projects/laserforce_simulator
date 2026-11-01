@@ -6,7 +6,6 @@ from typing import Any
 from django.contrib import admin, messages
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.http import HttpRequest, HttpResponse
-from django.urls import reverse
 from django.utils.html import format_html
 
 from .models import Invite, InviteRedemption, User
@@ -87,7 +86,9 @@ class InviteAdmin(admin.ModelAdmin):
 
     @staticmethod
     def signup_url(request: HttpRequest, invite: Invite) -> str:
-        return request.build_absolute_uri(f"{reverse('register')}?invite={invite.code}")
+        # ANG-08 - the SPA's register route (it reads ``?invite=``), not the
+        # Django template page D1 deletes.
+        return request.build_absolute_uri(f"/register?invite={invite.code}")
 
     def get_list_display(self, request: HttpRequest) -> Sequence[Any]:
         def signup_link(invite: Invite) -> str:

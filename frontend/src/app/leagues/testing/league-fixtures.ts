@@ -186,7 +186,6 @@ export function historyRow(overrides: Partial<HistoryRow> = {}): HistoryRow {
   return {
     season_id: 10,
     season_name: 'Season 1',
-    season_url: '/seasons/10/',
     start_date: '2026-09-01',
     teams_enrolled: 8,
     matches_played: 28,

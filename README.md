@@ -1,6 +1,6 @@
 # Laserforce Simulator
 
-A Django web app that simulates competitive [Laserforce](https://www.laserforce.com/) (laser tag) matches. Build teams, assign player stats, and run tick-by-tick match simulations with full event logs and MVP scoring.
+A Django API with an Angular front end that simulates competitive [Laserforce](https://www.laserforce.com/) (laser tag) matches. Build teams, assign player stats, and run tick-by-tick match simulations with full event logs and MVP scoring.
 
 ## Features
 
@@ -18,16 +18,16 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - **Round playback map** — On the event-log screen, replay the round on the arena map: player markers and fading movement trails animate along each player's true walked path (smoothed into flowing curves) over the processed map image, with the live scoreboard directly below and a play-synced event feed beside it — all driven by one play/pause/scrub clock. Rounds played without a map fall back to the scoreboard + feed
 - **Batch simulation** — Run N games between two teams and view aggregate win % / scores. The two teams alternate which physical side (red/blue) they play across the run, so neither team's aggregate is biased by any map-side advantage; per-team stats are reported by team position regardless of side played, with a separate map-side-advantage panel showing the raw red-side vs blue-side signal
 - **Sandbox tournaments** — Build a standalone single-elimination, double-elimination, round-robin, round-robin → double-elimination, or Swiss tournament from a seeded bracket: pick existing teams and/or generate new ones, reorder the seeding (default is overall-rating order), choose a series length per round depth (best-of-1, best-of-3, or best-of-5 per matchup), lock the bracket (arbitrary 4+ teams, with byes for the top seeds), then play it match-by-match while each matchup runs until one team clinches the series and winners auto-advance up a visual bracket tree to a crowned champion. Double elimination adds a losers bracket (a first loss drops a team into it rather than eliminating them) and a grand final with bracket reset (the winners-bracket champion must be beaten twice). Round robin instead has every team play every other team twice (one game per leg, best-of-1) and crowns the standings leader once all games are played, with a live standings table and an N×N results crosstable. Round robin → double elimination runs a round-robin seeding stage whose final standings seed a double-elimination finals stage. Swiss pairs an even field by seed fold in round one then by current standings each later round (never repeating an opponent unless forced), runs an auto-calculated ⌈log₂(N)⌉ rounds (admin-overridable), and crowns the standings leader broken by Buchholz. A **player-pool draw** is a separate team-assembly mode (orthogonal to the bracket format): instead of enrolling pre-set teams you register a pool of individual players — selected, generated, or CSV-imported — and the system runs a deterministic tier-balanced draw (six skill tiers, one player per tier per team) into balanced teams that then play the bracket in any of the five formats (played as round-robin → double-elimination, the default when you pick it, it is labelled a **Random Draw**), with each player's role re-assigned every round (either independently per team, or by a shared per-tier mapping so equal-tier players play the same role on both sides)
-- **Season awards** — Each Season's awards page (`/seasons/<id>/awards/`) crowns the regular-season Most Points, Best Accuracy, K/D by role, Best Medic, Most Efficient Nuke, and Season MVP, plus a bracket-only Finals MVP; the Season MVP and Finals MVP also appear on the League History table and each player's profile (all recomputed on render — no stored awards)
+- **Season awards** — Each Season's Awards screen crowns the regular-season Most Points, Best Accuracy, K/D by role, Best Medic, Most Efficient Nuke, and Season MVP, plus a bracket-only Finals MVP; the Season MVP and Finals MVP also appear on the League History table and each player's profile (all recomputed on render — no stored awards)
 - **Player development** — Each League's season rollover (`Start Next Season`) ages and develops every player on a ZenGM-style age curve (young players trend up, peak in their late 20s, older players decline), persisting a per-Season ratings snapshot viewable as an overall-rating-over-time trend on each player's League profile
 - **One Week (Live)** — In a single-player career League, the season Play dropdown offers a "One Week (Live)" entry that previews your team's next game (the next-matchday Round, or your next playoff Match) in the browser with play/pause/scrub controls; you then commit the watched game (replayed byte-identically) — the rest of the matchday/bracket stage is simulated alongside it — or discard and try again
 - **Live multi-game runs + Stop** — While a multi-game advance is running (Two Months / Until End of Season / Play Playoffs), the standings and leader boards update live as each fixture commits, and the Play control becomes a **Stop** button that cooperatively halts the run between games — already-played games stay committed and the run resumes on the next Play; progress survives navigating away or reloading the page
 - **Member nights** — A Season's phase flow can include a **member night**: a casual/social play interlude run per Site (a venue's home-site grouping of players) between competitive fixtures. From the `Play ▾` topnav you pick a Site (or "All Sites present") and the system gathers whoever's available (enrolled-team players plus free agents), draws 5–9 ad-hoc games — each splitting 12 players into two attempt-balanced 6-player teams with randomized roles — then drains them in the background with live progress and a Stop button. Member-night games are recorded as part of the Season and show in raw match listings, but never count toward the competitive Standings or power rankings
-- **Manager firing (owner mood)** — In a single-player career League, the team owner evaluates you once per completed season on a ZenGM-style cumulative owner-mood model — *wins* (regular-season record vs a .500 baseline) plus *playoffs* (missed / advanced / champion of the season's tournament), each capped so you can't coast on one factor. After a two-season grace period, an overall mood at or below the firing threshold gets you fired; the owner-evaluation screen (`/seasons/<id>/owner-evaluation/`) shows the verdict, a hot-seat warning if you're trending toward the axe, and the per-factor breakdown, and is browsable for past seasons. A fired manager picks a fresh team from the five worst-performing clubs (your old team excluded) on a New Team screen, starting a new tenure and grace period. With team finances enabled, the *money* factor (season profit) joins the mood model, and an optional per-League "fire on luxury tax" rule — set at League creation — fires you outright (independent of mood, but still after the grace period) any season your team pays the luxury tax; the owner-evaluation screen names which trigger fired you.
+- **Manager firing (owner mood)** — In a single-player career League, the team owner evaluates you once per completed season on a ZenGM-style cumulative owner-mood model — *wins* (regular-season record vs a .500 baseline) plus *playoffs* (missed / advanced / champion of the season's tournament), each capped so you can't coast on one factor. After a two-season grace period, an overall mood at or below the firing threshold gets you fired; the owner-evaluation screen shows the verdict, a hot-seat warning if you're trending toward the axe, and the per-factor breakdown, and is browsable for past seasons. A fired manager picks a fresh team from the five worst-performing clubs (your old team excluded) on a New Team screen, starting a new tenure and grace period. With team finances enabled, the *money* factor (season profit) joins the mood model, and an optional per-League "fire on luxury tax" rule — set at League creation — fires you outright (independent of mood, but still after the grace period) any season your team pays the luxury tax; the owner-evaluation screen names which trigger fired you.
 - **User accounts & ownership** — Email + password sign-in; registration is invite-only (staff create invites in Django admin, single-use by default or shared with a use cap and an expiry; the admin shows the sign-up link to send). Every Team, League, Tournament, sandbox Match and standalone Round belongs to the account that created it, and the whole site sits behind a login. Rows created before you had an account (or by a management command) are *unmanaged* and stay open to any signed-in account until claimed
-- **Self-insert** — Link your account to one Player on a team you manage ("This is me" on the player's page) and that Player is flagged with a **You** badge wherever its name appears on a server-rendered page — rosters, leaderboards, stats tables, awards, box scores and tournament pools — with a **My player** shortcut in the account menu. It is purely a vanity link: the Player is not moved, copied or added to any team, and simulations are unaffected
+- **Self-insert** — Link your account to one Player on a team you manage ("This is me" on the player's page) and that Player gets a **My player** shortcut in the account menu. It is purely a vanity link: the Player is not moved, copied or added to any team, and simulations are unaffected
 - **Team history** — Win/loss records across all matches
-- **REST API** — JSON endpoints at `/api/` for teams and players (read + write: create / edit teams, set roster slots, add / edit / delete players, generate players, import a roster CSV), match / round creation and analytics, read-only events, leagues and seasons (create a league from a template or the advanced form, delete a career league, start the next season or pick a new team after being fired, edit conferences, and read dashboards, history, standings, schedules, awards and owner evaluations, play a season), every League screen (player stats and ratings, free agents, leaders, the League player page, team roster / history / stats, power rankings, game log, statistical feats, playoffs, team and league finances — with finance edits for your current team — and your per-League watch list, which is saved to your account and shared with the web pages), sandbox tournaments (create in any of the five formats with preset teams or a player-pool draw, read the whole bracket and standings, set seeds, import participants, manage the player pool and the draw, lock, play the next match or play the whole tournament as a polled background job — league-embedded tournaments are read-only here), the full map editor (upload / delete maps, zones, sight lines, strong spots, spawns, heatmap — maps are shared by every account), and your account (who you are signed in as, register a new account, change your password, link or unlink your Self-insert), plus JWT sign-in, refresh and sign-out at `/api/token/`. Every response uses one envelope — `{"data": ..., "meta": {...}}` on success, `{"errors": [{"code", "message", "field"}], "meta": {}}` on failure — lists are paginated (20 per page, `?page_size=` up to 100) and filterable / sortable via query params. You only ever see your own account's rows (another account's row is a `404`)
+- **REST API** — JSON endpoints at `/api/` for teams and players (read + write: create / edit teams, set roster slots, add / edit / delete players, generate players, import a roster CSV), match / round creation and analytics, read-only events, leagues and seasons (create a league from a template or the advanced form, delete a career league, start the next season or pick a new team after being fired, edit conferences, and read dashboards, history, standings, schedules, awards and owner evaluations, play a season), every League screen (player stats and ratings, free agents, leaders, the League player page, team roster / history / stats, power rankings, game log, statistical feats, playoffs, team and league finances — with finance edits for your current team — and your per-League watch list, which is saved to your account), sandbox tournaments (create in any of the five formats with preset teams or a player-pool draw, read the whole bracket and standings, set seeds, import participants, manage the player pool and the draw, lock, play the next match or play the whole tournament as a polled background job — league-embedded tournaments are read-only here), the full map editor (upload / delete maps, zones, sight lines, strong spots, spawns, heatmap — maps are shared by every account), and your account (who you are signed in as, register a new account, change your password, link or unlink your Self-insert), plus JWT sign-in, refresh and sign-out at `/api/token/`. Every response uses one envelope — `{"data": ..., "meta": {...}}` on success, `{"errors": [{"code", "message", "field"}], "meta": {}}` on failure — lists are paginated (20 per page, `?page_size=` up to 100) and filterable / sortable via query params. You only ever see your own account's rows (another account's row is a `404`)
 
 ## Tech Stack
 
@@ -36,7 +36,7 @@ A Django web app that simulates competitive [Laserforce](https://www.laserforce.
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
 - `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`)
 - `whitenoise` for production static file serving directly from Django
-- nginx (`frontend/Dockerfile`) as the Docker stacks' front door: it serves the built Angular SPA at `/app/` and proxies every other path to Django (ADR-0046). Fly.io stays Django-only for now
+- nginx (`frontend/Dockerfile`) as the Docker stacks' front door: it serves the built Angular SPA at `/` and proxies `/api/`, `/admin/`, `/static/` and `/media/` to Django, which serves no pages of its own (ADR-0047). Fly.io serves only the API and Django Admin for now, with no UI
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
 - `djangorestframework` + `django-filter` for the JSON API at `/api/`
 - `django-cors-headers` so the Angular dev server (`http://localhost:4200`) can call `/api/` cross-origin. Set `CORS_ALLOWED_ORIGINS` (comma-separated) to change the allowed origins; the default is the dev server under `DEBUG` and none otherwise. `Content-Disposition` is exposed, so the SPA can name its downloads.
@@ -114,7 +114,9 @@ python manage.py createsuperuser
 python manage.py runserver
 ```
 
-Then open http://127.0.0.1:8000/ in your browser.
+Django now serves the API at http://localhost:8000/api/ and Django Admin at
+http://localhost:8000/admin/; it has no pages of its own. For the UI, start the Angular dev server
+(see **Frontend** below) and open http://localhost:4200/.
 
 ### Option B — Docker Compose (production-like stack)
 
@@ -129,20 +131,20 @@ docker compose up
 # (first run) migrations are applied automatically by entrypoint.sh
 ```
 
-Then open http://localhost:8080/ in your browser: the Django pages, with the Angular SPA at
-http://localhost:8080/app/ on the same origin. Django is also reachable directly at
-http://localhost:8000/.
+Then open http://localhost:8080/ in your browser: the Angular SPA, with `/api/` and `/admin/`
+proxied to Django on the same origin. Django is also reachable directly at
+http://localhost:8000/admin/. An old `/app/<path>` link redirects to `/<path>`.
 
 ### Option C — self-host on a home PC (public HTTPS URL)
 
-`docker-compose.selfhost.yml` runs nginx (the SPA at `/app/`), the app, a Celery worker, Postgres and Redis, and publishes them
+`docker-compose.selfhost.yml` runs nginx (the SPA at `/`), the app, a Celery worker, Postgres and Redis, and publishes them
 at `https://<name>.<tailnet>.ts.net` through Tailscale Funnel. See
 [docs/self-hosting.md](docs/self-hosting.md).
 
-### Frontend (Angular, in progress)
+### Frontend (Angular)
 
-Phase 8 is moving the UI to an Angular 22 single-page app in [`frontend/`](frontend/) (see
-[ADR-0042](docs/adr/0042-angular-frontend-stack.md)). So far it has a sign-in page, invite-only
+The UI is an Angular 22 single-page app in [`frontend/`](frontend/) (see
+[ADR-0042](docs/adr/0042-angular-frontend-stack.md)). It has a sign-in page, invite-only
 registration (`/register?invite=<code>`, signed in straight away) and Change password, a landing page
 at `/` where sign-in lands (Sandbox, Single-player League and a greyed Multiplayer "Coming soon" card,
 plus an In Progress card per active League), an app shell (a header whose title links home, with Tools
@@ -155,8 +157,8 @@ Self-insert), a Player's career stats (totals, per-role tables against the role 
 Mean / Median toggle, and a points trend chart) and Role Benchmarks, and the Matches screens: Match History (your Matches
 and Single Rounds, paged), New Match and New Single Round (simulate and open the result), Batch Simulate (10 to 500 in-memory games between two Teams with live progress, win-rate cards, averages, the map-side advantage and a score histogram, then save Average or Highlight games as Rounds), and the Match and Round pages: a Match Summary per Round, and
 each Round's per-player scoreboard (sortable, with MVP scores and a PDF export) and its Event log (every event, colour-coded and filterable by type and player, with the round's Highlights), and its Playback (watch the round unfold: play / step / 1-8x speed, live per-Side scoreboards, a newest-first event feed and a beta map), and its Charts (Shots, Lives, Points and SP over time per player, with Side totals and Elimination / Special / Nuke overlays, built with Chart.js), its Missile log (fired / hit / efficiency and every missile, Friendly fire highlighted) and its Movement heatmap (where players spent their time on the map, filterable by player, role and team), the analytics screens: Team and Player head-to-head (record cards, per-map / per-role breakdowns, margin charts and every game between them), a Team's match history (record, roster by role, scope filter by Tournament, every Match and Single Round) and Compare Rounds (per-player stat deltas and a points-over-time overlay), and the Maps screens: the Arena map list (upload, delete, configured badge) and the map editor (Zones & Bases, Sight Lines and the multi-round Heatmap, asking before it discards unsaved edits), and the Tournaments screens: the Tournament list, Create Tournament (preset Teams or a Player-pool draw, every bracket format) and the Tournament page: its setup (participants and their CSV import, Seeding, Lock & Build Bracket, and the Player pool: add, generate, import and remove players, draw or re-roll the Teams and set each drawn player's Tier), Play Next Match and Play All with live progress, and every format's results (the Bracket, Winners / Losers / Grand Final, Swiss rounds, the round-robin crosstable and the Standings), and the Leagues screens: the Leagues list (Active and Archived), Create League from a template or the Advanced form (phase and map-rotation composers), Delete (with what it removes), the League dashboard (Start Season, Start next Season, Choose new team for a fired Manager), League History and the new-team picker, and the League stats screens (League Leaders, Player Stats, Player Ratings, Team Stats, Statistical Feats, Game Log, Power Rankings and Playoffs, each with its Season / Career and Team filters, sorting and paging kept in the URL), and the League team and player screens (a Team's Roster, Schedule and History, the League player page with its ratings history and awards, Free Agents and your Watch List, with a star on every League table to watch or unwatch a player), and the League finance screens (every Team's revenue, profit, cash and payroll, and a Team's Finances page: hype, salaries, availability, season history and your own Team's Expense Settings for budgets, ticket price and injury policy), and the Season screens (a Season's dashboard, its sortable Standings per Conference, the Schedule with member nights, the Season Awards, the Owner's Annual Performance Evaluation with Start Next Season, and Manage Conferences to partition a draft Season's Teams and set each Conference's map rotation), and the Season play loop (a Play menu in the toolbar to Start Season, play One Week, Two Months, Until End or the Playoffs, set up and play member nights, start the next Season, follow a background run's progress and Stop it, and watch your game in One Week (Live)), all beside a League menu whose not-yet-ported screens show as "Soon". They sit on the typed API services and
-the JWT sign-in / silent-refresh flow. The Django pages stay live until ANG-08; until then the Docker stacks serve the
-built SPA at `/app/` beside them (Option B and C above). Styling comes from the app theme in
+the JWT sign-in / silent-refresh flow. The Docker stacks serve the built SPA at `/` (Option B and
+C above). Styling comes from the app theme in
 [ADR-0043](docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md). The theme follows the
 OS light / dark setting and uses JetBrains Mono, self-hosted. It needs **Node 24** (`frontend/.nvmrc`) and npm; the Angular CLI is
 a project dependency, so no global install is needed.
@@ -175,17 +177,15 @@ In dev the app calls the Django API directly at `http://localhost:8000/api` (COR
 
 ## Accounts & Ownership
 
-**The whole site is behind a login.** Every page except sign-in, registration and password-change redirects an anonymous visitor to `/accounts/login/`; the JSON API answers an anonymous request with a `401`, except `POST /api/accounts/register/`, which creates an account without signing you in, and the `/api/token/` sign-in endpoints. The API accepts either your browser session or a JWT: `POST /api/token/` with your email and password returns a 15-minute access token (send it as `Authorization: Bearer <token>`) and sets a 7-day refresh cookie that `POST /api/token/refresh/` trades for a new access token.
+**The whole site is behind a login.** The SPA sends a signed-out visitor to its sign-in page; the JSON API answers an anonymous request with a `401`, except `POST /api/accounts/register/`, which creates an account without signing you in, and the `/api/token/` sign-in endpoints. The API accepts either your browser session or a JWT: `POST /api/token/` with your email and password returns a 15-minute access token (send it as `Authorization: Bearer <token>`) and sets a 7-day refresh cookie that `POST /api/token/refresh/` trades for a new access token.
 
 | URL | What it is |
 |-----|------------|
-| `/accounts/login/` | Sign in with **email + password** (there are no usernames) |
-| `/accounts/register/` | **Invite-only registration** — needs an unused invite code (`?invite=<code>` prefills it) |
-| `/accounts/logout/` | Sign out (the top-nav control posts here) |
-| `/accounts/password-change/` | Change your password while signed in |
-| `/accounts/self-insert/<player_id>/link/` | POST — make that Player your **Self-insert** (the "This is me" button) |
-| `/accounts/self-insert/unlink/` | POST — clear your Self-insert (the "Unlink" button) |
-| `/admin/` | Django Admin — where an administrator **removes** an account |
+| `/login` | Sign in with **email + password** (there are no usernames) |
+| `/register?invite=<code>` | **Invite-only registration** — needs an unused invite code (the link Django Admin shows for an Invite prefills it) |
+| `/account/password` | Change your password while signed in |
+| A player's page | "This is me" makes that Player your **Self-insert**; the account menu's Unlink clears it |
+| `/admin/` | Django Admin — where an administrator creates Invites and **removes** an account |
 
 Every Team, League, Tournament, sandbox Match and standalone Round records the account that created it. You see your own rows and nothing of anybody else's — another account's row returns **404**, exactly as a nonexistent one would. Arena maps are the deliberate exception: they are shared reference data, visible to every signed-in account, because map pools and rotations reference maps across league boundaries.
 
@@ -271,28 +271,31 @@ Action weights live in `matches/sim_helpers/weights.py` and shift dynamically ba
 
 ## URL Reference
 
+The SPA's screens (served at `/` by nginx, or at http://localhost:4200/ by the dev server):
+
 | URL | Description |
 |-----|-------------|
-| `/accounts/login/` | Sign in (email + password) |
-| `/accounts/register/` | Create an account (invite-only) |
-| `/accounts/password-change/` | Change your password (no reset flow — use `manage.py changepassword`) |
+| `/login` | Sign in (email + password) |
+| `/register?invite=<code>` | Create an account (invite-only) |
+| `/account/password` | Change your password (no reset flow — use `manage.py changepassword`) |
 | `/` | Mode-picker landing (Sandbox / Single-player League / Multiplayer — Coming soon) + in-progress Leagues |
-| `/teams/` | Team & player management |
-| `/leagues/` | Single-player League list (active + archived) |
-| `/seasons/<id>/awards/` | Season-end awards (Most Points, K/D by role, Best Medic, Most Efficient Nuke, Best Accuracy, Season MVP, Finals MVP) |
-| `/seasons/<id>/owner-evaluation/` | Career owner evaluation — per-factor owner mood, verdict, hot-seat warning (browsable for past seasons) |
-| `/leagues/<id>/new-team/` | New Team picker shown after a firing — choose from the five worst-performing eligible teams |
-| `/leagues/<id>/delete/` | Delete a career League (confirm step) — fully tears down its Seasons, Matches, embedded playoff tournaments, and generated teams + players |
-| `/matches/` | Match list and creation |
-| `/matches/create/` | Create a full 2-round match |
-| `/matches/single-round/create/` | Create a standalone game round |
-| `/matches/simulate-batch/` | Run N in-memory simulations |
-| `/matches/game-round/<id>/` | Per-player round stats |
-| `/matches/game-round/<id>/events/` | Filterable event timeline |
-| `/matches/team/<id>/history/` | Team win/loss history |
-| `/tournaments/` | Sandbox tournament list |
-| `/tournaments/create/` | Create a single-elim, double-elim, round-robin, RR → double-elim, or Swiss tournament (preset teams or a player-pool draw; a player-pool draw played as RR → double-elim is a "Random Draw") |
-| `/tournaments/<id>/` | Bracket tree, seeding, play controls, and (player-pool draw) player-pool intake + draw |
+| `/teams` | Team & player management |
+| `/leagues` | Single-player League list (active + archived) |
+| `/leagues/<id>/seasons/<id>/awards` | Season-end awards (Most Points, K/D by role, Best Medic, Most Efficient Nuke, Best Accuracy, Season MVP, Finals MVP) |
+| `/leagues/<id>/seasons/<id>/owner-evaluation` | Career owner evaluation — per-factor owner mood, verdict, hot-seat warning (browsable for past seasons) |
+| `/leagues/<id>/new-team` | New Team picker shown after a firing — choose from the five worst-performing eligible teams |
+| `/matches` | Match History, New Match (`/matches/new`) and Batch Simulate (`/matches/batch`) |
+| `/rounds/new` | Create a standalone game round |
+| `/rounds/<id>` | Per-player round stats, with its Event log, Playback, Charts, Missile log and Heatmap screens |
+| `/teams/<id>/history` | Team match history |
+| `/tournaments` | Sandbox tournament list; `/tournaments/new` creates a single-elim, double-elim, round-robin, RR → double-elim, or Swiss tournament (preset teams or a player-pool draw; a player-pool draw played as RR → double-elim is a "Random Draw") |
+| `/tournaments/<id>` | Bracket tree, seeding, play controls, and (player-pool draw) player-pool intake + draw |
+
+Django serves the rest:
+
+| URL | Description |
+|-----|-------------|
+| `/admin/` | Django Admin |
 | `/api/teams/` | Team list (paginated JSON; `?name=`, `?include_free_agents=true`) / POST to create a team |
 | `/api/teams/<id>/` | Team detail with full player stats / PATCH to rename |
 | `/api/teams/<id>/slots/` | PUT to replace the six roster slots |

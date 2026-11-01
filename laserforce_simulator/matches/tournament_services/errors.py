@@ -1,7 +1,7 @@
 """ANG-01f — Tournament domain errors and the shared write guards.
 
-Raised by the ``tournament_services`` modules and translated by the HTML views
-(flash + redirect) and the API (``tournament_api_views.base``) alike. The
+Raised by the ``tournament_services`` modules and translated by the API
+(``tournament_api_views.base``). The
 guards check in a fixed order — embedded first, then state — so a write on an
 embedded locked Tournament always reports ``TournamentEmbeddedError``.
 

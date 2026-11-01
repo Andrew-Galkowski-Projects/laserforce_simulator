@@ -2,9 +2,8 @@
 
 ``run_player_generation`` / ``GenerationResult``, ``run_roster_import`` /
 ``RosterImportResult``, ``resolve_import_teams`` scope, ``player_form_initial``,
-``annotate_overall_rating`` and ``build_roster_template_csv`` — plus the HTML
-surfaces that now delegate to them (``player_add`` GET, ``player_list``,
-``import_roster_template``), whose behaviour must be unchanged.
+``annotate_overall_rating``, ``build_roster_template_csv`` and the LG-00c sort
+coercers. The HTML surfaces that delegated to them went in ANG-08 D1.
 
 Generation is seeded with ``random.seed(42)``; random names / profile values
 are never asserted.
@@ -19,7 +18,6 @@ import random
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from django.urls import reverse
 
 from conftest import get_shared_manager
 from teams import roster_importer
@@ -430,67 +428,9 @@ class TestBuildRosterTemplateCsv(TestCase):
             self.assertEqual(len(row), len(ALL_COLUMNS))
         self.assertIn("scout,medic", rows[2])
 
-    def test_byte_identical_to_html_download(self) -> None:
-        response = self.client.get(reverse("import_roster_template"))
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.content.decode("utf-8"), build_roster_template_csv())
-
     def test_template_round_trips_through_the_importer(self) -> None:
         result = run_roster_import(build_roster_template_csv(), manager=None)
         self.assertEqual(result.row_count, 2)
-
-
-# ---------------------------------------------------------------------------
-# HTML surfaces delegating to services — behaviour unchanged
-# ---------------------------------------------------------------------------
-
-
-class TestHtmlDelegatesUnchanged(_ServicesTestCase):
-    def test_player_add_get_renders_stat_defaults(self) -> None:
-        team = Team.objects.create(name="Html Add", manager=self.user_a)
-        random.seed(42)
-        response = self.client.get(reverse("player_add", args=[team.pk]))
-        self.assertEqual(response.status_code, 200)
-        form = response.context["form"]
-        for stat in _PLAYER_STAT_FIELDS:
-            self.assertEqual(form[stat].value(), 50, stat)
-        self.assertTrue(form["name"].value())
-
-    def test_player_list_overall_rating_sort_still_works(self) -> None:
-        team = Team.objects.create(name="Html List", manager=self.user_a)
-        Player.objects.create(team=team, name="Lo", accuracy=0)
-        Player.objects.create(team=team, name="Hi", accuracy=100)
-        response = self.client.get(
-            reverse("player_list"), {"sort": "overall_rating", "dir": "desc"}
-        )
-        self.assertEqual(response.status_code, 200)
-        names = [p.name for p in response.context["page_obj"]]
-        self.assertEqual(names[:2], ["Hi", "Lo"])
-
-    def test_html_generate_still_stamps(self) -> None:
-        random.seed(42)
-        response = self.client.post(
-            reverse("generate_players"),
-            {"num_teams": "2", "players_per_team": "6", "mean": "50", "std_dev": "15"},
-            follow=True,  # UXP-16: the result renders on the redirected GET
-        )
-        self.assertEqual(response.status_code, 200)
-        created = response.context["created_teams"]
-        self.assertEqual(len(created), 2)
-        self.assertEqual(response.context["free_agent_count"], 0)
-        for team in created:
-            self.assertEqual(team.manager_id, self.user_a.pk)
-
-    def test_html_generate_free_agent_mode_context(self) -> None:
-        random.seed(42)
-        response = self.client.post(
-            reverse("generate_players"),
-            {"num_teams": "0", "players_per_team": "12", "mean": "50", "std_dev": "15"},
-            follow=True,  # UXP-16: the result renders on the redirected GET
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(list(response.context["created_teams"]), [])
-        self.assertEqual(response.context["free_agent_count"], 12)
 
 
 # ---------------------------------------------------------------------------
@@ -576,19 +516,6 @@ class TestBuildCareerStats(TestCase):
         self.assertTrue(result["has_rounds"])
         self.assertTrue(result["per_role_with_benchmarks"])
 
-    def test_matches_html_view_context(self) -> None:
-        from teams.services import build_career_stats
-
-        client = self.client
-        client.force_login(get_shared_manager())
-        response = client.get(reverse("player_career_stats", args=[self.player.pk]))
-        self.assertEqual(response.status_code, 200)
-        result = build_career_stats(
-            self.player, min_rounds=5, display="mean", user=get_shared_manager()
-        )
-        for key in _CAREER_BUILDER_KEYS:
-            self.assertEqual(response.context[key], result[key], key)
-
 
 class TestBuildRoleBenchmarks(TestCase):
     def setUp(self) -> None:
@@ -637,18 +564,6 @@ class TestBuildRoleBenchmarks(TestCase):
         )
         self.assertEqual(result["min_rounds"], 0)
         self.assertEqual(result["display"], "median")
-
-    def test_matches_html_view_context(self) -> None:
-        from teams.services import build_role_benchmarks
-
-        self.client.force_login(get_shared_manager())
-        response = self.client.get(reverse("role_benchmarks"))
-        self.assertEqual(response.status_code, 200)
-        result = build_role_benchmarks(
-            min_rounds=5, display="mean", user=get_shared_manager()
-        )
-        for key in _BENCHMARK_BUILDER_KEYS:
-            self.assertEqual(response.context[key], result[key], key)
 
 
 class TestPopUniqueNameSkipsTakenPoolNames(TestCase):

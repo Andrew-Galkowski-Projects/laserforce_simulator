@@ -13,8 +13,9 @@ public seam ``Season.tournaments_for_phase(phase)``:
   STAGE counts across all N.
 * ``matches.tasks.play_season_task`` — its tournament tail spends **one budget
   unit per stage across all N brackets**, not one per bracket.
-* ``matches.league_views.play_week`` — one "Play One Week" click advances
-  EVERY Conference's bracket by one stage.
+* the "Play One Week" action (``league_play_services``, through ``POST
+  /api/seasons/<id>/play-week/``) -- one click advances EVERY Conference's
+  bracket by one stage (pinned in ``test_api_sync_play.py``).
 
 That is the parallel-overlay pacing rule of ADR-0035: California and Nevada
 play their semifinals in the same week, not one after the other.
@@ -38,7 +39,6 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.test import TestCase
-from django.urls import reverse
 
 from matches.models import BracketNode, Tournament
 from matches.simulation import BatchSimulator
@@ -175,71 +175,8 @@ class TestPlayPlayoffsTaskRegional(TestCase):
         self.assertEqual(season.state, "active")
 
 
-# ===========================================================================
-# 12. play_week — one click advances EVERY bracket by one stage
-# ===========================================================================
-
-
-class TestPlayWeekRegional(TestCase):
-    """POST ``/seasons/<id>/play-week/`` on a 2-Conference tournament phase."""
-
-    def setUp(self) -> None:
-        (
-            self.season,
-            self.conferences,
-            self.groups,
-            self.phase,
-            self.tournaments,
-        ) = _built_two_conference_season("Week")
-
-    def test_one_post_advances_every_bracket_by_one_stage(self) -> None:
-        before = _resolved_by_tournament(self.phase)
-        stage_sizes = {t.id: _stage_size(t) for t in self.tournaments}
-        self.assertEqual(set(stage_sizes.values()), {2})
-
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            response = self.client.post(reverse("play_week", args=[self.season.id]))
-        self.assertEqual(response.status_code, 302)
-
-        after = _resolved_by_tournament(self.phase)
-        for tournament in self.tournaments:
-            self.assertEqual(
-                after[tournament.id] - before[tournament.id],
-                stage_sizes[tournament.id],
-                "every Conference's bracket must advance one stage per click",
-            )
-
-    def test_one_post_leaves_both_finals_unresolved(self) -> None:
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            self.client.post(reverse("play_week", args=[self.season.id]))
-        for tournament in self.tournaments:
-            final = tournament.nodes.get(advances_to__isnull=True)
-            self.assertIsNone(final.winner_id)
-
-    def test_one_post_does_not_complete_the_season_early(self) -> None:
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            self.client.post(reverse("play_week", args=[self.season.id]))
-        self.season.refresh_from_db()
-        self.assertEqual(self.season.state, "active")
-        self.assertEqual(self.season.current_phase().id, self.phase.id)
-
-    def test_repeated_posts_drain_both_brackets_to_champions(self) -> None:
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            # CONF-04 — the click chain is longer now: after both regionals
-            # drain the cursor advances to the derived Worlds phase, which
-            # must be built and drained before the Season completes.
-            for _ in range(14):
-                self.season.refresh_from_db()
-                if self.season.state == "completed":
-                    break
-                self.client.post(reverse("play_week", args=[self.season.id]))
-
-        self.season.refresh_from_db()
-        for tournament in self.phase.regional_tournaments.all():
-            self.assertEqual(tournament.state, "completed")
-            self.assertIsNotNone(tournament.champion_id)
-        self.assertEqual(self.season.state, "completed")
-        self.assertIsNotNone(self.season.champion_team_id)
+# (12. ``play-week`` advances EVERY bracket by one stage: ported to
+# ``test_api_sync_play.py::TestPlayWeekRegional``.)
 
 
 # ===========================================================================
@@ -349,18 +286,6 @@ class TestZeroConferenceDrainRegressionPin(TestCase):
         self.assertEqual(payload["total"], 2)
         self.assertEqual(payload["completed"], payload["total"])
 
-    def test_play_week_drains_one_stage_of_the_single_bracket(self) -> None:
-        season, _teams, phase = _built_flat_season("ZeroWeek")
-        tournament = phase.tournament
-        before = _resolved_node_count(tournament)
-        stage_size = _stage_size(tournament)
-
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            response = self.client.post(reverse("play_week", args=[season.id]))
-
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(_resolved_node_count(tournament) - before, stage_size)
-
 
 # ===========================================================================
 # CONF-02 review fix - the three UI entry points that guarded on
@@ -389,35 +314,11 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
             self.tournaments,
         ) = _built_two_conference_season("UiEntry")
 
-    def test_play_playoffs_enqueues_instead_of_409(self) -> None:
-        """The regression this fix exists for: the enqueue view used to 409."""
-        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
-        with patch("matches.tasks.play_playoffs_task.apply_async") as apply_async:
-            response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json()["season_id"], self.season.id)
-        apply_async.assert_called_once_with(
-            kwargs={"season_id": self.season.id},
-            task_id=response.json()["job_id"],
-            retry=False,
-        )
-
-    def test_play_single_round_resolves_exactly_one_node(self) -> None:
-        before = sum(_resolved_by_tournament(self.phase).values())
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            response = self.client.post(
-                reverse("play_single_round", args=[self.season.id])
-            )
-        self.assertEqual(response.status_code, 302)
-        after = sum(_resolved_by_tournament(self.phase).values())
-        self.assertEqual(
-            after - before,
-            1,
-            "Play Single Round is a ONE-node step across the whole phase",
-        )
+    # (``play-playoffs`` enqueues and ``play-single-round`` resolves one node:
+    # ported to test_api_play_runs.py / test_api_sync_play.py.)
 
     def test_playoff_cursor_keys_report_the_phase_active(self) -> None:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
 
         active, tournament_id, completed, _following, _final = _playoff_cursor_keys(
             self.season
@@ -428,7 +329,7 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
         self.assertEqual(tournament_id, self.tournaments[0].id)
 
     def test_cursor_reports_completed_only_when_every_bracket_drains(self) -> None:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
         from matches.tournament_engine import play_next_bracket_round
 
         # Drain ONE Conference's bracket fully; the other stays untouched.
@@ -452,37 +353,14 @@ class TestZeroConferenceUiEntryPointsUnchanged(TestCase):
     def setUp(self) -> None:
         self.season, self.teams, self.phase = _built_flat_season("UiFlat")
 
-    def test_play_playoffs_still_enqueues(self) -> None:
-        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
-        with patch("matches.tasks.play_playoffs_task.apply_async"):
-            response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
-        self.assertEqual(response.status_code, 202)
-
-    def test_play_single_round_still_resolves_one_node(self) -> None:
-        before = _resolved_node_count(self.phase.tournament)
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            response = self.client.post(
-                reverse("play_single_round", args=[self.season.id])
-            )
-        self.assertEqual(response.status_code, 302)
-        self.phase.tournament.refresh_from_db()
-        self.assertEqual(_resolved_node_count(self.phase.tournament) - before, 1)
-
     def test_cursor_keys_still_point_at_the_single_embedded_bracket(self) -> None:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
 
         active, tournament_id, _completed, _following, _final = _playoff_cursor_keys(
             self.season
         )
         self.assertTrue(active)
         self.assertEqual(tournament_id, self.phase.tournament_id)
-
-    def test_play_playoffs_409s_when_the_phase_has_no_bracket(self) -> None:
-        """The guard still guards - an unbuilt phase is still a 409."""
-        season, _teams, _rr_phase, phase = _flat_season("UiUnbuilt")
-        self.assertIsNone(phase.tournament_id)
-        response = self.client.post(reverse("play_playoffs", args=[season.id]))
-        self.assertEqual(response.status_code, 409)
 
 
 # ===========================================================================
@@ -1022,103 +900,10 @@ class TestWorldsDrainCrossesThePhaseBoundary(TestCase):
         self.season.refresh_from_db()
         self.assertNotEqual(self.season.state, "completed")
 
-    # -- §6.D play_playoffs is not a 409 trap ------------------------------
-
-    def test_play_playoffs_returns_202_on_an_unbuilt_worlds_cursor(self) -> None:
-        """The regression this hook exists for (§11.5 item 10). With the cursor
-        parked on an unbuilt Worlds phase, ``tournaments_for_phase`` is ``[]``,
-        so the guard would 409 "No active playoff bracket to play." and the
-        drain could never be STARTED. The build MUST precede the cursor read."""
-        _conf04_stamp_regionals_completed(self.phase, self.conferences, self.groups)
-        self.assertEqual(
-            self.season.current_phase().pk, _conf04_worlds_phase(self.season).pk
-        )
-        self.assertIsNone(_conf04_worlds_phase(self.season).tournament_id)
-
-        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
-        with patch("matches.tasks.play_playoffs_task.apply_async"):
-            response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
-        self.assertEqual(response.status_code, 202)
-        self.assertEqual(response.json()["season_id"], self.season.id)
-
-    def test_the_409_post_leaves_a_built_and_active_worlds_bracket(self) -> None:
-        _conf04_stamp_regionals_completed(self.phase, self.conferences, self.groups)
-        # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
-        with patch("matches.tasks.play_playoffs_task.apply_async"):
-            self.client.post(reverse("play_playoffs", args=[self.season.id]))
-
-        worlds = _conf04_worlds_tournament(self.season)
-        self.assertIsNotNone(worlds)
-        self.assertEqual(worlds.state, "active")
-
-    def test_play_playoffs_still_409s_when_there_is_no_bracket_at_all(self) -> None:
-        """The guard still guards: an unbuilt REGIONAL phase (the regular season
-        is still running) is still a 409."""
-        season, _conferences, _groups, _rr, phase = _conf_season(
-            "Conf04Unbuilt", [4, 4]
-        )
-        self.assertFalse(phase.regional_tournaments.exists())
-        response = self.client.post(reverse("play_playoffs", args=[season.id]))
-        self.assertEqual(response.status_code, 409)
-
-    # -- §6.C play_single_round is never a dead click ----------------------
-
-    def test_the_click_that_finishes_the_regionals_builds_worlds(self) -> None:
-        """§11.5 item 11. Two 4-Team brackets hold 3 nodes each and
-        ``play_single_round`` resolves exactly ONE node per click, so click 6
-        resolves the last regional node - and must leave the Worlds bracket
-        BUILT and ``active`` rather than a cursor on an empty phase."""
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            for _ in range(6):
-                response = self.client.post(
-                    reverse("play_single_round", args=[self.season.id])
-                )
-                self.assertEqual(response.status_code, 302)
-
-        for conference in self.conferences:
-            self.assertEqual(
-                _conf03_regional(self.phase, conference).state, "completed"
-            )
-        worlds = _conf04_worlds_tournament(self.season)
-        self.assertIsNotNone(worlds, "the regionals-finishing click must build Worlds")
-        self.assertEqual(worlds.state, "active")
-        self.assertEqual(worlds.nodes.count(), 1)
-
-    def test_that_click_does_not_itself_play_a_worlds_node(self) -> None:
-        # §6.C - the click already played its regional node; the NEXT click
-        # finds the cursor on a built Worlds phase and drains it normally.
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            for _ in range(6):
-                self.client.post(reverse("play_single_round", args=[self.season.id]))
-        worlds = _conf04_worlds_tournament(self.season)
-        self.assertEqual(_resolved_node_count(worlds), 0)
-        self.season.refresh_from_db()
-        self.assertEqual(self.season.state, "active")
-
-    def test_the_next_click_plays_a_worlds_node_and_crowns_the_season(self) -> None:
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            for _ in range(7):
-                response = self.client.post(
-                    reverse("play_single_round", args=[self.season.id])
-                )
-                self.assertEqual(response.status_code, 302)
-
-        worlds = _conf04_worlds_tournament(self.season)
-        self.assertEqual(_resolved_node_count(worlds), 1)
-        self.assertEqual(worlds.state, "completed")
-        self.season.refresh_from_db()
-        self.assertEqual(self.season.state, "completed")
-        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
-
-    def test_no_click_in_the_run_ever_returns_the_no_bracket_error(self) -> None:
-        # A 400 here would be the "cursor parked on an unbuilt Worlds phase"
-        # failure mode: ``_render_season_dashboard_error`` renders with 400.
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            for _ in range(7):
-                response = self.client.post(
-                    reverse("play_single_round", args=[self.season.id])
-                )
-                self.assertNotEqual(response.status_code, 400)
+    # (``play-playoffs`` on an unbuilt Worlds cursor and ``play-single-round``
+    # across the boundary: ported to test_api_play_runs.py::
+    # TestPlayPlayoffsOnRegionalPhases and test_api_sync_play.py::
+    # TestPlaySingleRoundCrossesIntoWorlds.)
 
 
 class TestWorldsDrainWithALastChanceBracket(TestCase):

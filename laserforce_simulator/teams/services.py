@@ -1,10 +1,9 @@
-"""ANG-01a — Team/Player write services shared by the HTML views and the REST API.
+"""ANG-01a — Team/Player write services behind the REST API.
 
 The post-validation halves of LG-00 generation and LG-00b roster import live
-here so ``teams.views`` (HTML) and ``teams.api_views`` (REST) run the exact
-same code path. The generation / roster helpers moved here from
-``teams.views`` (which re-exports them for existing importers) to avoid a
-views <-> services import cycle.
+here, called by ``teams.api_views`` and by the League / Tournament services.
+The generation / roster helpers moved here from the HTML ``teams.views``
+(deleted in ANG-08).
 """
 
 from __future__ import annotations
@@ -62,8 +61,8 @@ def player_form_initial() -> dict[str, object]:
 
     The form's own field initials (the 19 stat defaults of 50, from the model)
     plus one ``_random_player_profile()`` draw (name, age, started_playing_age,
-    total_games, home_site, height). The HTML ``player_add`` GET and the API
-    add-player defaults both use this, so they agree on every omitted field.
+    total_games, home_site, height). The API add-player defaults use this for
+    every omitted field.
     """
     return {
         **{
@@ -101,6 +100,38 @@ def annotate_overall_rating(qs: QuerySet[Player]) -> QuerySet[Player]:
         )
         / 19.0
     )
+
+
+# LG-00c — the Player sort whitelist (URL key -> ORM target), 22 ORM entries.
+# ``overall_rating`` sorts the ``annotate_overall_rating`` annotation. The
+# ``preferred_roles`` sort is Python-side and handled by each caller. Moved
+# here from ``teams.views._SORT_KEYS`` (ANG-08): the API and League screens
+# import it across apps.
+PLAYER_SORT_KEYS: dict[str, str] = {
+    "name": "name",
+    "team": "team__name",
+    "overall_rating": "overall_rating_db",
+    "player_awareness": "player_awareness",
+    "game_awareness": "game_awareness",
+    "resource_awareness": "resource_awareness",
+    "decision_making": "decision_making",
+    "positioning": "positioning",
+    "stamina": "stamina",
+    "speed": "speed",
+    "flexibility": "flexibility",
+    "adaptability": "adaptability",
+    "communication": "communication",
+    "teamwork": "teamwork",
+    "offensive_synergy": "Offensive_synergy",
+    "defensive_synergy": "defensive_synergy",
+    "midfield_synergy": "midfield_synergy",
+    "resupply_synergy": "resupply_synergy",
+    "resupply_efficiency": "resupply_efficiency",
+    "accuracy": "accuracy",
+    "survival": "survival",
+    "special_usage": "special_usage",
+    "potential": "potential",
+}
 
 
 # Two example rows demonstrating: (a) team grouping (both rows on
@@ -861,7 +892,7 @@ def build_career_stats(
     display: str,
     user: "AbstractBaseUser | None",
 ) -> dict:
-    """HX-01 + HX-02 career payload for one Player (the HTML context minus ``player``).
+    """HX-01 + HX-02 career payload for one Player (``player`` excluded).
 
     Aggregates every ``PlayerRoundState`` for the player into career totals,
     the per-role breakdown and the rolling-mean trend, then overlays the
@@ -912,7 +943,7 @@ def build_career_stats(
 def build_role_benchmarks(
     *, min_rounds: int, display: str, user: "AbstractBaseUser | None"
 ) -> dict:
-    """HX-02 role benchmarks payload (the HTML context, verbatim).
+    """HX-02 role benchmarks payload.
 
     UXP-14: scoped to the Rounds ``user`` may see -- its own plus Unmanaged
     (ADR-0038), never another Account's. ``benchmarks_by_role`` is a

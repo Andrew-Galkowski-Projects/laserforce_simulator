@@ -1,9 +1,9 @@
 """LG-02a-2 — Tournament per-node resolve/advance engine.
 
 Extracts the per-node simulate/resolve/advance body that previously lived
-inline in ``matches.tournament_views.play.tournament_play_next``. Both the sync
-view and the async Celery task drive the bracket through this single
-``play_next_node`` entry point.
+inline in the (ANG-08-deleted) HTML ``tournament_play_next`` view. Both the
+sync API action and the async Celery task drive the bracket through this
+single ``play_next_node`` entry point.
 """
 
 import random

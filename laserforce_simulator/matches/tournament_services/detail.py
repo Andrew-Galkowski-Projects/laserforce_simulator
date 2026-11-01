@@ -1,21 +1,17 @@
 """ANG-01f — Tournament detail builders.
 
-The bracket rounds, Series games, round-robin crosstable, Swiss rounds, stage
-and RR->DE cut labels behind the Tournament detail page, moved out of the view
-layer (ANG-01f-1) so the HTML views, the League playoffs screen and the API all
-build them from one place. This module imports no view module.
+The bracket rounds, Series games, round-robin crosstable, stage and RR->DE cut
+labels behind the Tournament detail API, moved out of the view layer
+(ANG-01f-1) so the League playoffs screen and the API build them from one
+place. This module imports no view module.
 """
 
 from dataclasses import asdict
 
-from django.contrib.auth.base_user import AbstractBaseUser
-from django.contrib.auth.models import AnonymousUser
 from django.db.models import QuerySet
 from rest_framework.fields import DateTimeField
 
-from accounts.permissions import owned_queryset
-from teams.forms import RosterImportForm
-from teams.models import Player, Team
+from teams.models import Team
 
 from matches.api_refs import player_ref, season_ref, team_ref
 from matches.models import (
@@ -304,30 +300,6 @@ def _build_rr_crosstable(tournament: Tournament, rows: list) -> list:
     return crosstable
 
 
-def _build_swiss_rounds(tournament: Tournament) -> list:
-    """LG-02c (Swiss) — group the Swiss nodes by ``bracket_round`` into the
-    per-round pairing sections for the detail render.
-
-    Returns ``list[{"round_number": int, "pairings": [<node_view_dict>, ...]}]``
-    in ``bracket_round`` order, each ``<node_view_dict>`` the SAME shape
-    :func:`build_rounds` builds for RR/elim nodes (so the node-card include is
-    reused). Each section dict also carries the include-friendly aliases
-    ``bracket_round`` (== round_number) and ``nodes`` (== pairings) so it can be
-    handed straight to ``matches/_tournament_round.html``. Empty list for a
-    non-Swiss Tournament.
-    """
-    return [
-        {
-            "round_number": section["bracket_round"],
-            "pairings": section["nodes"],
-            # Include-friendly aliases for matches/_tournament_round.html.
-            "bracket_round": section["bracket_round"],
-            "nodes": section["nodes"],
-        }
-        for section in build_rounds(tournament, "swiss")
-    ]
-
-
 def _tournament_stage(tournament: Tournament, has_finals: bool) -> str:
     """LG-02c (RR->DE) — derive the display stage (NOT stored).
 
@@ -375,95 +347,6 @@ def _can_play(tournament: Tournament, next_node: BracketNode | None) -> bool:
     """Play Next is offered: the Tournament is active and a node is ready
     (``next_node`` is :meth:`Tournament.find_next_playable_node`)."""
     return tournament.state == "active" and next_node is not None
-
-
-def build_detail_context(
-    tournament: Tournament, *, user: "AbstractBaseUser | AnonymousUser | None"
-) -> dict:
-    """The Tournament detail page's template context (LG-02a keys + LG-02a-2
-    import keys + LG-02c RR / RR->DE / Swiss keys + LG-02x-1 pool keys).
-
-    ``user`` scopes the pool's add-existing picker to the Players that Account
-    may see (ANG-01f), the same set ``PoolAddPlayersForm`` accepts.
-    """
-    participants = list(tournament.participants.select_related("team").order_by("seed"))
-    rounds = _build_all_rounds(tournament)
-    next_node = tournament.find_next_playable_node()
-    # LG-02c (RR->DE) — finals exist iff any non-RR node has been persisted.
-    has_finals = tournament.nodes.exclude(bracket_type="round_robin").exists()
-    stage = _tournament_stage(tournament, has_finals)
-    # LG-02c — round-robin crosstable + standings (also rendered during the
-    # RR->DE seeding stage). Empty for the elim formats.
-    is_rr_like = tournament.format in ("round_robin", "round_robin_double_elim")
-    cut_labels: dict[int, str] = {}
-    if is_rr_like:
-        # Compute the standings ONCE and feed every surface (the crosstable
-        # orders teams by rank, the table renders the rows, the cut markers tag
-        # them) — avoids a second multi-join + compute_standings pass per render.
-        rr_rows = tournament.round_robin_standings()
-        rr_crosstable = _build_rr_crosstable(tournament, rr_rows)
-        # Pair each StandingsRow with its Team so the template can render the
-        # team NAME (StandingsRow carries only team_id) — the LG-01
-        # season-standings `rows_with_teams` precedent.
-        team_by_id = {p.team_id: p.team for p in participants}
-        rr_standings = [(row, team_by_id.get(row.team_id)) for row in rr_rows]
-        # Cut markers only in the RRDE seeding stage.
-        if tournament.format == "round_robin_double_elim" and stage == "seeding":
-            cut_labels = _rrde_cut_labels(tournament, rr_rows)
-    else:
-        rr_crosstable = []
-        rr_standings = []
-    # LG-02c (Swiss) — per-round pairing sections + Buchholz-ranked standings.
-    # Empty for non-Swiss formats so the template references them unconditionally.
-    if tournament.format == "swiss":
-        swiss_rounds_view = _build_swiss_rounds(tournament)
-        swiss_rows = tournament.swiss_standings()
-        team_by_id = {p.team_id: p.team for p in participants}
-        swiss_standings = [(row, team_by_id.get(row.team_id)) for row in swiss_rows]
-    else:
-        swiss_rounds_view = []
-        swiss_standings = []
-    # LG-02x-1 — Player-pool draw pool / draw surface. Empty / defaulted for preset.
-    if tournament.team_assembly == "player_pool":
-        pool_entries = list(
-            tournament.player_entries.select_related("player", "drawn_team").order_by(
-                "tier", "player_id"
-            )
-        )
-        is_drawn = tournament.player_entries.filter(drawn_team__isnull=False).exists()
-        all_players = list(
-            owned_queryset(Player.objects.all(), user, path="team").order_by("name")
-        )
-    else:
-        pool_entries = []
-        is_drawn = False
-        all_players = []
-    return {
-        "tournament": tournament,
-        "format_label": format_label(tournament),
-        "participants": participants,
-        "rounds": rounds,
-        "next_node": next_node,
-        "is_locked": tournament.is_locked,
-        "can_play": _can_play(tournament, next_node),
-        "import_form": RosterImportForm(),
-        "import_row_errors": [],
-        "rr_crosstable": rr_crosstable,
-        "rr_standings": rr_standings,
-        "tournament_stage": stage,
-        "cut_labels": cut_labels,
-        "swiss_rounds_view": swiss_rounds_view,
-        "swiss_standings": swiss_standings,
-        # LG-02x-1 — Player-pool draw keys.
-        "team_assembly": tournament.team_assembly,
-        "role_assignment_mode": tournament.role_assignment_mode,
-        "pool_entries": pool_entries,
-        "pool_size": len(pool_entries),
-        "is_drawn": is_drawn,
-        "all_players": all_players,
-        "pool_import_form": RosterImportForm(),
-        "pool_import_row_errors": [],
-    }
 
 
 # ---------------------------------------------------------------------------

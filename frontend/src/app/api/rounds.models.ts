@@ -356,8 +356,6 @@ export interface RoundHeatmap {
   /** Fetch the image from `maps/{id}/processed-image/`; `null` for a map-less Round. */
   arena_map: { id: number; name: string } | null;
   zone_size: number | null;
-  /** The session-only Django URL: never fetched by the SPA (use `arena_map.id`). */
-  processed_image_url: string | null;
   /** Player id (as a string) -> `"r,c"` -> ticks; `{}` when nothing was recorded. */
   cell_occupancy_json: Record<string, Record<CellKey, number>>;
   player_roster: HeatmapRosterEntry[];

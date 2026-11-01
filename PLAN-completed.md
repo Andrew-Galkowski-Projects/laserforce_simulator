@@ -7649,6 +7649,68 @@ Landing page, the Shell's Tools / Help top-nav sections (Play ships
    `blocker` text, Multiplayer, any working Tools feature, sidenav changes, Django's sandbox
    top links.
 
+### ANG-08 · [DONE] Remove Django template views
+
+Spec: #464
+
+**[DONE] Shipped (2026-11-01).** Every Django template view, template file and template-only helper
+is gone (spec #464, tickets #465-#474). Django now serves only /admin/, /api/ and /media/ (pinned by
+test_django_serves_only_admin_api_and_media). nginx serves the SPA at / with an index.html fallback
+and 301s /app/<x> to /<x> (ADR-0047 supersedes ADR-0046). Helpers other code imported through view
+modules moved first: PLAYER_SORT_KEYS to teams.services, the batch / save status builders to
+matches.job_status. Every shared-logic case the API tests lacked was ported to an API test and seen
+red under mutation before its HTML test was deleted. Beyond the plan: 11 League play cases lost with
+views_tests.py were ported after an audit, and review deleted the now-dead int_or_none export,
+_coerce_sort / _coerce_dir, build_detail_context, resolve_league_team, parse_team_id and the
+GenerateLeagueForm select helpers. LOGIN_URL is admin:login; the Admin invite link is the SPA's
+/register?invite=<code>; the API fields detail_url, season_url and processed_image_url are dropped.
+Fly.io is API + Admin only until ANG-10.
+
+Once each Angular view is verified, delete the corresponding Django template file and its
+HTML-serving view function. Keep the API endpoint. Update URL routing to remove the old path.
+The app should have zero `.html` template files by the end of this phase, except Django Admin
+(which is a permanent exception and stays indefinitely).
+
+**Settled (owner grill, 2026-10-31):**
+1. **Verified** = each ANG-06 item's own browser check. No fresh parity pass; all templates go
+   in one task.
+2. **SPA moves from `/app/` to `/`** in this task: no `--base-href /app/`, nginx serves the SPA at
+   `/` with an `index.html` fallback and proxies only `/api/`, `/admin/`, `/static/`, `/media/` to
+   Django. ADR-0047 supersedes ADR-0046.
+3. **Old links:** nginx 301s `/app/<x>` to `/<x>`. No per-path redirects for old Django URLs; they
+   fall into the SPA's `**` route (ADR-0004: data is disposable).
+4. **Fly.io** becomes API + Admin only; serving the SPA there is a follow-up PLAN.md task.
+5. **Whole legacy surface goes**, including the non-HTML views that only the template JS used
+   (batch-sim / map-editor / play-run JSON, `play_status` snippets, watch toggle, tournament
+   play-all, CSV template, PDF export, every POST-redirect action). Helpers other code imports
+   through view modules move to services first (`build_batch_status_response`,
+   `build_save_status_response`, `int_or_none`, `teams.views._SORT_KEYS`, the League re-exports,
+   `core.views._seed_defaults` / `_get_image_local_path`). URLs left: `/admin/`, `/api/`,
+   `/media/`.
+6. **Template-only support code goes:** the four custom context processors, both templatetags
+   modules (`team_extras`, `self_insert_tags`) and their tests, `BatchSimulateForm`,
+   `EmailAuthenticationForm`, `laserforce_simulator/assets/` and `STATICFILES_DIRS`. `APP_DIRS`,
+   WhiteNoise and `collectstatic` stay (Admin, DRF).
+7. **API fields built from HTML URL names are dropped** (the SPA uses none): h2h `detail_url`,
+   League History `season_url`, round heatmap `processed_image_url`, in the API and in
+   `frontend/src/app/api/*.models.ts`, with their pinning tests updated.
+8. **Tests:** delete HTML-only tests; tests guarding shared logic (ownership stamping, setup-form
+   scoping, play-run guards / cancel, next-season, reassign, League delete, member night, playoffs
+   drain, map-in-use guard) get any case the API tests lack ported to an API test first; tests
+   importing helpers through view modules are repointed; `test_login_exempt_surfaces.py` updated.
+   The spec lists a port-or-delete verdict per shared-logic file.
+9. **Auth:** keep `SessionAuthentication` (browsable API for Admin-logged-in staff) and
+   `LoginRequiredMiddleware`; `LOGIN_URL` = `admin:login`, login / logout redirects point at
+   non-HTML targets; the Admin invite link becomes the SPA's `/register?invite=<token>`.
+10. **CI / smoke:** the docker job polls `/admin/login/`; `smoke_nginx.sh` checks `/` serves the
+    SPA with `<base href="/">`, a deep link falls back, `/app/x` 301s to `/x`, and CSRF / Host /
+    X-Forwarded-Proto run against `/admin/login/`; `test_https_proxy.py` moves to `/admin/login/`.
+11. **Docs** describing the HTML views are rewritten or cut in this task (app `CLAUDE.md`s, root
+    `CLAUDE.md`, `docs/agents/**`, `README.md`, `docs/self-hosting.md`, `CODING_STANDARDS.md`'s
+    template-parity rule). Past ADRs stay; ADR-0046 is marked superseded.
+12. **Out of scope:** new Angular screens or behaviour, the "Soon" items, the SPA on Fly,
+    dropping `SessionAuthentication`, any model or migration change.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

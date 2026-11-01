@@ -17,17 +17,16 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from django.urls import URLPattern, URLResolver, get_resolver
+import pytest
+from django.conf import settings
+from django.test import Client
+from django.urls import URLPattern, URLResolver, get_resolver, reverse
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.settings import api_settings
 
+# ANG-08 D1: the Admin login is the only Django login page left (ADR-0047).
 HTML_EXEMPT_VIEWS = {
     "django.contrib.admin.sites.login",
-    "django.contrib.auth.views.LoginView",
-    "django.contrib.auth.views.LogoutView",
-    "django.contrib.auth.views.PasswordChangeView",
-    "django.contrib.auth.views.PasswordChangeDoneView",
-    "accounts.views.register",
 }
 
 ANONYMOUS_API_VIEWS = {
@@ -90,6 +89,50 @@ def test_every_api_view_requires_authentication_unless_allowlisted() -> None:
         if IsAuthenticated not in permissions:
             anonymous.add(_dotted(callback.cls))  # type: ignore[attr-defined]
     assert anonymous == ANONYMOUS_API_VIEWS
+
+
+def _routes(patterns: list[Any], prefix: str = "") -> Iterator[str]:
+    for pattern in patterns:
+        route = prefix + str(pattern.pattern)
+        if isinstance(pattern, URLResolver):
+            yield from _routes(pattern.url_patterns, route)
+        elif isinstance(pattern, URLPattern):
+            yield route
+
+
+def test_django_serves_only_admin_api_and_media() -> None:
+    # ANG-08 (ADR-0047): the SPA owns every other path.
+    allowed = ("admin/", "api/", "^media/")
+    stray = [
+        r for r in _routes(get_resolver().url_patterns) if not r.startswith(allowed)
+    ]
+    assert stray == []
+
+
+def test_the_admin_login_is_the_only_html_exemption() -> None:
+    assert HTML_EXEMPT_VIEWS == {"django.contrib.admin.sites.login"}
+
+
+@pytest.mark.django_db
+def test_admin_login_renders_its_form_for_an_anonymous_visitor(client: Client) -> None:
+    # Admin needs Django's own three context processors (ANG-08).
+    response = client.get(reverse("admin:login"))
+    assert response.status_code == 200
+    body = response.content.decode()
+    assert 'id="login-form"' in body
+    assert 'name="username"' in body
+    assert 'name="password"' in body
+
+
+def test_no_project_template_remains() -> None:
+    templates_dir = settings.BASE_DIR / "templates"
+    assert list(templates_dir.rglob("*.html")) == []
+
+
+def test_no_custom_context_processor_is_registered() -> None:
+    processors = settings.TEMPLATES[0]["OPTIONS"]["context_processors"]
+    custom = [p for p in processors if p.startswith(("core.", "accounts."))]
+    assert custom == []
 
 
 def test_anonymous_api_views_are_explicitly_allow_any() -> None:

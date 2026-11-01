@@ -6,10 +6,9 @@ Seam contract ``.claude/worktrees/ang-01d-1-seam-contract.md`` sections 2 / 3.1 
   ``start_next_season`` + its three domain exceptions, ``reassign_and_roll``,
   ``ensure_owner_evaluation``, the ``build_*`` readers, ``history_seasons``,
   ``replace_conferences``).
-* The moved-name re-export block in ``matches.league_views`` (section 2.3).
 * ``ConferencePartitionForm`` -- every step-1/2 message, the partition strings
   + bracket floor, str vs list rotation, the once-only rotate-by-conference
-  guard, and the combined error order == today's HTML list.
+  guard, and the combined error order.
 
 Hand-built fixtures only; no simulated point totals are asserted.
 """
@@ -19,10 +18,9 @@ from __future__ import annotations
 from datetime import date
 
 from django.test import TestCase
-from django.urls import reverse
 
 from core.map_test_fixtures import TempMediaMixin
-from matches import league_services, league_views
+from matches import league_services
 from matches.forms import ConferencePartitionForm
 from matches.models import Conference, OwnerEvaluation, Season
 from matches.tests.league_api_fixtures import (
@@ -48,96 +46,6 @@ from matches.tests.league_api_fixtures import (
     not_enrolled_msg,
     ranked_career_league,
 )
-
-# ---------------------------------------------------------------------------
-# Re-exports (section 2.3)
-# ---------------------------------------------------------------------------
-
-_RENAMED_ALIASES = {
-    "_template_to_form_data": "template_to_form_data",
-    "_create_league_and_season": "create_league_and_season",
-    "_is_career_league": "is_career_league",
-    "_run_season_rollover": "run_season_rollover",
-    "_eligible_new_teams": "eligible_new_teams",
-    "_teardown_league": "teardown_league",
-    "_build_dashboard_context": "build_dashboard_context",
-    "_pick_displayed_season": "pick_displayed_season",
-    "_compute_season_award_set": "compute_season_award_set",
-    "_build_history_row": "build_history_row",
-    "_STANDINGS_SORT_KEYS": "STANDINGS_SORT_KEYS",
-}
-
-_SAME_NAME_MOVES = (
-    "SEED_BUDGET_MIN",
-    "SEED_BUDGET_MAX",
-    "SEED_BUDGET_SINGLE",
-    "_compute_team_overall",
-    "_rank_teams_by_strength",
-    "_pick_manager_team",
-    "_seed_team_budgets_by_strength",
-    "_write_baseline_ratings",
-    "_developing_players",
-    "_develop_league_for_new_season",
-    "_classify_playoffs_for_team",
-    "_ensure_team_finances",
-    "_ensure_owner_evaluations",
-    "WORST_N_ELIGIBLE",
-    "_delete_team_if_orphaned",
-    "_league_teardown_targets",
-    "_league_match_q",
-    "_playoff_cursor_keys",
-    "_build_map_config_label",
-    "_member_night_games_for_season",
-    "_member_night_appearances_for_team",
-    "_build_team_schedule_rows",
-    "_validate_conference_partition",
-    "_standings_sort_value",
-)
-
-
-class TestReExports(TestCase):
-    def test_renamed_names_alias_the_service_objects(self) -> None:
-        for old, new in _RENAMED_ALIASES.items():
-            with self.subTest(old=old):
-                self.assertTrue(hasattr(league_services, new), new)
-                self.assertIs(getattr(league_views, old), getattr(league_services, new))
-
-    def test_same_name_moves_are_re_exported(self) -> None:
-        for name in _SAME_NAME_MOVES:
-            with self.subTest(name=name):
-                self.assertIs(
-                    getattr(league_views, name), getattr(league_services, name)
-                )
-
-    def test_new_public_surface_exists(self) -> None:
-        for name in (
-            "SeasonInProgressError",
-            "NoCompletedSeasonError",
-            "ManagerFiredError",
-            "season_mode_for",
-            "latest_completed_season",
-            "start_next_season",
-            "reassign_and_roll",
-            "ensure_owner_evaluation",
-            "build_season_standings",
-            "build_season_schedule",
-            "build_team_schedule",
-            "history_seasons",
-            "build_season_awards",
-            "build_conferences_state",
-            "replace_conferences",
-        ):
-            with self.subTest(name=name):
-                self.assertTrue(hasattr(league_services, name))
-
-    def test_services_module_does_not_import_league_views(self) -> None:
-        import inspect
-
-        source = inspect.getsource(league_services)
-        self.assertNotIn("from matches.league_views", source)
-        self.assertNotIn("from .league_views", source)
-        self.assertNotIn("import matches.league_views", source)
-
 
 # ---------------------------------------------------------------------------
 # season_mode_for / latest_completed_season
@@ -784,24 +692,3 @@ class TestConferencePartitionForm(TempMediaMixin, TestCase):
                 ROTATION_GUARD_MSG,
             ],
         )
-
-    def test_combined_errors_match_html_manage_conferences(self) -> None:
-        """The HTML POST (indexed parse) and the API body (JSON) report the
-        identical error list for the equivalent submission."""
-        self.season.map_mode = "rotate_by_conference"
-        self.season.save(update_fields=["map_mode"])
-        form = self.form(self._combined_inputs())
-        self.assertFalse(form.is_valid())
-        response = self.client.post(
-            reverse("manage_conferences", args=[self.season.id]),
-            {
-                "conference_name": [" ", "East"],
-                "conference_rotation": ["abc", "999999"],
-                f"team_{self.ids[0]}_conference": "0",
-                f"team_{self.ids[2]}_conference": "1",
-                f"team_{self.ids[3]}_conference": "1",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["errors"], _messages(form))
-        self.assertEqual(self.season.conferences.count(), 0)

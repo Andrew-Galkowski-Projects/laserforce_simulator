@@ -39,6 +39,7 @@ from teams.models import Player, Team
 from teams.roster_importer import RosterImportError, RowError
 from teams.serializers import PlayerSerializer, TeamListSerializer, TeamSerializer
 from teams.services import (
+    PLAYER_SORT_KEYS,
     annotate_overall_rating,
     build_career_stats,
     build_role_benchmarks,
@@ -48,7 +49,6 @@ from teams.services import (
     run_player_generation,
     run_roster_import,
 )
-from teams.views import _SORT_KEYS
 
 
 def roster_import_errors_to_envelope(errors: list[RowError]) -> list[ErrorEntry]:
@@ -91,7 +91,7 @@ _SLOT_FIELDS = (
 # `IsAuthenticated` is what actually gates it. The class-level `queryset` stays
 # for the router's basename/model introspection.
 #
-# ANG-01a — writes bind the same Django Forms the HTML views bind (ADR-0039);
+# ANG-01a — writes bind Django Forms (ADR-0039);
 # serializers are output-only. Every write resolves its Team through
 # `get_object()` on the owned queryset, so another Account's Team is a 404.
 # No `update` / `destroy` → PUT / DELETE on a team detail are 405.
@@ -303,8 +303,8 @@ class PlayerViewSet(
     # LG-00c's 23 public sort keys, aliased to their ORM targets
     # (offensive_synergy -> Offensive_synergy, team -> team__name,
     # overall_rating -> the overall_rating_db annotation).
-    ordering_fields = tuple(_SORT_KEYS)
-    ordering_aliases = _SORT_KEYS
+    ordering_fields = tuple(PLAYER_SORT_KEYS)
+    ordering_aliases = PLAYER_SORT_KEYS
     ordering = ("team__name", "name")
     ordering_tiebreak = ("name", "id")
 

@@ -278,7 +278,7 @@ def play_season_task(
     """
     try:
         from core.models import ArenaMap
-        from matches.league_views import (
+        from matches.league_play_services import (
             resolve_injuries_for_fixture,
             restore_after_fixture,
         )

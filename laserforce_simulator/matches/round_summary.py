@@ -1,9 +1,9 @@
 """Round scoreboard — pure aggregation over per-player dicts.
 
 The **Round scoreboard** (GLOSSARY.md, `### Analytics and review`) is the
-per-player table both the HTML round-detail page and the **Round report**
-PDF render. The view materialises one 27-key dict per ``PlayerRoundState``
-via ``matches.views._player_row`` and hands the lists to the functions
+per-player table both the API round scoreboard and the **Round report**
+PDF render. ``matches.services`` materialises one row dict per
+``PlayerRoundState`` via ``_player_row`` and hands the lists to the functions
 below; both surfaces consume the same dict so they cannot drift.
 
 This module is **pure**: no Django, no ORM, no RNG, no I/O.

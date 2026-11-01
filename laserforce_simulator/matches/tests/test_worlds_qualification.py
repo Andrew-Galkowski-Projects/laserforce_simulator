@@ -48,7 +48,6 @@ defect in this file.
 from __future__ import annotations
 
 from django.test import SimpleTestCase, TestCase
-from django.urls import reverse
 
 from matches.models import BracketNode, Tournament, TournamentParticipant
 from matches.tests.test_regional_playoffs import (
@@ -793,14 +792,6 @@ class TestWorldsQualifiersPrematureFieldGuard(TestCase):
 
     def test_worlds_qualifiers_is_empty_mid_regular_season(self) -> None:
         self.assertEqual(self.season.worlds_qualifiers(), [])
-
-    def test_the_worlds_panel_is_absent_from_the_playoffs_screen(self) -> None:
-        response = self.client.get(
-            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["worlds_qualifiers"], [])
-        self.assertNotContains(response, 'id="league-playoffs-worlds"')
 
     def test_still_empty_after_the_round_robin_but_before_activation(self) -> None:
         # The RR is finished but nothing has built the brackets yet — still

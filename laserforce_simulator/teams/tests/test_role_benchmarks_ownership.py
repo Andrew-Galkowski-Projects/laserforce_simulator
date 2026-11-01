@@ -2,9 +2,9 @@
 
 The benchmark population is the Account's own + Unmanaged Rounds (the same
 ``owned_game_round_q`` visibility the rest of the Sandbox uses). Another
-Account's Rounds never feed this Account's numbers -- not on the HTML page,
-not on ``GET /api/players/benchmarks/``, not on the career-page overlay, and
-not through the shared cache.
+Account's Rounds never feed this Account's numbers -- not on
+``GET /api/players/benchmarks/``, not on the career-page overlay, and not
+through the shared cache.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.test import TestCase, override_settings
-from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
@@ -91,16 +90,6 @@ class TestBenchmarksScopedToAccount(TestCase):
         own = build_role_benchmarks(min_rounds=0, display="mean", user=self.user_a)
         self.assertEqual(_commander_points_n(other), 1)
         self.assertEqual(_commander_points_n(own), 2)
-
-    def test_html_page_hides_other_accounts_rounds(self) -> None:
-        client = self.client
-        client.force_login(self.user_b)
-        response = client.get(reverse("role_benchmarks") + "?threshold=0")
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.context["any_data"])
-        client.force_login(self.user_a)
-        response = client.get(reverse("role_benchmarks") + "?threshold=0")
-        self.assertTrue(response.context["any_data"])
 
     def test_api_hides_other_accounts_rounds(self) -> None:
         api = APIClient()

@@ -1,8 +1,8 @@
 """LG-03 — Season-end awards (pure Python aggregation).
 
 Computes a Season's award set from a flat list of per-``PlayerRoundState``
-dicts (one entry per Round a player appeared in). The view
-(``matches.league_views.season_awards``) builds these dicts — reading
+dicts (one entry per Round a player appeared in). The caller
+(``matches.league_services._compute_season_award_set``) builds these dicts — reading
 ``get_accuracy`` / ``get_mvp`` (properties) and resolving the team via
 ``team_color`` — and hands a flat list to :func:`compute_season_awards`; this
 module never sees a Django object, the ORM, RNG, ``datetime``, or I/O.

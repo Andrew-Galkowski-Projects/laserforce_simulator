@@ -62,7 +62,7 @@ class TestCorsOnApi(TestCase):
         self.assertEqual(response["Access-Control-Allow-Origin"], DEV_ORIGIN)
 
     def test_non_api_path_gets_no_cors_headers(self) -> None:
-        response = Client().get(reverse("login"), HTTP_ORIGIN=DEV_ORIGIN)
+        response = Client().get(reverse("admin:login"), HTTP_ORIGIN=DEV_ORIGIN)
         self.assertEqual(response.status_code, 200)
         self.assertNotIn("Access-Control-Allow-Origin", response)
         self.assertNotIn("Access-Control-Allow-Credentials", response)

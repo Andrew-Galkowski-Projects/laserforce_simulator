@@ -1,5 +1,5 @@
 """CRE-02 — Django ``TestCase`` tests for the ``tier_means=`` keyword-only
-parameter on ``teams.views._generate_teams``.
+parameter on ``teams.services._generate_teams``.
 
 The seam contract is locked at ``.claude/worktrees/cre-02-seam-contract.md``
 (§4.2 for the signature and semantics, §8.4 for the determinism obligations).
@@ -25,7 +25,7 @@ from django.test import TestCase
 
 from teams.models import Player, Team
 from teams.player_generator import compute_tier_means
-from teams.views import _generate_teams
+from teams.services import _generate_teams
 
 SEED = 42
 
@@ -72,7 +72,7 @@ def _player_pool(prefix: str, size: int = 400) -> list[str]:
 def _mean_overall(team: Team) -> float:
     """Mean active-roster ``overall_rating`` — recomputed here deliberately.
 
-    NOT ``matches.league_views._rank_teams_by_strength`` / ``_compute_team_overall``:
+    NOT ``matches.league_services._rank_teams_by_strength`` / ``_compute_team_overall``:
     the tier assertions must be independent of the league-ranking helper.
     """
     actives = team.active_players

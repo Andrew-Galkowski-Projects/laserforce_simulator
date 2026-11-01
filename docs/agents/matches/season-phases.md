@@ -94,27 +94,25 @@ chokepoint.** Each was an inline `generate_schedule(team_ids,
 `if not fixtures: return False`; behaviour-equivalence is load-bearing — a
 phase-less Season MUST return today's result); **`play_season_task`**
 (`tasks.py:190` — downstream `played_keys` build / `select_play_fixtures` /
-per-fixture `simulate_scheduled_round` loop unchanged); **`season_schedule`**
-(`league_views.py:371`); **`_build_dashboard_context`** (`league_views.py:646`);
-**`league_history`** Play-Week preview (`league_views.py:1512`);
-**`team_schedule`** (`league_views.py:1822`). `Season.complete_if_finished`
+per-fixture `simulate_scheduled_round` loop unchanged); and, in
+`matches/league_services.py`, **`build_season_schedule`**,
+**`build_dashboard_context`** and **`build_team_schedule`**. `Season.complete_if_finished`
 (`models.py:984`) is **unchanged** (routes through `_is_finished`). The pure
 module **`matches/season_dashboard.py`** (`find_next_fixture` / `round_progress`
 / `find_next_matchday` / `select_play_fixtures` / `compute_leaders` /
 `LeaderRow`) is **NOT edited** — it stays pure (frozen no-Django import
 allowlist, defended by `TestNoDjangoImportsLeaked`); the **caller** builds the
 fixtures via `scheduled_fixtures()` and passes the list in, exactly as today.
-**Deliberately NOT touched:** `Tournament.lock_and_build` (`models.py:1233`) and
-`tournament_views.py:435` both call `generate_schedule` for a **standalone
-Tournament**, not a Season — the chokepoint is Season-only.
+**Deliberately NOT touched:** `Tournament.lock_and_build` (`models.py:1233`)
+calls `generate_schedule` for a **standalone Tournament**, not a Season — the
+chokepoint is Season-only.
 
 **Create-on-Season-create — one explicit `round_robin` phase per new Season.**
-Both `@transaction.atomic`-decorated draft-creation views gain one
-`SeasonPhase.objects.create(season=season, ordinal=1, phase_type="round_robin")`
-**inside the existing atomic block, after the `Season.objects.create(...)`** (so
-a rollback drops the phase too): **`league_create`** (`league_views.py`, after
-the create at `:527`) and **`next_season`** (after the create at `:1900`). No
-other site writes a Season this slice. **Admin-created Seasons get the fallback
+Both draft-creation sites write
+`SeasonPhase.objects.create(...)` **inside their atomic block, after the
+`Season.objects.create(...)`** (so a rollback drops the phase too):
+**`create_league_and_season`** and **`run_season_rollover`** (both in
+`matches/league_services.py`; Part2b turned each into a loop). **Admin-created Seasons get the fallback
 for free** (zero rows ⇒ implicit phase) — no admin-side creation hook.
 
 **Admin (`matches/admin.py`).** `SeasonPhase` is added to the model import and
@@ -158,14 +156,12 @@ produce the **identical** `_is_finished()` / `complete_if_finished()` outcome
 (same state flip, same `champion_team` id) over hand-built `Match`/`GameRound`
 rows — asserting on schema-level outcomes, **not** simulated point totals;
 `scheduled_fixtures()` returns `[]` for a `< 2`-team Season without raising).
-`matches/tests/test_league_create.py` (extend — a successful `league_create`
-POST creates the Season AND exactly one `SeasonPhase(ordinal=1,
+`matches/tests/test_league_create.py` (extend — a successful League create
+makes the Season AND exactly one `SeasonPhase(ordinal=1,
 phase_type="round_robin")`; the existing rollback test leaves **zero**
 `SeasonPhase` rows). `matches/tests/test_league_next_season.py` (extend —
 `next_season` creates the new draft Season AND its one `round_robin` phase).
-`matches/tests/views_tests.py` (extend — read-path equivalence at the view
-layer: the rendered schedule/dashboard for a phase-less Season is byte-identical
-to one with an explicit RR phase). `matches/tests/test_league_play.py` (extend —
+`matches/tests/test_league_play.py` (extend —
 `play_season_task` over a phase-less Season plays the same fixtures it does
 today, under the existing `CELERY_TASK_ALWAYS_EAGER` conftest). Tests assert on
 persisted row shapes, the constraint, ordering, the fallback representation, and
@@ -181,21 +177,22 @@ default="round_robin")`), `PHASE_TYPE_CHOICES` (all three values),
 reverse accessor, the chokepoint `Season.ordered_phases()` /
 `Season.scheduled_fixtures()`, the unsaved-`SeasonPhase` implicit fallback
 (optional `Season._implicit_phase()`), the two `SeasonPhase.objects.create(...)`
-creation sites (`league_create` / `next_season`), `SeasonPhaseAdmin`
+creation sites (`create_league_and_season` / `run_season_rollover`), `SeasonPhaseAdmin`
 (+ optional `SeasonPhaseInline`), and the migration `0041_season_phase` (dep
 `0040_tournament_random_draw`, `CreateModel`-only).
 
 ## LG-02-Part2b create-league phase composer
 
-Builds on the Part2a foundation by giving the **create-League** surface a
-vanilla-JS **"+" composer** that writes **multiple ordered `SeasonPhase` rows**
+Builds on the Part2a foundation by giving **create-League** a **phase
+composer** that writes **multiple ordered `SeasonPhase` rows**
 (versus Part2a's single auto-created `round_robin` phase), plus two **dormant**
 `SeasonPhase` columns and a new **pure** parsing module. A Season's structure is
 now author-composable as an ordered list of phase *types* (RR / Tournament) at
-create time; the composer serializes the ordered rows into a hidden wire-format
+create time; the client sends the ordered rows in the `phases` wire-format
 field, the form's `clean()` parses it through the pure module, and **both**
-`SeasonPhase`-creation sites (`league_create`, `next_season`) loop over the
-parsed specs. **The read-path is UNCHANGED** — the Part2a chokepoint
+`SeasonPhase`-creation sites (`create_league_and_season`, `run_season_rollover`)
+loop over the parsed specs (the SPA composer is
+`frontend/src/app/leagues/league-create-advanced/`). **The read-path is UNCHANGED** — the Part2a chokepoint
 `Season.scheduled_fixtures()` still calls `generate_schedule(team_ids,
 Season.schedule_format)` and **ignores the phase rows**: it plays the first
 `round_robin` phase and treats `tournament` phases as invisible. Part2b *writes*
@@ -249,7 +246,7 @@ season_schedule_format: str) -> list[PhaseSpec]`** parses the composer's
 serialized output. The **wire format (LOCKED) is comma-separated phase-type
 tokens** — e.g. `"round_robin,tournament"` — parsed with `str.split(",")` and a
 `str.strip()` per token (chosen over JSON to keep the allowlist minimal, no
-`json` import; the template serializes the ordered rows into this exact form).
+`json` import).
 **Behaviour:** an **empty / blank `raw`** (`""` or whitespace-only after strip)
 **short-circuits to exactly one** `PhaseSpec(ordinal=1,
 phase_type="round_robin", schedule_format=season_schedule_format)` — the Part2a
@@ -284,47 +281,21 @@ stashes the result under **`cleaned_data["phase_specs"]`** (`list[PhaseSpec]`).
 The `season_schedule_format` argument is the form's own `schedule_format` value
 (the disabled field's locked `"single_round_robin"`).
 
-**Views (`matches/league_views.py`) — both creation sites loop over the specs.**
-In **`league_create`** (~line 553, inside the existing `@transaction.atomic`
-block) the single `SeasonPhase.objects.create(season=season, ordinal=1,
+**Services (`matches/league_services.py`) — both creation sites loop over the specs.**
+In **`create_league_and_season`** (inside its `@transaction.atomic`) the single
+`SeasonPhase.objects.create(season=season, ordinal=1,
 phase_type="round_robin")` is **replaced by a loop** over
 `form.cleaned_data["phase_specs"]`, each iteration creating a `SeasonPhase` with
 `season=season`, `ordinal=spec.ordinal`, `phase_type=spec.phase_type`,
 `schedule_format=spec.schedule_format`, and **`tournament=None`** (always). In
-**`next_season`** (~line 1942, inside its existing `@transaction.atomic` block)
+**`run_season_rollover`** (the caller owns the atomic block)
 there is **no composer** — it **carries the previous Season's composition
 forward** (mirroring the team-id / map-pool carry-forward): the single
 `SeasonPhase.objects.create(...)` is replaced by a **copy loop** over the source
 Season's `phases.all()` (the `latest_completed` carry-forward source Season;
 `Meta.ordering=["ordinal"]` guarantees order), copying `ordinal`, `phase_type`,
 and `schedule_format` **verbatim** while **resetting `tournament=None`**. Both
-loops stay inside the existing atomic blocks so a rollback drops the phases too.
-
-**Template (`templates/leagues/create.html`) — vanilla-JS composer (no
-framework, inline `<script>`, per the LG-01d precedent).** A **"+ Add block"**
-button clones a row template into the composer container; each row has a
-phase-type `<select>` (`round_robin` / `tournament`) and, for a `round_robin`
-row, a `schedule_format` `<select>` with the single option `single_round_robin`
-(mirroring the disabled Season-level one); rows are removable (reorder optional).
-On submit the JS serializes the ordered rows into the hidden
-`#league-create-phases` input in the **wire format pinned above** (comma-joined
-phase-type tokens in row order, e.g. `"round_robin,tournament"`). A **"member
-nights coming soon"** note and a per-tournament-block **"build coming in a later
-release"** flag communicate the deferred surfaces. **LOCKED DOM ids / class
-substring:** `league-create-phases-composer` (outer composer container `<div>`);
-`league-create-add-block` (the "+ Add block" button); `league-create-phases`
-(the hidden input — also the form field's widget id above);
-`league-create-phase-row-{i}` (per-row wrapper, `{i}` = 0-based row index
-assigned by JS); `league-create-phase-type-{i}` (per-row phase-type `<select>`);
-`league-create-phase-format-{i}` (per-row `schedule_format` `<select>` on RR
-rows); `league-create-member-night-note` (the "member nights coming soon" note);
-and the CSS-class **substring** `phase-tournament-pending` (the per-tournament
-"build coming later" flag). All new ids are net-new and **do not collide** with
-the existing create.html ids (`league-create-form`, `league-create-league-name`,
-`league-create-season-name`, `league-create-start-date`,
-`league-create-num-teams`, `league-create-schedule-format`,
-`league-create-mean`, `league-create-std-dev`, `league-create-map-mode`,
-`league-create-map-pool`, `league-create-submit`).
+loops stay inside the atomic block so a rollback drops the phases too.
 
 **Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` extends from
 `("season", "ordinal", "phase_type")` to **`("season", "ordinal",
@@ -391,13 +362,9 @@ related_name="season_phases")`); **migration**
 one round-robin phase"` / `f"unknown phase type: {token!r}"` / `"malformed phase
 composition"`; **form** field `phases` (`HiddenInput`, id `league-create-phases`,
 `required=False`) + `cleaned_data["phase_specs"]` (existing disabled
-`schedule_format` field unchanged); **views** `league_create` (~553) spec loop /
-`next_season` (~1942) carry-forward copy loop, both inside the existing
-`@transaction.atomic`, `tournament=None` always; **template DOM ids**
-`league-create-phases-composer`, `league-create-add-block`,
-`league-create-phases`, `league-create-phase-row-{i}`,
-`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
-`league-create-member-night-note`, class substring `phase-tournament-pending`;
+`schedule_format` field unchanged); **services** `create_league_and_season` spec loop /
+`run_season_rollover` carry-forward copy loop, both inside the atomic block,
+`tournament=None` always;
 **admin** `SeasonPhaseAdmin.list_display = ("season", "ordinal", "phase_type",
 "schedule_format", "tournament")`; **read-path UNCHANGED, `tournament` FK always
 NULL, no re-baseline.**
@@ -412,9 +379,8 @@ any playoff click), then drains the bracket to crown the **Season champion**. It
 replaces Part2b's "play the first `round_robin` phase only" read-path with a
 **phase cursor** + two **lifecycle hooks** on `Season`, an **auto-build** that
 wires an existing standalone `Tournament` (consumed VERBATIM) into a
-`SeasonPhase`, two new play views + a Celery task that drain the already-shipped
-tournament engine, dashboard + template wiring to surface the playoff button
-group, and one compose-time guard. **No `Match.season_phase` FK, no Match
+`SeasonPhase`, two new play actions + a Celery task that drain the already-shipped
+tournament engine, dashboard playoff-cursor keys, and one compose-time guard. **No `Match.season_phase` FK, no Match
 migration, no simulator change, no tournament engine change, no Score Calibration
 re-baseline.** The [ADR-0023](../../adr/0023-season-phase-composable-structure.md)
 ordered-typed-phase decision (extended with a "Part2c-1 consequences" addendum)
@@ -509,36 +475,21 @@ phase is now complete; `tournament.champion` is set). **Return shape LOCKED:**
 `{"completed": int, "total": int}` — **STAGE** counts from
 `matches.bracket.stage_progress` (reused VERBATIM, fed by `_node_to_dict` over the
 tournament's nodes), NOT node counts — matching the `play_tournament_task` shape
-exactly so `_build_play_status_response` reads it unchanged. **NO outer
+exactly. **NO outer
 `@transaction.atomic`** — `play_next_node` is already `@transaction.atomic` per
 Match (ADR-0016 precedent), so a mid-drain failure leaves every resolved node
 committed and is resumable.
 
-**Two play views (`matches/league_views.py`).**
-**`play_single_round(request, season_id) -> HttpResponse`** (sync): POST-only
-(`HttpResponseNotAllowed(["POST"])` first, 405 on GET — the LG-01d idiom), writes
-`last_league_id` after the 404 guard, requires `current_phase()` to be a built
-(`tournament_id is not None`) tournament phase else re-renders the dashboard with
-`play_error` (the `_render_season_dashboard_error` 400-equivalent), plays **exactly
-one** playoff Match via `play_next_node` (deferred import), then
-`season.complete_if_finished()` (crowns the Season if the final node landed), then
-**302 redirect** to `season_dashboard`.
-**`play_playoffs(request, season_id) -> JsonResponse`** (async): POST-only (405
-otherwise), same built-tournament guard but returns **409** JSON `{"error": ...}`
-on mismatch (async endpoints return JSON, not a dashboard re-render — the
-`tournament_play_all` precedent); happy path ⇒ `play_playoffs_task.delay(season_id)`
-→ **202** JSON `{job_id, season_id}` (mirrors `play_two_months` / `play_until_end`).
-**Polling REUSES** the LG-01d `play_status` view + `_build_play_status_response` +
-`_celery_state_to_job_status` **verbatim** (same URL name, same 5-key JSON
-`{status, completed, total, error, season_id}`) — the playoff task's stage-count
-return is read unchanged from `async_result.info` / `.result`. **No change** to
-`play_status` or `_build_play_status_response`.
-
-**URL routes (`matches/season_urls.py`).** Two new bare-named entries —
-`play_single_round` (`<int:season_id>/play-single-round/`) and `play_playoffs`
-(`<int:season_id>/play-playoffs/`) — inserted **after** the LG-01d play routes and
-**before** the `standings/` / `schedule/` entries (first-match resolution).
-`play_status` is **reused** for the playoff job — no new status route.
+**Two play actions (`matches/league_play_services.py`, served by
+`SeasonViewSet` in `matches/league_api_views.py`).**
+**`play_single_round(season)`** (sync, `POST /api/seasons/<id>/play-single-round/`)
+requires `current_phase()` to be a built tournament phase (else
+`WrongPhaseError`, a 409), plays **one** playoff Match via `play_next_node`, then
+`season.complete_if_finished()` (crowns the Season if the final node landed).
+**`play_playoffs_run(season)`** (async, `POST /api/seasons/<id>/play-playoffs/`)
+applies the same guard, then enqueues `play_playoffs_task`; poll
+`GET /api/seasons/<id>/play-jobs/<job_id>/`, which reads the task's stage-count
+return unchanged.
 
 **Compose-time guard (`matches/phase_composer.py`).** `parse_phase_composition`
 gains ONE new rule: a `tournament` phase requires a **preceding** `round_robin`
@@ -551,8 +502,9 @@ phase"`**. Pure `ValueError` (the module stays Django-free — frozen
 passes); the form layer re-wraps as a `forms.ValidationError` attached to
 `phases`. `member_night` remains rejected at the unknown-type step.
 
-**Dashboard context + templates.** `_build_dashboard_context` (rendered by both
-the League and Season dashboards) grows by **four playoff-cursor keys**, computed
+**Playoff-cursor keys.** `_playoff_cursor_keys` (`matches/league_services.py`;
+read by `build_dashboard_context` and by `build_play_controls` in `matches/league_play_services.py`, the
+`GET /api/leagues/<id>/play-controls/` payload) derives **four playoff-cursor keys**, computed
 from `displayed_season.current_phase()`: **`playoff_phase_active`** (`bool` — `True`
 iff `current_phase()` is a tournament phase that is built **+ active**
 (`tournament_id is not None AND tournament.state == "active"`));
@@ -560,37 +512,7 @@ iff `current_phase()` is a tournament phase that is built **+ active**
 phase is built, active **or** completed); **`playoff_completed`** (`bool` — `True`
 iff a tournament phase exists, is built, and `tournament.state == "completed"`);
 **`has_following_tournament_phase`** (`bool` — `True` iff the phase list contains a
-`tournament` phase at an ordinal **after** the current RR phase). The existing
-`action_button_state` / `action_button_label` keys are UNCHANGED in name; the
-playoff buttons are a **separate group**, not a replacement for the action-button
-slot. **NEW DOM ids** (both surfaces; they stack underneath the LG-01c/d
-action-button + play-dropdown slot): the Play Single Round form / submit
-(`{season,league}-dashboard-play-single-round-form` / `-submit`), the Play
-Playoffs form / submit / progress
-(`{season,league}-dashboard-play-playoffs-form` / `-submit` / `-progress`), and the
-**View bracket** link (`{season,league}-dashboard-view-bracket-link`). Both playoff
-buttons render **only when `playoff_phase_active`**; the View-bracket link renders
-**whenever `playoff_tournament_id is not None`** (built tournament phase, active OR
-completed) with `href = {% url 'tournament_detail' playoff_tournament_id %}` (the
-existing standalone bracket page — **do NOT embed the bracket**, decision #9). The
-forms POST to `play_single_round` / `play_playoffs`. *(RETIRED by NAV-01: the playoff Play forms `{season,league}-dashboard-play-single-round-form` / `-submit` / `-play-playoffs-form` / `-submit` / `-progress` are **DELETED** from the dashboards and relocate to the `Play ▾` topnav as `topbar-play-play-single-round` / `topbar-play-play-playoffs`; the `{season,league}-dashboard-view-bracket-link` read-only link is **KEPT** on the dashboard, and `playoff_phase_active` / `playoff_completed` / `has_following_tournament_phase` / `following_tournament_is_final` now come from `_build_play_controls_context`. See **NAV-01** above.)* **Conditional terminal-label
-relabel:** the LG-01d terminal play-dropdown button labeled **"Until End of
-Season"** is relabeled to **"Until Playoffs"** **iff `has_following_tournament_phase`**
-— the form action / behaviour (`play_until_end`) and the button DOM id
-(`{season,league}-dashboard-play-until-end`) are UNCHANGED, only the visible label
-text swaps. The Play Playoffs form's **inline poll JS** intercepts submit,
-fetch-POSTs, reads the 202 `{job_id, season_id}`, then polls `play_status` on a
-1000 ms interval updating `-play-playoffs-progress` and reloading on
-`status === "complete"` (mirrors the LG-01d `play_two_months` / `play_until_end`
-inline JS verbatim — duplicated per template, no shared partial); Play Single Round
-submits synchronously (server-side 302). **Poll UX (shared with the LG-01d play
-dropdown):** the poll interval is **500 ms** and every progress block (the LG-01d
-`-play-progress` and the Part2c-1 `-play-playoffs-progress`, on both dashboards)
-carries a Bootstrap `spinner-border` (class `play-progress-spinner` /
-`playoffs-progress-spinner`) shown alongside the live "Running… X / Y" counter so
-the run reads as alive between per-round counter ticks; the spinner is hidden in
-`clearPolling()` (on `complete` / `error`) and on an enqueue failure, and re-shown
-by `showProgress()` on a retry.
+`tournament` phase at an ordinal **after** the current RR phase).
 
 **Tournament Matches stay `season=NULL` (decision #3).** The tournament engine
 (`play_next_node`, `simulate_match(match_type="tournament")`) is consumed
@@ -617,13 +539,13 @@ Match history; weekly playoff pacing.
 **Tests:** `matches/tests/test_phase_composer.py` (EXTEND — `"tournament,
 round_robin"` raises the new `ValueError`; `"round_robin,tournament"` parses to 2
 ordered specs; the zero-RR string still fires first; purity still passes).
-`matches/tests/test_season_phase.py` / a new `matches/tests/test_season_playoff.py`
+`matches/tests/test_season_phase.py` / `matches/tests/test_season_playoffs.py`
 (cursor/completion derivation; auto-build seeds by standings rank + is idempotent;
 `complete_if_finished` champion = tournament champion for a drained playoff and
 `compute_standings(...)[0]` byte-identical for a single-RR-phase Season;
-`play_playoffs_task` drains to champion under `CELERY_TASK_ALWAYS_EAGER`; the two
-views' status codes (302 / dashboard-error / 405 and 202 / 409 / 405); the
-dashboard context keys per cursor sub-state + the conditional terminal label) —
+`play_playoffs_task` drains to champion under `CELERY_TASK_ALWAYS_EAGER`; the
+playoff-cursor keys per cursor sub-state). The two play actions are pinned in
+`matches/tests/test_api_sync_play.py` / `test_api_play_runs.py` —
 **never** on exact simulated point totals.
 
 **Locked names (quick index):**
@@ -649,24 +571,13 @@ dashboard context keys per cursor sub-state + the conditional terminal label) �
   `@shared_task(bind=True, name="matches.play_playoffs")`, `(self, season_id:
   int) -> dict`, returns `{"completed": int, "total": int}` (stage counts from
   `matches.bracket.stage_progress`).
-- **Views (`matches/league_views.py`):** `play_single_round(request, season_id)
-  -> HttpResponse` (sync POST, 302 / dashboard-error / 405);
-  `play_playoffs(request, season_id) -> JsonResponse` (async POST, 202 / 409 /
-  405). **Reused:** `play_status` + `_build_play_status_response` +
-  `_celery_state_to_job_status`.
-- **URL names (`matches/season_urls.py`):** `play_single_round`
-  (`<int:season_id>/play-single-round/`), `play_playoffs`
-  (`<int:season_id>/play-playoffs/`), before `standings/` / `schedule/`.
+- **Play services (`matches/league_play_services.py`):** `play_single_round(season)`
+  (sync) / `play_playoffs_run(season)` (async); API actions
+  `POST /api/seasons/<id>/play-single-round/` / `play-playoffs/`.
 - **Compose guard `ValueError` (`matches/phase_composer.py`):** `"a tournament
   phase requires a preceding round-robin phase"`, after the zero-RR check.
-- **Dashboard context keys:** `playoff_phase_active`, `playoff_tournament_id`,
+- **Playoff-cursor keys:** `playoff_phase_active`, `playoff_tournament_id`,
   `playoff_completed`, `has_following_tournament_phase`.
-- **DOM ids (season / league):**
-  `{season,league}-dashboard-play-single-round-form` / `-submit`;
-  `{season,league}-dashboard-play-playoffs-form` / `-submit` / `-progress`;
-  `{season,league}-dashboard-view-bracket-link`. Terminal label "Until Playoffs"
-  iff `has_following_tournament_phase`. View-bracket link → `{% url
-  'tournament_detail' playoff_tournament_id %}`.
 - **ADR:** extend [ADR-0023](../../adr/0023-season-phase-composable-structure.md)
   (no new ADR). **No `Match.season_phase` FK, no Match migration, no
   simulator/engine change, no re-baseline.**
@@ -686,8 +597,8 @@ phases then an OPTIONAL trailing `tournament`** (RR1→RR2, RR1→RR2→playoff)
 tournament engine (`simulate_match(match_type="tournament")` / `play_next_node`)
 and the Part2c-1 auto-build / cursor / completion machinery are consumed
 **VERBATIM**; legacy phase-less and single-RR seasons stay **byte-identical**.
-**No simulator mechanics change, no tournament-engine change, no composer/form/
-template change, no Score Calibration re-baseline, no SIM-07/08 interaction.** The
+**No simulator mechanics change, no tournament-engine change, no composer/form
+change, no Score Calibration re-baseline, no SIM-07/08 interaction.** The
 [ADR-0023](../../adr/0023-season-phase-composable-structure.md)
 ordered-typed-phase decision (extended with a "Part2c-2 consequences" addendum)
 and the **Matchday** / **Season phase** GLOSSARY.md glossary touch-ups carry the
@@ -728,8 +639,8 @@ the single-RR case). `Season.scheduled_fixtures(self) -> list[ScheduleFixture]` 
 **REWRITTEN to be the flat concatenation** of every phase's offset fixtures —
 preserving its return type, its `[]`-on-`<2`-teams guard, and byte-identical
 output for a single-RR (or phase-less) Season (one phase, offset 0) so every flat
-caller (`_is_finished`, `season_schedule`, `_build_dashboard_context`,
-`league_history`, `team_schedule`) is unchanged. A new private
+caller (`_is_finished`, `build_season_schedule`, `build_dashboard_context`,
+`build_team_schedule`) is unchanged. A new private
 `Season._scheduled_team_ids(self) -> list[int]` extracts the draft-vs-snapshot
 `team_ids` rule (no behaviour change) so the by-phase seam and per-phase
 completion read one source.
@@ -790,7 +701,7 @@ helpers need only whole-season next/progress (2-tuple); both shapes are plain-in
 / frozenset / dataclass, so the module stays Django-free.
 
 **Play-loop wiring (`matches/tasks.py::play_season_task`,
-`matches/league_views.py::play_week`).** Both sites are rewritten to iterate
+`matches/league_play_services.py::play_week`).** Both sites are rewritten to iterate
 **by phase**: build `by_phase = season.scheduled_fixtures_by_phase()`, a
 `phase_by_id = {phase.id: phase for phase, _ in by_phase}` map, a flat
 `fixtures = [(phase.id, fixture) for phase, pf in by_phase for fixture in pf]`
@@ -803,8 +714,7 @@ phase-less season `scheduled_fixtures_by_phase()` yields one tuple whose
 `phase.id is None`, so `phase_by_id.get(None)` → `None` → `season_phase=None`
 flows through, preserving legacy `season_phase=NULL` Matches. The
 `_resolve_fixture_map` / `in_bulk` / progress
-machinery, the 405 guard, `last_league_id` write, and the success/error responses
-are otherwise unchanged. **`play_two_months` / `play_until_end` are UNCHANGED** —
+machinery is otherwise unchanged. **`play_two_months` / `play_until_end` are UNCHANGED** —
 they enqueue `play_season_task`; the `max_matchdays=8 | None` window carries
 through `select_play_fixtures` unchanged over the global-continuous matchdays.
 
@@ -867,11 +777,11 @@ interaction, NO Score Calibration re-baseline** (extend ADR-0023, no new ADR).
   None`). FLAT dashboard `played_keys` stays the 2-tuple `(frozenset,
   round_number)`.
 - **Play-loop sites:** `matches/tasks.py::play_season_task` and
-  `matches/league_views.py::play_week` — both build `by_phase` / `phase_by_id` /
+  `matches/league_play_services.py::play_week` — both build `by_phase` / `phase_by_id` /
   flat `[(phase.id, fixture)]` / phase-aware `played_keys`, call
   `select_play_fixtures(...)`, pass `season_phase=phase_by_id.get(phase_id)`.
   `play_two_months` / `play_until_end` UNCHANGED.
-- **Composer / form / template:** UNCHANGED (`parse_phase_composition` already
+- **Composer / form:** UNCHANGED (`parse_phase_composition` already
   permits multiple `round_robin` tokens, ≥1 RR, no cap; the Part2c-1
   tournament-must-follow-RR guard stays).
 - **ADR:** extend [ADR-0023](../../adr/0023-season-phase-composable-structure.md)

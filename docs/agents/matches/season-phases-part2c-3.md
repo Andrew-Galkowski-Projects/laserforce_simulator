@@ -108,17 +108,17 @@ would be treated as already-played. `compute_leaders` / `LeaderRow` UNCHANGED. (
 the §3 key-tuple table in the seam contract for all OLD → NEW shapes.)
 
 **Play-loop wiring + FLAT overlay sites (`matches/tasks.py`,
-`matches/league_views.py`).** **`play_season_task`** (`tasks.py`) and **`play_week`**
-(`league_views.py`) build leg-bearing `played_keys` entries — `(gr.match.season_phase_id,
+`matches/league_play_services.py`, `matches/league_services.py`).** **`play_season_task`** (`tasks.py`) and **`play_week`**
+(`league_play_services.py`) build leg-bearing `played_keys` entries — `(gr.match.season_phase_id,
 frozenset({gr.match.team_red_id, gr.match.team_blue_id}), gr.round_number,
 gr.match.leg)` — and pass **`leg=fixture.leg`** into `simulate_scheduled_round`;
 `play_two_months` / `play_until_end` are **UNCHANGED** (they enqueue
 `play_season_task`; the `max_matchdays` window carries through). The three FLAT
 2-tuple overlay sites that feed `find_next_fixture` / `round_progress` each gain
 `leg` (reading `match.leg` off the `GameRound.match` already in scope /
-`select_related("match")`): **`_build_dashboard_context`** (`played_keys` entries
-+ fixture compare key), **`season_schedule`** (`played_by_key` dict key + per-fixture
-lookup), **`team_schedule`** (`played_keys` set + `fixture_by_key` dict +
+`select_related("match")`): **`build_dashboard_context`** (`played_keys` entries
++ fixture compare key), **`build_season_schedule`** (`played_by_key` dict key + per-fixture
+lookup), **`build_team_schedule`** (`played_keys` set + `fixture_by_key` dict +
 per-fixture/per-round lookup). Each becomes `(..., round_number, leg)` so a
 double-RR phase's two legs are distinct.
 
@@ -143,17 +143,10 @@ least one round-robin phase"`, `"a tournament phase requires a preceding
 round-robin phase"`); the `PhaseSpec` shape (`ordinal, phase_type,
 schedule_format`) is **UNCHANGED**. The form's `clean()` call site is unchanged
 (per-token format wins; `season_schedule_format` stays the fallback for a bare
-`round_robin` token, semantics still "bare ⇒ single_round_robin"). **Template
-(`templates/leagues/create.html`):** the per-phase `<select>` gains a
-`double_round_robin` option and `serialize()` emits each RR row as
-`round_robin:<format>` (a `tournament` row emits the bare token); **all Part2b DOM
-ids are UNCHANGED** (`league-create-phases-composer`, `league-create-add-block`,
-`league-create-phases`, `league-create-phase-row-{i}`,
-`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
-`league-create-member-night-note`, class substring `phase-tournament-pending`).
+`round_robin` token, semantics still "bare ⇒ single_round_robin").
 
-**`next_season` carry-forward — NO-OP.** `next_season`
-(`matches/league_views.py`) already copies each source phase's `schedule_format`
+**`next_season` carry-forward — NO-OP.** `run_season_rollover`
+(`matches/league_services.py`) already copies each source phase's `schedule_format`
 **verbatim** into the new draft Season's phases (the Part2b carry-forward loop), so
 a `double_round_robin` phase reproduces automatically with **no edit**. Admin is
 also unchanged (`SeasonPhaseAdmin.list_display` already includes `schedule_format`;
@@ -201,17 +194,15 @@ sort) — **NEVER** raw simulated point totals. **No re-baseline / extend ADR-00
   3-tuple `(frozenset, round_number, leg)`. UNCHANGED: `compute_leaders`,
   `LeaderRow`. `TestNoDjangoImportsLeaked` must keep passing.
 - **Play-loop + FLAT overlay sites:** `tasks.play_season_task` /
-  `league_views.play_week` (leg-bearing `played_keys`, `leg=fixture.leg`);
-  `league_views._build_dashboard_context` / `season_schedule` / `team_schedule`
+  `league_play_services.play_week` (leg-bearing `played_keys`, `leg=fixture.leg`);
+  `league_services.build_dashboard_context` / `build_season_schedule` / `build_team_schedule`
   (FLAT `played` keys gain `leg` from `gr.match.leg` / `fixture.leg`).
   `play_two_months` / `play_until_end` UNCHANGED.
 - **Composer (`matches/phase_composer.py`):** per-token `type[:format]` wire
   format; bare `round_robin` ⇒ `single_round_robin`; `tournament` ⇒
   `schedule_format=None`; NEW `ValueError(f"unknown schedule_format: {fmt!r}")`;
-  `PhaseSpec` shape unchanged. Template `templates/leagues/create.html` gains a
-  `double_round_robin` option + `round_robin:<format>` serialize; **all Part2b DOM
-  ids unchanged**.
-- **No-op / no-change:** `next_season` (carries `schedule_format` forward
+  `PhaseSpec` shape unchanged.
+- **No-op / no-change:** `run_season_rollover` (carries `schedule_format` forward
   verbatim), `SeasonPhaseAdmin`, `_final_standings_for_phase`, the simulator / RNG
   / tournament engine.
 - **ADR:** extend [ADR-0023](../../adr/0023-season-phase-composable-structure.md)
@@ -269,19 +260,19 @@ the wire this slice; `parse_phase_composition` leaves every spec at the
 reserving the `:` syntax for the c-3c picker. The frozen import allowlist
 (`dataclasses` / `typing`) + `TestNoDjangoImportsLeaked` are unchanged.
 
-**Creation / carry-forward (`matches/league_views.py`).** Both
-`SeasonPhase.objects.create(...)` loops stamp the field — `league_create` adds
-`tournament_mode=spec.tournament_mode` and `next_season` adds
+**Creation / carry-forward (`matches/league_services.py`).** Both
+`SeasonPhase.objects.create(...)` loops stamp the field — `create_league_and_season` adds
+`tournament_mode=spec.tournament_mode` and `run_season_rollover` adds
 `tournament_mode=src.tournament_mode` (verbatim carry-forward, mirroring the
 `schedule_format` copy) so a future non-`standings` mode (c-3c) reproduces across
-seasons. Both edits sit inside the existing `@transaction.atomic` blocks.
+seasons. Both edits sit inside the atomic block.
 
 **Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` appends
 `"tournament_mode"`.
 
 **UNCHANGED (→ c-3c).** `Season.activate_pending_tournament_phase` still hardcodes
 standings-seeding (the default already matches, so byte-identical); the composer
-template / wire format / guard; the read-path, simulator, RNG, and `Match` model.
+wire format / guard; the read-path, simulator, RNG, and `Match` model.
 **No re-baseline.**
 
 **Tests.** `test_season_phase.py` (field default / choices / `max_length==16` /
@@ -296,12 +287,11 @@ carry-forward preserves it** — the load-bearing forward-compat guard for c-3c)
 The slice that makes a `tournament` **Season phase** sitting **mid-season** (between
 two `round_robin` phases, or **first**) actually BUILD — turning the c-3b dormant
 `tournament_mode` field live for **`strength`** + **`unseeded`** (`random_draw` stays
-**DEFERRED**, rejected by the parser + offered as a disabled "coming soon" composer
-option). It relaxes the standings-only flavour of the Part2c-1 preceding-RR compose
+**DEFERRED**, rejected by the parser). It relaxes the standings-only flavour of the Part2c-1 preceding-RR compose
 guard, branches the build by seeding mode, fires the build at `start_season` for a
 first-phase tournament, and adds a play-loop **barrier** so the RR loop halts at an
 incomplete mid-season tournament and the bracket drains through the EXISTING
-`play_single_round` / `play_playoffs` views before later RR phases play. **NO
+`play_single_round` / `play_playoffs` actions before later RR phases play. **NO
 migration** (`tournament_mode` exists from c-3b). The simulator / RNG / tournament
 engine are consumed **VERBATIM**; the Django-free pure helpers + `scheduled_fixtures*`
 + `matches/season_dashboard.py` are **UNTOUCHED** (`TestNoDjangoImportsLeaked` stays
@@ -328,11 +318,11 @@ glossary touch-ups carry the build-now / barrier-drain domain language. Seam con
   whose `ordinal < barrier`.
 - `parse_phase_composition(raw, *, season_schedule_format) -> list[PhaseSpec]`
   (`matches/phase_composer.py`) — **CHANGED**: parses the `tournament[:mode]` token.
-- `play_season_task` (`matches/tasks.py`) / `play_week` (`matches/league_views.py`) —
+- `play_season_task` (`matches/tasks.py`) / `play_week` (`matches/league_play_services.py`) —
   **CHANGED**: one-line swap `scheduled_fixtures_by_phase()` →
   `playable_fixtures_by_phase()`.
-- `_build_dashboard_context` / `_playoff_cursor_keys` (`matches/league_views.py`) —
-  **CHANGED**: add the `following_tournament_is_final: bool` context for the terminal
+- `_playoff_cursor_keys` (`matches/league_services.py`) —
+  **CHANGED**: add the `following_tournament_is_final: bool` key for the terminal
   label split.
 
 **Wire format + ValueError (`matches/phase_composer.py`).** The `tournament` token
@@ -403,7 +393,7 @@ incomplete `tournament` phase's ordinal); when no tournament phase is incomplete
 returns the full output. `_tournament_barrier_ordinal()` walks `ordered_phases()` and
 returns the ordinal of the first `tournament` phase that is NOT `_phase_complete`, else
 `None`. Two one-line play-loop swaps —
-`matches/tasks.py::play_season_task` and `matches/league_views.py::play_week` swap
+`matches/tasks.py::play_season_task` and `matches/league_play_services.py::play_week` swap
 `scheduled_fixtures_by_phase()` → `playable_fixtures_by_phase()`; everything else in
 both loops (`phase_by_id`, the flat `[(phase.id, fixture)]` build, the leg-bearing
 `played_keys`, `select_play_fixtures`, offsets, `arena_map` resolution) is UNCHANGED.
@@ -413,28 +403,15 @@ with a mid-season tournament the RR loop must halt before later RR phases so the
 tournament phase completes, the barrier advances past it and the later RR phases become
 playable.
 
-**Dashboard label split (`_build_dashboard_context` / templates).** A new
-`following_tournament_is_final: bool` (computed in / alongside `_playoff_cursor_keys`)
-drives the terminal play button: when the next tournament phase after the current RR
-phase is the FINAL phase (last ordinal) → label **"Until Playoffs"**; when it is
-mid-season (not last ordinal) → **"Until Tournament"**. `has_following_tournament_phase`
-still gates whether the tournament-aware label shows at all. Touches both
-`templates/seasons/dashboard.html` and `templates/leagues/dashboard.html`. **LOCKED:**
-the playoff button-group DOM ids + the `play_until_end` action are UNCHANGED (visible
-label text only); the Part2c-1 playoff context keys + Play Single Round / Play Playoffs /
-View bracket controls are UNCHANGED — they key off `current_phase()` being a built
-tournament phase, so a mid-season bracket drains through them with no structural change.
-
-**Composer (`templates/leagues/create.html`).** A tournament composer row gains a mode
-`<select>` with locked DOM id **`league-create-phase-mode-{i}`** (`{i}` = the existing
-0-based JS `rowSeq` index). Options `standings` / `strength` / `unseeded` selectable;
-**`random_draw` a DISABLED "coming soon" option** (the `member_night` deferral pattern).
-Shown for `tournament` rows only (hidden for `round_robin`, mirroring how
-`phase-format-select` is RR-only via `applyType()`). `serialize()` emits
-`tournament:<mode>` for a tournament row (reading the row's `.phase-mode-select`,
-default `"standings"`); RR rows still emit `round_robin:<format>`. The
-`phase-tournament-pending` note is PRESERVED; all existing Part2b / c-3a DOM ids
-unchanged.
+**Label split (`_playoff_cursor_keys`).** A new
+`following_tournament_is_final: bool` drives the terminal play label: when the next
+tournament phase after the current RR phase is the FINAL phase → **"Until Playoffs"**;
+when it is mid-season → **"Until Tournament"**. `has_following_tournament_phase`
+still gates whether the tournament-aware label shows at all (the SPA reads both in
+`frontend/src/app/leagues/play/play-menu.ts`). The `play_until_end` action and the
+Part2c-1 playoff keys + play actions are UNCHANGED — they key off `current_phase()`
+being a built tournament phase, so a mid-season bracket drains through them with no
+structural change.
 
 **UNCHANGED (→ later slices).** `random_draw` build (DEFERRED); the pure
 `select_play_fixtures` / `find_next_matchday` / `find_next_fixture` / `round_progress` /
@@ -564,40 +541,14 @@ is preserved VERBATIM (`"malformed phase composition"`,
 participants at runtime is caught defence-in-depth by the EXISTING
 `Tournament.lock_and_build` ≥4-participant `ValidationError`.
 
-**Creation / carry-forward (`matches/league_views.py`).** Both
-`SeasonPhase.objects.create(...)` loops sit inside their existing
-`@transaction.atomic` blocks:
-- `league_create` (~L559) adds **`tournament_cut=spec.tournament_cut`** and does
+**Creation / carry-forward (`matches/league_services.py`).** Both
+`SeasonPhase.objects.create(...)` loops sit inside the atomic block:
+- `create_league_and_season` adds **`tournament_cut=spec.tournament_cut`** and does
   **NOT** set `tournament_format` (there is no `PhaseSpec.tournament_format`; the
   column default `"single_elimination"` applies).
-- `next_season` (~L2137) carries forward **BOTH**
+- `run_season_rollover` carries forward **BOTH**
   `tournament_cut=src.tournament_cut` AND `tournament_format=src.tournament_format`
   verbatim (the persisted source `SeasonPhase` row has both real columns).
-
-**Composer (`templates/leagues/create.html`).** A tournament composer row gains two
-new tournament-rows-only controls (same `applyType()` show/hide rule as the mode
-`<select>`):
-- **Cut input** — `<input type="number" min="0">` with DOM id
-  **`league-create-phase-cut-{i}`** (`{i}` = the existing `rowSeq` index), class hook
-  **`phase-cut-input`**, **default value `0`**, wired to `serialize()` on `change`.
-- **Disabled tournament-format `<select>`** — DOM id
-  **`league-create-phase-tournament-format-{i}`** (DISTINCT from the RR
-  `league-create-phase-format-{i}`), single visible option text **"Single
-  elimination (more formats coming soon)"**, `disabled` attribute present. It
-  serializes **NOTHING** (`serialize()` must NOT read it — the build hardcodes
-  `format="single_elimination"`, the column default covers persistence; a visual
-  placeholder, the `phase-tournament-pending` / disabled-`random_draw`-option
-  precedent).
-
-`serialize()` emits **`tournament:<mode>:<cut>`** for a tournament row (reading the
-row's `.phase-mode-select` then `.phase-cut-input`, cut defaulting to `"0"`); RR rows
-still emit `round_robin:<format>` UNCHANGED. The default `value="0"` on the cut input
-guarantees a parseable `"0"` for an untouched tournament row. All existing Part2b /
-c-3a / c-3c DOM ids unchanged (`league-create-phases-composer`,
-`league-create-add-block`, `league-create-phases`, `league-create-phase-row-{i}`,
-`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
-`league-create-phase-mode-{i}`, `league-create-member-night-note`, the
-`phase-tournament-pending` class).
 
 **Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` appends
 `"tournament_format"`, `"tournament_cut"` (now 8 entries).
@@ -642,7 +593,7 @@ Flips the **dormant** c-3d `tournament_format` column **dormant→live** so a
 Season `tournament` phase builds via **ANY of the five formats**
 (`single_elimination` / `double_elimination` / `round_robin` /
 `round_robin_double_elim` / `swiss`), and surfaces **full per-format sub-config
-parity** with the standalone `tournament_create` form (4 Series-length tiers +
+parity** with the standalone `TournamentCreateForm` (4 Series-length tiers +
 RR→DE winners-/losers-bracket advancers + Swiss rounds). A **thin
 orchestration/config slice** — the standalone Tournament engine already builds +
 drains all five formats and is consumed VERBATIM, so NO simulator mechanics
@@ -817,58 +768,16 @@ seeded order doesn't fit the chosen format. The build caller
 not a happy path). **NO new `Season.clean()` / `SeasonPhase.clean()` / form
 cross-field guard.**
 
-**Creation / carry-forward (`matches/league_views.py`).** Both
-`SeasonPhase.objects.create(...)` loops sit inside their existing
-`@transaction.atomic` blocks:
-- `league_create` (~L559) sets **all 8 new fields from `spec`**
+**Creation / carry-forward (`matches/league_services.py`).** Both
+`SeasonPhase.objects.create(...)` loops sit inside the atomic block:
+- `create_league_and_season` sets **all 8 new fields from `spec`**
   (`tournament_format=spec.tournament_format` plus the 4 series tiers + wb/lb +
   swiss). `tournament_format` now comes from `spec` — there IS a
   `PhaseSpec.tournament_format` this slice, so the c-3d "left to column default"
   note no longer applies.
-- `next_season` (~L2141) carries **all 8 forward from `src` verbatim** (the c-3d
+- `run_season_rollover` carries **all 8 forward from `src` verbatim** (the c-3d
   call already carried `tournament_cut` + `tournament_format`; this adds the 7
   sub-config fields).
-
-**Composer (`templates/leagues/create.html`).** The c-3d **disabled** placeholder
-format `<select>` goes **LIVE**, and new per-format sub-config controls appear,
-all show/hidden by a type+format toggle mirroring the standalone
-`tournamentCreateToggle`:
-- **Format select** — `league-create-phase-tournament-format-{i}` (now ENABLED),
-  class `phase-tournament-format-select`, **5 options** matching
-  `SeasonPhase.TOURNAMENT_FORMAT_CHOICES` (`single_elimination` selected /
-  `double_elimination` / `round_robin` / `round_robin_double_elim` / `swiss`).
-- **4 series-length selects** — DOM ids `league-create-phase-final-sl-{i}` /
-  `-semifinal-sl-{i}` / `-quarterfinal-sl-{i}` / `-earlier-sl-{i}`; class
-  `phase-series-length-select`; each Bo1/Bo3/Bo5 (`1`/`3`/`5`), Bo1 selected;
-  shown for `single_elimination` / `double_elimination` / `round_robin_double_elim`.
-- **wb/lb combo select** — DOM id `league-create-phase-rrde-combo-{i}`; class
-  `phase-rrde-combo-select`; six locked combo value-strings (`4/0`, `4/2`, `8/0`,
-  `8/4`, `16/0`, `16/8` — the exact value-string format mirrors the standalone
-  form's rrde-combo options); shown for `round_robin_double_elim` ONLY.
-  `serialize()` splits the combo on `/` into wb + lb.
-- **swiss-rounds input** — DOM id `league-create-phase-swiss-rounds-{i}`; class
-  `phase-swiss-rounds-input`; `<input type="number" min="0" value="0">`; shown for
-  `swiss` ONLY.
-
-`applyType()` + the format-change toggle: an RR row hides format/series/combo/swiss
-and shows the schedule-format select (c-3a); a tournament row shows the format
-select, the four series selects for SE/DE/RR→DE, the rrde-combo for RR→DE only, and
-the swiss-rounds input for Swiss only — the format select's `change` re-runs the
-sub-config show/hide. The existing mode select
-(`league-create-phase-mode-{i}`, c-3c), cut input
-(`league-create-phase-cut-{i}`, c-3d), and `phase-tournament-pending` note are
-**PRESERVED**. `serialize()` reads `.phase-mode-select` (default `standings`),
-`.phase-cut-input` (default `"0"`), the now-enabled `.phase-tournament-format-select`
-(default `single_elimination`), the 4 `.phase-series-length-select` tiers (default
-`1`), `.phase-rrde-combo-select` (split into wb/lb, default `0/0`), and
-`.phase-swiss-rounds-input` (default `0`), then emits
-**`tournament:<mode>:<cut>:<format>:<fsl>:<ssl>:<qsl>:<esl>:<wb>:<lb>:<swiss>`**;
-RR rows still emit `round_robin:<format>` UNCHANGED. All prior Part2b / c-3a /
-c-3c / c-3d DOM ids unchanged (`league-create-phases-composer`,
-`league-create-add-block`, `league-create-phases`, `league-create-phase-row-{i}`,
-`league-create-phase-type-{i}`, `league-create-phase-format-{i}`,
-`league-create-phase-mode-{i}`, `league-create-phase-cut-{i}`,
-`league-create-member-night-note`, the `phase-tournament-pending` class).
 
 **Admin (`matches/admin.py`).** `SeasonPhaseAdmin.list_display` appends the 7
 sub-config columns after `tournament_cut` (`tournament_format` already present
@@ -883,7 +792,7 @@ byte-identical to Part2c-1.
 **UNCHANGED (→ c-3f).** Completion `Season._phase_complete` (a tournament phase
 is complete ⇔ `phase.tournament_id is not None AND
 phase.tournament.state == "completed"`; all five formats reach `state="completed"`
-via the engine); champion `Season._stamp_champion_for_final_phase`; the drain views
+via the engine); champion `Season._stamp_champion_for_final_phase`; the drain actions
 `play_single_round` / `play_playoffs` + `play_playoffs_task` (they drain via
 `play_next_node`, which dispatches per format); `Season._seed_order_for_phase`
 body; the c-3d cut slice; the full tournament engine (`lock_and_build`,
@@ -891,8 +800,7 @@ body; the c-3d cut slice; the full tournament engine (`lock_and_build`,
 `build_swiss_round`, `find_next_node`, `advance_winner`, `advance_loser`,
 `resolve_bye_chain`, `series_length_for_round`, `series_length_for_depth`,
 `_persist_elim_specs`, `build_de_finals_if_rr_finished`,
-`advance_swiss_if_round_finished`); the simulator / RNG / `Match` model; the
-standalone `tournament_create.html`. The season-linked playoff Match-history
+`advance_swiss_if_round_finished`); the simulator / RNG / `Match` model. The season-linked playoff Match-history
 surface + weekly playoff pacing are DEFERRED to c-3f; the mid-season `random_draw`
 build stays DEFERRED. **No re-baseline.**
 
@@ -916,13 +824,13 @@ the format or raises the EXISTING `lock_and_build` `ValidationError`),
 `spec`), `test_league_next_season.py` (**hand-set a source phase's sub-config via
 ORM, assert `next_season` carries all 8 forward verbatim**). **Assertion
 discipline:** schema-level outcomes only (built `format`, sub-config field values,
-`BracketNode` shapes per format, champion id, parsed spec fields, `ValueError`s,
-DOM ids) — **NEVER raw simulated point totals** (tournament sims are
+`BracketNode` shapes per format, champion id, parsed spec fields, `ValueError`s) —
+**NEVER raw simulated point totals** (tournament sims are
 non-deterministic).
 
 ## LG-02-Part2c-3f season-linked playoff history + weekly playoff pacing
 
-The **final Part2c-3 slice**. Two view/engine-layer concerns, **NO model change,
+The **final Part2c-3 slice**. Two service/engine-layer concerns, **NO model change,
 NO migration**: (A) widen the **Team History Overall tab** so its round corpus
 includes **season-embedded playoff rounds** + fill the `playoff_appearances`
 counter, and (B) **weekly playoff pacing** — a phase-aware Play dropdown that
@@ -940,18 +848,15 @@ vocabulary. Seam contract:
 [`.claude/worktrees/lg-02-part2c-3f-seam-contract.md`](../../../.claude/worktrees/lg-02-part2c-3f-seam-contract.md).
 
 **Locked names (NEW / CHANGED).**
-- `matches/league_screens/team_history.py::_build_overall_context(team)` —
-  **CHANGED** (the ONLY code edit for sub-feature A): widen the round corpus, fill
-  `playoff_appearances`, add the `Tournament` import (see below). *(ANG-01e deleted the
-  three `team_history._build_{overall,seasons,players}_context` helpers; the same logic is
-  now `league_screen_services._team_overall_record` / `_team_season_rows` /
-  `build_team_history_players`, behind `build_team_history`.)*
+- `matches/league_screen_services.py::_team_overall_record(team)` (behind
+  `build_team_history`) — **CHANGED** (the ONLY code edit for sub-feature A): widen
+  the round corpus and fill `playoff_appearances` (see below).
 - `matches/tournament_engine.py::play_next_bracket_round(tournament: Tournament) -> int`
   — **NEW**: drain the lowest incomplete `(bracket_type, bracket_round)` STAGE to
   clinch; return the NODES-clinched count; `0` when nothing playable.
-- `matches/league_views.py::play_week(request, season_id) -> HttpResponse` —
+- `matches/league_play_services.py::play_week(season) -> None` —
   **CHANGED**: phase-aware (tournament cursor → `play_next_bracket_round` once +
-  `complete_if_finished()` + 302; else RR matchday path BYTE-IDENTICAL).
+  `complete_if_finished()`; else RR matchday path BYTE-IDENTICAL).
 - `matches/tasks.py::play_season_task(self, season_id, max_matchdays=None) -> dict`
   — **CHANGED**: phase-aware tail draining bracket STAGES on the shared
   `max_matchdays − rr_weeks_played` budget; PROGRESS switches to `stage_progress`
@@ -965,8 +870,8 @@ Tournament also has `season=NULL`). The discriminator is the **FK chain** off
 `match__series_match__node__tournament__season_phases__isnull=False` — a
 `SeasonPhase.tournament` FK pointing at the Tournament makes its reverse
 `season_phases` set non-empty (season-embedded), whereas a sandbox Tournament's
-`season_phases` is empty. Three edits inside the ONE function
-`_build_overall_context(team)`:
+`season_phases` is empty. Two edits inside the ONE function
+`_team_overall_record(team)`:
 - **Edit 1 — widen the round corpus.** The regular-season-only filter
   (`GameRound.objects.filter(match__season__isnull=False)`) becomes a **single
   query** UNION of regular-season rounds + season-embedded playoff rounds:
@@ -1003,27 +908,22 @@ Tournament also has `season=NULL`). The discriminator is the **FK chain** off
   to-many `participants` join. Passed through verbatim:
   `compute_overall_record(outcomes, championships=championships,
   playoff_appearances=playoff_appearances)`.
-- **Edit 3 — add the import.** `Tournament` to
-  `from matches.models import GameRound, League, PlayerRoundState, Season, Tournament`
-  (only its presence is load-bearing).
 
-**Pure module + template UNCHANGED (assert-only).**
+**Pure module UNCHANGED (assert-only).**
 `matches/team_history_logic.py` ALREADY supports the arg —
 `compute_overall_record(round_outcomes, *, championships, playoff_appearances:
 int = 0) -> OverallRecord` and `OverallRecord.playoff_appearances` — so the pure
-module is **NOT edited** (`TestNoDjangoImportsLeaked` stays green); the view does
+module is **NOT edited** (`TestNoDjangoImportsLeaked` stays green); the service does
 ALL ORM work and the seam carries only a `list[str]` of `"W"`/`"L"`/`"T"` plus two
-ints. `templates/leagues/team_history.html` already renders
-`{{ overall_record.playoff_appearances }}` inside `#team-history-overall`; it read
-`0` only because the view omitted the kwarg — **NO template change, no new DOM id**.
+ints.
 
 **KEPT UNCHANGED (sub-feature A).** **Players tab**
-(`team_history.py::_build_players_context`) — its `PlayerRoundState` corpus filters
+(`build_team_history_players`) — its `PlayerRoundState` corpus filters
 ONLY by team membership (no season filter), so playoff `PlayerRoundState` rows
 **already** count toward player rollups; the **ONE accepted limitation**: a playoff
 Match's `season_id is None`, so its `season_year` resolves to `None` — playoff
 games count toward `games_played`/stats but do NOT set "last season played"
-(accepted, out of scope). **Seasons tab** (`_build_seasons_context`) — per-Season
+(accepted, out of scope). **Seasons tab** (`_team_season_rows`) — per-Season
 rank via `compute_standings` scoped to `season.matches.filter(is_completed=True)`
 stays **regular-season-only** (playoff Matches have `season_id=None`, so rank is
 **unaffected**).
@@ -1045,13 +945,11 @@ playable (the deterministic-structure quantity tests assert on). **No outer
 (ADR-0016), so a mid-stage failure leaves every clinched node committed and is
 resumable.
 
-**`play_week` (phase-aware).** Signature UNCHANGED; the POST-only 405 guard,
-`last_league_id` write, and the non-`active` `_render_season_dashboard_error`
-branch stay **BYTE-IDENTICAL**. The change: branch on the cursor BEFORE the RR
+**`play_week` (phase-aware).** Branch on the cursor BEFORE the RR
 matchday path — when `season.current_phase()` is a built tournament phase
 (`phase.phase_type == "tournament" and phase.tournament_id is not None`), call
-`play_next_bracket_round(phase.tournament)` once, `season.complete_if_finished()`,
-and `redirect("season_dashboard", …)`; **else the existing RR matchday path runs
+`play_next_bracket_round(phase.tournament)` once and `season.complete_if_finished()`;
+**else the existing RR matchday path runs
 byte-for-byte** (the `transaction.atomic` block, by-phase fixtures, `played_keys`,
 `select_play_fixtures(..., 1)`, the per-fixture loop). The playoff branch needs no
 `transaction.atomic` wrapper (`play_next_bracket_round` is per-Match atomic).
@@ -1073,52 +971,36 @@ built bracket unplayed as its own step — else
 during the RR loop (unchanged), then **STAGE-counts** via
 `matches/bracket.stage_progress` over the tournament's nodes (the
 `play_playoffs_task` precedent) once the bracket drain begins; the final return is
-stage-counts when a tail ran, else the RR shape. `_build_play_status_response`
-reads `{completed, total}` generically and is **UNCHANGED**. No outer
+stage-counts when a tail ran, else the RR shape. No outer
 `@transaction.atomic`; the `finally` stays (CI-01: no task closes its own DB connection; Celery's worker fixup does).
 
 **KEPT UNCHANGED (sub-feature B + invariants).** `play_single_round` (one playoff
 Match), `play_playoffs` (async drain-all), `play_playoffs_task`,
-`_build_play_status_response`, `play_two_months`, `play_until_end`,
-`simulate_match`, `simulate_scheduled_round`, `play_next_node`. The **Playoffs
-League screen STAYS AS-IS** — `matches/league_screens/playoffs.py` +
-`templates/leagues/playoffs.html` (embedded bracket) are byte-unchanged invariants
-(NO game-log rewrite, NO `_playoff_log_rows` / `matches/playoff_log.py` / new
-`playoffs-*` DOM ids). The registry / sidebar / url / re-export are already live
-(`"league_playoffs" not in _FEATURE_REGISTRY`, the `_build_league_sidebar_links`
-Playoffs entry resolves to `_cs("league_playoffs")`, the `league_playoffs` URL,
-the `__init__.py` re-export) — **assert-unchanged only**. The Play dropdown already
-carries the Part2c-3c terminal "Until Playoffs"/"Until Tournament" relabel — **no
-new dashboard/template change, NO new DOM ids**; this slice only changes what those
-views DO on a playoff cursor.
+`play_two_months`, `play_until_end`,
+`simulate_match`, `simulate_scheduled_round`, `play_next_node`. The Playoffs
+League screen (`league_screen_services.build_playoffs`) is unchanged; the Part2c-3c
+terminal "Until Playoffs"/"Until Tournament" label split is unchanged — this slice
+only changes what the play actions DO on a playoff cursor.
 
 **Scope-out (LOCKED).** NO migration; NO `Match` / `GameRound` / `SeasonPhase` /
-`Tournament` field change; NO `team_history_logic.py` / `team_history.html` change;
+`Tournament` field change; NO `team_history_logic.py` change;
 NO Players-tab / Seasons-tab change; NO playoffs-screen reshape; NO
 `simulate_match` / `simulate_scheduled_round` / `play_next_node` mechanics change;
-NO Score Calibration re-baseline; NO registry/sidebar/url/re-export work; NO new
-dashboard DOM ids. Mid-season **`random_draw`** tournament build still **DEFERRED**
+NO Score Calibration re-baseline. Mid-season **`random_draw`** tournament build still **DEFERRED**
 (parser-rejected); **`member_night`** phase **inert**. **NO ADR / GLOSSARY.md edit.**
 
-**Tests.** `test_team_history_logic.py` (assert-only — the existing purity test
+**Tests.** `test_league_team_history.py` (assert-only — the existing purity test
 stays green + the `playoff_appearances` field flows through
-`compute_overall_record`); the existing **Team History view test file** (EXTENDED
-in place — hand-build a Season with a built single-elim playoff embedded via the
-FULL FK chain `SeasonPhase(tournament=…) → Tournament → BracketNode → SeriesMatch →
-Match(season=NULL) → GameRound`: the Overall W/L/T total rises by exactly the
-number of playoff `GameRound`s the team played; `playoff_appearances` equals the
-DISTINCT season-embedded playoff Tournament count; a **standalone sandbox**
-Tournament's rounds are NOT counted and do NOT bump `playoff_appearances`; the
-Seasons-tab rank is unaffected; the Players-tab corpus rule still holds);
+`compute_overall_record`); `test_api_team_screens.py::TeamHistoryTests` (the
+Team History API);
 `test_tournament_engine.py` (EXTENDED — `play_next_bracket_round` drains one stage
 and returns its node-clinch count, leaves the next stage unresolved, returns `0`
 when nothing playable, a Bo3 stage counts each node once on clinch);
-`test_league_play.py` / the league-play view tests (EXTENDED, under
+`test_league_play.py` (EXTENDED, under
 `CELERY_TASK_ALWAYS_EAGER` — `play_week` drains exactly ONE bracket STAGE on a
-tournament cursor then 302s and runs the RR path unchanged on an RR cursor, 405 on
-GET, non-`active` → `play_error`; `play_season_task` with `max_matchdays=None`
+tournament cursor and runs the RR path unchanged on an RR cursor; `play_season_task` with `max_matchdays=None`
 drains RR then bracket to a champion, with `max_matchdays=8` subtracts
 `rr_weeks_played` from the bracket budget and resumes on a second call, PROGRESS
 `meta` switches to stage-counts during the drain). **Assertion discipline:**
-STRUCTURE / COUNTS / champion id / state / record deltas / DOM ids — **NEVER raw
+STRUCTURE / COUNTS / champion id / state / record deltas — **NEVER raw
 simulated point totals** (tournament sims draw fresh per-round seeds).

@@ -26,7 +26,7 @@ from matches.models import League
 from matches.power_rankings_logic import SORT_KEYS as POWER_RANKINGS_SORT_KEYS
 from matches.season_player_stats import DERIVED_KEYS, STAT_KEYS
 from matches.team_stats_logic import SORT_KEYS as TEAM_STATS_SORT_KEYS
-from teams.views import _SORT_KEYS as _TEAMS_SORT_KEYS
+from teams.services import PLAYER_SORT_KEYS as _TEAMS_SORT_KEYS
 
 _PROVENANCE_CHOICES = [("all", "all"), ("real", "real"), ("sim", "sim")]
 _ROLE_CHOICES = [
@@ -299,7 +299,7 @@ class PlayerStatsParamsForm(_DisplayedSeasonTeamParamMixin, LeagueScreenParamsFo
 
 
 # The Player Ratings / Free Agents sort keys the HTML screens allow: the LG-00c
-# ``teams.views._SORT_KEYS`` plus the Python-sorted ``preferred_roles``.
+# ``teams.services.PLAYER_SORT_KEYS`` plus the Python-sorted ``preferred_roles``.
 PLAYER_RATING_SORT_KEYS: tuple[str, ...] = (*_TEAMS_SORT_KEYS, "preferred_roles")
 
 

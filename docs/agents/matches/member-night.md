@@ -30,8 +30,8 @@ is **DERIVED** (no `SeasonPhase.state` field — ADR-0023 honoured), so there is
 The run draws a **fresh `random.Random()`** outside the SIM-07/08 seed chain and changes no
 simulation *mechanic* (the ordinary per-Round simulator runs unchanged) ⇒ **no Score
 Calibration re-baseline**. Tests assert schema-level outcomes (Match counts, FK stamping,
-`is_draw_team` Teams, roster validity, completion derivation, the Standings exclusion, DOM
-ids, the pure split/draw under an INJECTED seeded `random.Random`) — **NEVER raw simulated
+`is_draw_team` Teams, roster validity, completion derivation, the Standings exclusion, the
+pure split/draw under an INJECTED seeded `random.Random`) — **NEVER raw simulated
 point totals**.
 
 **Pure module `matches/member_night.py` (NEW).** Django-free balanced 2-team split +
@@ -84,13 +84,11 @@ harmless).
 ranked: `.exclude(season_phase__phase_type="member_night")` on a `Match` queryset (or the
 `match__`-prefixed analogue on a `GameRound` queryset) is pinned at every
 `compute_standings`-feeding query — **7 sites**: `Season._final_standings_for_phase`,
-`league_views.season_standings` (the Match query AND the LG-06g side-split `GameRound`
-query), `_build_dashboard_context`, `_build_history_row` (an **in-Python** skip to preserve
-the `season.matches` prefetch, NOT a queryset `.exclude`), `league_screens/team_history.py::
-_build_seasons_context` (since ANG-01e `league_screen_services._team_season_rows`), and `league_screens/power_rankings.py` (win% component — member
-nights must not move power rankings either). **PLAY-01 live polling needs no separate edit**
-— `_build_play_status_response` → `_render_live_play_panels` → `_build_dashboard_context`
-recomputes through the SAME excluded query, so the live poll is covered transitively.
+`league_services.build_season_standings` (the Match query AND the LG-06g side-split `GameRound`
+query), `league_services.build_dashboard_context`, `league_services.build_history_row` (an
+**in-Python** skip to preserve the `season.matches` prefetch, NOT a queryset `.exclude`),
+`league_screen_services._team_season_rows`, and `league_screen_services.build_power_rankings`
+(win% component — member nights must not move power rankings either).
 **Leaders are NOT excluded this slice** (see scope-out): member-night `PlayerRoundState`
 rows flow into `compute_leaders` unfiltered; only **Standings** are excluded now.
 
@@ -110,29 +108,26 @@ cleanup / no re-roll** — the run is one-shot (completion is derived; the phase
 re-runs), the drawn Teams persist as the durable record (filtered out of enrolled-Team
 lists by `is_draw_team`, never in `season.teams`).
 
-**Views + drain task + URLs.** NEW `member_night_setup(request, season_id) -> HttpResponse`
-— **POST-only** (405 on GET), guards `current_phase()` is a `member_night` phase (else the
-dashboard-error re-render), reads the **multi-valued `sites` POST field** (the checked
-per-Site toggle boxes; ≥1 required, else the dashboard-error re-render), and
-`@transaction.atomic` draws via `draw_member_night_games(pool_by_site, random.Random())`
-(FRESH non-deterministic Random) over the chosen Sites, creating the drawn Teams + unplayed
-Match shells, then **302 redirects** to `season_dashboard` (sync setup; the shells exist and
-the phase parks). NEW `play_member_night(request, season_id) -> JsonResponse` (**Play All**)
-— POST-only (405), guards an unplayed member-night Match exists (else **409** JSON), enqueues
-`play_member_night_task.delay(season.id)` + sets `active_play_job_id` /
-`play_cancel_requested=False` (the PLAY-01 enqueue pattern), returns **202** `{job_id,
-season_id}`. **Polling REUSES `play_status` + `_build_play_status_response` +
-`_celery_state_to_job_status` verbatim** (no new status view). NEW
-`play_member_night_single(request, season_id) -> HttpResponse` (**Play Single Members Game**)
-— POST-only sync, drains exactly ONE unplayed shell (both Rounds via
+**Services + drain task + API (`matches/league_play_services.py`).**
+`require_member_night(season)` guards an active, idle Season whose `current_phase()` is a
+`member_night` phase (`SeasonNotActiveError` / `PlayInProgressError` / `WrongPhaseError`).
+`setup_member_night(season, sites, *, manager=None) -> int` (`sites` pre-validated by
+`MemberNightSetupForm`) `@transaction.atomic` draws via
+`draw_member_night_games(pool_by_site, random.Random())` (FRESH non-deterministic Random) over
+the chosen Sites, creating the drawn Teams + unplayed Match shells (the shells exist and the
+phase parks). `play_member_night_run(season) -> str` (**Play All**) raises
+`NoMemberNightGamesError` when no unplayed shell exists, else starts `play_member_night_task` via
+`enqueue_play_run` (sets `active_play_job_id` / `play_cancel_requested=False`, the PLAY-01
+enqueue pattern). `play_member_night_single(season) -> SeasonPhase` (**Play Single Members
+Game**) drains exactly ONE unplayed shell (both Rounds via
 `simulate_scheduled_round(..., season_phase=mn)` — shared `_next_member_night_shell` helper),
-`complete_if_finished()`, **302** to the dashboard (the `play_single_round` analogue,
-default `fidelity`). NEW `play_member_night_live(request, season_id) -> HttpResponse`
-(**Single Members Game (Live)**) — POST-only sync, drains ONE shell at **`fidelity="full"`**
-(GEN-01 — so the persisted event log drives the SIM-05 replay), stashes the 2 Round ids in
-the `live_watch` session (`kind="member_night"`, the LG-01i pattern) and **302** redirects to
-`play_week_live_watch` (reusing the watch view/template verbatim — it renders a 2-Round game
-from `round_ids`). NEW Celery task
+`complete_if_finished()` (the `play_single_round` analogue, default `fidelity`).
+`play_member_night_live(season) -> LivePlayResult` (**Single Members Game (Live)**) drains ONE
+shell at **`fidelity="full"`** (GEN-01 — so the persisted event log drives the replay) and
+returns `kind="member_night"` + the 2 Round ids, with no background run. API (all on
+`/api/seasons/<id>/`): `GET` / `POST member-night/` (state / setup), `POST member-night/play/`,
+`member-night/play-single/`, `member-night/play-live/`; Play All is polled through
+`play-jobs/<job_id>/`. NEW Celery task
 `play_member_night_task` (`@shared_task(bind=True, name="matches.play_member_night")`,
 `(self, season_id) -> dict`) mirrors `play_playoffs_task`: the PLAY-01 top + between-game
 cancel checks (`_play_cancel_requested`), loops the unplayed shells playing both Rounds,
@@ -140,12 +135,7 @@ cancel checks (`_play_cancel_requested`), loops the unplayed shells playing both
 games), `complete_if_finished()` after the loop, and a `finally` clearing
 `active_play_job_id` (CI-01: no task closes its own DB connection; Celery's worker fixup does). **NO outer `@transaction.atomic`** — each
 Round is its own atomic commit (ADR-0016), so a mid-drain failure leaves completed games
-committed and the run resumable. URLs (`matches/season_urls.py`, bare names):
-`member_night_setup` → `<int:season_id>/member-night/setup/` (POST),
-`play_member_night` → `<int:season_id>/member-night/play/` (POST),
-`play_member_night_single` → `<int:season_id>/member-night/play-single/` (POST),
-`play_member_night_live` → `<int:season_id>/member-night/play-single-live/` (POST);
-`play_status` is reused for the drain job (no new status route).
+committed and the run resumable.
 
 **Composer + carry-forward.** `parse_phase_composition` stops rejecting `member_night`: a
 **bare token** parses to `PhaseSpec(phase_type="member_night", schedule_format=None,
@@ -153,65 +143,41 @@ committed and the run resumable. URLs (`matches/season_urls.py`, bare names):
 composition"` (member nights carry **no** sub-config), and a member night may sit
 **anywhere, including first** (the Part2c-1 preceding-RR guard only fires for `tournament`
 standings tokens). `PhaseSpec` shape is UNCHANGED, the module stays Django-free, and every
-pre-existing `ValueError` string is preserved. `templates/leagues/create.html` makes the
-"coming soon" `member_night` placeholder a **live** selectable option per phase-row type
-`<select>` (hiding the RR schedule-format + tournament sub-config controls; `serialize()`
-emits the bare `member_night` token, no `:sub-config`). `next_season` carry-forward is
+pre-existing `ValueError` string is preserved. `next_season` carry-forward is
 **UNCHANGED** — a `member_night` phase carries forward as just another `phase_type` row, so
 a fresh member night re-runs each Season via derived completion.
 
-**Play-surface controls (NAV-01 topnav).** The Play dropdown is **phase-contextual**: on a
-`member_night` OR `tournament` cursor the RR **One Week / Two Months / Until End** trio is
-**suppressed** (`{% if not playoff_phase_active and not member_night_phase_active %}`), and
+**Play-surface controls.** The Play menu is **phase-contextual**: on a `member_night` OR
+`tournament` cursor the RR **One Week / Two Months / Until End** trio is **suppressed**, and
 that phase's own control set renders instead. The **playoff** set (when `playoff_phase_active`)
-is **Play Single Round** (`play_single_round`, sync) / **Play Two Months**
-(`topbar-play-play-two-months` → `play_two_months`, async = up to 8 Bracket rounds per
-Part2c-3f) / **Through Playoffs** (`topbar-play-play-playoffs` → `play_playoffs`, async, drain
-to champion) / **Play Single Round (Live)** (`topbar-play-playoff-live` → `play_week_live`,
-sync → replay, gated on `live_preview_available`). The **member-night** controls are fed by
-NEW `_build_play_controls_context` keys (merged into the topnav by `league_nav` with no
-`league_nav` edit): `member_night_phase_active` (`bool`), `member_night_sites`
-(`list[(site, count)]`, viable sites only, sorted — drives the toggle boxes),
-`member_night_has_unplayed` (`bool`, gates the three play controls). **LOCKED DOM ids**:
-`topbar-play-member-night-setup` (a SYNC POST `<form>` to `member_night_setup` with an
-`topbar-play-member-night-all` "All Sites" master toggle + per-Site
-`topbar-play-member-night-site-cb` toggle boxes posting the multi-valued `sites` field + a
-Confirm button), and — only when `member_night_has_unplayed` — the three play controls
-`topbar-play-member-night-single` (sync, `play_member_night_single`),
-`topbar-play-member-night-live` (sync → replay, `play_member_night_live`), and
-`topbar-play-member-night-play` (**Play All**, async, `play_member_night`, polled by the
-existing `topnav_play_script.html` IIFE against `play_status` — same progress + Stop wiring as
-Play Playoffs). The IIFE also intercepts the async playoff `topbar-play-play-two-months` and
-wires the `topbar-play-member-night-all` master toggle to check/uncheck every per-Site box.
+is **Play Single Round** (`play_single_round`, sync) / **Play Two Months** (`play_two_months`,
+async = up to 8 Bracket rounds per Part2c-3f) / **Through Playoffs** (`play_playoffs`, async,
+drain to champion) / **Play Single Round (Live)** (`play_live`, sync → replay, gated on
+`live_preview_available`). The **member-night** controls are fed by `build_play_controls` keys:
+`member_night_phase_active` (`bool`), `member_night_sites` (`[{"site", "count"}]`, viable
+Sites only, sorted — drives the Site picker), `member_night_has_unplayed` (`bool`, gates the
+three play controls). The Angular menu and Site picker are ANG-06-19 in
+[`nav-and-play.md`](nav-and-play.md).
 
 **UXP-11 set-up / progress UX.** Every per-Site box and the "All Sites" master start
-`checked`, so Confirm works in one click. The set-up `<li>` renders only while set-up is
-the next step (`member_night_phase_active and not member_night_has_unplayed`); once games
-are drawn only the three play controls show. `member_night_setup` flashes
-`"Member night set up: N games drawn across K Site(s)."`; `play_member_night_single`
-(whose service now returns the played game's `SeasonPhase`) flashes
-`"Member-night game played: P / T games done."`, or `"Member night complete: all T games
-played."` on the last one. `build_dashboard_context` gains `member_night_progress`
-(`{"played", "total"}` from `league_services.member_night_game_counts(phase)`, or `None`
-off an active member-night cursor / before set-up), rendered by
-`_partials/dashboard_member_night.html` as `season-dashboard-member-night` /
-`league-dashboard-member-night` with a "View results" link to
-`season_schedule#season-schedule-member-nights`. The API dashboard payload is unchanged.
+checked, so Confirm works in one click. Set-up shows only while it is the next step
+(`member_night_phase_active and not member_night_has_unplayed`); once games are drawn only the
+three play controls show. Set-up reports `"Member night set up: N games drawn across K
+Site(s)."`; a single game reports `"Member-night game played: P / T games done."`, or
+`"Member night complete: all T games played."` on the last one. `build_dashboard_context`
+gains `member_night_progress` (`{"played", "total"}` from
+`league_services.member_night_game_counts(phase)`, or `None` off an active member-night cursor
+/ before set-up); the API dashboard payload carries it.
 
 **Schedule surfaces (read-only / derived).** Member-night games (Standings-excluded but
-real `season`-attached drawn-team Matches) are surfaced on two schedule pages via shared
-helpers in `matches/league_views.py`: `_member_night_game_dict(match)` (one display row —
-drawn-Team names encode the Site, plus result + per-Round `game_round_detail` links),
+real `season`-attached drawn-team Matches) are surfaced on two schedule screens via shared
+helpers in `matches/league_services.py`: `_member_night_game_dict(match)` (one display row —
+drawn-Team names encode the Site, plus result + per-Round ids),
 `_member_night_games_for_season(season) -> list[dict]` (grouped by `member_night` phase
 ordinal), and `_member_night_appearances_for_team(season, team) -> list[dict]` (games where a
 Player of `team` appeared, found via `PlayerRoundState.player__team` — each game lists which
-of the Team's Players played). `season_schedule` gains `member_night_games` (a "Member nights"
-section in `seasons/schedule.html`, DOM ids `season-schedule-member-nights` /
-`season-schedule-member-night-{ordinal}` / `member-night-game-{match_id}`); `team_schedule`
-gains `member_night_appearances` (a "Member Night Appearances" section in
-`leagues/team_schedule.html`, DOM ids `team-schedule-member-nights` /
-`team-schedule-member-night-list` / `team-schedule-member-night-row-{match_id}`). No model
-change, no migration.
+of the Team's Players played). `build_season_schedule` gains `member_night_games`;
+`build_team_schedule` gains `member_night_appearances`. No model change, no migration.
 
 **Scope-out (DEFERRED).** The **per-Season player-stat include/exclude/only filter** (Player
 Stats / League Leaders / Statistical Feats / Team-History Players — the LG-06d `?provenance=`
@@ -237,49 +203,32 @@ balanced 6/6 over a 12–18 pool); NO re-roll / cleanup of drawn Teams.
   member_night); `playable_fixtures_by_phase` repoints. UNCHANGED: `_rr_phase_complete`,
   `_is_finished`, `current_phase`; `_final_standings_for_phase` gains only the `.exclude`.
 - **Standings exclusion** — `.exclude(season_phase__phase_type="member_night")` at
-  `_final_standings_for_phase`, `season_standings` (Match + GameRound), `_build_dashboard_context`,
-  `_build_history_row` (in-Python skip), `team_history._build_seasons_context` (now
-  `league_screen_services._team_season_rows`),
-  `power_rankings`. PLAY-01 live poll covered transitively.
+  `_final_standings_for_phase`, `build_season_standings` (Match + GameRound),
+  `build_dashboard_context`, `build_history_row` (in-Python skip),
+  `league_screen_services._team_season_rows`, `build_power_rankings`.
 - **Game shape** — 2-Round Match via `simulate_scheduled_round(season, team_a, team_b,
   round_number, *, season_phase=<mn phase>)` VERBATIM; setup pre-creates `Match(season,
   season_phase=mn, team_red, team_blue, is_completed=False)` shells; two `is_draw_team`
   Teams per game, roles set once at setup, no `before_round_hook`, no `TournamentPlayerEntry`.
-- **Views** — `member_night_setup(request, season_id) -> HttpResponse` (POST sync, multi
-  `sites`, 302 / dashboard-error / 405); `play_member_night(request, season_id) ->
-  JsonResponse` (Play All, POST async, 202 / 409 / 405);
-  `play_member_night_single(request, season_id) -> HttpResponse` (POST sync, drains ONE shell,
-  302 / dashboard-error / 405); `play_member_night_live(request, season_id) -> HttpResponse`
-  (POST sync, ONE shell at `fidelity="full"` → `live_watch` session → 302 to
-  `play_week_live_watch`); shared helper `_next_member_night_shell(season)`. Reused:
-  `play_status` + `_build_play_status_response` + `_celery_state_to_job_status` (Play All);
-  `play_week_live_watch` (Live). The Play dropdown SUPPRESSES the RR trio on a
-  member_night/playoff cursor; the playoff set relabels to Single Round / Two Months
-  (`play_two_months`) / Through Playoffs (`play_playoffs`) / Live (`play_week_live`).
-- **URL names** (`matches/season_urls.py`, bare) — `member_night_setup`
-  (`<int:season_id>/member-night/setup/`), `play_member_night`
-  (`<int:season_id>/member-night/play/`), `play_member_night_single`
-  (`<int:season_id>/member-night/play-single/`), `play_member_night_live`
-  (`<int:season_id>/member-night/play-single-live/`).
+- **Services** (`matches/league_play_services.py`) — `require_member_night(season)`;
+  `setup_member_night(season, sites, *, manager=None) -> int`; `play_member_night_run(season)
+  -> str` (Play All, job id); `play_member_night_single(season) -> SeasonPhase` (drains ONE
+  shell); `play_member_night_live(season) -> LivePlayResult` (ONE shell at
+  `fidelity="full"`); shared helper `_next_member_night_shell(season)`. The Play menu
+  SUPPRESSES the RR trio on a member_night/playoff cursor; the playoff set relabels to Single
+  Round / Two Months (`play_two_months`) / Through Playoffs (`play_playoffs`) / Live
+  (`play_live`).
+- **API** (`/api/seasons/<id>/`) — `member-night/` (GET state, POST setup),
+  `member-night/play/`, `member-night/play-single/`, `member-night/play-live/`.
 - **Celery task** — `play_member_night_task`,
   `@shared_task(bind=True, name="matches.play_member_night")`, `(self, season_id) -> dict`
   returning `{"completed": int, "total": int}` (GAME counts), PLAY-01 cancel checks +
   `finally` clear of `active_play_job_id`.
 - **Composer** — `parse_phase_composition` accepts a bare `member_night` token
   (`schedule_format=None`, no sub-config; `member_night:x` ⇒ `"malformed phase composition"`;
-  no preceding-RR guard); `templates/leagues/create.html` member_night option live
-  (serialize emits bare `member_night`); `next_season` carry-forward UNCHANGED.
-- **Context keys** (`_build_play_controls_context`, merged by `league_nav`) —
-  `member_night_phase_active` (`bool`), `member_night_sites` (`list[(str, int)]`),
-  `member_night_has_unplayed` (`bool`).
-- **DOM ids** (`templates/_partials/topnav_play.html`) — `topbar-play-member-night-setup`
-  (POST form), `topbar-play-member-night-all` (All-Sites master toggle) + per-Site
-  `topbar-play-member-night-site-cb` toggle boxes (multi-valued `sites` field), and the three
-  play controls (gated on `member_night_has_unplayed`) `topbar-play-member-night-single`,
-  `topbar-play-member-night-live`, `topbar-play-member-night-play` (Play All). Playoff set:
-  `topbar-play-play-single-round` / `topbar-play-play-two-months` / `topbar-play-play-playoffs`
-  / `topbar-play-playoff-live`. The RR trio (`topbar-play-one-week` / `-two-months` /
-  `-until-end`) is suppressed on a member_night/playoff cursor.
+  no preceding-RR guard); `next_season` carry-forward UNCHANGED.
+- **Play-controls keys** (`build_play_controls`) — `member_night_phase_active` (`bool`),
+  `member_night_sites` (`[{"site", "count"}]`), `member_night_has_unplayed` (`bool`).
 - **ADR / CONTEXT** — ADR-0033 + the GLOSSARY.md **Member night** / **Site** glossary pair
   (already written). **No new ADR, no new domain term, no migration, no re-baseline.**
 - **DEFERRED to LG-07b** — the per-Season player-stat member-nights include/exclude/only

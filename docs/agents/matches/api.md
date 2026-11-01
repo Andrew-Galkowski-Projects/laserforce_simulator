@@ -28,11 +28,11 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
   only sent fields change) or a full dict (**PUT = full replace**), then `validate_form_or_raise(form)`;
   `Model.full_clean()` failures raise `EnvelopeValidationError(django_validation_error_to_envelope(e))`.
   **Views raise; they never hand-build a 4xx `Response`.** API-03's `SimulateBatchRequestSerializer`
-  is the one grandfathered input serializer. Where no HTML Form exists for a write, a new API-only
+  is the one grandfathered input serializer. Where no Form exists for a write, a new API-only
   Form is added instead of a serializer (ANG-01b `SaveBatchGamesForm`). **Read-only query params**
   that need validation bind a strict param Form (`plain_form_data(Form, request.query_params)` →
-  `validate_form_or_raise`) — 400 on a bad value, unlike the lenient HTML parsing (ANG-01b
-  `matches/api_forms.py`, `teams/api_forms.py`).
+  `validate_form_or_raise`) — 400 on a bad value (ANG-01b `matches/api_forms.py`,
+  `teams/api_forms.py`).
 - **Status / code table.** 400 — the Form / serializer / filter error code verbatim (`required`,
   `invalid`, `invalid_choice`, `max_value`, …; `code=None` ⇒ `invalid`), `parse_error` (bad JSON),
   `roster_invalid` (`field = row:<n>[:<column>]`); 404 `not_found` — missing row, **cross-Account row
@@ -49,7 +49,7 @@ settings, **not per view**. New API slices (ANG-01b..g) must follow it. Seam con
   public `ordering_fields`, mapped through `ordering_aliases`, unknown terms silently dropped, then
   `ordering_tiebreak` appended for stable pagination). A typed filter (number / choice / date / range)
   with a bad value ⇒ **400** with `field` = the param name (range filters report the base name, e.g.
-  `date_played`, `timestamp`) — unlike the HTML pages' forgiving fallback. Boolean junk is ignored
+  `date_played`, `timestamp`). Boolean junk is ignored
   (exception: ANG-01f's `embedded` is a strict boolean, junk ⇒ 400 `invalid`).
   Every viewset mixes in `ListOnlyFilterMixin` first, so filters apply to `list` only and query params
   never 404 / 400 a detail or write lookup.
@@ -82,7 +82,7 @@ DRF endpoints registered under `/api/`, enveloped per **API conventions** above.
 | `GET /api/rounds/<id>/timeline/` | — (`round_timeline` dict) | **ANG-06e.** The whole **Event log**, unpaginated, no params, GET only: `{events, players, highlights, summary}`. `events` remaps the `round_playback_payload` rows (movement and the four unlisted types included, `(timestamp, id)` order), each `{tick, event_type, points, description, actor_id, actor_name, actor_side, target_id, target_name, target_side, metadata}`; Sides from `PlayerRoundState.team_color`; no target ⇒ the three `target_*` are `null`. `players` `{id, name, side, role}` in `PlayerRoundState.id` order; `highlights` = `highlights_json or []`; `summary` = `get_event_summary()`. Upgrades to `full` first; constant query count |
 | `GET /api/rounds/<id>/playback/` | — (`matches.playback.round_playback` dict) | **ANG-06f** (ADR-0044). The Round's **Playback snapshots**, no params, GET only: `{duration_ticks (1800), not_targetable_ticks (8), respawn_ticks (16), players, map}`. `players` `[{id, snapshots}]` in `PlayerRoundState.id` order; each snapshot `{tick, score, lives, shots, missiles, sp, tags, misses, downed_at, eliminated, rapid_fire, nuking}` — a tick-0 opening one from the `starting_*` fields, then one per tick the player changed (same-tick events collapsed). Values are read from the logged after-event metadata (`actor_*` / `sp`, `target_*`, `special.targets[]`); only missiles (−1 per `locking`, −1 more per `missiled` hit, MECH-16), eliminated, tags, misses, `downed_at`, `rapid_fire` and `nuking` are derived. The last snapshot equals the player's `PlayerRoundState` (seeded invariant test). `map` = `build_playback_map` (`{zone_size, arena_map: {id, name}, players: [{id, name, team, role, scout, spawn, moves}]}`) or `null` for a map-less Round. Upgrades to `full` first; names / Sides / events stay on `/timeline/` |
 | `GET /api/rounds/<id>/missile-log/` | — (builder dict) | **ANG-01b.** RES-03 `{round_id, fired, hit, efficiency, rows}`; upgrades to `combat` |
-| `GET /api/rounds/<id>/heatmap/` | — (builder dict) | **ANG-01b.** RES-04 `{round_id, has_map, arena_map: {id, name} \| null, zone_size, processed_image_url, cell_occupancy_json, player_roster}`; upgrades to `full` |
+| `GET /api/rounds/<id>/heatmap/` | — (builder dict) | **ANG-01b.** RES-04 `{round_id, has_map, arena_map: {id, name} \| null, zone_size, cell_occupancy_json, player_roster}`; upgrades to `full` |
 | `GET /api/rounds/<id>/report/` | — (raw PDF) | **ANG-01b.** RV-03 PDF attachment, **not enveloped**. **RV-05:** upgrades the round to `full` fidelity first (`ensure_fidelity(..., "full")`, as `/events/` does) so the chart section plots the same events |
 | `GET /api/rounds/compare/?round_a=&round_b=` | — (builder dict) | **ANG-01b.** RV-01 `{round_a, round_b, stat_keys, team_ids, points_series, deltas}` |
 | `POST /api/simulate-batch/<job_id>/save/` | — | **ANG-01b.** Enqueue `save_games_task` ⇒ 200 `{job_id}` |
@@ -117,21 +117,20 @@ HX-03 / HX-04 head-to-head, HX-01 career and HX-02 benchmark endpoints live on t
 (`/api/teams/head-to-head/`, `/api/players/head-to-head/`, `/api/players/<id>/career/`,
 `/api/players/benchmarks/`) but their builders are in `matches/services.py` / `teams/services.py` —
 see **ANG-01b** below, `teams/CLAUDE.md` (Services) and `docs/agents/teams/api.md`.
-Team head-to-head `detail_list` rows also carry `match_id` / `round_id` (each null on the other
-kind, ANG-06-9) so the SPA links by id instead of `detail_url`.
+Team head-to-head `detail_list` rows carry `match_id` / `round_id` (each null on the other
+kind, ANG-06-9) so the SPA links by id.
 
 **Team match history (ANG-06-9).** `GET /api/teams/<id>/history/` is a detail action on
 `TeamViewSet` (`get_object()` ⇒ cross-Account 404) over `build_team_match_history(team, user,
-scopes)` in `matches/team_match_history.py`, which the HTML `team_match_history` view calls too.
-Both surfaces drop another Account's Matches / Rounds (`owned_match_q` / `owned_game_round_q`).
+scopes)` in `matches/team_match_history.py`, which drops another Account's Matches / Rounds
+(`owned_match_q` / `owned_game_round_q`).
 `scope` is repeated: absent ⇒ every scope, present ⇒ that selection, `?scope=` ⇒ none; unknown keys
 (`freeform`, `t<tournament id>` are the valid ones) are ignored. `team_match_history_payload` turns
 the builder's model rows into the `data` shape (`team`, `scope_options[{key,label,selected}]`,
 `show_scope_filter`, `has_any_games`, `stats`, `role_columns`, `roster`, `opponents`, `matches`,
 `single_rounds`; both lists newest first; every Match and Single Round row carries `result`
 `won` / `lost` / `tie`, a null winner being a tie). The builder returns a frozen
-`TeamMatchHistory` dataclass (`stats` a `HistoryStats`); the HTML view spreads its fields into
-the template context. The roster query `select_related`s `game_round` (`get_mvp` reads it): the
+`TeamMatchHistory` dataclass (`stats` a `HistoryStats`). The roster query `select_related`s `game_round` (`get_mvp` reads it): the
 `("teams", "history")` scaler in `test_detail_action_query_counts.py` pins the constant query
 count. Tests: `matches/tests/test_api_team_match_history.py`.
 
@@ -142,8 +141,8 @@ FilterSet by hand (`translate_validation` ⇒ 400 envelope). `get_queryset()` no
 
 **Batch endpoints (API-03) are enveloped too.** `POST /api/simulate-batch/` (still **200**) and
 `GET /api/simulate-batch/<job_id>/` return `{"data": <bare JSON>, "meta": {}}` where `data` is
-**byte-identical** to the pre-ANG-01a body (`_BATCH_POST_KEYS` / `_BATCH_STATUS_KEYS`, i.e. the UI
-polling JSON). The three hand-built `Response({"detail": msg}, status=400)` (same-team, roster errors,
+**byte-identical** to the pre-ANG-01a body (`_BATCH_POST_KEYS` / `_BATCH_STATUS_KEYS` in
+`test_batch_views.py`; the status body is `matches.job_status.build_batch_status_response`). The three hand-built `Response({"detail": msg}, status=400)` (same-team, roster errors,
 unknown team) became `raise ValidationError(msg)` — same messages ⇒
 `{"code": "invalid", "message": msg, "field": null}`; serializer failures give per-field entries.
 **Closed by ANG-01b:** the `SimulateBatchRequestSerializer` team lookup is now ownership-scoped —
@@ -169,10 +168,9 @@ Seam contract: [`.claude/worktrees/ang-01b-seam-contract.md`](../../../.claude/w
 (`h2h_stats`, `player_h2h_stats`, `round_comparison`, `missile_log_stats`, `round_summary`,
 `career_stats`, `role_benchmarks*`, `sim_helpers/pdf_report`) are untouched.
 
-**`matches/services.py` (new)** — shared by the HTML views and the API; must not import
-`matches.views` (the views import it).
+**`matches/services.py` (new)** — the API's service layer (it has no HTML callers since ANG-08).
 - `MatchSetupError(Exception)` — `str(exc)` is the exact user-facing message.
-- `check_matchup(team_red, team_blue) -> None` — raises, in HTML order: same team ⇒ "A team cannot
+- `check_matchup(team_red, team_blue) -> None` — raises, in order: same team ⇒ "A team cannot
   play against itself!", then red / blue `roster_errors` ⇒ `"{name} has an invalid roster: {errs}"`.
 - `resolve_batch_teams(team_red_id, team_blue_id, user) -> tuple[Team, Team]` — equal ids ⇒ same-team
   error; each slot looked up in `owned_queryset(Team.objects.all(), user)`, a miss (foreign **or**
@@ -182,7 +180,7 @@ Seam contract: [`.claude/worktrees/ang-01b-seam-contract.md`](../../../.claude/w
   `create_sandbox_round(team_red, team_blue, *, arena_map, user) -> GameRound` — `check_matchup` →
   `BatchSimulator().simulate_match` / `simulate_single_round_detailed` → `stamp_manager(row, user)`; a
   simulator `ValueError` is re-raised as `MatchSetupError`.
-- `shared_team_ids(round_a, round_b)` (was `views._shared_team_ids`),
+- `shared_team_ids(round_a, round_b)`,
   `build_round_comparison(round_a, round_b, user) -> {team_ids, points_series, deltas}` (precondition:
   distinct rounds with a shared team, else `ValueError`; an un-owned shared Team ⇒ `Http404`).
 - `build_team_h2h(team_a, team_b, *, provenance, date_from, date_to)` and
@@ -192,17 +190,16 @@ Seam contract: [`.claude/worktrees/ang-01b-seam-contract.md`](../../../.claude/w
   (`ensure_fidelity(gr, "full")` first; returns the `ArenaMap` **instance** — the API flattens it),
   `build_round_report_data(gr)` (the 15-key RV-03 `report_data`, **no** fidelity upgrade: the
   `report` action upgrades first), `round_report_filename(gr)`, **ANG-06d** `round_scoreboard(gr)`
-  (the Django round page context and the API `scoreboard` field).
-- The RV-01 / HX-03 / HX-04 private helpers moved here verbatim; `matches/views.py` re-exports
-  `_player_row`, `_comparison_row`, `_cumulative_team_points` and `_shared_team_ids = shared_team_ids`.
-  The lenient HTML parsers (`_parse_provenance`, `_parse_date`, `_H2H_PROVENANCE_VALUES`) stay in views.
+  (the API `scoreboard` field).
+- The RV-01 / HX-03 / HX-04 private helpers (`_player_row`, `_comparison_row`,
+  `_cumulative_team_points`) live here; patch / import them from `matches.services`.
 
-**Forms.** `MatchSetupForm` / `SingleRoundSetupForm` / `BatchSimulateForm` take a keyword-only
+**Forms.** `MatchSetupForm` / `SingleRoundSetupForm` take a keyword-only
 `user=None`; `team_red` / `team_blue` = the valid-roster subset of
 `owned_queryset(Team.objects.regular(), user)` (`None` ⇒ Unmanaged only). Foreign / Free Agents /
-per-League pool / invalid-roster ids ⇒ `invalid_choice` (HTML form error; API 400). New API-only
+per-League pool / invalid-roster ids ⇒ 400 `invalid_choice`. New API-only
 `SaveBatchGamesForm` (`team_red`, `team_blue` ints ≥ 1; optional `arena_map`; `game_type` avg /
-outlier; strict `n` 1..10 — the HTML save keeps its clamp). `matches/api_forms.py` (new):
+outlier; strict `n` 1..10). `matches/api_forms.py` (new):
 `CompareRoundsParamsForm` (`round_a`, `round_b`), `TeamH2HParamsForm` (`team_a`, `team_b`,
 `provenance` default "all", `from` / `to`), `PlayerH2HParamsForm` (`player_a`, `player_b`, `role`
 default null, `provenance`, `from` / `to`); `_add_date_range(form_cls)` injects the keyword-named
@@ -220,46 +217,36 @@ rounds / teams / players to compare." (`field` null) — checked **before** the 
 - **Compare** — validate → `get_owned_or_404` a then b → no shared team ⇒ 400 `invalid` "These rounds
   share no team, so there is nothing to compare." → builder. `round_a` / `round_b` are flattened refs
   `{id, round_number, match_id, date_played, team_red, team_blue}`.
-- **Batch save** (`POST /api/simulate-batch/<job_id>/save/`) — **job-keyed with teams in the body; no
-  session.** The Job id is a capability token (no owner check); ownership is enforced on the inputs.
+- **Batch save** (`POST /api/simulate-batch/<job_id>/save/`) — **job-keyed with teams in the body.**
+  The Job id is a capability token (no owner check); ownership is enforced on the inputs.
   Order: Form → `resolve_batch_teams` → `AsyncResult(job_id).state != "SUCCESS"` (incl. unknown /
   PENDING / FAILURE) ⇒ **409 `job_not_complete`** (`JobNotComplete(APIException)` in
   `matches/api_views.py`) → `avg_seeds` / `outlier_seeds[:n]`, empty ⇒ 400 "No saved seeds for this
   category." → `save_games_task.delay(..., manager_id=request.user.pk)` ⇒ **200** `{job_id}` (the
   status every Job-enqueue endpoint uses).
-- **Save status** (`GET /api/simulate-batch/save/<save_job_id>/`) — `build_save_status_response`,
-  byte-identical to the HTML JSON; never 4xx (unknown ⇒ `running`).
+- **Save status** (`GET /api/simulate-batch/save/<save_job_id>/`) —
+  `matches.job_status.build_save_status_response`; never 4xx (unknown ⇒ `running`).
 
 **Fidelity (GEN-01).** missile-log ⇒ `combat`, heatmap ⇒ `full`, and the ANG-01a `/events/` action
 now ⇒ `full` (before, a `scores` round served an empty event list); since RV-05 the report also
 upgrades to `full` in the action (`build_round_report_data` itself still does not).
 
-**HTML views changed (output byte-identical for owned data).** `create_match` / `create_single_round`
-/ `simulate_batch` pass `user=request.user` and delegate to the services (team choices narrow);
-`save_batch_games` passes `manager_id` (saved rounds now owned by the saver); `compare_rounds`,
-`head_to_head`, `player_head_to_head` scope their pickers **and** preselect lookups to owned rows
-(closes a team-name leak) and delegate to the builders; `missile_log`, `movement_heatmap`,
-`export_round_report` delegate to the builders. Lenient HTML param parsing is unchanged.
-
 **Known follow-ups (PLAN.md Deferred Items).** The H2H / career round sets are not
 ownership-filtered (the HX-02 benchmark population is, since UXP-14) (a foreign Account's Match between two Unmanaged Teams can surface in
-`detail_list`); the HTML `save_batch_games` still trusts the session's team ids.
+`detail_list`).
 
 ## ANG-01d-1 league lifecycle + reads API
 
 Seam contract: [`.claude/worktrees/ang-01d-1-seam-contract.md`](../../../.claude/worktrees/ang-01d-1-seam-contract.md).
-**No migration, no simulation change, no Score Calibration re-baseline, no ADR**; models, templates,
-`league_urls.py`, `season_urls.py`, `tasks.py`, `league_screens/*` and `core/*` unchanged. ANG-01d was
+**No migration, no simulation change, no Score Calibration re-baseline, no ADR**. ANG-01d was
 re-sliced: this is the **lifecycle + reads** half; the **play loop** (start Season, play week / two
-months / until end / playoffs / single round, live watch, Job status + cancel, member nights, the
-topnav play-control keys) is **ANG-01d-2** (shipped separately, PR #178, in
-`matches/league_play_services.py`) — `_build_play_controls_context`, the play views and `tasks.py`
-did not move in ANG-01d-1. The API **never writes or pops `request.session["last_league_id"]`**.
+months / until end / playoffs / single round, live watch, Job status + cancel, member nights) is
+**ANG-01d-2** (shipped separately, PR #178, in `matches/league_play_services.py`).
 
-**`matches/league_services.py` (new)** — shared by the HTML views and the API; must **not** import
-`matches.league_views` (views import services); imports `CreateLeagueForm` under `TYPE_CHECKING`
-only. Moved code calls `random.Random()` through `import random` (patch safety).
-- **Moved verbatim** from `league_views.py` (bodies byte-unchanged). Same name: `SEED_BUDGET_MIN` /
+**`matches/league_services.py` (new)** — the League service layer behind the API (no HTML callers
+since ANG-08); imports `CreateLeagueForm` under `TYPE_CHECKING` only. Code calls `random.Random()`
+through `import random` (patch safety).
+- **Helpers** (moved from the deleted `league_views.py`). Same name: `SEED_BUDGET_MIN` /
   `_MAX` / `_SINGLE`, `_compute_team_overall`, `_rank_teams_by_strength`, `_pick_manager_team`,
   `_seed_team_budgets_by_strength`, `_write_baseline_ratings`, `_developing_players`,
   `_coaching_effect_by_team`, `_scouting_budget_by_team`, `_develop_league_for_new_season`,
@@ -275,15 +262,8 @@ only. Moved code calls `random.Random()` through `import random` (patch safety).
   `create_league_and_season` (still `@transaction.atomic`), `is_career_league`,
   `run_season_rollover` (undecorated — caller owns atomic), `eligible_new_teams`, `teardown_league`,
   `build_dashboard_context`, `pick_displayed_season`, `compute_season_award_set`,
-  `build_history_row` (13 keys), `STANDINGS_SORT_KEYS`.
-- **Re-exports.** `league_views.py` imports every moved / new name back (`# noqa: F401`) and aliases
-  the renamed ones to their old underscore names (`_template_to_form_data`, `_create_league_and_season`,
-  `_is_career_league`, `_run_season_rollover`, `_eligible_new_teams`, `_teardown_league`,
-  `_build_dashboard_context`, `_pick_displayed_season`, `_compute_season_award_set`,
-  `_build_history_row`, `_STANDINGS_SORT_KEYS`), so every existing `from matches.league_views import
-  _x` (tests, `league_screens/*`, `core.context_processors`) keeps working. **Patch-target rule:**
-  `patch("matches.league_views._x")` no longer intercepts calls from moved / delegating code — patch
-  `matches.league_services.<name>`; `matches.league_views.random.Random` stays valid (global module).
+  `build_history_row` (13 keys), `STANDINGS_SORT_KEYS`. **Patch-target rule:** patch
+  `matches.league_services.<name>`.
 - **Domain exceptions:** `SeasonInProgressError(season)` (`.season` = the non-completed Season),
   `NoCompletedSeasonError`, `ManagerFiredError(evaluation)` (`.evaluation`).
 - **New:** `season_mode_for(season | None) -> "none" | "draft" | "completed" | "active"`;
@@ -303,17 +283,16 @@ only. Moved code calls `random.Random()` through `import random` (patch safety).
   `replace_conferences(season, specs)` (`@transaction.atomic`; delete-all then recreate in ordinal
   order; `[]` clears).
 
-**Forms.** `ConferencePartitionForm(data, *, season)` (`matches/forms.py`, **shared HTML + API**;
+**Forms.** `ConferencePartitionForm(data, *, season)` (`matches/forms.py`;
 `conferences = ParsedJSONField()`; imports `_validate_conference_partition` lazily). `clean_conferences`
 returns `[(name.strip(), sorted team_ids, rotation_ids), …]`; locked order, all code `invalid`, field
 `conferences`: (1) shape — one error `conferences must be a list of {"name", "team_ids",
-"map_rotation_ids"} objects.` (`map_rotation_ids` optional, a list **or** a str); (2) membership
-(API-only reachable) — `Team {tid} is in more than one conference.` / `Team {tid} is not enrolled in
+"map_rotation_ids"} objects.` (`map_rotation_ids` optional, a list **or** a str); (2) membership — `Team {tid} is in more than one conference.` / `Team {tid} is not enrolled in
 this Season.`, stop; (3) partition via `_validate_conference_partition` (strings unchanged; bracket
 floor `MIN_BRACKET_PARTICIPANTS` when a tournament phase exists, else 2); (4) rotation — str through
 `parse_rotation_ids`, list ids checked against confirmed-config maps (`Map rotation contains an invalid
 id.` / `… an unknown map id.`, order + duplicates kept); (5) `rotate_by_conference` guard `Each
-conference needs at least 1 rotation map.` once. Steps 3–5 reproduce the HTML error list exactly.
+conference needs at least 1 rotation map.` once.
 API-only: `LeagueTemplateForm` (`template` `ChoiceField` over `LEAGUE_TEMPLATES` keys) and
 `ReassignTeamForm(data, *, eligible_team_ids)` (`team_id` `TypedChoiceField(coerce=int)`).
 `matches/api_forms.py` gains `StandingsParamsForm` (`sort` ∈ `STANDINGS_SORT_KEYS`, default `rank`;
@@ -347,24 +326,24 @@ team_ids}`); `active_play_job_id` / `play_cancel_requested` excluded (ANG-01d-2 
 - **History** — `history_seasons` → the in-progress Season (if any) then completed ones, paginated
   with `EnvelopePagination`; `build_history_row` runs **only on the page slice**; Team / winner
   instances flattened to refs. In-progress row appears once (page 1), not pinned per page.
-- **Team schedule** — `get_owned_or_404(Team, …, pk=team_id)` (no enrolment check, HTML parity); no
+- **Team schedule** — `get_owned_or_404(Team, …, pk=team_id)` (no enrolment check); no
   displayed Season ⇒ 404.
 - **Next season** — `@transaction.atomic`; `start_next_season` exceptions ⇒ 409s; 201
   `SeasonSerializer` (since ANG-06-14 through `roll_and_start_next_season`, so the Season is
-  started: see below). On a 409 the lazy ensure writes **roll back** (HTML commits them) — harmless,
-  idempotent + deterministic.
+  started: see below). On a 409 the lazy ensure writes **roll back** — harmless, idempotent +
+  deterministic.
 - **New-team candidates** — non-career ⇒ `not_career_league`; no completed ⇒ `no_completed_season`;
   `{latest_completed, candidates: [standings rows + team ref]}`. **Reassign** — `@transaction.atomic`:
   non-career → active Season ⇒ `season_in_progress` → no completed → `ReassignTeamForm` (400
   `required` / `invalid_choice`, field `team_id`) → `get_owned_or_404(Team)` → `reassign_and_roll` ⇒
-  201. Neither checks the fired verdict (HTML parity).
+  201.
 - **Standings** — `{season, is_draft_preview, sort, dir, groups: [{conference: ref | null, name, rows}]}`;
   rows = the 17 `StandingsRow` keys + `team` ref; flat Season ⇒ exactly one `conference: null` group;
   `rank` never renumbered by sort.
 - **Schedule** — `{season, matchdays: [{matchday, date, fixtures}], member_night_games}` with
   `team_a` / `team_b` flattened. **Awards** — `{season, has_rounds, most_points, best_accuracy,
   kd_by_role (5 roles), best_medic, most_efficient_nuke, season_mvp, finals_mvp}`.
-- **Owner evaluation** — `ensure_owner_evaluation` (same lazy writes as HTML); `None` ⇒ 404; `data`
+- **Owner evaluation** — `ensure_owner_evaluation` (lazy writes); `None` ⇒ 404; `data`
   carries `team_managed` ref, the three deltas + totals, `overall_mood`, `verdict`, `hot_seat_level`,
   `fired_reason`, `is_fired`, `reassigned`, `created_at`.
 - **Conferences** — GET = `build_conferences_state` with `teams` as refs. PUT (`JSONParser` only;
@@ -375,22 +354,11 @@ team_ids}`); `active_play_job_id` / `play_cancel_requested` excluded (ANG-01d-2 
 `season_in_progress`, `field = "season:<id>"` (dict `detail`, the `roster_invalid` `row:<n>`
 precedent; next-season / reassign); `ManagerFired` ⇒ `manager_fired` (next-season); `ManagerNotFired` ⇒ `manager_not_fired`
 (UXP-03: candidates / reassign unless the latest evaluation fired the Manager and they have not
-reassigned yet; the HTML picker redirects to the owner evaluation, HTML reassign is 400); `NoCompletedSeason`
+reassigned yet); `NoCompletedSeason`
 ⇒ `no_completed_season` (next-season / candidates / reassign); `NotCareerLeague` ⇒
-`not_career_league` (delete / candidates / reassign; message = the HTML string per site);
-`SeasonNotDraft` ⇒ `season_not_draft` (conferences PUT; text == the HTML 400). PUT / PATCH on a
+`not_career_league` (delete / candidates / reassign; one message per site);
+`SeasonNotDraft` ⇒ `season_not_draft` (conferences PUT). PUT / PATCH on a
 League or Season detail, POST / DELETE on seasons ⇒ 405.
-
-**HTML views changed (output byte-identical, same DB writes).** `league_dashboard` (mode ladder ⇒
-`season_mode_for`), `season_standings`, `season_schedule`, `team_schedule`, `league_history`,
-`season_awards`, `owner_evaluation`, `next_season` (catches the three service exceptions **inside** its
-atomic block ⇒ same redirects / 400 as before, ensure writes still commit), `reassign_team` (final
-writes ⇒ `reassign_and_roll`) and `manage_conferences` POST (keeps its indexed parse, then binds
-`ConferencePartitionForm`; errors re-rendered from `form.errors.as_data()["conferences"]`) delegate
-to the services. **Bug fix (user-approved):** `reassign_team` now has an **active-Season guard** —
-after the non-career 400 and before any write, `league.active_season` ⇒ 302 to that Season's
-dashboard (before, a POST while a Season was draft / active created a second non-completed Season,
-since `Season.objects.create` bypasses `Season.clean`). Still no fired check.
 
 **Known follow-ups (PLAN.md Deferred Items).** No fired check on candidates / reassign; team schedule
 accepts any owned Team; the history API does not pin the in-progress row; `LeagueSerializer.active_season`
@@ -398,30 +366,23 @@ is per-row.
 
 ## ANG-01e league screens API
 
-Spec: GitHub issue #180 (tickets #181-#186); grill decisions 1-19 in `PLAN.md`. All **15**
-`league_screens/*` surfaces are exposed under `/api/leagues/<id>/…`. **One migration**
-(`0063_watchedplayer`, no `RunPython`); no simulation change, no Score Calibration re-baseline, no ADR.
-The API **never writes `request.session["last_league_id"]`** and builds no sidebar links.
+Spec: GitHub issue #180 (tickets #181-#186); grill decisions 1-19 in `PLAN.md`. All **15** League
+screens are exposed under `/api/leagues/<id>/…`. **One migration** (`0063_watchedplayer`, no
+`RunPython`); no simulation change, no Score Calibration re-baseline, no ADR.
 
-**`matches/league_screen_services.py` (new)** — the builders behind every League screen, called by
-both the `league_screens/*` HTML views and the API (the views no longer hold screen logic). Reads no
-request; must **not** import `matches.league_views` or `matches.league_screens`. **Patch
-`matches.league_screen_services.*`** — the old private helpers were deleted, not re-exported (the
-plan's re-export decision was dropped).
+**`matches/league_screen_services.py` (new)** — the builders behind every League screen API (no
+HTML callers since ANG-08). Reads no request. **Patch `matches.league_screen_services.*`**.
 - **Season scope:** `CAREER = "career"`; frozen `SeasonScope(seasons, selected: Season | "career" |
-  None, options, round_filter)` (+ `selected_id`, the legacy HTML value); `resolve_season_scope(league,
-  displayed_season, raw_season, *, allow_career=True)` raises `ValueError` on a foreign / bad id. The
-  HTML wraps it forgivingly (`league_views._lenient_season_scope` falls back to the default;
-  `_resolve_season_scope` keeps its 4-tuple); the API rejects it in the param Form.
+  None, options, round_filter)` (+ `selected_id`); `resolve_season_scope(league,
+  displayed_season, raw_season, *, allow_career=True)` raises `ValueError` on a foreign / bad id; the
+  API rejects it in the param Form.
 - **Shared lookups:** `build_round_dicts(prs_filter, *, extra_fields=None)` (one dict per
   `PlayerRoundState`; `extra_fields(prs) -> dict` adds keys, used by Statistical Feats);
   `rating_stats(player | PlayerSeasonRating)` = the 19 stats keyed **lowercase**
   (`offensive_synergy`, though the field is `Offensive_synergy`).
 - **Enrolment — the single definition:** `enrolled_team_ids(season)` = the activation snapshot
   `starting_team_ids_json`, falling back to the live `season.teams` M2M only for a draft (snapshot
-  `None`). `enrolled_teams(season | None)` (by name), `enrolled_team(season, team_id)`,
-  `parse_team_id(raw)`, `resolve_league_team(league, displayed_season, team_id)` (HTML picker chain:
-  `?team_id=` → `current_team` → first enrolled). Every screen, team picker and `team_id` allowlist
+  `None`). `enrolled_teams(season | None)` (by name), `enrolled_team(season, team_id)`. Every screen, team picker and `team_id` allowlist
   reads enrolment through these (before, some read the live M2M, so a Team added after the start
   leaked in).
 - **Watch list:** `watched_player_ids(account, league | league_id) -> set[int]` (anonymous ⇒
@@ -442,13 +403,12 @@ plan's re-export decision was dropped).
 
 **`WatchedPlayer` model (new).** `account` (FK `AUTH_USER_MODEL`), `league`, `player` (all CASCADE),
 `created_at`; `UniqueConstraint(account, league, player)` `uniq_account_league_watched_player`. No
-ownership axis of its own — always filtered by `account`. Replaces the LG-06f session store; session
-lists were dropped, not migrated (ADR-0004).
+ownership axis of its own — always filtered by `account`.
 
 **Forms.** `matches/forms.py::TeamFinancesForm` (ModelForm over the four `budget_*`, `injury_policy`,
 `ticket_price`) **rejects, never clamps**: budgets `1..finance.MAX_LEVEL`, `ticket_price >= 0`, policy
 in `Team.INJURY_POLICY_CHOICES`; labels Scouting / Coaching / Facilities / Health / Injury policy /
-Ticket price (the HTML error list shows `label: message`; the API keeps field names). Both callers bind
+Ticket price (the API keeps field names). The PATCH binds
 `merged_form_data(TeamFinancesForm, team, data)`, so absent fields keep the saved value.
 `matches/api_forms.py`: `LeagueScreenParamsForm` (bind with `league=`; `clean_season` blank ⇒ `None`,
 this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_choice`; `rate` default
@@ -462,8 +422,8 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
 **Endpoint behaviour** (`matches/league_screen_api_views.py::LeagueScreensMixin`, mixed into
 `LeagueViewSet`; every action starts with `self.get_object()` ⇒ cross-Account 404, anonymous 401).
 - **Params** are strict (bad `season` / `rate` / `ordering` / `team_id` ⇒ 400). Paging is the shared
-  `EnvelopePagination` (`page`, `page_size`), not the HTML `per_page`. Sorting is `?ordering=<key>` /
-  `-<key>` over the HTML's keys with each screen's HTML default.
+  `EnvelopePagination` (`page`, `page_size`). Sorting is `?ordering=<key>` / `-<key>` with each
+  screen's own default.
 - **`meta.season_scope`** = `{selected: season_ref | "career" | null, options: [{id, name, year}]}`
   on every Season-scoped screen (the watch list and the Team screens included), merged beside the
   page keys via the new `EnvelopePagination.get_paginated_response(data, extra_meta=None)`
@@ -488,16 +448,16 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
 - **Every Player row carries `watched`** for the requesting Account; rating rows carry the 19
   lowercase `stats`.
 - **Team-scoped paths** (`teams/<team_id>/…`) use `enrolled_team_or_404` — no displayed Season or a
-  Team not enrolled in it ⇒ 404. No current-team fallback (HTML-only).
+  Team not enrolled in it ⇒ 404. No current-team fallback.
 - **League player** is lenient (decision 17): 404 only for a missing / foreign League or Player; one
   response with bio, overall, 19 stats, per-Season + Career rows, awards and ratings history.
   ANG-06-16 adds `can_link_self_insert`: `player.team.manager_id == request.user.pk` (the
-  template's *This is me* rule; an unmanaged Team is false). Another Account's Player is a 404, so
+  *This is me* rule; an unmanaged Team is false). Another Account's Player is a 404, so
   the flag is never sent false for that reason.
 - **`leaders/`** returns all four boards (top 10), no sort params. **`playoffs/`** rejects `career`.
 - **`statistical-feats/`** `data.team_feats[]` = `{kind, label, team_name, team: team_ref | null,
   round_id}` (`team_feats_payload`). `team_name` (ANG-06-15) is the `TeamFeatRecord`'s own winner
-  name, the value the HTML shows, so it is set even when `team` is `null` (no Round 2 to resolve the
+  name, so it is set even when `team` is `null` (no Round 2 to resolve the
   winner's ref through).
 - **Watch list writes:** `PUT` / `DELETE watch-list/<player_id>/` ⇒ `{player, watched}`, idempotent;
   `DELETE watch-list/` ⇒ `{removed: n}`. Player not in the League ⇒ **400 `player_not_in_league`**
@@ -510,16 +470,6 @@ this League's Season id, or `"career"` when `allow_career`, else 400 `invalid_ch
   `{team, cash, revenue, profit, payroll}` (money `null` without a snapshot).
 - Service exceptions map through `translate_screen_errors()` to `PlayerNotInLeagueError` /
   `FinanceDisabledError` / `TeamNotEditableError` (`APIException`s in the mixin module).
-
-**HTML views changed.** All `league_screens/*` views call the builders (output unchanged except the
-enrolment fix). **Team Finances POST** binds `TeamFinancesForm` against `league.current_team` only (a
-posted `team_id` is ignored), re-renders 200 with `team-finances-form-errors` on bad values, and
-redirects on success / when finances are off; viewing another Team disables the form
-(`<fieldset disabled>`) with `team-finances-readonly-notice`. This fixes a bug where the POST saved any
-enrolled Team's budgets. **Watch list:** the toggle now returns 400 `{"error": "player not in league"}`
-for a Player outside the League; **Remove All** is a POST form (`watch-list-remove-all-form`) to the
-new `watch_list_clear` URL (`GET ?action=clear` removed); the `core.context_processors.watch_list`
-processor reads `watched_player_ids(request.user, league_id)`.
 
 **Known follow-ups (`issues.md`).** ANG01e-D1 player-page awards recompute whole Seasons; ANG01e-D2
 Team History scans every Season of every League; ANG01e-D3 long builders mix querying with assembly.
@@ -539,21 +489,17 @@ exposed by any payload). `Tournament.team_assembly` choice `random_draw` is rena
 `SeasonPhase.tournament_mode = "random_draw"` is a different column and is **unchanged** (it builds a
 drawn pool into RR→DE, a Random Draw by definition).
 
-**Packages.** `matches/tournament_views.py` became the `matches/tournament_views/` package
-(`list_create`, `detail`, `setup`, `draw`, `play`; URL names and templates unchanged). The logic moved
-to **`matches/tournament_services/`**, shared by HTML and API. It imports no view module and has **no
-`__init__` re-exports**: import from each submodule, and **patch `matches.tournament_services.<module>.*`**
-(moved view helpers were deleted, not re-exported — the ANG-01e precedent).
+**Packages.** The Tournament logic lives in **`matches/tournament_services/`**, the service layer behind
+the API (no HTML callers since ANG-08). It imports no view module and has **no `__init__`
+re-exports**: import from each submodule, and **patch `matches.tournament_services.<module>.*`**.
 - `errors` — `TournamentEmbeddedError`, `TournamentNotSetupError`, `TournamentNotActiveError`,
   `NoPlayableNodeError`, `PlayInProgressError(job_id)` (`.job_id`), `BrokerUnavailableError`,
-  `DrawNotReadyError(message)`; `BROKER_UNAVAILABLE_MESSAGE` (the HTML 503 text, used by both
-  surfaces); guards `require_sandbox` / `require_setup` / `require_active`, which check **embedded
+  `DrawNotReadyError(message)`; `BROKER_UNAVAILABLE_MESSAGE` (the 503 text); guards `require_sandbox` / `require_setup` / `require_active`, which check **embedded
   first, then state** (an embedded locked Tournament reports `tournament_embedded`). Each exception
   carries a default message ("The Tournament is not active.", "The Tournament is no longer in
-  setup.", "No Match is ready to play.", …) that the HTML flashes and the API sends.
-- `detail` — `build_rounds(t, bracket_type)` (was the view's `_build_rounds`; `league_screen_services`
-  imports it from here), `build_detail_context(t, *, user)` (the HTML template context; `user` scopes
-  the pool picker), `format_label(t)` ("Random Draw" for `player_pool` + `round_robin_double_elim`,
+  setup.", "No Match is ready to play.", …) that the API sends.
+- `detail` — `build_rounds(t, bracket_type)` (`league_screen_services` imports it from here),
+  `format_label(t)` ("Random Draw" for `player_pool` + `round_robin_double_elim`,
   else the format's display label), `is_embedded(t)` (referenced by any `SeasonPhase`, or carries a
   `season_phase` — regional / Worlds), `tournament_fields(t)` (the top-level fields shared by list rows
   and the detail), `build_tournament_detail(t)`, `pool_entries(t)`, `pool_entry_payload(entry)`,
@@ -576,7 +522,7 @@ The API lives in **`matches/tournament_api_views/`**: `base` (`TournamentViewSet
 `setup` / `draw` / `play`. `TournamentSerializer` (output only, renders `tournament_fields`),
 `TournamentFilterSet` (`matches/filters.py`) and `tournament_ref` (`{id, name}`, `api_refs.py`).
 
-**Strict Forms (shared by HTML and API).** Absent / blank optional fields take their old defaults, but
+**Strict Forms.** Absent / blank optional fields take their old defaults, but
 a **present bad value is rejected**, never defaulted or clamped.
 - `TournamentCreateForm` — `name` (required), `format`, `team_assembly` (`preset` / `player_pool`),
   `teams` (the requester's own + Unmanaged regular Teams with a valid Roster; another Account's Team is
@@ -584,12 +530,7 @@ a **present bad value is rejected**, never defaulted or clamped.
   `min_value`** — it used to be clamped to 6), `rrde_combo` (`4/0`, `4/2`, `8/0`, `8/4`, `16/0`,
   `16/8`), `swiss_rounds` (≥ 0), `role_assignment_mode`, and the four series lengths (1 / 3 / 5). A
   preset Tournament needs ≥ 4 Teams counting generated ones (`too_few_teams`, field `teams`); a
-  Player-pool draw ignores `teams` / `generate_*`. The field names are the HTML POST names. The
-  forgiving view parsers (`_parse_rrde_combo`, `_parse_swiss_rounds` and the inline series-length /
-  format / team-assembly fallbacks) are gone. Other old view helpers moved and were renamed:
-  `_detail_context` ⇒ `detail.build_detail_context`, `_build_rounds` ⇒ `detail.build_rounds`,
-  `_team_mean_rating` ⇒ `seeding.team_mean_rating`, `_build_tournament_play_status_response` ⇒
-  `play.build_play_status`.
+  Player-pool draw ignores `teams` / `generate_*`.
 - `SeedsForm` — `seeds` is a `{team_id: seed}` map covering exactly the current participants with
   seeds 1..N, else 400 `invalid` on `seeds` (missing / extra team, duplicate or gapped seed, non-int).
 - `PoolAddPlayersForm` — `player_ids` must be Players the Account may see (`owned_queryset(…,
@@ -620,7 +561,7 @@ guards (409), then the Form (400), then the service — views raise, never build
   match_team, match_opp, played, match_id}` from the row Team's side (leg 1 at `[a][b]`, leg 2 at
   `[b][a]`, diagonal null), `[]` outside Round robin / RR→DE; its Series Matches are prefetched, so the
   query count is flat in the field size. `can_play` = active and `find_next_playable_node()` finds a
-  node (`_can_play`, shared with the HTML context); `next_node` is not sent. PUT / PATCH / DELETE ⇒ 405. Embedded Tournaments are readable, with their `season` ref.
+  node (`_can_play`); `next_node` is not sent. PUT / PATCH / DELETE ⇒ 405. Embedded Tournaments are readable, with their `season` ref.
 - **Seeds / lock / import-participants** — 409 `tournament_embedded` / `tournament_not_setup` first.
   Seeds (`PUT`, JSON) and lock return 200 with the detail; a lock format-rule `ValidationError` (too few
   participants, RR→DE advancers above the field, an odd Swiss field) ⇒ 400 `invalid`, field null.
@@ -640,8 +581,8 @@ guards (409), then the Form (400), then the service — views raise, never build
   match_ids, state, champion}`, where `node` carries `id`, `bracket_type`, `bracket_round` plus the
   `node_payload` keys.
 - **Play-all** — the same guards, then `enqueue_play_all` ⇒ **200** `{job_id, tournament_id,
-  status_url}` (the HTML keeps its 202); broker down ⇒ **503 `broker_unavailable`** with nothing
-  claimed. **Play-job status** — `GET play-jobs/<job_id>/` ⇒ the HTML polling keys `{status,
+  status_url}`; broker down ⇒ **503 `broker_unavailable`** with nothing
+  claimed. **Play-job status** — `GET play-jobs/<job_id>/` ⇒ `{status,
   completed, total, error, tournament_id}`; the Job id is a capability token (ANG-01b / ANG-01d-2).
 
 **Single active play run** (ADR-0040 Tournaments). `enqueue_play_all` makes up the task id and writes it
@@ -659,31 +600,12 @@ retry reports the current id or `"unknown"`. A broker `OperationalError` clears 
 409 `play_in_progress` with `field = job:<id>`; 503 `broker_unavailable`; `DrawNotReadyError` and a
 Django `ValidationError` (lock rules, the preset / Player-pool mismatch) ⇒ 400 `invalid`, field null.
 
-**HTML views changed** (all delegate to the services and bind the same Forms; redirects and URL names
-unchanged).
-- **Embedded guard:** every write on an embedded Tournament (reseed, lock, import, pool, draw,
-  play-next) flashes the error and redirects; play-all answers 409 JSON. Before, `/tournaments/` could
-  play an in-League bracket and bypass the Season's play run.
-- **Strict errors are flashed** (create re-renders 200 with the errors; reseed, pool generate and
-  draw edit flash). Reseed rejects missing / duplicate seeds — a duplicate used to be a 500
-  `IntegrityError`.
-- **Account leaks closed:** the create Team picker and the pool add-existing picker are scoped to the
-  Account; draw edit accepts only this Tournament's drawn Teams.
-- **Labels:** the create form reads "Player pool draw" and preselects RR→DE when it is picked (still
-  changeable); the list shows `format_label`; the detail page has a `#tournament-format-label` badge
-  ("Random Draw" for RR→DE).
-- **Play:** play-all returns 409 JSON `{"error"}` while a run is live (or for a not-active / embedded
-  Tournament) and keeps 202 on success; play-next flashes. The flash texts now come from the service
-  exception defaults (e.g. "The Tournament is not active.").
-
-**Tests.** API: `matches/tests/test_api_tournaments_{read,create,setup,draw,play}.py`. HTML regressions:
-`test_tournament_views_{create,setup,draw,play}_ang01f.py` (plus updates to `test_tournament_views.py`).
-Services / schema: `test_tournament_foundation_ang01f.py` (guards, `format_label`, the migration row
+**Tests.** API: `matches/tests/test_api_tournaments_{read,create,setup,draw,play}.py`. Services / schema: `test_tournament_foundation_ang01f.py` (guards, `format_label`, the migration row
 rewrite) and `test_tournament_services_boundary.py` (no view imports).
 
 **Known follow-ups.** `issues.md`: ANG01f5-D1 generated / imported pool Players land on the global,
 Unmanaged Free Agents Team; ANG01f5-D2 pool CSV import skips the DB slot-collision check; ANG01f-D3
-`build_detail_context` / `build_tournament_detail` mix several jobs. PLAN.md Deferred Items: the
+`build_tournament_detail` mixes several jobs. PLAN.md Deferred Items: the
 never-consumed `PENDING` play run.
 
 ## ANG-02 CORS configuration
@@ -703,7 +625,7 @@ cross-origin with cookies. Config only: `settings.py` plus `django-cors-headers`
     because ANG-07 serves Angular from the same origin.
   - `CORS_ALLOW_CREDENTIALS = True`. The session cookie is sent because `localhost:4200` and `:8000`
     are the same *site* under SameSite=Lax, and ANG-03's refresh cookie will need it too.
-  - `CORS_URLS_REGEX = r"^/api/.*$"`, so HTML, admin and static responses never carry CORS headers.
+  - `CORS_URLS_REGEX = r"^/api/.*$"`, so admin, static and media responses never carry CORS headers.
   - `CORS_EXPOSE_HEADERS = ["Content-Disposition"]` (ANG-06-10), so the cross-origin dev SPA can
     read a download's file name (`ApiClient.getFile`, the Round report).
   - `CSRF_TRUSTED_ORIGINS = list(CORS_ALLOWED_ORIGINS)`. A session write from an untrusted origin is a
@@ -731,7 +653,7 @@ The API accepts a JWT as well as the session. `djangorestframework-simplejwt` (`
 - **Auth classes.** `DEFAULT_AUTHENTICATION_CLASSES = [JWTAuthentication, SessionAuthentication]`.
   DRF takes `WWW-Authenticate` from the first class, so an anonymous `/api/` request is **401**
   (`WWW-Authenticate: Bearer realm="api"`) — the Angular client's signal to refresh. The session stays
-  second for the browsable API and the HTML site. Authenticated-but-forbidden 403s (CSRF) and
+  second for the browsable API and the admin. Authenticated-but-forbidden 403s (CSRF) and
   cross-Account 404s are unchanged.
 - **`SIMPLE_JWT`** (constants): access 15 minutes, refresh 7 days, `ROTATE_REFRESH_TOKENS`,
   `BLACKLIST_AFTER_ROTATION`, `UPDATE_LAST_LOGIN`, `AUTH_HEADER_TYPES = ("Bearer",)`. Login reads
@@ -760,7 +682,7 @@ The API accepts a JWT as well as the session. `djangorestframework-simplejwt` (`
   bearer 401, session still accepted). Every anonymous-403 assertion in the API tests became 401 with an
   `ADR-0041` comment; the auth-order mutation (session first) turns four of them red.
 - **Out of scope.** The Angular interceptor (ANG-05), login throttling, revoking refresh tokens on
-  password change (PLAN.md Deferred Items), HTML views on JWT, scheduling `flushexpiredtokens`.
+  password change (PLAN.md Deferred Items), scheduling `flushexpiredtokens`.
 
 ## ANG-06-14 League core API gaps
 
@@ -770,24 +692,20 @@ Spec: GitHub issue #409 (ticket #410). The backend half of the Angular League co
 **Services.**
 - `league_services.league_delete_summary(league) -> dict[str, int]` — `{seasons, matches,
   tournaments, teams, players}`, built from `_league_teardown_targets` / `_league_match_q` (the
-  same targets `teardown_league` deletes). The HTML `league_delete` GET renders it instead of its
-  old inline dict.
+  same targets `teardown_league` deletes).
 - `league_services.sidebar_schedule_team(league, displayed_season) -> Team | None` — the LG-01g
   TEAM > Schedule chain (`current_team` if enrolled, else the alphabetically-first enrolled Team,
-  else `None`; `None` without a Season), moved verbatim from
-  `league_views._resolve_current_team_for_sidebar` (deleted). The Django sidebar
-  (`_build_league_sidebar_links`) and the nav endpoint both call it.
+  else `None`; `None` without a Season); the nav endpoint calls it.
 - `league_services.managed_team_id(league) -> int | None` — UXP-08's rule (`current_team_id` in a
-  `mode="league"` League, else `None`), moved from `league_views._managed_team_id` (kept as an
-  alias there).
+  `mode="league"` League, else `None`).
 - `league_services.dashboard_awaiting_reassignment(league, season_mode) -> bool` — true only for a
   career League whose displayed Season is `completed` and whose
   `manager_awaiting_reassignment(league, latest_completed_season(league))` holds. It runs the lazy
-  finance / owner-evaluation ensures, as the HTML new-team picker's GET does.
+  finance / owner-evaluation ensures.
 - `league_play_services.roll_and_start_next_season(league) -> NextSeasonResult(season,
   needs_conferences)` (frozen dataclass; in `league_play_services` because it already imports
-  `league_services`). UXP-18's two rules, shared by HTML and API: see `league-foundation.md`,
-  **UXP-18**. The caller owns the outer atomic.
+  `league_services`). UXP-18's two rules: see `league-foundation.md`, **UXP-18**. The caller owns
+  the outer atomic.
 
 **Endpoints** (`LeagueViewSet`, `get_object()` ⇒ cross-Account 404, anonymous 401).
 - `GET /api/leagues/<id>/delete-summary/` (route `league-delete-summary`) — `data` =
@@ -815,7 +733,7 @@ Spec: GitHub issue #409 (ticket #410). The backend half of the Angular League co
 dashboard key tests; `LEAGUE_DASHBOARD_KEYS` in `league_api_fixtures.py` gains the five keys),
 `test_api_league_lifecycle.py` (`test_success_201_active_season`,
 `test_previous_conferences_keep_a_draft_season`, `test_refused_start_keeps_the_rolled_draft`),
-service tests in `test_league_delete.py`, `test_league_next_season.py`, `test_league_sidebar.py`,
+service tests in `test_league_delete.py`, `test_league_next_season.py`,
 and `core/test_maps_api.py` (`simulation_ready`). The N+1 registry
 (`laserforce_simulator/api/tests/test_detail_action_query_counts.py`) gains `("leagues",
 "delete-summary")` and `("leagues", "nav")` scalers.

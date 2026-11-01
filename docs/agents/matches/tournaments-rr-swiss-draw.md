@@ -99,7 +99,7 @@ desc → total_score desc → team_name asc` with a 1-based dense `rank`
 
 - **`round_robin_standings(self) -> list[StandingsRow]`** assembles the three
   `compute_standings` inputs from this Tournament's RR nodes and returns the ranked
-  rows — used by BOTH the engine (champion) and the detail view (standings table),
+  rows — used by BOTH the engine (champion) and the detail (standings table),
   and returns a row for **every enrolled team** (zero-filled before any play).
   `enrolled_teams` comes from `self.participants.select_related("team")`
   (`(p.team_id, p.team.name)`); `completed_matches` is one 9-key dict per RR node
@@ -145,39 +145,19 @@ series_winner_slot(...) is None`) treats an unplayed RR node (`wins_a=0, wins_b=
 both slots filled, `is_bye=False`, `series_length=1`) as playable and a resolved one
 as skipped, and its sort key `(_BRACKET_RANK[bracket_type], bracket_round,
 position)` orders RR nodes deterministically by `(3, matchday, position)`.
-**Callers unchanged:** `tournament_play_next` (sync view), `play_tournament_task`
-(its `while play_next_node(...) is not None` loop drains every RR node one Match at
-a time), `tournament_play_all`, `tournament_play_status` keep their URLs + the 5-key
-status JSON; `stage_progress` (unchanged) reports per-`(bracket_type, bracket_round)`
-group completion — for RR that is **per-matchday** progress, a sensible Play-All
-stages readout.
+**Callers unchanged:** `play_tournament_task` (its `while play_next_node(...) is not
+None` loop drains every RR node one Match at a time) and `tournament_services.play`
+(play-next, play-all, the 5-key status JSON); `stage_progress` (unchanged) reports
+per-`(bracket_type, bracket_round)` group completion — for RR that is
+**per-matchday** progress, a sensible Play-All stages readout.
 
-**View / template surface.** Create form (`tournament_create` /
-`tournament_create.html`): the existing `<select name="format">` (DOM id
-**`tournament-create-format`**) gains a third option — value **`"round_robin"`**,
-label **`"Round robin"`** — alongside single/double-elim; the view's
-forgiving-fallback parse widens to accept `"round_robin"` (anything
-absent/tampered still falls back to `"single_elimination"`; *ANG-01f: absent still does, a tampered
-value is now rejected*), and the four
-`*_series_length` POST fields are still parsed/passed but are **inert** for RR
-(RR forces Bo1 at the node level). The four series-length selects
-(`tournament-create-final-series-length` / `-semifinal-` / `-quarterfinal-` /
-`-earlier-series-length`) are **hidden client-side** when the format select reads
-`round_robin` (a small inline `onchange` toggle — behaviour pinned, exact JS at the
-Code agent's discretion; no server-side change, the inert values do no harm).
-Detail page (`tournament_detail` in `matches/tournament_views.py` /
-`tournament_detail.html`): `_build_rounds` **keeps its 3-key elim dict**
-`{"winners", "losers", "grand_final"}` (all three lists **empty** for an RR
-Tournament — existing elim tests stay green), and RR rides on **two NEW top-level
-context keys** added to `_detail_context` (defaulted `rr_crosstable=[]` /
-`rr_standings=[]` for elim so the template references them unconditionally,
-populated only in the RR branch): **`rr_crosstable`** (the N×N crosstable, a
-`list[dict]` of per-team row descriptors in standings order — the precise nesting is
-the Code agent's discretion, only the cell-mapping rule below and the DOM ids are
-load-bearing) and **`rr_standings`** = `tournament.round_robin_standings()` (the
-live standings table, zero-filled in `setup`/early `active`, final once
-`completed`). The crosstable is built in a separate helper (suggested
-`_build_rr_crosstable`), not by overloading `_build_rounds`.
+**Create / detail.** `TournamentCreateForm`'s `format` accepts `"round_robin"`; the
+four `*_series_length` fields are still taken but are **inert** for RR (RR forces Bo1
+at the node level). The API detail carries **`rr_crosstable`** (the N×N crosstable,
+built by `tournament_services.detail._build_rr_crosstable(tournament, rows)`, in
+Standings order) and **`rr_standings`** (`tournament.round_robin_standings()`,
+zero-filled in `setup`/early `active`, final once `completed`); both are `[]` for the
+elim formats.
 
 **Crosstable cell-mapping rule (LOCKED).** The crosstable is N×N indexed
 `cell[row_team][col_team]`. Each fixture has two legs (two nodes, `round_number==1`
@@ -187,25 +167,14 @@ and `round_number==2`); the node carries `team_a` (=`min(pair)` id) / `team_b`
 `cell[team_b][team_a]`** (team_b is the row/home team for the reverse fixture);
 **diagonal `cell[t][t]` → always blank**. Because `generate_schedule` does **not**
 persist `round_number` onto the `BracketNode` (the node only stores
-`bracket_round=matchday` / `position`), the **view must recover each leg's
+`bracket_round=matchday` / `position`), **`_build_rr_crosstable` recovers each leg's
 `round_number`** by re-deriving the schedule (`fixtures = generate_schedule(team_ids)`,
 matching each persisted RR node to its fixture by the `(matchday,
 position-within-matchday)` key the builder used) and reading `round_number` off the
-matched `ScheduleFixture`. Each filled cell shows the leg's score from the **row
-team's** perspective and links to the played Match; an unplayed leg renders empty /
-"—". The RR branch renders **only** the two RR tables — outer `<table>` DOM ids
-**`tournament-rr-crosstable`** and **`tournament-rr-standings`** — plus the reused
-play controls; the elim WB/LB/GF section containers (`tournament-bracket*`,
-single-elim `tournament-node-*`) are **absent** for RR, and conversely the two RR
-ids are absent for elim (the template **branches on `tournament.format`**). RR nodes
-are always Bo1, so the detail page renders **no** per-node series-score / Bo-N labels
-for RR. **Reused VERBATIM** (no new ids, shared across all formats): the lock control
-(`tournament-lock-form` / `-submit`), play-next (`tournament-play-next-form` /
-`-submit`), play-all (`tournament-play-all-form` / `-submit` / `-progress` + poll JS),
-the import + seeding forms, and the champion banner **`tournament-champion-banner`**
-(rendered when `tournament.champion` is set — the RR completion path stamps it
-identically). The widened `format` / `bracket_type` choices auto-surface in admin —
-no `list_display` / inline / registration change.
+matched `ScheduleFixture`. Each filled cell carries the leg's score from the **row
+team's** perspective and the played Match's id; an unplayed leg has `played` false.
+The widened `format` / `bracket_type` choices auto-surface in admin — no
+`list_display` / inline / registration change.
 
 **Determinism / scope.** **Non-deterministic** per-Match sims — `simulate_match`
 draws fresh per-round seeds, so RR Tournament games are **NOT**
@@ -247,19 +216,12 @@ idempotent, no-op for non-`round_robin` / non-`active`). `test_tournament_engine
 resolves one node but does **NOT** crown / complete despite `advances_to is None`;
 **`TestPlayNextNodeRoundRobinCompletes`** draining to `None` resolves every node and
 exactly then stamps champion + `"completed"`, no node ever gets an `advance_winner`
-mutation). `test_tournament_views.py` (extend — **`TestCreateFormRoundRobin`** the
-format select offers `round_robin`, a POST persists `format == "round_robin"`, a
-tampered/absent value falls back to `single_elimination`;
-**`TestDetailRoundRobinCrosstable`** renders `tournament-rr-crosstable` (leg
-`round_number==1` in `cell[team_a][team_b]`, leg `2` in `cell[team_b][team_a]`,
-diagonal blank) + `tournament-rr-standings`, elim containers absent, shared lock /
-play-next / play-all + champion banner render, the four series-length selects hidden).
-`test_tournament_tasks.py` (extend — **`TestPlayTournamentTaskRoundRobin`** under
+mutation). `test_tournament_tasks.py` (extend — **`TestPlayTournamentTaskRoundRobin`** under
 `CELERY_TASK_ALWAYS_EAGER`, `play_tournament_task` drains an RR Tournament to
 completion + stamps champion + `"completed"`, `stage_progress` reports per-matchday
 stage counts). Tests assert on the pure functions, persisted node/row shapes,
-`node.winner` / `tournament.champion` / `tournament.state`, standings ORDER, and the
-DOM ids — **never on exact simulated point totals** (non-deterministic).
+`node.winner` / `tournament.champion` / `tournament.state`, and standings ORDER —
+**never on exact simulated point totals** (non-deterministic).
 `compute_standings` itself is already covered pure-unit by `test_standings.py`
 (LG-06g) — no new pure standings tests for RR (the RR methods only *assemble* the
 seam dicts; that assembly is DB-level).
@@ -279,12 +241,8 @@ Reused pure seam: `compute_standings(completed_matches, enrolled_teams,
 season_rounds)` — 9-key match dict / 6-key season_rounds dict / `(id, name)` enrolled
 tuple / 17-field `StandingsRow`. Migration:
 `matches/migrations/0037_tournament_round_robin.py`, dep
-`0036_bracketnode_double_elimination`, two `AlterField`s, no `RunPython`. NEW DOM
-ids: `tournament-rr-crosstable`, `tournament-rr-standings`. Reused verbatim:
-`tournament-create-format`, `tournament-champion-banner`, `tournament-lock-*`,
-`tournament-play-next-*`, `tournament-play-all-*`. NEW context keys: `rr_crosstable`,
-`rr_standings` (empty for elim; existing `rounds` 3-key dict shape unchanged).
-Crosstable rule: leg `round_number==1` → `cell[team_a][team_b]`; leg `2` →
+`0036_bracketnode_double_elimination`, two `AlterField`s, no `RunPython`. Detail keys:
+`rr_crosstable`, `rr_standings` (empty for elim). Crosstable rule: leg `round_number==1` → `cell[team_a][team_b]`; leg `2` →
 `cell[team_b][team_a]`; diagonal blank.
 
 ## LG-02c round robin → double elimination tournaments
@@ -301,7 +259,7 @@ pure + persist machinery verbatim — the new work is (a) **one** pure builder t
 fuses a re-tagged Winners bracket with a pre-seeded Losers bracket, (b) a
 **deferred finals build** triggered when the last RR node resolves, (c) a shared
 persist helper **extracted** from `lock_and_build`, and (d) the create-form combo
-select + detail cut-line markers. **Non-deterministic** (`simulate_match` draws
+field + detail cut labels. **Non-deterministic** (`simulate_match` draws
 fresh per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
 re-baseline**. ADR-0021 is **EXTENDED** for the deferred-build decision; **no new
 ADR, no new GLOSSARY.md term** beyond the already-written **Round robin → double
@@ -317,10 +275,10 @@ otherwise unchanged (`CharField(max_length=32)`, `default="single_elimination"` 
 four `*_series_length` fields** (before `created_at`/`champion`):
 **`Tournament.wb_advancers`** (how many top-ranked teams enter the Winners bracket)
 and **`Tournament.lb_advancers`** (how many next-ranked teams pre-seed the Losers
-bracket). **Neither carries `choices`** — the create form's `rrde_combo` select is
+bracket). **Neither carries `choices`** — the create form's `rrde_combo` field is
 the single source of valid shape combos; the model holds the resolved ints (mirrors
 how `BracketNode.series_length` carries a resolved int with no choices). Both are
-**create-time only, frozen at lock** — no view rewrites them post-setup; meaningful
+**create-time only, frozen at lock** — nothing rewrites them post-setup; meaningful
 only for `format == "round_robin_double_elim"`, left `0` for every other format. No
 `bracket_type` change (the Finals stage reuses `winners`/`losers`/`grand_final`); no
 `_BRACKET_RANK` change (`"round_robin": 3` already present). Migration
@@ -333,12 +291,11 @@ widen to the 4-tuple → `AddField(wb_advancers)` → `AddField(lb_advancers)`; 
 combos are exactly six: **`wb ∈ {4, 8, 16}`** (a power of two) and
 **`lb ∈ {0, wb // 2}`** — `4/0, 4/2, 8/0, 8/4, 16/0, 16/8`. The **SHAPE**
 (power-of-two `wb`, `lb ∈ {0, wb//2}`) is enforced at the **create form** (the
-`rrde_combo` select enumerates only the six combos); the **COUNT fit** (`wb <= n`
+`rrde_combo` field accepts only the six combos); the **COUNT fit** (`wb <= n`
 and `wb + lb <= n`, where `n = len(participants)`) is validated at
 **`lock_and_build`** and raises `django.core.exceptions.ValidationError`
 (`"wb_advancers exceeds participant count."` / `"wb_advancers + lb_advancers
-exceeds participant count."`), surfaced by the existing lock view via
-`messages.error` (LG-02a precedent).
+exceeds participant count."`), surfaced by the API lock as 400 `invalid`.
 
 **Seeding-stage build at lock (`matches/models.py`).** The existing RR guard in
 `lock_and_build` widens from `if self.format == "round_robin":` to **`if
@@ -450,49 +407,22 @@ inside an RRDE tournament: winner advance, loser Drop, GF1 Bracket-reset, GF2 cr
 all **byte-unchanged**. When the last RR node resolves in an RRDE tournament,
 `build_de_finals_if_rr_finished()` persists the Finals, the tournament stays
 `active`, and the next `play_next_node` call finds the first playable DE node.
-**Callers unchanged** (`tournament_play_next`, `play_tournament_task`,
-`tournament_play_all`, `tournament_play_status` keep their URLs + 5-key status JSON);
+**Callers unchanged** (`play_tournament_task`, `tournament_services.play`);
 `stage_progress` reports completion across the RR groups THEN the WB/LB/GF groups —
 the finals groups appear only after the deferred build, so Play-All progress
 naturally extends mid-run as the Finals materialize. `find_next_node` is unchanged.
 
-**View / template surface.** Create form (`tournament_create` /
-`tournament_create.html`): the `<select name="format">` (DOM id
-**`tournament-create-format`**) gains a fourth option — value
-**`round_robin_double_elim`**, label **`Round robin → Double elimination`**
-(em-dash arrow U+2192); the view's forgiving-fallback parse widens to accept it
-(absent/tampered → `single_elimination`). NEW single `<select name="rrde_combo">`
-(DOM id **`tournament-create-rrde-combo`**) enumerating the six valid combos
-(`4/0, 4/2, 8/0, 8/4, 16/0, 16/8` — exact value-string format at Code agent's
-discretion), parsed into `wb_advancers` / `lb_advancers`; parse is forgiving (absent/
-invalid on an RRDE create → first combo `(4, 0)`; ignored on a non-RRDE create,
-both advancers persist `0`). *(ANG-01f: the forgiving `_parse_rrde_combo` is gone — absent still
-means `4/0`, but an unknown combo is now a 400 / form error from `TournamentCreateForm`.)* The combo select is shown client-side **only** when the
-format select reads `round_robin_double_elim` (hidden otherwise — reuse the existing
-inline `onchange` toggle that hides the series-length selects for `round_robin`;
-behaviour pinned, exact JS at Code agent's discretion). `Tournament.objects.create(...)`
-passes `wb_advancers=` / `lb_advancers=` (`0`/`0` for non-RRDE). Detail page
-(`_detail_context` / `tournament_detail.html`): two NEW context keys —
-**`tournament_stage`** (`str`, DERIVED not stored: `"setup"` / `"seeding"` /
-`"finals"` / `"completed"`) and **`cut_labels`** (`dict[int, str]`,
-`team_id -> "wb" | "lb" | "out"`, built from `round_robin_standings()`: top
-`wb_advancers` → `"wb"`, next `lb_advancers` → `"lb"`, rest → `"out"`; populated only
-in the seeding stage of an RRDE tournament, `{}` otherwise). The existing keys
-(`tournament`, `participants`, `rounds`, `next_node`, `is_locked`, `can_play`,
-`import_form`, `import_row_errors`, `rr_crosstable`, `rr_standings`) are
-**unchanged**. NEW DOM ids: **`tournament-stage-badge`** (renders `tournament_stage`,
-e.g. "Seeding stage" / "Finals stage") and a per-standings-row cut class substring
-**`tournament-standings-cut-wb`** / **`-lb`** / **`-out`** on each RR standings row in
-the seeding stage (so tests can assert which teams are tagged Winners / Losers /
-Eliminated). During seeding, reuse the RR crosstable + standings VERBATIM
-(`tournament-rr-crosstable` / `tournament-rr-standings`), adding the cut class + the
-stage badge; once Finals are built, ALSO render the DE three-section tree reusing the
-EXISTING DE rendering (`tournament-bracket-winners` / `-losers` / `-grand-final` +
-the per-section `tournament-bracket-{bracket_type}-round-{n}` columns +
-`tournament-champion-banner`). `_build_rounds` / `_build_rr_crosstable` are
-**unchanged** — `_build_rounds` already returns the 3-key
-`{"winners", "losers", "grand_final"}` dict, populated once finals nodes exist; the
-template branches on `tournament.format`.
+**Create / detail.** `TournamentCreateForm`'s `format` accepts
+`round_robin_double_elim`; its `rrde_combo` field (`"4/0"`, `"4/2"`, `"8/0"`, `"8/4"`,
+`"16/0"`, `"16/8"`; absent ⇒ `4/0`, unknown ⇒ form error) resolves to `wb_advancers`
+/ `lb_advancers` (both `0` for a non-RRDE create). The API detail adds **`stage`**
+(DERIVED not stored by `tournament_services.detail._tournament_stage`: `"setup"` /
+`"seeding"` / `"finals"` / `"completed"`) and **`cut_labels`** (`{team_id: "wb" | "lb"
+| "out"}` from `round_robin_standings()`: top `wb_advancers` → `"wb"`, next
+`lb_advancers` → `"lb"`, rest → `"out"`; populated only in the seeding stage of an
+RRDE tournament, `{}` otherwise). During seeding the RR `rr_crosstable` /
+`rr_standings` are filled; once Finals are built the `brackets` list also carries
+the `winners` / `losers` / `grand_final` groups.
 
 **Determinism / scope.** **Non-deterministic** per-Match sims (`simulate_match`
 draws fresh per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
@@ -524,18 +454,13 @@ keeps single/double-elim `lock_and_build` byte-identical via
 triggers the deferred Finals build, tournament stays `active`; draining the Finals
 crowns the champion via the GF crown block; a Seeding node never gets an
 `advance_winner` mutation; a DE-stage node advances/drops/resets normally).
-`matches/tests/test_tournament_views.py` (extend — create form offers the
-`round_robin_double_elim` option + the `tournament-create-rrde-combo` select with the
-six combos; POST persists `format`/`wb_advancers`/`lb_advancers` with forgiving
-fallback; detail renders `tournament-stage-badge` seeding-vs-finals strings + the
-`tournament-standings-cut-{wb|lb|out}` substrings tagging the right teams; reused RR +
-DE DOM ids present). `matches/tests/test_tournament_tasks.py` (extend — under
+`matches/tests/test_tournament_tasks.py` (extend — under
 `CELERY_TASK_ALWAYS_EAGER`, `play_tournament_task` drains an RRDE tournament through
 BOTH stages — seeding RR nodes THEN the auto-built DE finals — to a champion +
 `state="completed"`; `stage_progress` reports per-group completion across the RR
 groups then the WB/LB/GF groups). Tests assert on pure functions, persisted
 node/row/edge shapes, `bracket_type` / `series_length`, `node.winner` / `champion` /
-`state`, standings ORDER, and DOM ids — **never on exact simulated point totals**.
+`state`, and standings ORDER — **never on exact simulated point totals**.
 
 ## LG-02c swiss tournaments
 
@@ -549,8 +474,8 @@ new work is (a) **two** pure functions — a single round builder that serves bo
 the round-1 seed fold and the later greedy ranked sweep, plus a Buchholz re-rank
 layer — (b) a **per-round DEFERRED build** triggered each time a round's last node
 resolves, (c) a `compute_standings`-input assembly helper **extracted** from
-`round_robin_standings`, and (d) the create-form round-count input + the per-round
-pairings/standings detail page. **Non-deterministic** (`simulate_match` draws fresh
+`round_robin_standings`, and (d) the create-form round-count field + the per-round
+pairings/standings detail. **Non-deterministic** (`simulate_match` draws fresh
 per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
 re-baseline**. ADR-0021 is **EXTENDED** for the per-round deferred build + Buchholz
 re-rank decision; **no new ADR**, and **no new GLOSSARY.md term** beyond the
@@ -583,8 +508,8 @@ disposable-sandbox precedent).
 **EVEN-N only — no byes ever (LOCKED).** Swiss admits any **even** participant
 count; an **odd** count raises `django.core.exceptions.ValidationError` at
 `lock_and_build` with the EXACT message
-**`"Swiss requires an even number of participants."`** (surfaced by the lock view
-via `messages.error`, LG-02a precedent). There are **no bye nodes** at any point —
+**`"Swiss requires an even number of participants."`** (surfaced by the API lock as
+400 `invalid`). There are **no bye nodes** at any point —
 every Swiss node is a real pairing, so `resolve_bye_chain` is never invoked (flat,
 like the RR branch).
 
@@ -712,62 +637,19 @@ crown block: `if node.bracket_type == "swiss":
 tournament.advance_swiss_if_round_finished(); return node`. The `return node` means a
 resolved Swiss node NEVER reaches the elim advance/crown block — without it the
 "crown when `advances_to is None`" elim rule would wrongly crown on the FIRST resolved
-Swiss node. Callers (`tournament_play_next`, `play_tournament_task`,
-`tournament_play_all`, `tournament_play_status`) are UNCHANGED in
-signature/route; `play_tournament_task`'s `while play_next_node(...) is not None`
+Swiss node. Callers (`play_tournament_task`, `tournament_services.play`) are
+UNCHANGED; `play_tournament_task`'s `while play_next_node(...) is not None`
 loop drains every Swiss node one Match at a time and naturally extends mid-run as each
 deferred round's pairings materialize; `stage_progress` (unchanged) reports
 per-`(bracket_type, bracket_round)` group completion — for Swiss, per-round progress.
 
-**View / template surface.** Create form (`tournament_create` /
-`tournament_create.html`): the `<select name="format">` (DOM id
-**`tournament-create-format`**) gains a fifth `<option value="swiss">Swiss</option>`;
-the view's format whitelist appends `"swiss"` (absent/tampered → `single_elimination`
-fallback). NEW numeric input (DOM id **`tournament-create-swiss-rounds`**, name
-`swiss_rounds`, `min="0"`, `value="0"`) wrapped in a `.tournament-create-swiss-rounds-row`
-(mirrors the `*-series-length-row` / `*-rrde-combo-row` pattern), shown client-side
-**only** when the format select reads `swiss`. A forgiving **`_parse_swiss_rounds(raw)
--> int`** coerces the POST field to a non-negative int (absent/blank/invalid/negative
-⇒ `0` = auto; clamping happens at lock), passed as `swiss_rounds=` into
-`Tournament.objects.create(...)` (`0` and harmless for non-Swiss). *(ANG-01f: superseded —
-`_parse_swiss_rounds` is gone; the strict `tournament_services.create.TournamentCreateForm` field
-`swiss_rounds` (`min_value=0`) keeps absent / blank ⇒ `0` = auto, but a non-integer or negative value
-is now a form error. Lock-time clamping is unchanged. See **ANG-01f** below.)* The
-`tournamentCreateToggle(value)` JS shows `.tournament-create-swiss-rounds-row` only
-for `swiss`, and **hides** the series-length selects AND the rrde-combo control for
-`swiss` (Swiss is always Bo1, no DE finals — the existing `value === "round_robin"`
-hide rule widens to `value === "round_robin" || value === "swiss"`). Detail page
-(`_detail_context` / `tournament_detail.html`): two NEW context keys — **`swiss_rounds_view`**
-(`list[{round_number, pairings}]`, the Swiss nodes grouped by `bracket_round`, each
-pairing a node-view dict in the SAME shape `_build_rounds` builds — reusing the
-node-card include — assembled by a small helper, suggested
-`_build_swiss_rounds(tournament)`, NOT by overloading the 3-key elim `_build_rounds`)
-and **`swiss_standings`** (`list[(StandingsRow, Team)]`, the Buchholz-ranked rows
-paired with their Team via the LG-01 `rows_with_teams` precedent). Both default to
-`[]` for non-Swiss (mirrors `rr_crosstable=[]` / `rr_standings=[]`); every existing
-context key (`tournament`, `participants`, `rounds`, `next_node`, `is_locked`,
-`can_play`, `import_form`, `import_row_errors`, `rr_crosstable`, `rr_standings`,
-`tournament_stage`, `cut_labels`) is UNCHANGED. `_tournament_stage` gains an explicit
-`if tournament.format == "swiss": return "swiss"` for the active case (so the
-`tournament-stage-badge` reads "Swiss stage"; the badge guard widens to fire for
-swiss). NEW DOM ids (LOCKED): **`tournament-swiss-rounds`** (outer container of the
-per-round pairing sections), **`tournament-swiss-round-{n}`** (one section per Swiss
-round, `n` = 1-based), **`tournament-swiss-standings`** (the Buchholz-ranked standings
-table), and per-pairing **`tournament-node-swiss-{bracket_round}-{position}`** cards
-(reusing the existing `tournament-node-{bracket_type}-{bracket_round}-{position}`
-convention; Swiss nodes are Bo1 ⇒ NO per-node Series-score / Bo-N label, same as RR).
-The Swiss render block is gated `{% elif tournament.format == "swiss" %}` in the
-existing format ladder. **REUSED VERBATIM** (no new ids): `tournament-champion-banner`
-(stamped identically on the Swiss completion path), the lock control
-(`tournament-lock-form`/`-submit`), play-next (`tournament-play-next-form`/`-submit`),
-play-all (`tournament-play-all-form`/`-submit`/`-progress` + poll JS), the import +
-seeding forms, and `tournaments-nav-link`. The elim WB/LB/GF containers
-(`tournament-bracket*`) and the RR ids
-(`tournament-rr-crosstable`/`tournament-rr-standings`) are ABSENT for Swiss; the Swiss
-ids are ABSENT for every other format (the template branches on `tournament.format`).
-`_build_rounds`'s 3-key `{"winners", "losers", "grand_final"}` return is UNCHANGED —
-all three lists are empty for a Swiss Tournament (Swiss nodes are never bucketed into
-its three sections).
+**Create / detail.** `TournamentCreateForm`'s `format` accepts `"swiss"`; its
+`swiss_rounds` field (`min_value=0`; absent / blank ⇒ `0` = auto, a non-integer or
+negative value is a form error; clamping happens at lock) is stored as-is (`0` and
+harmless for non-Swiss). The API detail carries the Swiss nodes as the `swiss` group
+of `brackets` (one round per `bracket_round`, same node shape as every other group)
+and **`swiss_standings`** (the Buchholz-ranked `swiss_standings()` rows, `[]` for
+non-Swiss). `_tournament_stage` returns `"swiss"` for an active Swiss Tournament.
 
 **Determinism / scope.** **Non-deterministic** per-Match sims (`simulate_match` draws
 fresh per-round seeds) ⇒ **no SIM-07/SIM-08 interaction, NO Score Calibration
@@ -803,20 +685,13 @@ played-pairs rematch only as trailing fallback)). `matches/tests/test_tournament
 (extend — `TestPlayNextNodeSwiss`: a resolved Swiss node never gets an
 `advance_winner` mutation; resolving the round's LAST node triggers the next-round
 build, stays active; the final round's completion crowns `swiss_standings()[0]` and
-flips `state="completed"`). `matches/tests/test_tournament_views.py` (extend —
-`TestCreateFormSwiss`: the format select offers `swiss`, a `swiss_rounds` input with
-DOM id `tournament-create-swiss-rounds` exists, a POST persists
-`format == "swiss"` + the coerced `swiss_rounds`, forgiving parse, format fallback;
-`TestDetailSwiss`: detail renders `tournament-swiss-rounds` with per-round
-`tournament-swiss-round-{n}` sections + `tournament-node-swiss-{br}-{pos}` cards +
-`tournament-swiss-standings`, the series-length selects + rrde-combo hidden for swiss,
-the reused champion/lock/play-next/play-all ids present, elim + RR ids absent).
+flips `state="completed"`).
 `matches/tests/test_tournament_tasks.py` (extend — `TestPlayTournamentTaskSwiss`:
 under `CELERY_TASK_ALWAYS_EAGER`, `play_tournament_task` drains a full Swiss
 Tournament (all rounds) to a champion + `state="completed"`; `stage_progress` reports
 per-round stage counts). Tests assert on pure functions, persisted node/row shapes,
-`bracket_type`/`series_length`, `node.winner`/`champion`/`state`, standings ORDER,
-and DOM ids — **never** on exact simulated point totals.
+`bracket_type`/`series_length`, `node.winner`/`champion`/`state`, and standings
+ORDER — **never** on exact simulated point totals.
 
 **Locked names:** see the seam contract
 [`.claude/worktrees/lg-02c-swiss-seam-contract.md`](../../../.claude/worktrees/lg-02c-swiss-seam-contract.md)
@@ -824,17 +699,18 @@ for the authoritative list of every name / signature / dict-key / DOM-id / liter
 (format `"swiss"` + label, `_BRACKET_RANK["swiss"] = 4`, `swiss_rounds` field,
 `build_swiss_round` / `swiss_buchholz_rerank`, `_standings_over_nodes` /
 `swiss_standings` / `_swiss_opponent_graph` / `_swiss_played_pairs` /
-`advance_swiss_if_round_finished`, the new DOM ids + context keys, the even-N error
-string, and migration `0039_tournament_swiss`).
+`advance_swiss_if_round_finished`, the even-N error string, and migration
+`0039_tournament_swiss`; its DOM ids and context keys belonged to the deleted Django
+page).
 
 ## LG-02x-1 random draw player-pool tournament
 
 > **Renamed by ANG-01f.** The `team_assembly` value `"random_draw"` below is now **`"player_pool"`**
 > (label "Player pool draw"; migration `0064` rewrote the rows), and a Player-pool draw may use **any**
 > format — only `player_pool` + `round_robin_double_elim` is called **Random Draw** (a derived
-> `format_label`). Read every `team_assembly == "random_draw"` below as `"player_pool"`. The views
-> moved to `matches/tournament_views/draw.py` on `matches/tournament_services/draw.py`. See **ANG-01f
-> tournaments API** at the end of this doc.
+> `format_label`). Read every `team_assembly == "random_draw"` below as `"player_pool"`. The pool /
+> draw logic lives in `matches/tournament_services/draw.py`. See **ANG-01f tournaments API** at the
+> end of this doc.
 
 Adds a NEW **orthogonal** `Tournament.team_assembly` mode **`"random_draw"`** (vs the
 default `"preset"`): instead of enrolling existing `Team`s, a **player pool** registers,
@@ -983,64 +859,50 @@ maps; (4) rewrite **both** drawn Teams' `slot_*` FKs **in memory** from the resu
 `random.Random()`, **NOT the SIM-07 seed chain** — no SIM-07/08 interaction, no Score
 Calibration re-baseline.
 
-**Views / URLs (`matches/tournament_views.py`, `matches/tournament_urls.py`).** All new
-URL names are **bare** (no `app_name`, mounted at `/tournaments/`).
+**Services / API (`matches/tournament_services/create.py`, `draw.py`).**
 
-- **CHANGED — `tournament_create`.** *(ANG-01f: now binds the strict `TournamentCreateForm`; a
-  tampered `team_assembly` / `role_assignment_mode` is rejected, and "Player pool draw" preselects
-  RR→DE but any format is allowed.)* Reads a new POST field **`team_assembly`**
-  (forgiving fallback: only `"preset"` / `"random_draw"`, else `"preset"`) and
-  **`role_assignment_mode`** (only `"random"` / `"per_tier"`, else `"random"`); stamps
-  both via `Tournament.objects.create(...)`. The `format` select is **unchanged** — a
-  `random_draw` Tournament uses `format="round_robin_double_elim"` (the `rrde_combo`
-  wb/lb select is reused verbatim). For `random_draw` **participants are NOT chosen at
-  create time** — the Tournament is created in `setup` with an **empty** pool, filled
-  on the detail page. NEW create-form DOM ids: **`tournament-create-team-assembly`**
-  (the `<select name="team_assembly">`), **`tournament-create-role-assignment-mode`**
-  (the `<select name="role_assignment_mode">`, shown by the existing
-  `tournamentCreateToggle` JS only when `team_assembly == "random_draw"`). Every
-  existing create-form id is unchanged.
-- **NEW — pool intake (three sources), draw, re-roll, hand-edit.** Mirror the
-  LG-02a/a-2 Team-intake at **Player** granularity. All POST, `@transaction.atomic`,
-  **setup-only** (reject with `messages.error` + redirect once `tournament.is_locked`).
-  All create `TournamentPlayerEntry` rows (tier `null`, `drawn_team` `null` until the
-  draw). Generated / CSV Players are created on the Free Agents Team via
-  `teams.models.get_free_agents_team()`.
+- **Create.** `TournamentCreateForm` takes **`team_assembly`** (`"preset"` /
+  `"random_draw"`, absent ⇒ `"preset"`) and **`role_assignment_mode`** (`"random"` /
+  `"per_tier"`, absent ⇒ `"random"`); an unknown value is a form error. For
+  `random_draw` **participants are NOT chosen at create time** — the Tournament is
+  created in `setup` with an **empty** pool.
+- **Pool intake (three sources), draw, re-roll, hand-edit.** Mirror the LG-02a/a-2
+  Team-intake at **Player** granularity. All `@transaction.atomic`, **setup-only**
+  (`require_pool_setup`). All create `TournamentPlayerEntry` rows (tier `null`,
+  `drawn_team` `null` until the draw). Generated / CSV Players are created on the
+  Free Agents Team via `teams.models.get_free_agents_team()`.
 
-  | URL name | Path | View fn | What it does |
-  |---|---|---|---|
-  | `tournament_pool_add_existing` | `<id>/pool/add-existing/` | `tournament_pool_add_existing` | Add selected existing `Player`s as pool entries. |
-  | `tournament_pool_generate` | `<id>/pool/generate/` | `tournament_pool_generate` | Generate N fresh Players via the LG-00 pure generator (`draw_stats` / `draw_preferred_roles`) on the Free Agents Team, add as pool entries. |
-  | `tournament_pool_import` | `<id>/pool/import/` | `tournament_pool_import` | CSV import via the LG-00b `RosterImportForm` + `parse_roster_csv`; **each CSV row = one pool Player** (team-grouping IGNORED). |
-  | `tournament_pool_remove` | `<id>/pool/remove/` | `tournament_pool_remove` | Remove a pool entry (by `player_id` / entry id) while in setup. |
-  | `tournament_draw` | `<id>/draw/` | `tournament_draw` | Run / re-roll the draw: validate pool size, build drawn Teams + participants, persist. |
-  | `tournament_draw_edit` | `<id>/draw/edit/` | `tournament_draw_edit` | Admin hand-edit of a drawn entry's `tier` / `drawn_team` (the variation mechanism). |
+  | API (`/api/tournaments/<id>/…`) | Service | What it does |
+  |---|---|---|
+  | `POST pool/players/` | `add_pool_players` | Add selected existing `Player`s as pool entries. |
+  | `POST pool/generate/` | `generate_pool_players` | Generate N fresh Players via the LG-00 pure generator (`draw_stats` / `draw_preferred_roles`) on the Free Agents Team, add as pool entries. |
+  | `POST pool/import/` | `import_pool_players` | CSV import via the LG-00b `RosterImportForm` + `parse_roster_csv`; **each CSV row = one pool Player** (team-grouping IGNORED). |
+  | `DELETE pool/players/<player_id>/` | `remove_pool_player` | Remove a pool entry while in setup. |
+  | `POST draw/` | `run_draw` | Run / re-roll the draw: validate pool size, build drawn Teams + participants, persist. |
+  | `PATCH draw/entries/<player_id>/` | `edit_draw_entry` | Hand-edit of a drawn entry's `tier` / `drawn_team` (the variation mechanism). |
 
-  Place these adjacent to the other `<int:tournament_id>/…` routes (after
-  `import-participants/`). The existing **`tournament_lock`** view is **reused
-  unchanged** to reach `active`: `lock_and_build()` takes the RR→DE branch over the
-  drawn Teams (now `TournamentParticipant` rows), validating `>= 4` participants as
-  today — **no `lock_and_build` change** (the draw must have produced participants +
-  drawn Teams before lock).
+  The existing lock (`POST lock/`) reaches `active`: `lock_and_build()` takes the
+  RR→DE branch over the drawn Teams (now `TournamentParticipant` rows), validating
+  `>= 4` participants as today — **no `lock_and_build` change** (the draw must have
+  produced participants + drawn Teams before lock).
 
-- **CSV-for-a-player-pool reconciliation (`tournament_pool_import`).** The LG-00b /
+- **CSV-for-a-player-pool reconciliation (`import_pool_players`).** The LG-00b /
   LG-02a-2 `parse_roster_csv` groups rows by team (`ParsedRoster.by_team`); a player
-  pool needs players, not team-grouped rosters. So `tournament_pool_import` calls
-  `parse_roster_csv(decoded_text)` (reuse — header validation, per-row coercion,
-  bundled `RosterImportError`), **ignores `by_team`**, iterates `parsed.rows` (flat
+  pool needs players, not team-grouped rosters. So `import_pool_players` calls
+  `parse_roster_csv` (reuse — header validation, per-row coercion, bundled
+  `RosterImportError`), **ignores `by_team`**, iterates `parsed.rows` (flat
   CSV-order) and treats **each `ParsedRow` as one pool Player** —
-  `Player.objects.create(team=get_free_agents_team(), name=row.name,
-  preferred_roles=row.preferred_roles, **row.profile, **row.stats)` then a
+  `Player.objects.create(team=get_free_agents_team(), name=row.name (suffixed `#k`
+  when taken), preferred_roles=row.preferred_roles, **row.profile, **row.stats)` then a
   `TournamentPlayerEntry`. The CSV `role` (slot intent) and `team` columns are **NOT
   used** (slots are per-Round draw assignments; team membership is the pool). Does
   **NOT** call `_check_db_slot_collisions` / `_apply_roster` (roster-slot helpers
-  irrelevant to a flat pool). Error branch: `transaction.set_rollback(True)` + re-render
-  the detail page (**HTTP 200**) with the bound form + `exc.errors` (mirrors
-  `tournament_import_participants`).
+  irrelevant to a flat pool). A `RosterImportError` is raised before any write
+  (API 400 `roster_invalid`).
 
-- **`tournament_draw` persistence.** (1) Validate pool: `N =
+- **`run_draw` persistence.** (1) Validate pool: `N =
   tournament.player_entries.count()`; require `N % 6 == 0` AND `N >= 24` (≥ 4 teams) —
-  else `messages.error` + redirect, **no writes**. (2) Build the `(player_id,
+  else `DrawNotReadyError` (API 400 `invalid`), **no writes**. (2) Build the `(player_id,
   overall_rating)` pool list (`entry.player.overall_rating`), call `compute_draw(pool)`
   (pure). (3) **Re-roll cleanup:** if drawn Teams already exist, delete them
   (`is_draw_team=True` for this tournament) + their `TournamentParticipant` rows and
@@ -1055,36 +917,12 @@ URL names are **bare** (no `app_name`, mounted at `/tournaments/`).
   **Does NOT reassign `Player.team`** — drawn Teams reference borrowed Players via slot
   FKs only; `PlayerRoundState` references the real Player so career stats stay unified.
 
-- **`_detail_context(tournament)` additions.** Keeps its existing 14 keys verbatim and
-  adds (empty/defaulted for `preset`): **`team_assembly`** (`str`),
-  **`role_assignment_mode`** (`str`), **`pool_entries`**
-  (`list[TournamentPlayerEntry]`, `select_related("player", "drawn_team")`, ordered
-  tier-then-player-id; `[]` for preset), **`pool_size`** (`int`), **`is_drawn`**
-  (`bool` = `tournament.player_entries.filter(drawn_team__isnull=False).exists()`),
-  **`pool_import_form`** (`RosterImportForm()`) and **`pool_import_row_errors`**
-  (`list[RowError]`, default `[]`) — the player-pool CSV intake form + errors (parallel
-  to the existing `import_form` / `import_row_errors`).
-
-**Template (`templates/matches/tournament_detail.html`) — new surface, LOCKED DOM
-ids.** Rendered **only** when `team_assembly == "random_draw"`. Pool intake (setup):
-`tournament-pool-section` (wrapper); `tournament-pool-add-existing-form` / `-select` /
-`-submit`; `tournament-pool-generate-form` / `-count` / `-mean` / `-std-dev` /
-`-submit`; `tournament-pool-import-form` / `-file` / `-submit` / `-template-link` /
-`-errors` + per-row `tournament-pool-import-error-{row_num}-{field|"row"}`;
-`tournament-pool-table` (one row `tournament-pool-entry-{player_id}` each) with
-per-entry `tournament-pool-remove-{player_id}`; `tournament-pool-size` (renders
-`pool_size`); `tournament-pool-invalid-notice` (shown when `pool_size % 6 != 0 or
-pool_size < 24`, carrying the substrings `divisible by 6` / `at least 24`). Draw:
-`tournament-draw-form` / `-submit` (enabled only when pool size valid + setup);
-`tournament-draw-reroll-submit` (re-roll, same endpoint, shown once drawn);
-`tournament-draw-table` (one section `tournament-draw-team-{team_id}` per drawn team,
-one row per member tagged with its `tier`); the hand-edit
-`tournament-draw-edit-form` / per-entry `tournament-draw-edit-{player_id}`. **Reused
-verbatim:** the lock control (`tournament-lock-form` / `-submit`), play controls
-(`tournament-play-next-*` / `tournament-play-all-*`), and the champion banner
-(`tournament-champion-banner`). Once drawn + locked, the Tournament renders the
-existing RR→DE crosstable / cut-labels / DE-finals surfaces over the drawn Teams
-**unchanged**.
+- **Detail.** The API detail carries `team_assembly`, `role_assignment_mode`,
+  **`pool_size`** (`int`) and **`is_drawn`** (`bool` =
+  `tournament.player_entries.filter(drawn_team__isnull=False).exists()`); `GET pool/`
+  pages the entries (`pool_entries(t)`: tier-then-player-id). Once drawn + locked, the
+  RR→DE crosstable / cut-labels / DE-finals payload covers the drawn Teams
+  **unchanged**.
 
 **Admin (`matches/admin.py`).** `TournamentPlayerEntry` registered after the existing
 tournament admins — `list_display = ("tournament", "player", "tier", "drawn_team")`.
@@ -1130,17 +968,12 @@ byte-unchanged; a hook is invoked once per round with `(round_number, team_red,
 team_blue)`, round 2 receiving swapped `(team_blue, team_red)`; a hook rewriting
 `slot_*` FKs changes the roster the round sims against). `test_tournament_engine.py`
 (extend — a `random_draw` Tournament routes `play_next_node` through the hook path; a
-`preset` Tournament's `simulate_match` call is unchanged, no hook). `test_tournament_views.py`
-(extend — create-form selects + POST persistence + fallback; pool intake (existing /
-generate / CSV) creates entries on the Free Agents Team; CSV error branch re-renders
-200 with `exc.errors` and zero writes; `tournament_draw` validates `N % 6` / `N >= 24`,
-builds drawn Teams + participants + fills tier/drawn_team, re-roll idempotent,
-hand-edit mutates a single entry; lock reached via `tournament_lock` over drawn Teams;
-the new `_detail_context` keys + pool/draw DOM ids render). `test_tournament_tasks.py`
+`preset` Tournament's `simulate_match` call is unchanged, no hook). Pool / draw
+endpoints: `test_api_tournaments_draw.py`. `test_tournament_tasks.py`
 (extend — `play_tournament_task` drains a `random_draw` RR→DE Tournament to a champion
 under `CELERY_TASK_ALWAYS_EAGER`, **non-deterministic** — assert champion stamped +
 `state="completed"`, never exact point totals). Tests assert on pure functions,
-persisted row shapes, constraints, the hook contract, DOM ids — **never** on exact
+persisted row shapes, constraints, the hook contract — **never** on exact
 simulated point totals.
 
 **Locked names:** see the seam contract
@@ -1149,9 +982,9 @@ for the authoritative list of every name / signature / dict-key / DOM-id / liter
 (`team_assembly` / `role_assignment_mode` + choices, `TournamentPlayerEntry`,
 `compute_draw` / `DrawnTeamPlan` / `ROLE_SLOTS` / `build_random_role_assignment` /
 `build_per_tier_role_assignment`, `simulate_match(before_round_hook=...)`,
-`_build_role_hook`, the 7 view fns + URL names, `Team.is_draw_team`, the DOM ids +
-`_detail_context` keys, the N-divisibility rule, and migrations
-`0040_tournament_random_draw` + `teams 00XX_team_is_draw_team`).
+`_build_role_hook`, `Team.is_draw_team`, the N-divisibility rule, and migrations
+`0040_tournament_random_draw` + `teams 00XX_team_is_draw_team`; its view fns, URL
+names, DOM ids and `_detail_context` keys belonged to the deleted Django pages).
 
 ## ANG-01f tournaments API (RR / Swiss / Player-pool notes)
 
@@ -1160,27 +993,25 @@ The full slice (endpoints, codes, packages) is the **ANG-01f tournaments API** s
 
 - **Rename.** `Tournament.team_assembly` `"random_draw"` ⇒ **`"player_pool"`** ("Player pool draw";
   migration `0064_tournament_player_pool_and_active_play_job` rewrites the rows and reverses). The
-  engine's role hook (`tournament_engine.play_specific_node`) and the detail template now key off
-  `"player_pool"`. **Random Draw** is now a derived label (`tournament_services.detail.format_label`):
-  `player_pool` + `round_robin_double_elim` reads "Random Draw" in the list, the detail badge
-  `#tournament-format-label` and the API `format_label`; any other format reads its plain label.
+  engine's role hook (`tournament_engine.play_specific_node`) now keys off `"player_pool"`.
+  **Random Draw** is now a derived label (`tournament_services.detail.format_label`):
+  `player_pool` + `round_robin_double_elim` reads "Random Draw" in the API `format_label`; any other
+  format reads its plain label.
   A drawn pool can be played as **any** of the five formats (each is tested to a champion through the
   API play-all; an odd drawn field on Swiss is a 400 at lock). `SeasonPhase.tournament_mode =
   "random_draw"` is unchanged.
-- **Create form.** The team-assembly option reads "Player pool draw" and picking it preselects RR→DE
-  (`tournamentAssemblyChanged` JS); the Manager may change the format.
-- **Strict Forms, no forgiving parses.** `_parse_rrde_combo` and `_parse_swiss_rounds` are gone. The
-  create page binds `tournament_services.create.TournamentCreateForm`: absent fields keep their old
+- **Strict Forms, no forgiving parses.** `_parse_rrde_combo` and `_parse_swiss_rounds` are gone.
+  Create binds `tournament_services.create.TournamentCreateForm`: absent fields keep their old
   defaults (`4/0`, `0` = auto Swiss rounds), but an unknown `rrde_combo`, a negative / non-integer
-  `swiss_rounds` or an unknown `format` is an error, flashed on the re-rendered form. Pool generate
+  `swiss_rounds` or an unknown `format` is a 400. Pool generate
   binds `PoolGenerateForm` (`count` 1..1000, `mean` 0..100, `std_dev` 1..40), pool add binds
   `PoolAddPlayersForm` (Account-scoped Players, not already pooled), and draw edit binds
   `DrawEntryForm` (`tier` 1..6, `drawn_team` one of this Tournament's drawn Teams — a leak fix).
 - **Guards.** Every pool / draw write runs `require_pool_setup`: embedded ⇒ `tournament_embedded`,
   not in setup ⇒ `tournament_not_setup`, preset ⇒ "This Tournament does not use a Player-pool draw."
-  (HTML flashes; API 409 / 400). Participant CSV import on a Player-pool Tournament is refused ("This
-  Tournament uses a Player-pool draw; add Players to its pool instead."). The add-existing picker is
-  scoped to the Account (`build_detail_context(t, *, user)`).
+  (API 409 / 400). Participant CSV import on a Player-pool Tournament is refused ("This
+  Tournament uses a Player-pool draw; add Players to its pool instead."). Pool add accepts only the
+  Players the Account may see (`PoolAddPlayersForm(..., user=)`).
 - **Single active run / embedded guard** apply to these formats too — see `tournaments-elimination.md`
   **ANG-01f** and ADR-0040 **Tournaments**.
 - **Logged, not fixed** (`issues.md`): ANG01f5-D1 generated / imported pool Players still land on the

@@ -2,8 +2,8 @@
 redeemable ``Invite``: not expired, with uses left (``max_uses``, default 1),
 and, when email-locked, only for that address.
 
-``RegisterForm`` enforces it, so the HTML ``register`` view and
-``POST /api/accounts/register/`` share one rule.
+``RegisterForm`` enforces it, and ``POST /api/accounts/register/`` binds it
+(the HTML ``register`` view went in ANG-08 D1).
 """
 
 from __future__ import annotations
@@ -162,29 +162,6 @@ class TestRegisterFormInvite(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
 
 
-class TestRegisterViewInvite(TestCase):
-    def setUp(self) -> None:
-        super().setUp()
-        self.client.logout()
-        self.url = reverse("register")
-
-    def test_invite_query_param_prefills_the_field(self) -> None:
-        invite = Invite.objects.create()
-        body = self.client.get(f"{self.url}?invite={invite.code}").content.decode()
-        self.assertIn(f'value="{invite.code}"', body)
-
-    def test_post_without_invite_creates_nothing(self) -> None:
-        response = self.client.post(self.url, _data(""))
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(User.objects.filter(email="invitee@example.com").exists())
-
-    def test_post_with_invite_creates_the_account(self) -> None:
-        invite = Invite.objects.create()
-        response = self.client.post(self.url, _data(invite.code))
-        self.assertRedirects(response, reverse("landing"))
-        self.assertTrue(User.objects.filter(email="invitee@example.com").exists())
-
-
 class TestRegisterApiInvite(TestCase):
     url = reverse("api_accounts_register")
 
@@ -209,7 +186,7 @@ class TestInviteAdmin(TestCase):
         self.client.force_login(admin)
         body = self.client.get(reverse("admin:accounts_invite_changelist")).content
         self.assertIn(
-            f"http://testserver/accounts/register/?invite={invite.code}",
+            f"http://testserver/register?invite={invite.code}",
             body.decode(),
         )
 
@@ -287,5 +264,5 @@ class TestInviteAdmin(TestCase):
         )
         invite = Invite.objects.get(email="friend@example.com")
         self.assertContains(
-            response, f"http://testserver/accounts/register/?invite={invite.code}"
+            response, f"http://testserver/register?invite={invite.code}"
         )

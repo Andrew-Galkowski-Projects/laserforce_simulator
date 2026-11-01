@@ -24,6 +24,7 @@ from matches.api_forms import CompareRoundsParamsForm
 from matches.api_refs import round_ref
 from matches.filters import GameEventFilterSet, GameRoundFilterSet, MatchFilterSet
 from matches.forms import MatchSetupForm, SaveBatchGamesForm, SingleRoundSetupForm
+from matches.job_status import build_batch_status_response, build_save_status_response
 from matches.models import GameRound, Match, PlayerRoundState
 from matches.playback import round_playback
 from matches.serializers import (
@@ -48,11 +49,6 @@ from matches.services import (
 from matches.sim_helpers.pdf_report import build_round_report
 from matches.simulation import BatchSimulator
 from matches.tasks import save_games_task, simulate_batch_task
-from matches.views import (
-    build_batch_status_response,
-    build_save_status_response,
-    int_or_none,
-)
 
 
 class SimulateBatchRequestSerializer(serializers.Serializer):
@@ -69,6 +65,16 @@ class JobNotComplete(APIException):
     status_code = 409
     default_code = "job_not_complete"
     default_detail = "The batch job is not complete."
+
+
+def _int_or_none(raw: str | None) -> int | None:
+    """Coerce a query param to int; return None on missing/invalid."""
+    if raw is None or raw == "":
+        return None
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
 
 
 # UX-01 — exempt from `LoginRequiredMiddleware` so an anonymous request gets
@@ -234,7 +240,6 @@ class GameRoundViewSet(ListOnlyFilterMixin, ReadOnlyModelViewSet):
                     else None
                 ),
                 "zone_size": payload["zone_size"],
-                "processed_image_url": payload["processed_image_url"],
                 "cell_occupancy_json": payload["cell_occupancy_json"],
                 "player_roster": payload["player_roster"],
             }
@@ -361,9 +366,9 @@ class SimulateBatchStatusAPIView(views.APIView):
 
     def get(self, request: Request, job_id: str) -> Response:
         async_result = AsyncResult(job_id)
-        team_red_id = int_or_none(request.query_params.get("team_red_id"))
-        team_blue_id = int_or_none(request.query_params.get("team_blue_id"))
-        arena_map_id = int_or_none(request.query_params.get("arena_map_id"))
+        team_red_id = _int_or_none(request.query_params.get("team_red_id"))
+        team_blue_id = _int_or_none(request.query_params.get("team_blue_id"))
+        arena_map_id = _int_or_none(request.query_params.get("arena_map_id"))
         return Response(
             build_batch_status_response(
                 async_result,

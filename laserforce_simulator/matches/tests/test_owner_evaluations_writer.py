@@ -1,4 +1,4 @@
-"""CAR-02 — tests for the lazy writer ``matches.league_views._ensure_owner_evaluations``
+"""CAR-02 — tests for the lazy writer ``matches.league_services._ensure_owner_evaluations``
 (seam contract §3.1 / §6.3).
 
 The writer ensures one ``OwnerEvaluation`` row per completed Season of a League
@@ -22,7 +22,7 @@ from datetime import date
 
 from django.test import TestCase
 
-from matches.league_views import (
+from matches.league_services import (
     _classify_playoffs_for_team,
     _ensure_owner_evaluations,
 )
@@ -455,7 +455,7 @@ class TestCar03MultiplayerIsolation(TestCase):
 
     The writer ``_ensure_owner_evaluations`` early-returns for
     ``league.mode != "league"`` (writes 0 ``OwnerEvaluation`` rows), and the
-    ``_is_career_league`` predicate is a tiny unit assertion on the same rule.
+    ``is_career_league`` predicate is a tiny unit assertion on the same rule.
     """
 
     def _make_multiplayer_league(self, name: str, *, current_team=None) -> League:
@@ -488,12 +488,12 @@ class TestCar03MultiplayerIsolation(TestCase):
         self.assertEqual(league.owner_evaluations.count(), 0)
 
     def test_is_career_league_predicate(self) -> None:
-        from matches.league_views import _is_career_league
+        from matches.league_services import is_career_league
 
         career = League.objects.create(name="Car03Career", mode="league")
         multiplayer = League.objects.create(name="Car03Mp", mode="multiplayer")
-        self.assertTrue(_is_career_league(career))
-        self.assertFalse(_is_career_league(multiplayer))
+        self.assertTrue(is_career_league(career))
+        self.assertFalse(is_career_league(multiplayer))
 
 
 class TestClassifyPlayoffsForTeam(TestCase):
@@ -608,7 +608,7 @@ class TestClassifyPlayoffsForTeam(TestCase):
 
 from datetime import date as _fin05_date  # noqa: E402
 
-from matches.league_views import (  # noqa: E402
+from matches.league_services import (  # noqa: E402
     _ensure_owner_evaluations as _fin05_ensure,
     _ensure_team_finances as _fin05_ensure_finances,
 )

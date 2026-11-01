@@ -57,8 +57,8 @@ from __future__ import annotations
 from datetime import date
 
 from django.test import TestCase
-from django.urls import reverse
 
+from matches.league_screen_services import build_team_history
 from matches.models import (
     BracketNode,
     Conference,
@@ -913,7 +913,7 @@ class TestAdditiveSignaturePin(TestCase):
 # §11.4 AMENDMENT — Team History counts regional playoffs
 # ===========================================================================
 #
-# ``matches/league_screens/team_history.py`` gains a third ``Q`` term on the
+# ``matches.league_screen_services._team_overall_record`` has a third ``Q`` term on the
 # Overall-tab Round corpus and a two-term ``Q`` OR on ``playoff_appearances``,
 # so a REGIONAL Tournament — linked by the forward ``Tournament.season_phase``
 # FK rather than by the ``season_phases`` reverse manager — is no longer
@@ -1024,12 +1024,9 @@ class TestRegionalPlayoffTeamHistory(TestCase):
         self.league.save(update_fields=["current_team"])
 
     def _record(self):
-        response = self.client.get(
-            reverse("team_history", args=[self.league.id]),
-            {"team_id": self.team.id},
-        )
-        self.assertEqual(response.status_code, 200)
-        return response.context["overall_record"]
+        # ANG-08: read through the service the API's Team History uses (the
+        # HTML page this went through is gone).
+        return build_team_history(self.team).overall
 
     # -- playoff_appearances ------------------------------------------------
 

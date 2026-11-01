@@ -1,9 +1,9 @@
 """Per-player resource series for a round, ported from the events page (RV-05 T1).
 
 ``build_round_series`` is a one-for-one Python port of the RES-02b series
-build in ``templates/matches/game_round_events.html`` (``playerState`` /
-``seriesByChart`` / ``pushIfChanged``), so the round report PDF charts plot
-exactly what the page charts. Inputs are the server rows the page already
+build in the (since deleted, ANG-08) ``game_round_events.html`` template
+(``playerState`` / ``seriesByChart`` / ``pushIfChanged``), so the round report
+PDF charts plot what the events page charted. Inputs are the server rows the page already
 receives: the ``_round_players_data`` player rows and the
 ``round_playback_payload`` event rows. Pure Python: no Django imports, no
 ORM, no I/O.

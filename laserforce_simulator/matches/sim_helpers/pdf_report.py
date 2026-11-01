@@ -29,7 +29,7 @@ from reportlab.platypus import (
 )
 
 # ``pdf_charts`` (and with it matplotlib) is imported lazily inside
-# ``_chart_section``: this module loads with ``matches.views`` in every
+# ``_chart_section``: this module loads with ``matches.api_views`` in every
 # process, and matplotlib is only needed when a report with charts is built.
 
 # Page geometry: letter with 0.5in side margins and 0.6in top / bottom. The

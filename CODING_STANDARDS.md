@@ -6,7 +6,7 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 - **Type hints on every public function signature.** Flag a public function that has none.
 - **One job per function.** Flag a function over ~25 lines that does two things and splits cleanly.
-- **Django idioms.** Prefer `get_object_or_404`, model methods over logic in views, and a `services.py` builder shared by the HTML view and the API (see `teams/services.py`, `matches/services.py`, `matches/league_services.py`, `core/services.py`). A service returns model objects or dataclasses, and the API view turns them into refs (`history_seasons` returns Seasons, `_history_item` builds the refs); a service that builds the response dict is a finding. Flag raw SQL unless a comment justifies it.
+- **Django idioms.** Prefer `get_object_or_404`, model methods over logic in views, and a `services.py` builder behind a thin API view (see `teams/services.py`, `matches/services.py`, `matches/league_services.py`, `core/services.py`). A service returns model objects or dataclasses, and the API view turns them into refs (`history_seasons` returns Seasons, `_history_item` builds the refs); a service that builds the response dict is a finding. Flag raw SQL unless a comment justifies it.
 - **Querysets.** Flag a queryset evaluated inside a loop (N+1). Suggest `select_related` / `prefetch_related`. Flag a large list built where a slice or generator would do. Flag a queryset whose iteration order decides RNG draws, saved order or output order but has no explicit `order_by`: PostgreSQL row order moves after an UPDATE, while SQLite's id order hides it (CI-01's rollover develop bug).
 - **Dead code.** Unused imports, unreachable branches, commented-out blocks.
 - **Pythonic idioms.** Comprehensions for simple transforms, `any()` / `all()`, `zip()`, `enumerate()`. A `dataclass` or `NamedTuple` instead of a dict with fixed keys.
@@ -20,8 +20,8 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 ## REST API (ADR-0039)
 
-- Writes bind the existing Django `Form`. Serializers are output-only. When no HTML
-  Form exists (the HTML route takes the value from its URL), the write binds a small
+- Writes bind a Django `Form`. Serializers are output-only. When no model Form fits
+  (the value comes from the URL or the query string), the write binds a small
   params Form in `<app>/api_forms.py` the same way, as `ZoneSizeParamsForm` and
   `SelfInsertParamsForm` do. Hand-rolled body validation is a finding.
 - Views raise errors; they never build a 4xx `Response` by hand.
@@ -34,12 +34,10 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 ## Angular frontend
 
-- **Parity with the Django form and template it replaces.** An Angular form that ports
-  a Django form carries each widget's constraints (`min`, `max`, `step`, `maxlength`,
-  `required`) on the matching control, from the Form's fields and the template's
-  `<input>` attributes both. Flag a control missing one (ANG-06b shipped the Player
-  profile inputs without their bounds); check the template before flagging an extra one
-  (ANG-06-17's Ticket price `step="0.5"` lives only in the template).
+- **Controls carry the bound Form's constraints.** An Angular form whose write binds a
+  Django Form carries each field's constraints (`min`, `max`, `step`, `maxlength`,
+  `required`) on the matching control, read from that Form's fields. Flag a control
+  missing one (ANG-06b shipped the Player profile inputs without their bounds).
 - **Wrapping field text.** A `mat-form-field` with a `mat-hint` or a server error
   (`applyApiErrors`) sets `subscriptSizing="dynamic"`, so a wrapped line pushes the
   next field down instead of overlapping it (ANG-06 item 7's invite hint and password

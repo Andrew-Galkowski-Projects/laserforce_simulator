@@ -58,6 +58,32 @@ _PLAYER_H2H_KEYS = {
     "margin_series",
     "cumulative_wl_series",
 }
+# ANG-08: no row carries ``detail_url`` (it reversed a deleted HTML URL name).
+_TEAM_H2H_ROW_KEYS = {
+    "kind",
+    "date_played",
+    "label",
+    "team_a_score",
+    "team_b_score",
+    "score_str",
+    "winner_name",
+    "match_id",
+    "round_id",
+    "is_simulated",
+}
+_PLAYER_H2H_ROW_KEYS = {
+    "round_id",
+    "date_played",
+    "role_a",
+    "role_b",
+    "player_a_team_score",
+    "player_b_team_score",
+    "score_str",
+    "tags_a_to_b",
+    "tags_b_to_a",
+    "winner_label",
+    "is_simulated",
+}
 
 
 def _saved_round(red, blue, seed: int = 4242) -> GameRound:
@@ -151,6 +177,16 @@ class TestTeamH2H(_H2HTestCase):
         self.assertIsNone(rows["match"]["round_id"])
         self.assertEqual(rows["round"]["round_id"], game_round.pk)
         self.assertIsNone(rows["round"]["match_id"])
+
+    def test_detail_row_key_set_has_no_detail_url(self) -> None:
+        """ANG-08: the match and round rows carry no ``detail_url``."""
+        _saved_round(self.red, self.blue)
+        Match.objects.create(team_red=self.red, team_blue=self.blue, is_completed=True)
+        data = self.h2h(team_a=self.red.pk, team_b=self.blue.pk).json()["data"]
+        rows = {row["kind"]: row for row in data["detail_list"]}
+        self.assertEqual(set(rows), {"match", "round"})
+        self.assertEqual(set(rows["match"]), _TEAM_H2H_ROW_KEYS)
+        self.assertEqual(set(rows["round"]), _TEAM_H2H_ROW_KEYS)
 
     def test_provenance_and_dates_echoed(self) -> None:
         data = self.h2h(
@@ -299,6 +335,13 @@ class TestPlayerH2H(_H2HTestCase):
         data = self.h2h(player_a=self.pa.pk, player_b=self.pb.pk).json()["data"]
         self.assertEqual(data["round_record"]["n"], 1)
         self.assertEqual(len(data["detail_list"]), 1)
+
+    def test_detail_row_key_set_has_no_detail_url(self) -> None:
+        """ANG-08: a player round row carries no ``detail_url``."""
+        _saved_round(self.red, self.blue)
+        data = self.h2h(player_a=self.pa.pk, player_b=self.pb.pk).json()["data"]
+        self.assertEqual(len(data["detail_list"]), 1)
+        self.assertEqual(set(data["detail_list"][0]), _PLAYER_H2H_ROW_KEYS)
 
     def test_same_team_round_excluded(self) -> None:
         _saved_round(self.red, self.blue)

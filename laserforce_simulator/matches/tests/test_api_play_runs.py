@@ -13,16 +13,14 @@ and persisted rows -- never on simulated point totals.
 
 from __future__ import annotations
 
-import ast
 from datetime import date
-from pathlib import Path
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
 from django.urls import reverse
 
 from matches.models import GameRound, Season, SeasonPhase
 from matches.simulation import BatchSimulator
+from matches.tests.conftest import FakeAsyncResult
 from matches.tests.league_api_fixtures import (
     LeagueApiTestCase,
     make_league,
@@ -83,6 +81,19 @@ class TestPlayTwoMonths(LeagueApiTestCase):
         self.assertFalse(GameRound.objects.filter(match__season=self.season).exists())
         self.season.refresh_from_db()
         self.assertEqual(self.season.active_play_job_id, "live-job")
+
+    def test_a_schedule_inside_two_months_plays_out_and_completes(self) -> None:
+        # ANG-08 (#464, ported from views_tests.py TestLg01dPlayTwoMonths):
+        # N=2 is 2 matchdays of 1 Round, inside the 8-matchday budget.
+        season = active_season(
+            make_league("PtmAllL", manager=self.user_a), make_teams("PtmAll", 2)
+        )
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-two-months")))
+        self.assertEqual(GameRound.objects.filter(match__season=season).count(), 2)
+        season.refresh_from_db()
+        self.assertEqual(season.state, "completed")
+        self.assertIsNotNone(season.champion_team_id)
 
     def test_draft_season_is_409_season_not_active(self) -> None:
         draft = Season.objects.create(
@@ -249,6 +260,65 @@ class TestPlayJobs(LeagueApiTestCase):
             },
         )
 
+    # --- ANG-08 (#464): ported from views_tests.py TestLg01dPlayStatus ------
+
+    def _status(self, job: FakeAsyncResult) -> dict:
+        season = active_season(
+            make_league("PjStL", manager=self.user_a), make_teams("PjSt", 2)
+        )
+        with patch("matches.league_play_services.AsyncResult", return_value=job):
+            return self.ok(self.api.get(action(season.id, "play-jobs/abc")))
+
+    def test_progress_reads_running_with_completed_and_total(self) -> None:
+        data = self._status(FakeAsyncResult("PROGRESS", {"completed": 5, "total": 12}))
+        self.assertEqual(
+            data,
+            {
+                "status": "running",
+                "completed": 5,
+                "total": 12,
+                "cancelled": False,
+                "error": None,
+            },
+        )
+
+    def test_failure_reads_error_with_the_str_of_its_info(self) -> None:
+        data = self._status(FakeAsyncResult("FAILURE", Exception("boom")))
+        self.assertEqual(
+            data,
+            {
+                "status": "error",
+                "completed": 0,
+                "total": 0,
+                "cancelled": False,
+                "error": "boom",
+            },
+        )
+
+    # --- ANG-08d: ported from test_play_cancel.py -----------------------------
+
+    def test_a_cancelled_result_reads_complete_and_cancelled(self) -> None:
+        """A run that stopped on a cancel still reads ``complete``, with
+        ``cancelled`` set."""
+        data = self._status(
+            FakeAsyncResult("SUCCESS", {"completed": 1, "total": 2, "cancelled": True})
+        )
+        self.assertEqual(
+            data,
+            {
+                "status": "complete",
+                "completed": 1,
+                "total": 2,
+                "cancelled": True,
+                "error": None,
+            },
+        )
+
+    def test_a_normal_success_is_not_cancelled(self) -> None:
+        data = self._status(FakeAsyncResult("SUCCESS", {"completed": 2, "total": 2}))
+        self.assertEqual(data["status"], "complete")
+        self.assertFalse(data["cancelled"])
+
     def test_anonymous_is_401_and_cross_account_is_404(self) -> None:
         # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(self.foreign_league("PjF"), make_teams("PjF", 2))
@@ -260,24 +330,117 @@ class TestPlayJobs(LeagueApiTestCase):
         )
 
 
-class TestServiceModuleBoundary(SimpleTestCase):
-    """``league_play_services`` must not import the League views module (the
-    views import the service), so the dependency only points one way."""
+class TestEnqueueRecordsTheRun(LeagueApiTestCase):
+    """ANG-08d (ported from ``test_play_cancel.py``): an enqueue clears a stale
+    cancel flag, records the job id it hands to ``apply_async`` and passes the
+    run's kwargs through unchanged."""
 
-    def test_does_not_import_league_views(self) -> None:
-        import matches.league_play_services as services
+    def setUp(self) -> None:
+        super().setUp()
+        self.league = make_league("EnqL", manager=self.user_a)
 
-        tree = ast.parse(Path(services.__file__).read_text(encoding="utf-8"))
-        imported: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.add(node.module or "")
-                imported.update(f"{node.module}.{a.name}" for a in node.names)
-        self.assertFalse(
-            [name for name in imported if "league_views" in name], imported
+    def test_a_stale_cancel_flag_is_cleared_so_the_run_plays(self) -> None:
+        season = active_season(self.league, make_teams("EnqStale", 2))
+        Season.objects.filter(pk=season.pk).update(play_cancel_requested=True)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-two-months")))
+        season.refresh_from_db()
+        self.assertFalse(season.play_cancel_requested)
+        # A flag left set would have stopped the eager task before its first
+        # fixture.
+        self.assertTrue(GameRound.objects.filter(match__season=season).exists())
+
+    def _assert_enqueued(self, season: Season, path: str, task, kwargs: dict) -> None:
+        with patch.object(task, "apply_async") as apply_async:
+            data = self.ok(self.api.post(action(season.id, path)))
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id, **kwargs},
+            task_id=data["job_id"],
+            retry=False,
         )
+        season.refresh_from_db()
+        self.assertEqual(season.active_play_job_id, data["job_id"])
+        self.assertFalse(season.play_cancel_requested)
+
+    def test_play_two_months_records_the_job_id_with_eight_matchdays(self) -> None:
+        from matches.tasks import play_season_task
+
+        season = active_season(self.league, make_teams("EnqP2m", 2))
+        self._assert_enqueued(
+            season, "play-two-months", play_season_task, {"max_matchdays": 8}
+        )
+
+    def test_play_until_end_records_the_job_id_with_no_matchday_cap(self) -> None:
+        from matches.tasks import play_season_task
+
+        season = active_season(self.league, make_teams("EnqPue", 2))
+        self._assert_enqueued(
+            season, "play-until-end", play_season_task, {"max_matchdays": None}
+        )
+
+    def test_play_playoffs_records_the_job_id(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        season = active_season(
+            self.league, make_teams("EnqPpo", 4), phases=("round_robin", "tournament")
+        )
+        play_round_robin(season)
+        self._assert_enqueued(season, "play-playoffs", play_playoffs_task, {})
+
+
+class TestPlayPlayoffsOnRegionalPhases(LeagueApiTestCase):
+    """ANG-08d (ported from ``test_regional_playoffs_drain.py``): Play Playoffs
+    reaches the N regional brackets and an unbuilt Worlds cursor (CONF-02 /
+    CONF-04), and still refuses a phase with no bracket."""
+
+    def test_a_regional_phase_is_200_and_enqueues(self) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tests.test_regional_playoffs import _built_regional_season
+
+        season, _conferences, _groups, _rr, phase = _built_regional_season("ApiPpoReg")
+        self.assertEqual(len(season.tournaments_for_phase(phase)), 2)
+        with patch.object(play_playoffs_task, "apply_async") as apply_async:
+            data = self.ok(self.api.post(action(season.id, "play-playoffs")))
+        self.assertEqual(data["season_id"], season.id)
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id}, task_id=data["job_id"], retry=False
+        )
+
+    def test_an_unbuilt_worlds_cursor_is_200_and_builds_worlds(self) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tests.test_worlds_tournament import (
+            _regionals_drained_season,
+            _worlds_phase_row,
+        )
+
+        season, _conferences, _groups, _rr, _phase = _regionals_drained_season(
+            "ApiPpoWorlds", [4, 4]
+        )
+        worlds_phase = _worlds_phase_row(season)
+        self.assertEqual(season.current_phase().pk, worlds_phase.pk)
+        self.assertIsNone(worlds_phase.tournament_id)
+        with patch.object(play_playoffs_task, "apply_async"):
+            data = self.ok(self.api.post(action(season.id, "play-playoffs")))
+        self.assertEqual(data["season_id"], season.id)
+        worlds_phase.refresh_from_db()
+        self.assertIsNotNone(worlds_phase.tournament_id)
+        self.assertEqual(worlds_phase.tournament.state, "active")
+
+    def test_a_regional_season_with_no_bracket_is_409_wrong_phase(self) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tests.test_regional_playoffs import _conf_season
+
+        season, _conferences, _groups, _rr, phase = _conf_season(
+            "ApiPpoUnbuilt", [4, 4]
+        )
+        self.assertFalse(phase.regional_tournaments.exists())
+        with patch.object(play_playoffs_task, "apply_async") as apply_async:
+            self.error(
+                self.api.post(action(season.id, "play-playoffs")), 409, "wrong_phase"
+            )
+        apply_async.assert_not_called()
+        season.refresh_from_db()
+        self.assertIsNone(season.active_play_job_id)
 
 
 class TestTaskClearsOnlyItsOwnRun(LeagueApiTestCase):

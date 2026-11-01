@@ -197,7 +197,7 @@ class PlayAllTests(LeagueApiTestCase):
         self.assertIsNotNone(self.t.champion_id)
         self.assertIsNone(self.t.active_play_job_id)
 
-    def test_status_endpoint_reports_the_html_polling_keys(self) -> None:
+    def test_status_endpoint_reports_the_polling_keys(self) -> None:
         with _fast():
             data = self.ok(self.post())
         status = self.ok(self.api.get(data["status_url"]))
@@ -207,10 +207,6 @@ class PlayAllTests(LeagueApiTestCase):
         self.assertGreater(status["total"], 0)
         self.assertEqual(status["completed"], status["total"])
         self.assertIsNone(status["error"])
-        html = self.api.get(
-            reverse("tournament_play_status", args=[self.t.id, data["job_id"]])
-        )
-        self.assertEqual(html.json(), status)
 
     def test_the_column_is_written_before_apply_async(self) -> None:
         seen: dict[str, str | None] = {}

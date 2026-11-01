@@ -7,16 +7,15 @@ Moved verbatim from `laserforce_simulator/teams/CLAUDE.md`; the app index there 
 
 **Analytics reads (ANG-01b).** Model instances are flattened to refs — `team_ref = {id, name}`,
 `player_ref = {id, name, team: team_ref | null}`; builder output is passed through verbatim
-(including `detail_list[*].detail_url`, an HTML path). Query params are **strict** param Forms bound
-via `plain_form_data(Form, request.query_params)` + `validate_form_or_raise` (the HTML pages keep their
-lenient parsing): missing id ⇒ `required`, non-int / bad date ⇒ `invalid`, id < 1 / negative
+(`detail_list` rows carry `match_id` / `round_id`; ANG-08 dropped `detail_url`). Query params are **strict** param Forms bound
+via `plain_form_data(Form, request.query_params)` + `validate_form_or_raise`: missing id ⇒ `required`, non-int / bad date ⇒ `invalid`, id < 1 / negative
 `threshold` ⇒ `min_value`, bad `provenance` / `role` / `display` ⇒ `invalid_choice`, the same id twice
 ⇒ `invalid` with `field` null (checked **before** the lookup, so an unknown id repeated is 400, not
 404). Rows then resolve through `get_owned_or_404` (head-to-head) or `get_object()` (career) — unknown
 / cross-Account ⇒ 404. Defaults: `provenance` "all", `role` null, `threshold` 5, `display` "mean".
 `BenchmarkParamsForm` lives in **`teams/api_forms.py`** (new). Known gap (PLAN.md Deferred Items): the
 head-to-head round sets and the career page's own round set are not ownership-filtered. The
-**benchmark population** (the standalone page and the career overlay) **is**, since UXP-14 — see
+**benchmark population** (the standalone benchmarks and the career overlay) **is**, since UXP-14 — see
 **HX-02 role benchmarks → Ownership scope**.
 
 ## Filters + ordering
@@ -26,10 +25,10 @@ so the Free Agents Team is still reachable by id):
 
 - `TeamFilterSet`: `name` (icontains); `include_free_agents` (boolean). **By default the list excludes
   every free-agent pool Team** — the global "Free Agents" Team and per-League pools, exactly
-  `Team.objects.regular()`, matching the HTML `team_list`; `?include_free_agents=true` includes them.
+  `Team.objects.regular()`; `?include_free_agents=true` includes them.
   Ordering: `name` (default), `created_date`, `wins`, `losses`, `id`; tiebreak `id`.
 - `PlayerFilterSet`: `team` (id; a foreign / nonexistent id ⇒ 200 empty, no existence leak; `team=abc`
-  ⇒ 400), `name` (icontains). Ordering keys = exactly the 23 LG-00c `_SORT_KEYS` (public
+  ⇒ 400), `name` (icontains). Ordering keys = exactly the 23 LG-00c `teams.services.PLAYER_SORT_KEYS` (public
   `offensive_synergy` → ORM `Offensive_synergy`, `team` → `team__name`, `overall_rating` → the
   `overall_rating_db` annotation from `annotate_overall_rating`); `preferred_roles` and the raw
   `Offensive_synergy` are not valid terms (silently dropped). Default `team__name, name`; tiebreak
@@ -38,17 +37,16 @@ so the Free Agents Team is still reachable by id):
 
 ## ANG-01b service builders
 
-**ANG-01b additions.** Two context builders shared by the HTML `player_career_stats` /
-`role_benchmarks` views (output byte-identical) and the API:
+**ANG-01b additions.** Two payload builders behind `GET /api/players/<id>/career/` and
+`GET /api/players/benchmarks/`:
 
 | Name | What |
 |---|---|
-| `build_career_stats(player, *, min_rounds, display, user) -> dict` | the HX-01 context minus `player`: `total_rounds`, `career`, `per_role`, `trend`, `has_rounds`, `min_rounds`, `display`, `stat_keys`, `per_role_with_benchmarks` (benchmark overlay only when `total_rounds > 0`, else `[]`) |
-| `build_role_benchmarks(*, min_rounds, display, user) -> dict` | the HX-02 context verbatim (UXP-14: over `user`'s own + Unmanaged Rounds): `min_rounds`, `display`, `roles`, `benchmarks`, `stat_keys`, `benchmarks_by_role` (template-only), `any_data` |
+| `build_career_stats(player, *, min_rounds, display, user) -> dict` | the HX-01 payload minus `player`: `total_rounds`, `career`, `per_role`, `trend`, `has_rounds`, `min_rounds`, `display`, `stat_keys`, `per_role_with_benchmarks` (benchmark overlay only when `total_rounds > 0`, else `[]`) |
+| `build_role_benchmarks(*, min_rounds, display, user) -> dict` | the HX-02 payload (UXP-14: over `user`'s own + Unmanaged Rounds): `min_rounds`, `display`, `roles`, `benchmarks`, `stat_keys`, `benchmarks_by_role` (the API drops it), `any_data` |
 
 The HX-01 / HX-02 helpers `_round_dict_from_state`, `_build_per_role_overlay`,
-`_HX01_DISPLAY_STAT_KEYS`, `_HX01_TO_BENCHMARK_STAT`, `_HX01B_STAT_ROW_SPEC` **moved here** and are
-re-exported from `teams/views.py`. The team / player head-to-head builders live in
+`_HX01_DISPLAY_STAT_KEYS`, `_HX01_TO_BENCHMARK_STAT`, `_HX01B_STAT_ROW_SPEC` live here. The team / player head-to-head builders live in
 `matches/services.py` (see `docs/agents/matches/api.md` **ANG-01b**).
 
 ## Roster-import ownership fix (ANG-01a)
@@ -61,10 +59,9 @@ echoed that Account's player names in the error. Both helpers now take a **requi
 `resolve_import_teams`: a name matching only a foreign Team is a miss ⇒ a **new Team stamped with the
 importer** is created and no foreign name can appear in any message. Appending to an **Unmanaged**
 Team (including the global Free Agents Team) stays legal. `get_or_create` is gone (it also raised
-`MultipleObjectsReturned` on duplicate names). The HTML `import_roster`, the API import and the
-Tournament participant import (`matches.tournament_services.setup.import_participants`, since ANG-01f
-called by both `matches/tournament_views/setup.py` and `POST /api/tournaments/<id>/import-participants/`)
-all pass `manager_or_none(request)`.
+`MultipleObjectsReturned` on duplicate names). The API import and the Tournament participant import
+(`matches.tournament_services.setup.import_participants`, called by
+`POST /api/tournaments/<id>/import-participants/`) both pass `manager_or_none(request)`.
 
 ## Serializers
 

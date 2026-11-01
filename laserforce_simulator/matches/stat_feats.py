@@ -1,10 +1,10 @@
 """LG-06e — pure feat-detection module for the Statistical Feats screen.
 
 PURE module — frozen import allowlist: ``dataclasses``, ``typing``,
-``collections`` ONLY. NO Django, NO ORM, NO RNG, NO I/O. The view in
-``matches/league_screens/statistical_feats.py`` materialises a list of
+``collections`` ONLY. NO Django, NO ORM, NO RNG, NO I/O. The caller,
+``matches.league_screen_services.build_statistical_feats``, materialises a list of
 per-(player, round) dicts (one entry per ``PlayerRoundState`` row, plus the
-parent Round's relevant event counts and view-computed Opp / Result / Season
+parent Round's relevant event counts and caller-computed Opp / Result / Season
 descriptors) and hands that list to the ``scan_feats`` entry point here; this
 module never touches a Django object.
 

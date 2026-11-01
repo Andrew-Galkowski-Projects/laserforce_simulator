@@ -1,6 +1,6 @@
 # frontend/ -- the Angular SPA (ANG-04)
 
-The Phase 8 replacement for the Django templates. The stack is fixed by
+The app's only UI (Phase 8; it replaced the Django templates, deleted in ANG-08). The stack is fixed by
 [ADR-0042](../docs/adr/0042-angular-frontend-stack.md). It has the sign-in and invite-only register
 pages, the ADR-0043 layout-B shell (header with the account menu, a Teams sidebar that is a drawer
 below 768px) behind `authGuard`, Change password (ANG-06 item 7), the Teams feature routes (ANG-06a, ANG-06b, ANG-06 2b), the
@@ -20,7 +20,7 @@ auth** below.
   `devDependency`: run it as `npx ng ...` or through the npm scripts, never a global install.
 - **Standalone components, zoneless change detection, signals.** No NgModules, no `zone.js`.
 - **No SSR.** `ng build` writes plain static files to `dist/frontend/browser/` (served by nginx at
-  `/app/` in the Docker stacks: see **Served from Docker** below).
+  `/` in the Docker stacks: see **Served from Docker** below).
 - **Angular Material** (and the CDK), Material 3, themed from the app's `--lf-*` tokens and
   following the OS light/dark setting. See **Theme** below and
   [ADR-0043](../docs/adr/0043-visual-theme-lfstats-layout-and-token-contract.md).
@@ -204,7 +204,7 @@ src/
                           module beside its component: zones-bases/ (zones.ts), sight-lines/
                           (sight-edit.ts: 100-key batch split), heatmap/ (heat-cells.ts);
                           testing/ (editor-fixtures incl. releaseModeLoads,
-                          maps-loads). The Django editor template is the behavioural reference.
+                          maps-loads).
     tournaments/          ANG-06-13a, tournaments.routes.ts (TOURNAMENTS_ROUTES): /tournaments
                           (tournament-list: server-paged, newest first, State badge),
                           /tournaments/new (tournament-create: TournamentCreateForm's show / hide
@@ -429,24 +429,28 @@ CORS allow-list (ANG-02) has exactly `http://localhost:4200`, so open the app on
 `127.0.0.1`. Both dev origins are the same site, so the `SameSite=Lax` refresh cookie (ADR-0041)
 still travels.
 
-## Served from Docker (ANG-07)
+## Served from Docker (ANG-07, ANG-08)
 
-[ADR-0046](../docs/adr/0046-spa-at-app-prefix-behind-nginx-front-door.md): until ANG-08 the Docker
-stacks put nginx in front of Django. It serves the SPA at `/app/` and proxies everything else
-(`/api/`, the Django pages, `/admin/`, `/static/`) to `${DJANGO_UPSTREAM}`, so the SPA is
-same-origin with the API and needs no CORS.
+[ADR-0047](../docs/adr/0047-spa-at-root-django-api-and-admin-only.md): the Docker stacks put nginx
+in front of Django. It serves the SPA at `/` and proxies only `/api/`, `/admin/`, `/static/` and
+`/media/` (and `/admin` without the slash) to `${DJANGO_UPSTREAM}`, so the SPA is same-origin with
+the API and needs no CORS. Every other path is the SPA: an old Django page path falls into its `**`
+route. A link from the ADR-0046 days, `/app/<path>`, gets a 301 to `/<path>` with the query kept.
 
-- `frontend/Dockerfile` builds with `--base-href /app/` on the command line. `src/index.html` keeps
-  `<base href="/">`, and `angular.json` is untouched, so `ng serve` and the CI build stay at `/`.
-  Never write an absolute asset or link path (`src="/..."`): use the Router or a relative path,
-  or it breaks under `/app/`.
+- `frontend/Dockerfile` builds with the default base href (`/`, from `src/index.html`), the same
+  as `ng serve` and the CI build.
 - `frontend/nginx/default.conf.template` is rendered by the nginx image's envsubst. It sets
   `no-cache` on `index.html` and `immutable` on hashed `js` / `css` / fonts, falls back to
-  `/app/index.html` for deep links, and allows 20 MB bodies (map uploads). The proxy forwards
+  `/index.html` for deep links, and allows 20 MB bodies (map uploads). The proxy forwards
   `Host $http_host` and the incoming `X-Forwarded-Proto`, and resolves the upstream per request.
+- **Location order is load-bearing.** Regex locations match in file order, so the Django proxy
+  regex sits _before_ the hashed-asset regex (`\.(js|css|woff2?)$`). Swapped, Admin's own
+  `/static/admin/...js` / `.css` would be looked up in the SPA root and 404, and Admin renders
+  unstyled. `location ^~ /app/` is a prefix match that stops the regex search, so `/app/main-*.js`
+  still redirects.
 - `scripts/smoke_nginx.sh` is its test (CI `docker` job; running it locally:
   [`docs/agents/ci.md`](../docs/agents/ci.md)). `docker compose up` serves it on
-  <http://localhost:8080/app/>.
+  <http://localhost:8080/>.
 
 ## Windows notes
 

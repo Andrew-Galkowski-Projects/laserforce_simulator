@@ -1,8 +1,7 @@
 """ANG-01f-5 -- the Player pool and the Draw of a Player-pool draw Tournament.
 
-Shared by the HTML views (``matches.tournament_views.draw``) and the API
-(``matches.tournament_api_views.draw``): both bind the same strict Forms and
-call the same services. Every service checks :func:`require_pool_setup`
+Called by the API (``matches.tournament_api_views.draw``), which binds the
+strict Forms and calls these services. Every service checks :func:`require_pool_setup`
 (sandbox, then setup, then ``team_assembly == "player_pool"``) itself, so a
 caller cannot skip a guard.
 """

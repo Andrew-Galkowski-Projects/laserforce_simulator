@@ -16,7 +16,7 @@ from __future__ import annotations
 from datetime import date
 from unittest.mock import patch
 
-from matches.models import GameRound, Season
+from matches.models import BracketNode, GameRound, Season, SeasonPhase
 from matches.simulation import BatchSimulator
 from matches.tests.league_api_fixtures import (
     LeagueApiTestCase,
@@ -24,6 +24,13 @@ from matches.tests.league_api_fixtures import (
     make_teams,
 )
 from matches.tests.test_api_play_runs import active_season, play_round_robin
+from matches.tests.test_regional_playoffs import (
+    _built_regional_season,
+    _flat_season,
+    _hand_play_rr,
+    _ids,
+    _stamp_bracket_completed,
+)
 
 _FAST_TICKS = 20
 
@@ -130,6 +137,98 @@ class TestPlayWeek(LeagueApiTestCase):
         )
         self.assertFalse(GameRound.objects.exists())
 
+    # --- ANG-08 (#464): ported from views_tests.py TestLg01dPlayWeek ---------
+
+    def test_a_second_click_plays_the_next_matchday(self) -> None:
+        # N=3: one fixture per matchday (the third Team has a bye).
+        season = active_season(self.league, make_teams("PwNext", 3))
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-week")))
+            self.assertEqual(GameRound.objects.filter(match__season=season).count(), 1)
+            self.ok(self.api.post(action(season.id, "play-week")))
+        rounds = GameRound.objects.filter(match__season=season).select_related("match")
+        self.assertEqual(rounds.count(), 2)
+        # Two different fixtures, not the first one played twice.
+        played = {
+            (frozenset({gr.match.team_red_id, gr.match.team_blue_id}), gr.round_number)
+            for gr in rounds
+        }
+        self.assertEqual(len(played), 2)
+
+    def test_a_mid_matchday_failure_rolls_back_the_whole_matchday(self) -> None:
+        # N=4: matchday 1 holds 2 fixtures; the second one raises.
+        season = active_season(self.league, make_teams("PwAtomic", 4))
+        original = BatchSimulator.simulate_scheduled_round
+        calls = {"n": 0}
+
+        def raises_on_second(sim, season_, team_a, team_b, round_number, **kwargs):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise ValueError("mid-matchday failure")
+            return original(sim, season_, team_a, team_b, round_number, **kwargs)
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            with patch.object(
+                BatchSimulator, "simulate_scheduled_round", raises_on_second
+            ):
+                self.errors(self.api.post(action(season.id, "play-week")), 400)
+        self.assertEqual(calls["n"], 2)
+        self.assertFalse(GameRound.objects.filter(match__season=season).exists())
+
+    def test_a_completed_season_is_409_season_not_active(self) -> None:
+        season = active_season(self.league, make_teams("PwDone", 2))
+        Season.objects.filter(pk=season.pk).update(state="completed")
+        self.error(
+            self.api.post(action(season.id, "play-week")), 409, "season_not_active"
+        )
+        self.assertFalse(GameRound.objects.filter(match__season=season).exists())
+
+
+class TestPlayWeekMultiRr(LeagueApiTestCase):
+    """ANG-08 (#464, ported from views_tests.py TestLg02c2PlayWeekMultiRr):
+    on a two-round-robin Season, One Week advances one global matchday and
+    crosses from RR1 into RR2 once RR1 is played out. N=2: each RR phase
+    spans 2 matchdays of 1 Round each."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.season = active_season(
+            make_league("PwMrrL", manager=self.user_a),
+            make_teams("PwMrr", 2),
+            phases=("round_robin", "round_robin"),
+        )
+        self.rr1, self.rr2 = SeasonPhase.objects.filter(season=self.season).order_by(
+            "ordinal"
+        )
+
+    def _click(self, times: int = 1) -> None:
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            for _ in range(times):
+                self.ok(self.api.post(action(self.season.id, "play-week")))
+
+    def _rounds_in(self, phase: SeasonPhase) -> int:
+        return GameRound.objects.filter(match__season_phase=phase).count()
+
+    def test_one_click_plays_one_matchday_attributed_to_rr1(self) -> None:
+        self._click()
+        self.assertEqual(self._rounds_in(self.rr1), 1)
+        self.assertEqual(self._rounds_in(self.rr2), 0)
+
+    def test_the_click_after_rr1_is_exhausted_lands_on_rr2(self) -> None:
+        self._click(2)
+        self.season.refresh_from_db()
+        self.assertTrue(self.season._phase_complete(self.rr1))
+        self.assertEqual(self._rounds_in(self.rr2), 0)
+        self._click()
+        self.assertEqual(self._rounds_in(self.rr1), 2)
+        self.assertEqual(self._rounds_in(self.rr2), 1)
+
+    def test_the_season_stays_active_partway_through_rr2(self) -> None:
+        self._click(3)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+        self.assertIsNone(self.season.champion_team_id)
+
 
 class TestPlaySingleRound(LeagueApiTestCase):
     def setUp(self) -> None:
@@ -188,3 +287,246 @@ class TestPlaySingleRound(LeagueApiTestCase):
             401,
             "not_authenticated",
         )
+
+
+# ---------------------------------------------------------------------------
+# ANG-08d -- regional / Worlds / Last-chance playoffs (ported from
+# test_regional_playoffs_drain.py and test_last_chance_qualifier.py).
+# Brackets are reached by a hand-played round robin (no simulation); the
+# drain itself runs the real engine under a short ROUND_TICKS.
+# ---------------------------------------------------------------------------
+
+_PLAYOFF_TICKS = 30
+
+
+def _resolved(tournament) -> int:
+    """Bracket nodes carrying a winner (played or bye)."""
+    return BracketNode.objects.filter(
+        tournament=tournament, winner__isnull=False
+    ).count()
+
+
+def _first_stage_size(tournament) -> int:
+    return BracketNode.objects.filter(
+        tournament=tournament, bracket_type="winners", bracket_round=1
+    ).count()
+
+
+def _regional(phase, conference):
+    """The Conference's Regional playoff (any non-Last-chance regional row)."""
+    return (
+        phase.regional_tournaments.filter(conference=conference)
+        .exclude(qualifier_stage="last_chance")
+        .first()
+    )
+
+
+def _last_chance(phase, conference):
+    return phase.regional_tournaments.filter(
+        conference=conference, qualifier_stage="last_chance"
+    ).first()
+
+
+def _worlds_tournament(season: Season):
+    phase = season.phases.filter(tournament_mode="worlds").first()
+    if phase is None:
+        return None
+    phase.refresh_from_db()
+    return phase.tournament
+
+
+def _built_flat_season(prefix: str):
+    """A 0-Conference Season with its single bracket built."""
+    season, teams, rr_phase, phase = _flat_season(prefix)
+    _hand_play_rr(season, rr_phase, _ids(teams))
+    season.refresh_from_db()
+    season.activate_pending_tournament_phase()
+    phase.refresh_from_db()
+    return season, phase
+
+
+class _PlayoffApiTestCase(LeagueApiTestCase):
+    def post(self, season: Season, path: str):
+        with patch.object(BatchSimulator, "ROUND_TICKS", _PLAYOFF_TICKS):
+            return self.api.post(action(season.id, path))
+
+
+class TestPlayWeekRegional(_PlayoffApiTestCase):
+    def setUp(self) -> None:
+        super().setUp()
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            _rr,
+            self.phase,
+        ) = _built_regional_season("ApiWeekReg")
+        self.tournaments = self.season.tournaments_for_phase(self.phase)
+        self.assertEqual(len(self.tournaments), 2)
+
+    def test_one_click_advances_every_bracket_by_one_stage(self) -> None:
+        before = {t.id: _resolved(t) for t in self.tournaments}
+        sizes = {t.id: _first_stage_size(t) for t in self.tournaments}
+        self.assertEqual(set(sizes.values()), {2})
+        self.ok(self.post(self.season, "play-week"))
+        for tournament in self.tournaments:
+            self.assertEqual(
+                _resolved(tournament) - before[tournament.id], sizes[tournament.id]
+            )
+            # One stage only: the final is still open.
+            final = tournament.nodes.get(advances_to__isnull=True)
+            self.assertIsNone(final.winner_id)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+        self.assertEqual(self.season.current_phase().id, self.phase.id)
+
+    def test_repeated_clicks_drain_every_bracket_and_worlds_to_a_champion(
+        self,
+    ) -> None:
+        for _ in range(14):
+            self.season.refresh_from_db()
+            if self.season.state == "completed":
+                break
+            self.ok(self.post(self.season, "play-week"))
+        self.season.refresh_from_db()
+        for conference, group in zip(self.conferences, self.groups):
+            regional = _regional(self.phase, conference)
+            self.assertEqual(regional.state, "completed")
+            self.assertIn(regional.champion_id, _ids(group))
+        self.assertEqual(self.season.state, "completed")
+        worlds = _worlds_tournament(self.season)
+        self.assertIsNotNone(worlds)
+        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
+
+
+class TestPlayWeekZeroConference(_PlayoffApiTestCase):
+    def test_one_click_drains_one_stage_of_the_single_bracket(self) -> None:
+        season, phase = _built_flat_season("ApiWeekFlat")
+        tournament = phase.tournament
+        before = _resolved(tournament)
+        stage = _first_stage_size(tournament)
+        self.ok(self.post(season, "play-week"))
+        self.assertEqual(_resolved(tournament) - before, stage)
+
+
+class TestPlaySingleRoundRegional(_PlayoffApiTestCase):
+    def test_a_regional_click_resolves_exactly_one_node(self) -> None:
+        season, _conferences, _groups, _rr, phase = _built_regional_season("ApiSrReg")
+        tournaments = season.tournaments_for_phase(phase)
+        before = sum(_resolved(t) for t in tournaments)
+        self.ok(self.post(season, "play-single-round"))
+        self.assertEqual(sum(_resolved(t) for t in tournaments) - before, 1)
+
+    def test_a_flat_click_resolves_exactly_one_node(self) -> None:
+        season, phase = _built_flat_season("ApiSrFlat")
+        before = _resolved(phase.tournament)
+        self.ok(self.post(season, "play-single-round"))
+        self.assertEqual(_resolved(phase.tournament) - before, 1)
+
+
+class TestPlaySingleRoundCrossesIntoWorlds(_PlayoffApiTestCase):
+    """CONF-04: two 4-Team regionals hold 3 nodes each, so click 6 finishes
+    qualification and must leave Worlds built and active; click 7 plays it."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        (
+            self.season,
+            self.conferences,
+            _groups,
+            _rr,
+            self.phase,
+        ) = _built_regional_season("ApiSrWorlds")
+
+    def _click(self, times: int) -> None:
+        for _ in range(times):
+            # A 409 here is the "cursor parked on an unbuilt Worlds" trap.
+            self.ok(self.post(self.season, "play-single-round"))
+
+    def test_the_regionals_finishing_click_builds_worlds_without_playing_it(
+        self,
+    ) -> None:
+        self._click(6)
+        for conference in self.conferences:
+            self.assertEqual(_regional(self.phase, conference).state, "completed")
+        worlds = _worlds_tournament(self.season)
+        self.assertIsNotNone(worlds)
+        self.assertEqual(worlds.state, "active")
+        self.assertEqual(worlds.nodes.count(), 1)
+        self.assertEqual(_resolved(worlds), 0)
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "active")
+
+    def test_the_next_click_plays_worlds_and_crowns_the_season(self) -> None:
+        self._click(7)
+        worlds = _worlds_tournament(self.season)
+        self.assertEqual(worlds.state, "completed")
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertEqual(self.season.champion_team_id, worlds.champion_id)
+
+
+class TestPlaySingleRoundSeedsTheLastChanceBracket(_PlayoffApiTestCase):
+    """CONF-03: the click that drains the last Regional playoff seeds the
+    Last-chance bracket, so the playoff controls never vanish (no dead click).
+
+    Conference 2's Regional playoff is stamped complete up front so the final
+    Conference-1 node is the last regional node of the phase.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        (
+            self.season,
+            self.conferences,
+            self.groups,
+            _rr,
+            self.phase,
+        ) = _built_regional_season("ApiSrLc", [9, 4], cut=4)
+        self.big, small = self.conferences
+        _stamp_bracket_completed(_regional(self.phase, small), self.groups[1][0])
+
+    def _click(self):
+        return self.ok(self.post(self.season, "play-single-round"))
+
+    def _click_until_the_regional_drains(self) -> None:
+        for _ in range(20):
+            self._click()
+            if _regional(self.phase, self.big).state == "completed":
+                return
+        self.fail("the Regional playoff never drained")
+
+    def test_the_draining_click_activates_a_four_team_last_chance_bracket(
+        self,
+    ) -> None:
+        self._click_until_the_regional_drains()
+        last_chance = _last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.state, "active")
+        self.assertEqual(last_chance.participants.count(), 4)
+        controls = self.ok(
+            self.api.get(f"/api/leagues/{self.season.league_id}/play-controls/")
+        )
+        self.assertIs(controls["playoff_phase_active"], True)
+        self.assertIs(controls["playoff_completed"], False)
+
+    def test_clicks_drain_the_last_chance_bracket_then_crown_the_season(
+        self,
+    ) -> None:
+        for _ in range(40):
+            self.season.refresh_from_db()
+            if self.season.state == "completed":
+                break
+            self._click()
+        last_chance = _last_chance(self.phase, self.big)
+        self.assertEqual(last_chance.state, "completed")
+        self.assertIn(last_chance.champion_id, _ids(self.groups[0]))
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.state, "completed")
+        self.assertIsNotNone(self.season.champion_team_id)
+
+    def test_the_click_after_seeding_resolves_a_last_chance_node(self) -> None:
+        self._click_until_the_regional_drains()
+        last_chance = _last_chance(self.phase, self.big)
+        before = _resolved(last_chance)
+        self._click()
+        self.assertGreater(_resolved(last_chance), before)

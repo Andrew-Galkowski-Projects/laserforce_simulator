@@ -1,12 +1,10 @@
-"""ANG-01e -- the League screen builders shared by the HTML views and the API.
+"""ANG-01e -- the League screen builders behind the API.
 
-The ``league_screens/*`` HTML views and the ``/api/leagues/<id>/...`` screen
-actions call the same functions here, so the two never drift apart. Nothing in
-this module reads a request: callers pass the League, the resolved Season
-scope and the screen's already-validated params.
-
-Must not import ``matches.league_views`` or ``matches.league_screens`` (they
-import this module); tests patch ``matches.league_screen_services.*``.
+The ``/api/leagues/<id>/...`` screen actions call the functions here (the
+HTML ``league_screens`` views that once shared them went in ANG-08). Nothing
+in this module reads a request: callers pass the League, the resolved Season
+scope and the screen's already-validated params. Tests patch
+``matches.league_screen_services.*``.
 """
 
 from __future__ import annotations
@@ -73,7 +71,7 @@ from matches.team_history_logic import (
 from matches.team_stats_logic import TeamStatRow, aggregate_team_stats, sort_team_stats
 from matches.tournament_services.detail import build_rounds
 from teams.models import Player, Team
-from teams.views import _SORT_KEYS as RATING_SORT_KEYS
+from teams.services import PLAYER_SORT_KEYS as RATING_SORT_KEYS
 
 CAREER: Literal["career"] = "career"
 
@@ -518,7 +516,8 @@ def build_player_stats(
 def _annotate_overall_rating(qs: QuerySet[Player]) -> QuerySet[Player]:
     """Annotate ``overall_rating_db`` (mean of the 19 stats) so the LG-00c
     ``overall_rating`` sort key has an ORM target (mirrors
-    ``teams.views.player_list``, incl. the capital-O ``Offensive_synergy``)."""
+    ``teams.services.annotate_overall_rating``, incl. the capital-O ``Offensive_synergy``).
+    """
     total = F(STAT_FIELDS[0])
     for field in STAT_FIELDS[1:]:
         total = total + F(field)
@@ -532,7 +531,7 @@ def _order_rated_players(
 
     ``preferred_roles`` sorts in Python (a JSON list); ``potential`` is
     nullable and sorts nulls last in BOTH directions; every other key is an
-    ORM sort through ``teams.views._SORT_KEYS``. ``name`` breaks ties.
+    ORM sort through ``teams.services.PLAYER_SORT_KEYS``. ``name`` breaks ties.
     """
     if sort == "preferred_roles":
         rows = list(qs)
@@ -1055,36 +1054,9 @@ def build_playoffs(season: Season | None) -> PlayoffsScreen:
 
 
 # ---------------------------------------------------------------------------
-# Team screens: Team resolution (Team History / Roster / Finances), then the
-# Team History, Roster, Team Stats, Power Rankings and Game Log builders.
+# Team screens: the Team History, Roster, Team Stats, Power Rankings and Game
+# Log builders.
 # ---------------------------------------------------------------------------
-
-
-def parse_team_id(raw: str | None) -> int | None:
-    """A raw ``?team_id=`` as an int, or ``None`` when missing / malformed
-    (the HTML screens' forgiving read; the API validates in its param Form)."""
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def resolve_league_team(
-    league: League, season: Season, requested_team_id: int | None
-) -> Team | None:
-    """The Team a team screen shows: ``requested_team_id`` when enrolled, else
-    ``league.current_team`` when enrolled, else the alphabetically-first
-    enrolled Team (the LG-01g sidebar chain); ``None`` when none is enrolled.
-    """
-    teams = enrolled_teams(season)
-    by_id = {t.id: t for t in teams}
-    if requested_team_id is not None and requested_team_id in by_id:
-        return by_id[requested_team_id]
-    if league.current_team_id is not None and league.current_team_id in by_id:
-        return by_id[league.current_team_id]
-    return teams[0] if teams else None
 
 
 @dataclass(frozen=True)
@@ -1105,7 +1077,7 @@ def build_team_roster(team: Team) -> TeamRoster:
 
 
 # Team History -- moved from ``league_screens/team_history.py`` (LG-01z-e /
-# LG-06c); the HTML view and the API share these.
+# LG-06c); the API reads these.
 
 # Seasons-table sort keys (``record`` sorts on ``wins``).
 TEAM_HISTORY_SEASONS_SORT_KEYS: frozenset[str] = frozenset(

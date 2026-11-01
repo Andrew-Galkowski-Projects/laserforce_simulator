@@ -1,8 +1,8 @@
 """HX-01 — Tests for per-player career stats.
 
-This file holds both the pure-unit tests for ``teams/career_stats.py`` (no DB,
-no Django imports) and the DB/view tests for ``teams.views.player_career_stats``
-(Django ``TestCase`` + test client).
+This file holds the pure-unit tests for ``teams/career_stats.py`` (no DB, no
+Django imports). The ``player_career_stats`` HTML view tests went with the view
+(ANG-08 D1); ``GET /api/players/<id>/career/`` is covered in ``test_api_career.py``.
 
 The seam contract is locked at ``.claude/worktrees/hx-01-seam-contract.md``.
 Until the Code agent lands ``teams/career_stats.py`` and the view/url/template,
@@ -29,10 +29,6 @@ from __future__ import annotations
 
 import unittest
 
-from django.test import TestCase
-from django.urls import reverse
-
-from matches.models import GameRound, PlayerRoundState
 from matches.sim_helpers.role_constants import SPECIAL_COST
 from teams.career_stats import (
     points_trend,
@@ -40,7 +36,6 @@ from teams.career_stats import (
     summarize,
     summarize_by_role,
 )
-from teams.models import Player, Team
 
 # ---------------------------------------------------------------------------
 # Pure-unit fixture helper
@@ -357,129 +352,6 @@ class TestCareerStatsPure(unittest.TestCase):
         # Django setup or ORM access on import.
         sys.modules.pop("teams.career_stats", None)
         importlib.import_module("teams.career_stats")
-
-
-# ---------------------------------------------------------------------------
-# §7.2 DB/view cases (Django TestCase + test client)
-# ---------------------------------------------------------------------------
-
-
-class TestPlayerCareerStatsView(TestCase):
-    """View-level coverage for ``teams.views.player_career_stats`` (§7.2)."""
-
-    def _make_player(self, name: str = "Career Player") -> Player:
-        """Create one team + one player attached to the Commander slot."""
-        team = Team.objects.create(name="Career Team")
-        player = Player.objects.create(team=team, name=name)
-        team.slot_commander = player
-        team.save()
-        return player
-
-    def _make_round_with_state(
-        self,
-        player: Player,
-        *,
-        role: str = "commander",
-        points_scored: int = 500,
-        tags_made: int = 5,
-        times_tagged: int = 3,
-        shots_missed: int = 4,
-        final_special: int = 2,
-        specials_used: int = 1,
-        was_eliminated_at: int = 1500,
-    ) -> PlayerRoundState:
-        """Create a real ``GameRound`` and one ``PlayerRoundState`` row."""
-        game_round = GameRound.objects.create(
-            round_number=1,
-            team_red=player.team,
-            team_blue=player.team,
-        )
-        return PlayerRoundState.objects.create(
-            game_round=game_round,
-            player=player,
-            team_color="red",
-            role=role,
-            points_scored=points_scored,
-            tags_made=tags_made,
-            times_tagged=times_tagged,
-            shots_missed=shots_missed,
-            final_special=final_special,
-            specials_used=specials_used,
-            was_eliminated_at=was_eliminated_at,
-        )
-
-    # ----- 1: 200 OK with rounds — all context keys present ---------------
-
-    def test_player_career_stats_view_200_with_rounds(self) -> None:
-        """GET on a player with ≥ 2 rounds returns 200 and all 6 context keys."""
-        player = self._make_player()
-        self._make_round_with_state(player, role="commander")
-        self._make_round_with_state(player, role="scout", points_scored=300)
-
-        url = reverse("player_career_stats", args=[player.id])
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, 200)
-
-        # All six locked context keys must be present.
-        for key in (
-            "player",
-            "total_rounds",
-            "career",
-            "per_role",
-            "trend",
-            "has_rounds",
-        ):
-            self.assertIn(key, response.context, f"context key {key!r} missing")
-        self.assertIs(response.context["has_rounds"], True)
-        self.assertEqual(response.context["total_rounds"], 2)
-
-        # Sanity-check one value through the view ↔ pure-module seam.
-        # Two rounds at 500 + 300 pts → avg_points = 400.0. The pure
-        # formulas themselves are exhaustively covered at the unit layer
-        # (TestCareerStatsPure); this is just a wiring check.
-        self.assertAlmostEqual(response.context["career"]["avg_points"], 400.0)
-        self.assertEqual(response.context["career"]["games"], 2)
-        # Roles played: Commander then Scout (locked order).
-        self.assertEqual(
-            [r["role"] for r in response.context["per_role"]],
-            ["commander", "scout"],
-        )
-        # Trend has one entry per round, 1-based.
-        self.assertEqual(len(response.context["trend"]), 2)
-        self.assertEqual(response.context["trend"][0][0], 1)
-        self.assertEqual(response.context["trend"][1][0], 2)
-
-    # ----- 2: 200 OK on empty state — "No rounds played yet" substring ----
-
-    def test_player_career_stats_view_200_empty_state(self) -> None:
-        """GET on a player with zero rounds: 200, has_rounds=False, empty-state copy."""
-        player = self._make_player(name="Rookie")
-        url = reverse("player_career_stats", args=[player.id])
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, 200)
-        self.assertIs(response.context["has_rounds"], False)
-        self.assertIn("No rounds played yet", response.content.decode())
-
-    # ----- 3: 404 on missing player ---------------------------------------
-
-    def test_player_career_stats_view_404_for_missing_player(self) -> None:
-        """A bogus player_id returns 404 (via ``get_object_or_404``)."""
-        url = reverse("player_career_stats", args=[999_999_999])
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, 404)
-
-    # ----- 4: "Career stats" anchor on the player-detail page -------------
-
-    def test_career_stats_link_rendered_on_player_detail_page(self) -> None:
-        """The existing player-detail page contains a 'Career stats' link."""
-        player = self._make_player(name="Linkable")
-        url = reverse(
-            "player_detail",
-            kwargs={"team_id": player.team_id, "player_id": player.id},
-        )
-        response = self.client.get(url)
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("Career stats", response.content.decode())
 
 
 if __name__ == "__main__":

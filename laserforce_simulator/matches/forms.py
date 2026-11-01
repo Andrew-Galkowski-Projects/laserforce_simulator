@@ -578,41 +578,6 @@ class CreateLeagueForm(forms.Form):
         return cleaned_data
 
 
-class BatchSimulateForm(forms.Form):
-    N_CHOICES = [("10", "10"), ("50", "50"), ("100", "100"), ("500", "500")]
-
-    team_red = forms.ModelChoiceField(
-        queryset=Team.objects.none(),
-        widget=forms.Select(attrs={"class": "form-control"}),
-        label="Red Team",
-    )
-    team_blue = forms.ModelChoiceField(
-        queryset=Team.objects.none(),
-        widget=forms.Select(attrs={"class": "form-control"}),
-        label="Blue Team",
-    )
-    n = forms.ChoiceField(
-        choices=N_CHOICES,
-        initial="100",
-        widget=forms.Select(attrs={"class": "form-control"}),
-        label="Number of simulations",
-    )
-    arena_map = forms.ModelChoiceField(
-        queryset=ArenaMap.objects.none(),
-        widget=forms.Select(attrs={"class": "form-control"}),
-        label="Arena Map",
-        required=False,
-        empty_label="No map (3-zone fallback)",
-    )
-
-    def __init__(self, *args, user: "AbstractBaseUser | None" = None, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        valid_teams = _valid_owned_teams(user)
-        self.fields["team_red"].queryset = valid_teams
-        self.fields["team_blue"].queryset = valid_teams
-        self.fields["arena_map"].queryset = _maps_with_confirmed_config()
-
-
 class SaveBatchGamesForm(forms.Form):
     """ANG-01b — API-only write Form for ``POST /api/simulate-batch/<job_id>/save/``.
 
@@ -675,7 +640,7 @@ class ConferencePartitionForm(forms.Form):
         self.season = season
 
     def clean_conferences(self) -> "list[tuple[str, list[int], list[int]]]":
-        # Lazy: ``league_services`` imports models / teams.views; importing it
+        # Lazy: ``league_services`` imports models / teams.services; importing it
         # at module load would create a ``forms`` -> ``league_services`` edge.
         from .league_services import _validate_conference_partition
 

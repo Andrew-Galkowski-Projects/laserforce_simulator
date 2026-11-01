@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# ANG-07 smoke test for the nginx front door (ADR-0046): builds frontend/Dockerfile,
+# Smoke test for the nginx front door (ADR-0047): builds frontend/Dockerfile,
 # runs it in front of an already-running Django, and asserts on response bodies.
+# The SPA is at /; only /api/, /admin/, /static/ and /media/ reach Django.
 #
 #   bash scripts/smoke_nginx.sh
 #
@@ -64,7 +65,7 @@ docker run -d --name "$CONTAINER" "${net_args[@]}" \
 
 ready=false
 for _ in $(seq 1 30); do
-  if curl -s -o /dev/null "$BASE/app/"; then
+  if curl -s -o /dev/null "$BASE/"; then
     ready=true
     break
   fi
@@ -76,19 +77,19 @@ if [ "$ready" != "true" ]; then
   exit 1
 fi
 
-# 1. The SPA shell at /app/, built with the /app/ base href, never cached.
-curl -s -D "$TMP/app.h" -o "$TMP/app.html" "$BASE/app/"
-check "/app/ serves the SPA shell" has '<app-root' "$TMP/app.html"
-check "index.html has base href /app/" has '<base href="/app/">' "$TMP/app.html"
-check "index.html is Cache-Control: no-cache" has '^cache-control:.*no-cache' "$TMP/app.h"
+# 1. The SPA shell at /, built with the default base href, never cached.
+curl -s -D "$TMP/root.h" -o "$TMP/root.html" "$BASE/"
+check "/ serves the SPA shell" has '<app-root' "$TMP/root.html"
+check "index.html has base href /" has '<base href="/">' "$TMP/root.html"
+check "index.html is Cache-Control: no-cache" has '^cache-control:.*no-cache' "$TMP/root.h"
 
 # 2. A deep link falls back to index.html.
-curl -s -o "$TMP/deep.html" "$BASE/app/teams/123"
-check "/app/teams/123 falls back to index.html" has '<app-root' "$TMP/deep.html"
+curl -s -o "$TMP/deep.html" "$BASE/teams/123"
+check "/teams/123 falls back to index.html" has '<app-root' "$TMP/deep.html"
 
 # 3. Hashed bundles are cached for good.
-main_js="$(grep -o 'main-[A-Za-z0-9]*\.js' "$TMP/app.html" | head -1)"
-code="$(curl -s -D "$TMP/js.h" -o /dev/null -w '%{http_code}' "$BASE/app/${main_js:-missing.js}")"
+main_js="$(grep -o 'main-[A-Za-z0-9]*\.js' "$TMP/root.html" | head -1)"
+code="$(curl -s -D "$TMP/js.h" -o /dev/null -w '%{http_code}' "$BASE/${main_js:-missing.js}")"
 check "index.html names a main-*.js bundle" [ -n "$main_js" ]
 check "the main bundle is 200 (got $code)" [ "$code" = "200" ]
 check "the main bundle is immutable" has '^cache-control:.*immutable' "$TMP/js.h"
@@ -98,27 +99,29 @@ code="$(curl -s -o "$TMP/me.json" -w '%{http_code}' "$BASE/api/accounts/me/")"
 check "/api/accounts/me/ is 401 (got $code)" [ "$code" = "401" ]
 check "/api/accounts/me/ is the error envelope" has '"errors"' "$TMP/me.json"
 
-# 5. Everything outside /app/ is Django's: anonymous / redirects to its sign-in form.
-curl -s -L -o "$TMP/root.html" "$BASE/"
-check "/ is Django's sign-in form" has 'csrfmiddlewaretoken' "$TMP/root.html"
+# 5. An ADR-0046 /app/ link is a 301 to the same path without the prefix.
+code="$(curl -s -D "$TMP/app.h" -o /dev/null -w '%{http_code}' "$BASE/app/teams/123")"
+check "/app/teams/123 is a 301 (got $code)" [ "$code" = "301" ]
+check "/app/teams/123 redirects to /teams/123" has '^location: /teams/123\s*$' "$TMP/app.h"
 
 # 6. A map-sized upload is not cut off by nginx's body limit.
 head -c 2097152 /dev/zero >"$TMP/big.png"
 code="$(curl -s -o /dev/null -w '%{http_code}' -F "name=smoke" -F "image=@$TMP/big.png" "$BASE/api/maps/")"
 check "2 MB POST /api/maps/ reaches Django (got $code)" [ "$code" != "413" -a "$code" != "000" ]
 
-# 7 + 8. Django's CSRF middleware sees what nginx forwards. A sign-in POST with bad
-# credentials re-renders the form (200) when CSRF passes, and is a 403 when it fails.
-curl -s -c "$TMP/jar" -o "$TMP/login.html" "$BASE/accounts/login/"
+# 7 + 8. Django's CSRF middleware sees what nginx forwards. An Admin login POST with
+# bad credentials re-renders the form (200) when CSRF passes, and is a 403 when it
+# fails. Admin's form names the email field `username`.
+curl -s -c "$TMP/jar" -o "$TMP/login.html" "$BASE/admin/login/"
 token="$(grep -o 'name="csrfmiddlewaretoken" value="[^"]*"' "$TMP/login.html" | head -1 | sed 's/.*value="//; s/"$//')"
 login_post() {
   curl -s -b "$TMP/jar" -o /dev/null -w '%{http_code}' "$@" \
     --data-urlencode "csrfmiddlewaretoken=$token" \
     --data-urlencode "username=smoke@example.com" \
     --data-urlencode "password=not-the-password" \
-    "$BASE/accounts/login/"
+    "$BASE/admin/login/"
 }
-check "/accounts/login/ carries a CSRF token" [ -n "$token" ]
+check "/admin/login/ carries a CSRF token" [ -n "$token" ]
 # 7. Host keeps the port, so the browser's Origin matches Django's host.
 code="$(login_post -H "Origin: $BASE")"
 check "Host keeps the port: Origin $BASE passes CSRF (got $code)" [ "$code" = "200" ]

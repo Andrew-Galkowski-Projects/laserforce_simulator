@@ -1,13 +1,12 @@
-"""ANG-01d-2 -- League play-loop logic shared by the HTML views and ``/api/``.
+"""ANG-01d-2 -- League play-loop logic behind ``/api/``.
 
 A Season has at most one **Active play run** (ADR-0040): "live" means
 ``Season.active_play_job_id`` is non-null. ``enqueue_play_run`` is the only
 enqueue path for Season play tasks; it writes the job id BEFORE the task is
 enqueued, and each task clears the column only while it still holds its own id.
 
-Must not import ``matches.league_views`` (the views import this module).
-Errors are plain ``Exception`` subclasses; the HTML views and the API map them
-to their own response shapes.
+Errors are plain ``Exception`` subclasses; the API maps them to its response
+shapes.
 """
 
 from __future__ import annotations

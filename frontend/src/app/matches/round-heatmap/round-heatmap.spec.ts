@@ -35,7 +35,6 @@ function heatmapData(overrides: Partial<RoundHeatmapData> = {}): RoundHeatmapDat
     has_map: true,
     arena_map: { id: 7, name: 'Warehouse' },
     zone_size: ZONE,
-    processed_image_url: '/maps/7/processed/',
     cell_occupancy_json: {
       '1': { '0,0': 4, '1,2': 1 },
       '3': { '0,0': 4 },

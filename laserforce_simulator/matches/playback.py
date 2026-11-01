@@ -26,11 +26,10 @@ def build_playback_map(game_round: GameRound) -> dict | None:
     """Reconstruct corridor-faithful player routes for the Playback map.
 
     Returns ``{"zone_size": int, "arena_map": {"id", "name"}, "players": [...]}``
-    (consumed by the canvas overlay in ``game_round_events.html`` and the SPA's
-    beta map), or ``None`` when the round ran without a map (3-zone fallback)
-    or its map config can't be resolved. ANG-06f moved it here from
-    ``views._build_playback_map`` (still re-exported there) and added
-    ``arena_map`` so the SPA can fetch the processed image.
+    (consumed by the SPA's beta map), or ``None`` when the round ran without a
+    map (3-zone fallback) or its map config can't be resolved. ANG-06f moved it
+    here from ``views._build_playback_map`` and added ``arena_map`` so the SPA
+    can fetch the processed image.
 
     Each ``event_type="movement"`` ``GameEvent`` records only its Advance's
     start + end cell (MOVE-01); the exact intermediate route is recomputed here

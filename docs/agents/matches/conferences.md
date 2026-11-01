@@ -110,27 +110,22 @@ season.conference_by_team_id()` once (outside the per-fixture loop) and passes
 `conference=conf_by_team.get(fixture.team_a_id)` (== `team_b_id`'s Conference, since fixtures
 are intra-Conference) into `simulate_scheduled_round`: `matches/tasks.py::play_season_task`
 (the per-fixture loop, also carrying `play_two_months` / `play_until_end` which enqueue this
-task), `matches/league_views.py::play_week`, and `matches/league_views.py::play_week_live`
-(the **RR branch** call only — the playoff branch uses `play_specific_node`, untouched).
+task), `matches/league_play_services.py::play_week`, and
+`matches/league_play_services.py::_commit_live_rr_round` (the One Week (Live) **RR** commit;
+the playoff commit uses `play_specific_node`, untouched).
 Zero-Conference Season ⇒ `conf_by_team` empty ⇒ `conference=None` ⇒ byte-identical.
 
-**Per-Conference Standings (`matches/league_views.py::season_standings` +
-`templates/seasons/standings.html`).** The view renders **one independently ranked table per
+**Per-Conference Standings (`matches/league_services.py::build_season_standings`, served by
+`GET /api/seasons/<id>/standings/` as `groups`).** **One independently ranked group per
 Conference**: for `>= 1` Conference, per Conference it scopes `completed_matches` to
 `Match.objects.filter(conference=conf, is_completed=True)` (keeping the existing member-night
 `.exclude`), takes `enrolled_teams` from that Conference's `starting_team_ids_json`
-(active/completed) or live M2M (draft preview), then `compute_standings(...)`; the context is
+(active/completed) or live M2M (draft preview), then `compute_standings(...)`; the result is
 a `standings_groups` list of `{"conference": Conference | None, "name": str | None,
-"rows_with_teams": [...]}` the template iterates (top-level `season` / `is_draft_preview` keys
-stay). The template renders one table per group with a name header. **Zero-Conference rule
-(LOCKED):** a Season with no Conference rows renders **exactly one table** with the existing
-id `season-standings-table` and **no** `season-standings-conference-*` ids — byte-identical to
-today (the `season-standings-empty` / `season-draft-preview-banner` / `season-state-badge`
-ids are also preserved). Only when Conferences exist do the **new** per-Conference ids appear:
-`season-standings-conference-{conference_id}` (wrapper around that Conference's table) and
-`season-standings-conference-name-{conference_id}` (its name header).
+"rows_with_teams": [...]}` (beside `is_draft_preview`). **Zero-Conference rule (LOCKED):** a
+Season with no Conference rows yields **exactly one group** with `conference` / `name` `None`.
 
-**CHANGED `matches/league_views.py::_build_dashboard_context` — manager-Conference snippet.**
+**CHANGED `matches/league_services.py::build_dashboard_context` — manager-Conference snippet.**
 The dashboard's top-3 standings snippet: when the displayed Season has `>= 2` Conferences,
 scope `compute_standings` to the **manager's** Conference — the Conference containing
 `displayed_season.league.current_team` (resolve via the team's membership; fall back to the
@@ -151,7 +146,7 @@ existing Seasons have zero Conferences and stay byte-identical).
 
 **Invariants (the two load-bearing guarantees).** (1) **Byte-identical-when-zero-Conference**
 — every changed path falls back to the single `(None, all ids)` partition / `conference=None`
-/ single `season-standings-table` / unchanged champion, so a Season with no Conference rows is
+/ single standings group / unchanged champion, so a Season with no Conference rows is
 indistinguishable from today. (2) **No Score Calibration re-baseline** — CONF-01 changes no
 simulation mechanic and consumes no new RNG; only the `Match` a Round attaches to + a new
 discriminator change.
@@ -171,14 +166,11 @@ discriminator change.
   / `_is_finished`.
 - **Simulator** `BatchSimulator.simulate_scheduled_round(..., *, conference=None, ...)`
   (keyword-only, after `leg`, before `fidelity`; key unchanged).
-- **Play sites** `tasks.play_season_task` / `league_views.play_week` /
-  `league_views.play_week_live` (RR branch) — `conf_by_team = conference_by_team_id()` +
+- **Play sites** `tasks.play_season_task` / `league_play_services.play_week` /
+  `league_play_services._commit_live_rr_round` — `conf_by_team = conference_by_team_id()` +
   `conference=conf_by_team.get(fixture.team_a_id)`.
-- **Views / template** `league_views.season_standings` (per-Conference `standings_groups`
-  groups) + `_build_dashboard_context` (manager-Conference snippet for `>= 2`);
-  `templates/seasons/standings.html` (DOM ids `season-standings-table` /
-  `season-standings-empty` preserved for zero-Conference; new
-  `season-standings-conference-{id}` / `season-standings-conference-name-{id}`).
+- **Services** `league_services.build_season_standings` (per-Conference `standings_groups`)
+  + `build_dashboard_context` (manager-Conference snippet for `>= 2`).
 - **Admin** `matches.admin.ConferenceAdmin` (`filter_horizontal=("teams",)`,
   `list_display=("season", "ordinal", "name")`).
 - **Migration** `matches/migrations/0057_conference_match_conference.py` (dep `0056`,
@@ -213,7 +205,7 @@ champion, so the bracket engine is reused **verbatim** — `lock_and_build`,
 `play_next_bracket_round`, `play_next_node`, `find_next_node`, `stage_progress`,
 `_collapse_drop_byes`, `series_length_for_round` and **all five formats are unchanged**. Every
 generalisation lives in the callers. **A 0/1-Conference Season is byte-identical** in rows,
-reads, champion stamping and rendered DOM ids; **no Score Calibration re-baseline** (no
+reads, champion stamping and bracket `key`s; **no Score Calibration re-baseline** (no
 simulation mechanic changes — the only shifts are how many `Tournament` rows a tournament phase
 produces and which Match corpus seeds them).
 
@@ -295,7 +287,7 @@ activation call sites (`Season.start_season`, `simulation/entrypoints.py` ×2) a
 the generalisation is entirely inside the method.
 
 **NEW `Season.tournaments_for_phase(self, phase) -> list[Tournament]` — the one caller seam.**
-**Public**, because `tasks.py`, `league_views.py` and `league_screens/playoffs.py` all call it and
+**Public**, because `tasks.py`, `league_play_services.py` and `league_screen_services.py` all call it and
 **nobody else re-implements the "regional else single" fallback**. Returns `[]` for a `pk is
 None` (implicit fallback) phase or a non-`tournament` phase; else the regional rows
 `select_related("conference").order_by("conference__ordinal", "id")` if any (so the N brackets
@@ -330,26 +322,23 @@ tournaments and keeps both PLAY-01 cancel checks and its `{"completed", "total",
 return shape verbatim), `tasks.play_season_task`'s tournament tail (a local `_drain_one_stage() ->
 int` returning `sum(play_next_bracket_round(t) for t in tournaments)` — `sum` over a generator
 evaluates **every** term, so do not rewrite it as a short-circuiting `any(...)`; **one budget unit
-= one stage across all N brackets**), and `league_views.play_week`'s playoff branch (so "Play One
+= one stage across all N brackets**), and `league_play_services.play_week`'s playoff branch (so "Play One
 Week" advances every Conference's bracket by one stage). For `N == 1` every one of these returns
 exactly what it returned before.
 
-**Playoffs screen (`matches/league_screens/playoffs.py` + `templates/leagues/playoffs.html`).**
-The `brackets` list now appends **one entry per regional Tournament** instead of one per
-tournament phase; `_build_rounds(tournament)["winners"]` is called per Tournament, unchanged. Two
-new context keys join `phase` / `tournament` / `name` / `rounds` / `champion` / `pending`:
-`conference` (the `Conference`, or `None`) and **`key`**, the DOM-id discriminator that stops the
+**Playoffs screen (`matches/league_screen_services.py::build_playoffs`, served by
+`GET /api/leagues/<id>/playoffs/`).** The `brackets` list appends **one entry per regional
+Tournament** instead of one per tournament phase; `build_rounds(tournament, "winners")` is called
+per Tournament. Two keys join `phase` / `tournament` / `name` / `rounds` / `champion` / `pending`:
+`conference` (the `Conference`, or `None`) and **`key`**, the discriminator that stops the
 N regional brackets of one phase colliding on `phase.ordinal` — `str(phase.ordinal)` when
-unscoped, `f"{phase.ordinal}-{conference.ordinal}"` when regional. The template swaps
-`bracket.phase.ordinal` for `bracket.key` in all five id positions (`league-playoffs-phase-` /
-`-champion-` / `-bracket-` / `-round-` / `-node-` + `-node-score-`) and adds a Conference
-sub-heading `league-playoffs-conference-{key}` rendered **only** when `bracket.conference` is set.
-Because `key == str(phase.ordinal)` whenever there is no Conference, **no existing rendered id or
-markup changes** for a 0/1-Conference Season.
+unscoped, `f"{phase.ordinal}-{conference.ordinal}"` when regional. Because
+`key == str(phase.ordinal)` whenever there is no Conference, **no existing `key` changes** for a
+0/1-Conference Season.
 
-**Team History now counts regional playoffs (`matches/league_screens/team_history.py`).** This
+**Team History now counts regional playoffs (`matches/league_screen_services.py`).** This
 was a post-approval amendment — the gap was originally scoped out and then pulled in.
-`_build_overall_context` identified a season-embedded playoff purely through
+`_team_overall_record` identified a season-embedded playoff purely through
 `tournament.season_phases`, the reverse manager; a regional Tournament is linked the **other**
 way, so without a fix its Rounds would be misfiled as standalone-sandbox play and its brackets
 would not count toward `playoff_appearances`. Both queries gained a term keyed on the new forward
@@ -373,11 +362,10 @@ all five formats); `SeasonPhase.tournament`; `Match.conference` **stamping** (CO
 **reads** the discriminator); `compute_standings`; the simulator; `Season.complete_if_finished` /
 `_preceding_phase` / `_rr_phase_complete` / `_member_night_phase_complete` / `scheduled_fixtures*`
 / `ordered_conferences` / `start_season`; the `Conference` model; and — a deliberate call — **the
-CONF-01 `season_standings` view**, which keeps its own per-Conference `standings_groups` block
-rather than being refactored onto `_final_standings_for_phase`. The two Conference-scoped queries
-coexist for now; ADR-0035 records consolidation as a follow-up rather than widening this slice
-into the CONF-01 standings surface. The sandbox `tournament_views` list is unfiltered, so regional
-Tournaments appear there alongside Season-embedded ones — existing behaviour, not a regression.
+CONF-01 standings builder** (`build_season_standings`), which keeps its own per-Conference
+`standings_groups` block rather than being refactored onto `_final_standings_for_phase`. The two
+Conference-scoped queries coexist for now; ADR-0035 records consolidation as a follow-up rather
+than widening this slice into the CONF-01 standings surface.
 
 **Locked names (quick index).**
 - **`Tournament`** NEW `season_phase` FK (`SET_NULL`, `related_name="regional_tournaments"`) +
@@ -391,18 +379,17 @@ Tournaments appear there alongside Season-embedded ones — existing behaviour, 
   None`, **public** `tournaments_for_phase(phase) -> list[Tournament]`,
   `_tournament_phase_complete(phase) -> bool`.
 - **Drain callers** `tasks.play_playoffs_task` / `tasks.play_season_task` (tournament tail,
-  `_drain_one_stage()`) / `league_views.play_week` (playoff branch) — all loop over
+  `_drain_one_stage()`) / `league_play_services.play_week` (playoff branch) — all loop over
   `tournaments_for_phase(phase)`; `tournament_engine` itself unchanged.
-- **Screens** `league_screens/playoffs.py` (new `conference` + `key` bracket keys) +
-  `templates/leagues/playoffs.html` (ids keyed on `bracket.key`, new
-  `league-playoffs-conference-{key}`); `league_screens/team_history.py` (the two OR'd queries).
+- **Screens** `league_screen_services.build_playoffs` (new `conference` + `key` bracket keys);
+  `league_screen_services._team_overall_record` (the two OR'd queries).
 - **Migration** `matches/migrations/0058_tournament_regional_linkage.py` (dep `0057`, two
   `AddField`s, no `RunPython` / backfill).
 - **Tests** `matches/tests/test_regional_playoffs.py` (build, per-Conference participants and
   seeds, all three modes splitting, per-Conference cut, idempotence, the completion gate, the
   0-/1-Conference byte-identity pins, the additive-signature pin, and the Team-History class) +
-  `matches/tests/test_regional_playoffs_drain.py` (the three callers) + an appended class in
-  `matches/tests/test_league_playoffs.py` (N labelled brackets and the 0-Conference id pin).
+  `matches/tests/test_regional_playoffs_drain.py` (the three callers) +
+  `matches/tests/test_api_feats_playoffs.py::RegionalPlayoffsTests` (N labelled brackets).
   House rule: brackets are drained by **driving the engine or stamping node winners**, never by
   running the simulator, and never by patching the seam under test.
 - **ADR / CONTEXT** —
@@ -416,70 +403,42 @@ Tournaments appear there alongside Season-embedded ones — existing behaviour, 
 ## CONF-05 manage conferences
 
 The in-app **draft-Season Conference composer** (the user-facing surface CONF-01 deferred,
-"Option B") — a dedicated page to partition a draft Season's enrolled Teams into Conferences
-before Start Season, replacing the original "create-League composer" framing. **No model
-change, no migration, no simulator touch, no Score Calibration re-baseline** — a pure view +
-template on top of the CONF-01 `Conference` model.
+"Option B") — partitions a draft Season's enrolled Teams into Conferences before Start Season,
+replacing the original "create-League composer" framing. **No model change, no migration, no
+simulator touch, no Score Calibration re-baseline** — on top of the CONF-01 `Conference` model.
 
-**View `matches.league_views.manage_conferences(request, season_id) -> HttpResponse`** —
-GET+POST (else **405** via `HttpResponseNotAllowed(["GET", "POST"])`), `get_object_or_404(Season)`,
-writes `request.session["last_league_id"]`. **GET** renders the editable composer while
-`season.state == "draft"`, or a **read-only frozen partition** once active/completed (membership
-is snapshotted at Start Season, so the partition is locked). **POST** is **draft-only** — a
-non-draft POST returns **400** (`HttpResponseBadRequest`). On a draft POST it parses
-`conference_name` (a `getlist` of names, DOM order) + a per-team `team_<id>_conference` (the
-0-based index into the names, `""` = unassigned), validates via the pure helper, and on success
-**replaces** the Season's Conferences inside `@transaction.atomic` (delete all + recreate with
-ordinals `1..N` + `conf.teams.set(...)`), then redirects to `manage_conferences`. An **empty
-submission clears** all Conferences (flat Season). On validation failure it re-renders (200)
-with the submitted values + `errors` and **writes nothing**.
+**Surface.** `GET` / `PUT /api/seasons/<id>/conferences/` (`build_conferences_state` /
+`ConferencePartitionForm` then `replace_conferences`, all in `matches/league_services.py` /
+`matches/forms.py`; see `api.md`), driven by the SPA `ManageConferences` screen
+(`frontend/src/app/leagues/seasons/manage-conferences/`). The partition is editable only while
+`season.state == "draft"` (membership is snapshotted at Start Season, so it is locked after); a
+non-draft PUT is 409 `season_not_draft`. `replace_conferences` **replaces** the Season's
+Conferences inside `@transaction.atomic` (delete all + recreate with ordinals `1..N` +
+`conf.teams.set(...)`); an **empty list clears** all Conferences (flat Season), and a failed
+validation **writes nothing**.
 
-**Pure validator `matches.league_views._validate_conference_partition(names, team_to_conf_idx,
-enrolled_team_ids) -> tuple[list[str], list[tuple[str, list[int]]] | None]`** — the locked
+**Pure validator `matches.league_services._validate_conference_partition(names, team_to_conf_idx,
+enrolled_team_ids, *, min_per_conference=2) -> tuple[list[str], list[tuple[str, list[int]]] | None]`** — the locked
 partition rules: an empty `names` list is the valid **zero-Conference** (flat) case ⇒
 `([], [])`; otherwise every name must be non-empty, every enrolled Team must map to a valid
 Conference index (**full partition**), and each Conference must have **≥2 Teams**. Returns
 `(errors, None)` on failure or `([], [(name, sorted_team_ids), ...])` on success. Locked error
 strings: `"Conference names cannot be empty."` / `"Every team must be assigned to a
-conference."` / `"Each conference needs at least 2 teams."`. A shared
-`_manage_conferences_context(...)` builds the template context (GET + error re-render),
-pre-filling from the existing partition or the submitted values.
+conference."` / `"Each conference needs at least 2 teams."`.
 
-**URL** `manage_conferences`, path `/seasons/<int:season_id>/conferences/`
-(`matches/season_urls.py`, inserted before `standings/`). **Template**
-`templates/seasons/manage_conferences.html` (extends `base.html` + the league sidebar) — a
-single-page **vanilla-JS composer** (the LG-02b precedent, no JS framework): a `+ Add
-conference` control plus a `<select>` per enrolled-Team row, with small JS that rebuilds the
-selects from the current Conference name inputs (preserving each choice by index, remapping on
-remove) so add / rename / remove stay in sync; one Save. DOM ids `manage-conferences-form` /
-`-add` / `-name-{i}` / `-team-{team_id}` / `-submit` / `-errors` / `-readonly` (the active-Season
-read-only block) / `-empty` (no enrolled Teams). **Entry point**: a draft-only
-`season-dashboard-manage-conferences-link` on `templates/seasons/dashboard.html`, gated
-`{% if season_mode == "draft" %}` (no `_build_dashboard_context` change — uses the existing
-`season_mode` + `season.id`) **and** the same draft-only link on the **league** dashboard
-(`templates/leagues/dashboard.html`, `league-dashboard-manage-conferences-link`, gated
-`season_mode == "draft" and displayed_season`), so it is discoverable from where the create
-flow lands.
+**Create-flow integration.** `CreateLeagueForm` gains a **`number_of_conferences`** choice
+(`None (single league)` / `2` / `3` / `4`, `TypedChoiceField → int`, default `0`); the form's
+`clean()` rejects too-few teams (`num_teams >= 2 * N`, error attached to
+`number_of_conferences`: `"{n} conferences need at least {2n} teams."`). When `N > 0`,
+`league_services.create_league_and_season` (after the existing create + baseline writes)
+**pre-creates `N` Conferences** named `"Conference 1".."Conference N"` with the generated Teams
+**auto-split evenly** (round-robin `ordered_teams[i::N]`, so each gets `>= 2`), ready to rename /
+reassign before Start Season.
 
-**Create-flow integration.** `CreateLeagueForm` gains a **`number_of_conferences`** dropdown
-(`None (single league)` / `2` / `3` / `4`, `TypedChoiceField → int`, default `0`, DOM id
-`league-create-number-of-conferences`); the form's `clean()` rejects too-few teams
-(`num_teams >= 2 * N`, error attached to `number_of_conferences`: `"{n} conferences need at
-least {2n} teams."`). When `N > 0`, `league_create` (after the existing create + baseline
-writes, inside its `@transaction.atomic`) **pre-creates `N` Conferences** named `"Conference
-1".."Conference N"` with the generated Teams **auto-split evenly** (round-robin
-`ordered_teams[i::N]`, so each gets `>= 2`) and **redirects to `manage_conferences`** instead
-of `season_standings` — so picking conferences on the create form drops the user straight into
-the composer (pre-filled, renamable/reassignable) before the dashboard. `N == 0` keeps the
-unchanged redirect to `season_standings`. The create form field rides
-`templates/leagues/create.html` (between `num_teams` and `schedule_format`).
-
-**Tests** `matches/tests/test_manage_conferences.py`: the pure validator (zero-Conference,
+**Tests** `matches/tests/test_manage_conferences.py` (the pure validator: zero-Conference,
 full-partition happy path, single-Conference, unassigned / `<2`-per-Conference / empty-name /
-out-of-range rejections), the view (GET draft composer + DOM ids, GET active read-only, 404 /
-405, `last_league_id` write, POST create / replace / clear, validation-error re-render with no
-DB write, non-draft POST 400), and the draft-only dashboard-link gate. Schema-level assertions
-only. See [ADR-0034](../../adr/0034-conference-partition.md) and the GLOSSARY.md
+out-of-range rejections) + `matches/tests/test_api_conferences.py` (the GET / PUT endpoint).
+See [ADR-0034](../../adr/0034-conference-partition.md) and the GLOSSARY.md
 **Conference** term; PLAN.md **CONF-05**.
 
 ## CONF-06 rotate_by_conference per-Conference map pools
@@ -497,8 +456,8 @@ three play loops), and **no Score Calibration re-baseline** (see *Scope-out*). `
 automatically.
 
 **Model fields (2 NEW on `Conference`, declared immediately after `starting_team_ids_json`).**
-(1) `Conference.map_rotation_ids_json` — the LIVE author-ordered id list, written by the
-`manage_conferences` POST; (2) `Conference.starting_map_rotation_ids_json` — the **activation
+(1) `Conference.map_rotation_ids_json` — the LIVE author-ordered id list, written by
+`replace_conferences` (the conferences PUT); (2) `Conference.starting_map_rotation_ids_json` — the **activation
 snapshot**, written by `Season.start_season()` and the ONLY list the play loops read. Both
 `models.JSONField(null=True, blank=True, default=None)`. `None` is the pre-authoring /
 pre-activation sentinel and `[]` is an authored-empty rotation — the two are deliberately
@@ -562,8 +521,8 @@ deduped** — duplicates are harmless for `in_bulk`. With no Conferences it redu
 -> "tuple[list[int], list[str]]"`** (module-level, below `_maps_with_confirmed_config()`; no ORM,
 no form state) — parses a comma-separated `ArenaMap`-id string into an **author-ordered** id list
 plus a list of human error strings. Extracted **verbatim** from the old inline
-`CreateLeagueForm.clean` token loop and now shared by the create form and the `manage_conferences`
-POST. Locked behaviour: author order, never sorted; **duplicates kept** (`"3,3"` → `[3, 3]`);
+`CreateLeagueForm.clean` token loop and now shared by the create form and
+`ConferencePartitionForm`. Locked behaviour: author order, never sorted; **duplicates kept** (`"3,3"` → `[3, 3]`);
 blank tokens skipped silently; whitespace stripped (`" 3 , 4 "` → `[3, 4]`); one error string **per
 offending token**, not deduped; valid ids from a partly-bad string still returned alongside the
 errors; `None` / `""` → `([], [])`. Its two error strings are unchanged from LG-01j/SUB-01:
@@ -577,22 +536,22 @@ CONF-01 partition rule, so "≥2" is the only meaningful floor) each with **≥1
 | # | Where | Verbatim string(s) |
 |---|---|---|
 | 1 | `CreateLeagueForm.clean`, a `rotate_by_conference` block after the `rotate_by_matchday` one, using `add_error` (NOT `raise`) so all three surface in one submission | `Map pool must be empty when Map mode is 'Rotate by Conference'.` (field `map_pool`) / `Map rotation must be empty when Map mode is 'Rotate by Conference'.` (field `map_rotation`) / `Map mode 'Rotate by Conference' requires at least 2 conferences.` (field `number_of_conferences`) |
-| 2 | `manage_conferences` POST, appended **once** (not per Conference) and only when `season.map_mode == "rotate_by_conference"`, `names` is non-empty and any parsed row is empty | `Each conference needs at least 1 rotation map.` (page-level `errors`, `#manage-conferences-errors`) |
+| 2 | `ConferencePartitionForm.clean_conferences`, appended **once** (not per Conference) and only when `season.map_mode == "rotate_by_conference"`, the list is non-empty and any parsed row is empty | `Each conference needs at least 1 rotation map.` (a `conferences` field error) |
 | 3 | `Season.start_season()` activation guard | `A Season with map mode 'Rotate by Conference' requires at least 2 conferences, each with at least 1 rotation map.` |
-| 4 | `_run_season_rollover` — the downgrade below | (no message; silent mode change) |
+| 4 | `run_season_rollover` — the downgrade below | (no message; silent mode change) |
 
 **Three play-loop call sites**, identical shape, each reordered so `conf_by_team` is built
 **above** the `pool_by_id` assignment (all three previously built it *after* the `in_bulk`):
 **build `conf_by_team = season.conference_by_team_id()` → `_fixture_map_ids(season, conf_by_team)`
 → `ArenaMap.objects.in_bulk(...)` → per-fixture `_resolve_fixture_map(..., conf_by_team=conf_by_team)`**.
-The sites are `matches.tasks.play_season_task`, `matches.league_views.play_week`, and
-`matches.league_views.play_week_live` (the manager live-game RR branch); the latter two extend
-their deferred import to `from matches.tasks import _fixture_map_ids, _resolve_fixture_map`.
+The sites are `matches.tasks.play_season_task`, `matches.league_play_services.play_week`, and
+`matches.league_play_services._commit_live_rr_round` (the manager live-game RR commit); the latter
+two use a deferred `from matches.tasks import _fixture_map_ids, _resolve_fixture_map`.
 Nothing else at these sites changes — for every pre-existing Season (`map_mode !=
 "rotate_by_conference"`) both the `in_bulk` argument and the resolved map are byte-identical to
 before.
 
-**`_build_map_config_label` 6th branch — the dashboard map label.** The LG-01j /
+**`league_services._build_map_config_label` 6th branch — the dashboard map label.** The LG-01j /
 SUB-01 label ladder gains a `rotate_by_conference` arm; without it the mode fell
 through to the ladder's defensive "unknown enum value" return and both dashboards
 reported **`Map: 3-zone fallback (no map)`** for a Season that was in fact running
@@ -606,10 +565,9 @@ contribute no part, so the count reflects only those that do. **ONE `ArenaMap` q
 for the whole label** — the ids are collected across every Conference first and
 resolved in a single `filter(id__in=...)`, never one query per Conference. Two NEW
 byte-equal label strings: `"Map: Rotating per Conference ({n} conferences: {conf}:
-{maps}; …)"` and `"Map: Rotating per Conference (no maps)"`. **No dashboard template
-edit** — both dashboards already render `{{ map_config_label }}` from LG-01j.
+{maps}; …)"` and `"Map: Rotating per Conference (no maps)"`.
 
-**Rollover downgrade (`matches.league_views._run_season_rollover`).** The
+**Rollover downgrade (`matches.league_services.run_season_rollover`).** The
 `Season.objects.create(...)` call takes `map_mode=("none" if latest_completed.map_mode ==
 "rotate_by_conference" else latest_completed.map_mode)`. **The why:** the rollover carries no
 Conferences forward (and CONF-06 deliberately does not start doing so), so a carried
@@ -618,44 +576,15 @@ all season, and silently produce a map-less Season that still claimed a map mode
 the 3-zone fallback makes that honest. Every other mode still carries **verbatim**, and the
 Season-level `map_rotation_ids_json` carry-forward is untouched.
 
-**Authoring — `manage_conferences` (view + context + template).** The rotation rides the CONF-05
-page rather than a new screen, so it is editable **only while the Season is `draft`** — it
-inherits that page's frozen-partition behaviour, and a non-draft POST still returns
-`HttpResponseBadRequest("Conferences can only be edited while the Season is in draft.")`.
-`_manage_conferences_context(...)` gains a keyword-only `submitted_rotations: "list[str] | None" =
-None` and four context keys: `conf_rows` (`list[dict]` of `{"name", "rotation"}`, index-aligned
-with the preserved `conf_names`, `rotation` being the comma-joined id string, from the submitted
-value on a failed POST else from `conf.map_rotation_ids_json`), `confirmed_maps`
-(`list(_maps_with_confirmed_config())`), `map_mode` (`season.map_mode`, gating the "required"
-hint), and `readonly_groups[i]["rotation_names"]` (author-ordered names off
-`starting_map_rotation_ids_json`, falling back to the live list when the snapshot is `None`;
-deleted ids drop out silently). POST order of operations: read `conference_rotation` via `getlist`
-index-aligned with `conference_name` → run the **UNCHANGED** `_validate_conference_partition` →
-`parse_rotation_ids` per row **for every map mode** (a malformed id is invalid regardless of mode),
-appending its errors in submitted Conference order → the once-only empty-rotation guard → on
-failure re-render 200 with `submitted_rotations` and write nothing → on success set
-`map_rotation_ids_json=per_conf_ids[ordinal - 1]` in the existing `Conference.objects.create(...)`
-inside the existing `transaction.atomic()` (`normalized` preserves submitted index order), storing
-the parsed list verbatim (`[]` for an authored-empty rotation, never `None` once saved).
-
-**Template `templates/seasons/manage_conferences.html`** mirrors the `league-create-map-rotation`
-precedent: a hidden comma-joined input per Conference row filled by a vanilla-JS composer on
-`change` / `submit`. NEW DOM ids — `manage-conferences-confirmed-maps` (a
-`<script type="application/json">` payload of `[{"id", "name"}, …]`, rendered once in the editable
-branch), `manage-conferences-rotation-{i}` (the hidden `name="conference_rotation"` input, inside
-`.conference-row`), `manage-conferences-rotation-composer-{i}`,
-`manage-conferences-rotation-add-{i}` (label `+ Add map`), `manage-conferences-rotation-row-{i}-{j}`,
-`manage-conferences-rotation-select-{i}` (`aria-label="Rotation map"`), and
-`manage-conferences-readonly-rotation-{i}` (the non-draft author-ordered list inside the existing
-`#manage-conferences-readonly` block). **Every existing CONF-05 DOM id is unchanged and must
-survive** (`-empty` / `-errors` / `-form` / `-list` / `-name-{i}` / `-add` / `-team-{team_id}` /
-`-submit` / `-readonly`). JS rules: each `.conference-row` owns one composer and re-serializes
-**its own** hidden input in document order; `+ Add conference` must build the full new row (name
-input **and** hidden rotation input **and** composer **and** add-map button) at the next `i` and
-wire it; removing a Conference row removes its rotation input with it, keeping the two `getlist`s
-index-aligned; all hidden inputs re-serialize on form `submit`; a pre-filled `conf_rows[i].rotation`
-is **rehydrated into composer rows on page load** so an existing partition round-trips without
-re-picking maps; ASCII only. The existing `rebuildSelects()` team-`<select>` behaviour is untouched.
+**Authoring — the CONF-05 conferences surface.** The rotation rides the Conference partition
+(each `map_rotation_ids` entry of the conferences PUT) rather than a new screen, so it is editable
+**only while the Season is `draft`**. `ConferencePartitionForm.clean_conferences` runs the
+partition validator, then `parse_rotation_ids` per row **for every map mode** (a malformed id is
+invalid regardless of mode), appending its errors in submitted Conference order, then the
+once-only empty-rotation guard; on failure nothing is written. On success `replace_conferences`
+stores each parsed list verbatim on `map_rotation_ids_json` (`[]` for an authored-empty rotation,
+never `None` once saved). `build_conferences_state` returns each Conference's live
+`map_rotation_ids` and its `starting_map_rotation_ids` snapshot.
 
 **Scope-out (locked).** **Per-fixture map override DEFERRED** — a `ScheduleFixture` is a plain
 dataclass regenerated on demand by `generate_schedule`, not a persisted row, so there is nowhere to
@@ -675,25 +604,20 @@ stand). **NO new ADR** (reversible model fields + a deterministic helper branch 
 rationale) and **NO `RunPython` / backfill** (ADR-0004).
 
 **Locked label names.** EXTENDED helper
-`matches.league_views._build_map_config_label` (6th branch, single `ArenaMap` query);
+`matches.league_services._build_map_config_label` (6th branch, single `ArenaMap` query);
 label string literals (2 NEW, byte-equal) `"Map: Rotating per Conference ({n}
-conferences: …)"` / `"Map: Rotating per Conference (no maps)"`; regression class
-`TestConf06LeagueDashboardRotateByConferenceLabel` in
-`matches/tests/test_league_dashboard.py` (draft/live, active/snapshot, no-maps — the
-first asserts the 3-zone label is ABSENT, so it fails against the pre-fix code).
+conferences: …)"` / `"Map: Rotating per Conference (no maps)"`.
 
-**Tests — six EXTENDED files, 0 NEW.** `matches/tests/test_season_map_config.py` (pure, no DB:
+**Tests.** `matches/tests/test_season_map_config.py` (pure, no DB:
 the `rotate_by_conference` branch against stub `season` / `fixture` / `Conference` objects incl.
 the 1-based-modulo pin and every defensive-`None` path; `_fixture_map_ids` order, Conference
 dedupe by `conf.id`, and no-Conference equivalence to the old expression; `parse_rotation_ids`
 across all six locked properties and both error strings); `test_conference.py` (DB: author order
 survives `start_season()` via a deliberately non-ascending list, `[]` snapshot from a `None`/`[]`
 live list, the activation `ValidationError` for 0 Conferences and for any empty rotation, and its
-silence under other modes); `test_manage_conferences.py` (draft GET renders
-`manage-conferences-rotation-0` + `manage-conferences-confirmed-maps`, POST saves per-Conference
-ids in submitted order, both guard re-renders at 200 with the verbatim strings, non-draft GET
-renders `manage-conferences-readonly-rotation-0` with no editable input, non-draft POST still
-400); `test_league_next_season.py` (the downgrade, other modes verbatim); and
+silence under other modes); `test_api_conferences.py` (the PUT saves per-Conference ids, the
+rotation errors and the rotate-by-conference guard); `test_league_next_season.py` (the
+downgrade, other modes verbatim); and
 `test_league_create.py` (the three `CreateLeagueForm` guards under their exact field keys plus a
 valid `rotate_by_conference` submission). Plus the regression guard: an existing
 `rotate_by_matchday` / `random_per_round` / `single` / `none` Season resolves byte-identical maps

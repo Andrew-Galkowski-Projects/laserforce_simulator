@@ -189,11 +189,6 @@ class TestBuildPlaybackMap(TestCase):
         self.assertEqual(payload["zone_size"], zone_size)
         self.assertEqual(len(payload["players"]), 1)
 
-    def test_views_reexports_the_moved_builder(self) -> None:
-        from matches import views
-
-        self.assertIs(views._build_playback_map, build_playback_map)
-
 
 class TestOpeningSnapshot(_PlaybackCase):
     def test_tick_zero_snapshot_equals_starting_fields(self) -> None:

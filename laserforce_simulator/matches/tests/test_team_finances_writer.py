@@ -1,4 +1,4 @@
-"""FIN-01 — tests for the lazy writer ``matches.league_views._ensure_team_finances``
+"""FIN-01 — tests for the lazy writer ``matches.league_services._ensure_team_finances``
 plus the salary-recompute sites (seam contract §5 / §8).
 
 The writer ensures one ``TeamSeasonFinance`` row per (Team, Season) for every
@@ -26,7 +26,7 @@ from datetime import date
 from django.test import TestCase
 
 from matches import finance
-from matches.league_views import _ensure_team_finances
+from matches.league_services import _ensure_team_finances
 from matches.models import (
     GameRound,
     League,
@@ -342,7 +342,7 @@ class TestSalaryRecomputeBaseline(TestCase):
         return league, season, team
 
     def test_baseline_sets_salary_when_finance_enabled(self) -> None:
-        from matches.league_views import _write_baseline_ratings
+        from matches.league_services import _write_baseline_ratings
 
         _league, season, team = self._enabled_season_with_players()
         players = list(team.active_players)
@@ -357,7 +357,7 @@ class TestSalaryRecomputeBaseline(TestCase):
             )
 
     def test_baseline_leaves_salary_none_when_finance_disabled(self) -> None:
-        from matches.league_views import _write_baseline_ratings
+        from matches.league_services import _write_baseline_ratings
 
         team = _make_team("BSalOff")
         league = _make_league("BSalOffL", current_team=team, finance_enabled=False)

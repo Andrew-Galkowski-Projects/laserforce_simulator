@@ -8,7 +8,6 @@ function heatmap(): RoundHeatmap {
     has_map: true,
     arena_map: { id: 7, name: 'Arena' },
     zone_size: 40,
-    processed_image_url: null,
     cell_occupancy_json: {
       '1': { '0,0': 2, '1,1': 3 },
       '2': { '1,1': 5 },

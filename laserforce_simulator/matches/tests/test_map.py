@@ -1151,115 +1151,10 @@ class TestMap05ComputeHighLosRanking:
         assert compute_high_los_ranking({}) == []
 
 
-@pytest.mark.django_db
-class TestMap05StrongSpotsViews:
-    """View tests for the /strong-spots/ endpoints introduced in MAP-05."""
-
-    def _make_arena_map(self, name="SSViewMap"):
-        from core.models import ArenaMap
-
-        return ArenaMap.objects.create(name=name, img_width=100, img_height=100)
-
-    def test_get_strong_spots_returns_cells(self, client):
-        from core.models import HeavyStrongSpotsConfig
-
-        arena_map = self._make_arena_map("GetSSView")
-        HeavyStrongSpotsConfig.objects.create(
-            arena_map=arena_map, zone_size=50, cells=[[1, 1], [2, 2]]
-        )
-        response = client.get(f"/maps/{arena_map.pk}/strong-spots/?zone_size=50")
-        assert response.status_code == 200
-        assert response.json()["cells"] == [[1, 1], [2, 2]]
-
-    def test_get_strong_spots_returns_empty_when_no_config(self, client):
-        arena_map = self._make_arena_map("NoSSView")
-        response = client.get(f"/maps/{arena_map.pk}/strong-spots/?zone_size=50")
-        assert response.status_code == 200
-        assert response.json()["cells"] == []
-
-    def test_save_strong_spots_persists_cells(self, client):
-        import json
-
-        from core.models import HeavyStrongSpotsConfig
-
-        arena_map = self._make_arena_map("SaveSSView")
-        response = client.post(
-            f"/maps/{arena_map.pk}/strong-spots/save/",
-            data=json.dumps({"zone_size": 50, "cells": [[3, 3], [4, 4]]}),
-            content_type="application/json",
-        )
-        assert response.status_code == 200
-        config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
-        assert config.cells == [[3, 3], [4, 4]]
-
-    def test_save_strong_spots_rejects_non_list_cells(self, client):
-        import json
-
-        arena_map = self._make_arena_map("BadSSView")
-        response = client.post(
-            f"/maps/{arena_map.pk}/strong-spots/save/",
-            data=json.dumps({"zone_size": 50, "cells": "not-a-list"}),
-            content_type="application/json",
-        )
-        assert response.status_code == 400
-
-    def test_save_strong_spots_rejects_non_int_pairs(self, client):
-        import json
-
-        arena_map = self._make_arena_map("BadSS2View")
-        response = client.post(
-            f"/maps/{arena_map.pk}/strong-spots/save/",
-            data=json.dumps({"zone_size": 50, "cells": [["a", "b"]]}),
-            content_type="application/json",
-        )
-        assert response.status_code == 400
-
-    def test_save_strong_spots_get_not_allowed(self, client):
-        arena_map = self._make_arena_map("MethodSSView")
-        response = client.get(f"/maps/{arena_map.pk}/strong-spots/save/")
-        assert response.status_code == 405
-
-    def test_save_strong_spots_updates_existing_config(self, client):
-        import json
-
-        from core.models import HeavyStrongSpotsConfig
-
-        arena_map = self._make_arena_map("UpdateSSView")
-        HeavyStrongSpotsConfig.objects.create(
-            arena_map=arena_map, zone_size=50, cells=[[1, 1], [2, 2]]
-        )
-        client.post(
-            f"/maps/{arena_map.pk}/strong-spots/save/",
-            data=json.dumps({"zone_size": 50, "cells": [[5, 5]]}),
-            content_type="application/json",
-        )
-        assert (
-            HeavyStrongSpotsConfig.objects.filter(
-                arena_map=arena_map, zone_size=50
-            ).count()
-            == 1
-        )
-        config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
-        assert config.cells == [[5, 5]]
-
-    def test_save_strong_spots_accepts_empty_cells(self, client):
-        import json
-
-        from core.models import HeavyStrongSpotsConfig
-
-        arena_map = self._make_arena_map("EmptySSView")
-        HeavyStrongSpotsConfig.objects.create(
-            arena_map=arena_map, zone_size=50, cells=[[1, 1]]
-        )
-        response = client.post(
-            f"/maps/{arena_map.pk}/strong-spots/save/",
-            data=json.dumps({"zone_size": 50, "cells": []}),
-            content_type="application/json",
-        )
-        assert response.status_code == 200
-        assert response.json()["status"] == "ok"
-        config = HeavyStrongSpotsConfig.objects.get(arena_map=arena_map, zone_size=50)
-        assert config.cells == []
+# The MAP-05 /maps/<id>/strong-spots/ HTML endpoint tests went with the map
+# template views (ANG-08 D1). Strong spots are covered through
+# `/api/maps/<id>/strong-spots/` in core/test_maps_api_writes.py and the
+# service in core/test_map_services.py.
 
 
 # ---------------------------------------------------------------------------
@@ -1672,8 +1567,8 @@ class TestMap08SpawnPoints:
         )
         sight_data = compute_sight_lines(zone_data)
 
-        response = client.post(
-            f"/maps/{arena_map.pk}/sight-lines/save/",
+        response = client.put(
+            f"/api/maps/{arena_map.pk}/sight-lines/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,
@@ -1911,8 +1806,8 @@ class TestMap08DBIntegration:
         )
         sight_data = compute_sight_lines(zone_data)
 
-        response = client.post(
-            f"/maps/{arena_map.pk}/sight-lines/save/",
+        response = client.put(
+            f"/api/maps/{arena_map.pk}/sight-lines/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,
@@ -1944,7 +1839,7 @@ class TestMap08DBIntegration:
         assert len(stored["blue_spawn"]) >= 1, "blue_spawn must be non-empty"
 
     def test_get_spawn_cells_view(self, client):
-        """GET /maps/<id>/spawn-cells/ returns stored spawn lists from zone_data."""
+        """GET /api/maps/<id>/spawn-cells/ returns stored spawn lists from zone_data."""
         from core.models import ArenaMap, MapZoneConfig
 
         zone_size = 50
@@ -1969,14 +1864,14 @@ class TestMap08DBIntegration:
             confirmed=True,
         )
 
-        response = client.get(f"/maps/{arena_map.pk}/spawn-cells/")
+        response = client.get(f"/api/maps/{arena_map.pk}/spawn-cells/")
         assert response.status_code == 200
-        data = response.json()
+        data = response.json()["data"]
         assert data["red_spawn"] == red_spawn
         assert data["blue_spawn"] == blue_spawn
 
     def test_get_spawn_cells_view_empty_when_no_spawn_data(self, client):
-        """GET /maps/<id>/spawn-cells/ returns empty lists when zone_data has none."""
+        """GET /api/maps/<id>/spawn-cells/ returns empty lists when zone_data has none."""
         from core.models import ArenaMap, MapZoneConfig
 
         zone_size = 50
@@ -1990,9 +1885,9 @@ class TestMap08DBIntegration:
             confirmed=True,
         )
 
-        response = client.get(f"/maps/{arena_map.pk}/spawn-cells/")
+        response = client.get(f"/api/maps/{arena_map.pk}/spawn-cells/")
         assert response.status_code == 200
-        data = response.json()
+        data = response.json()["data"]
         assert data["red_spawn"] == []
         assert data["blue_spawn"] == []
 
@@ -2034,8 +1929,8 @@ class TestMap08DBIntegration:
         # User explicitly saves hand-painted spawn cells via save_zone_config.
         user_red_spawn = [[0, 0]]
         user_blue_spawn = [[3, 3]]
-        resp = client.post(
-            f"/maps/{arena_map.pk}/save/",
+        resp = client.put(
+            f"/api/maps/{arena_map.pk}/zone-config/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,
@@ -2062,8 +1957,8 @@ class TestMap08DBIntegration:
 
         # Now trigger auto-regeneration via save_sight_lines.
         sight_data = compute_sight_lines(zone_data)
-        resp2 = client.post(
-            f"/maps/{arena_map.pk}/sight-lines/save/",
+        resp2 = client.put(
+            f"/api/maps/{arena_map.pk}/sight-lines/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,
@@ -2130,8 +2025,8 @@ class TestMap08DBIntegration:
         )
 
         # User explicitly erases all spawn cells — sends empty lists.
-        resp = client.post(
-            f"/maps/{arena_map.pk}/save/",
+        resp = client.put(
+            f"/api/maps/{arena_map.pk}/zone-config/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,
@@ -2159,8 +2054,8 @@ class TestMap08DBIntegration:
 
         # Now auto-generation should run and populate spawn cells.
         sight_data = compute_sight_lines(zone_data)
-        resp2 = client.post(
-            f"/maps/{arena_map.pk}/sight-lines/save/",
+        resp2 = client.put(
+            f"/api/maps/{arena_map.pk}/sight-lines/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,
@@ -2226,7 +2121,7 @@ class TestMap08DBIntegration:
         )
 
         resp = client.post(
-            f"/maps/{arena_map.pk}/sight-lines/compute/",
+            f"/api/maps/{arena_map.pk}/sight-lines/compute/",
             data=json.dumps({"zone_size": zone_size}),
             content_type="application/json",
         )
@@ -2283,7 +2178,7 @@ class TestMap08DBIntegration:
         user_red_spawn = [[0, 0]]
         user_blue_spawn = [[3, 3]]
         resp = client.post(
-            f"/maps/{arena_map.pk}/sight-lines/compute/",
+            f"/api/maps/{arena_map.pk}/sight-lines/compute/",
             data=json.dumps(
                 {
                     "zone_size": zone_size,

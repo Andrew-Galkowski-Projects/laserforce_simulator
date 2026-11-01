@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from django.contrib.auth import get_user_model
 from django.test import TestCase
-from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
@@ -149,18 +148,6 @@ class TestScoreboardSurvivorsAndBonus(_ScoreboardTestCase):
         self.assertEqual(board["blue"]["players"], [])
         self.assertFalse(board["blue"]["eliminated"])
         self.assertEqual(board["red"]["elim_bonus"], 0)
-
-    def test_round_page_shows_no_bonus_against_an_empty_side(self) -> None:
-        self.state(self.red_players["commander"], "red", "commander", 3000, lives=2)
-        self.client.force_login(self.user_a)
-        response = self.client.get(
-            reverse("game_round_detail", args=[self.game_round.pk])
-        )
-        self.assertEqual(response.status_code, 200)
-        html = response.content.decode()
-        self.assertNotIn("14000", html)
-        self.assertNotIn("(10000)", html)
-        self.assertNotIn("Eliminated!", html)
 
 
 class TestQueryCounts(_ScoreboardTestCase):

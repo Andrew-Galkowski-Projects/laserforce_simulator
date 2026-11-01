@@ -281,8 +281,6 @@ export interface AwardWinner {
 export interface HistoryRow {
   season_id: number;
   season_name: string;
-  /** The Django Season dashboard path. */
-  season_url: string;
   /** `YYYY-MM-DD`. */
   start_date: string;
   teams_enrolled: number;

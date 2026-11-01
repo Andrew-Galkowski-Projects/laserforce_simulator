@@ -46,8 +46,9 @@ logging out are an auth exchange, not a domain write, and no HTML form carries t
   cookie and CSRF dance, and gives no 401 signal to refresh on.
 - **Both tokens returned in the body and stored in localStorage.** Rejected: any XSS could steal a
   7-day credential.
-- **Drop `SessionAuthentication` from the API.** Rejected for now: the browsable API and the HTML
-  site still depend on it. It can go once ANG-08 removes the template views.
+- **Drop `SessionAuthentication` from the API.** Rejected for now: the browsable API depends on
+  it. ANG-08 removed the template views and kept it, so Admin-logged-in staff can still use the
+  browsable API (ADR-0047).
 - **Require CSRF on the token endpoints.** Rejected for the reasons above.
 
 ## Consequences

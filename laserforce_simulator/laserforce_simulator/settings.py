@@ -76,17 +76,15 @@ ROOT_URLCONF = "laserforce_simulator.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],
+        # ANG-08 (ADR-0047): no project templates remain; Admin and the DRF
+        # browsable API load theirs from the apps (APP_DIRS).
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "core.context_processors.league_nav",
-                "core.context_processors.app_mode",
-                "core.context_processors.watch_list",
-                "accounts.context_processors.self_insert",
             ],
         },
     },
@@ -146,12 +144,10 @@ AUTH_PASSWORD_VALIDATORS = [
 # in before any user FK existed, so no data migration is needed on a fresh
 # database (see README for the existing-database recovery path).
 AUTH_USER_MODEL = "accounts.User"
-# `LoginRequiredMiddleware` (above) gates every view; only the auth surfaces
-# and the DRF API carry `@login_not_required`. URL names, not paths, so a
-# mount change cannot break the redirects.
-LOGIN_URL = "login"
-LOGIN_REDIRECT_URL = "landing"
-LOGOUT_REDIRECT_URL = "login"
+# `LoginRequiredMiddleware` (above) gates every view; only the Admin login and
+# the DRF API are exempt. ANG-08 (ADR-0047): the Admin login is the only
+# Django login page left, so the gate sends anonymous visitors there.
+LOGIN_URL = "admin:login"
 
 
 # --- ANG-02: CORS for the Angular dev server ---
@@ -187,7 +183,6 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
-STATICFILES_DIRS = [BASE_DIR / "assets"]
 
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"

@@ -62,7 +62,7 @@ function paintHeat(
 
 /**
  * `/rounds/:id/heatmap`: the Round's **Movement heatmap** (ANG-06-10). The arena's processed
- * image (fetched as a Blob, never `processed_image_url`) with a heat overlay of the **Cell
+ * image (fetched as a Blob by `arena_map.id`) with a heat overlay of the **Cell
  * occupancy** of the players passing the Player / Role / Team pickers. The pickers filter
  * client-side; the canvas is redrawn by an effect, at the image's natural size, and CSS scales
  * both together to the content width.
