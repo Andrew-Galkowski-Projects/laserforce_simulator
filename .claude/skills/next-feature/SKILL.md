@@ -119,6 +119,13 @@ Team match history had no endpoint. Also grep `frontend/src` for each feature
 PLAN.md lists: one already shipped is a settled fact, not a ticket (ANG-06-10's
 Export PDF came with ANG-06d).
 
+A deploy or serving task lists what is running before round 1: `docker ps` and
+each image's created date, plus one real build's output tree, with each top-level
+path checked against Django's prefixes (`api/`, `admin/`, `static/`, `media/`).
+ANG-10 found the owner's live stack predated nginx only at the browser check,
+and Angular's `media/` fonts colliding with Django's `/media/` only after
+round 2.
+
 Cover, in the same rounds:
 
 - **Ownership.** Which Account sees and edits what, and where the `manager`
@@ -144,7 +151,10 @@ Follow `to-spec`. Agree the **seams** with the owner first: prefer existing
 ones, fewest possible, ideally one. In this app that is usually a service
 function in a `*services.py` module, or a DRF endpoint tested through the API
 client. Every new public name, signature and return shape at the seam goes in
-the spec's Implementation Decisions. Grep each name the spec cites that already
+the spec's Implementation Decisions. Every `login_not_required` view the spec
+adds lists its hostile inputs (a redirect target, a path) in Testing Decisions:
+ANG-10's `app_redirect` spec had none, and review found an open redirect.
+Grep each name the spec cites that already
 exists (a model field, a service method) before publishing: ANG-06a's spec said
 `currentUser().player` where the field is `self_insert`. For every HTTP assertion
 the spec makes (a status, a body text, a header), `curl` the real endpoint once:
