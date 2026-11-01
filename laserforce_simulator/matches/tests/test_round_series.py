@@ -1,8 +1,8 @@
 """Pure-unit tests for ``sim_helpers.round_series.build_round_series`` (RV-05 T1).
 
 The function is a one-for-one port of the events page's per-player series
-build (``templates/matches/game_round_events.html``, the RES-02b block), so
-the PDF charts plot exactly what the page charts. Inputs are the server rows
+build (the RES-02b block of the ``game_round_events.html`` template, deleted
+in ANG-08), so the PDF charts plot what the events page charted. Inputs are the server rows
 the page already receives: ``_round_players_data`` rows (``id, name, team,
 role, sl, ss``) and ``round_playback_payload`` rows (``ts`` in ticks, ``aid``,
 ``tid``, ``meta`` with the RES-02b actor / target / ``targets[]`` snapshots).

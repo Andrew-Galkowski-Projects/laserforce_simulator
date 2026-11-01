@@ -1,7 +1,7 @@
 """LG-01z-o — Player Stats (season performance) aggregation (pure Python).
 
 Aggregates per-player PERFORMANCE across a Season's completed Rounds —
-the HX-01 ``STAT_KEYS`` set. The view (``league_screens/player_stats.py``)
+the HX-01 ``STAT_KEYS`` set. The caller (``matches.league_screen_services``)
 builds one plain dict per ``PlayerRoundState`` row (reading ``get_mvp`` /
 ``get_accuracy`` per round) and hands a flat list to ``aggregate_player_stats``;
 this module never sees a Django object, the ORM, RNG, or I/O.
@@ -231,7 +231,7 @@ def apply_rate(rows: Iterable[PlayerStatRow], rate: str) -> list[PlayerStatRow]:
     """LG-06d — re-express the SUMMED_KEYS of each row as a rate, pure.
 
     ``rate`` is one of ``"total"`` / ``"per_game"`` / ``"per_10"`` (coerce
-    upstream via :func:`matches.league_views._coerce_rate`). Only the 10
+    upstream, e.g. ``matches.api_forms`` ``clean_rate``). Only the 10
     :data:`SUMMED_KEYS` count totals are transformed; :data:`AVERAGED_KEYS`
     (``mvp`` / ``accuracy``) and :data:`DERIVED_KEYS` (``tag_ratio`` /
     ``survival``) pass through untouched, and ``games`` is unchanged.

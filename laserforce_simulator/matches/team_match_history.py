@@ -1,4 +1,4 @@
-"""ANG-06-9 -- Team match history, shared by the HTML view and the API.
+"""ANG-06-9 -- Team match history, behind ``/api/teams/<id>/history/``.
 
 ``build_team_match_history`` gathers one Team's Matches and standalone Rounds,
 scopes them (free-form / one per Tournament), and builds the record tiles and
@@ -55,8 +55,8 @@ class HistoryStats:
 class TeamMatchHistory:
     """One Team's match history, scoped to the Account's own games.
 
-    ``scope_options``, ``roster_rows`` and each row's ``roles`` stay dicts:
-    the HTML view's tests read them by key from the template context.
+    ``scope_options``, ``roster_rows`` and each row's ``roles`` stay dicts,
+    read by key.
     """
 
     team: Team

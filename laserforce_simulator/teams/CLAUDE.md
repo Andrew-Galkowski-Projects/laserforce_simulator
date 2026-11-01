@@ -1,9 +1,8 @@
 # teams/
 
-Manages teams, players, and rosters, mounted at `/teams/` (the homepage `/` is the `core` landing
-mode-picker). The Angular SPA's Teams screens (ANG-06a: list, detail, create, edit, assign slots; ANG-06b: add /
-edit player; ANG-06 2b: generate players, import roster) read
-the same data through `/api/teams/`; see `frontend/CLAUDE.md`. The Django templates stay until ANG-08.
+Manages teams, players, and rosters through `/api/teams/` and `/api/players/`. The Angular SPA's
+Teams screens (ANG-06a: list, detail, create, edit, assign slots; ANG-06b: add / edit player;
+ANG-06 2b: generate players, import roster) are the only UI; see `frontend/CLAUDE.md`.
 
 This file is the **index**. Feature detail lives in `docs/agents/teams/` — read the doc a pointer
 names before touching that feature, and add new feature notes there, not here.
@@ -55,7 +54,7 @@ pagination, Form-bound writes, `django-filter`) live in the `laserforce_simulato
 [ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md) — see **API conventions**
 in [`matches/CLAUDE.md`](../matches/CLAUDE.md). Every response here is
 `{"data": ..., "meta": {...}}` / `{"errors": [{code, message, field}], "meta": {}}`. Serializers are
-**output-only**; every write binds the same Django `Form` the HTML view binds. Ownership:
+**output-only**; every write binds a Django `Form` (`teams/forms.py`, `teams/api_forms.py`). Ownership:
 `get_queryset()` is `owned_queryset(...)` (Players via `path="team"`), so another Account's Team /
 Player is **404 on every read and write**, and the row is left unchanged.
 
@@ -69,7 +68,7 @@ Player is **404 on every read and write**, and the row is left unchanged.
 | POST `/api/teams/<pk>/players/` | `add_player` (`team-players`) | `PlayerForm` over `{**player_form_initial(), **sent}` + `full_clean()` | 201 `PlayerSerializer` |
 | POST `/api/teams/generate/` | `generate` (`team-generate`) | `GenerateLeagueForm` (no defaults merged — omitted `num_teams` ⇒ 400 `required`) | 201 `{created_teams: [TeamList], free_agent_count}` |
 | POST `/api/teams/import/` | `import_roster` (`team-import`) | `RosterImportForm` — **multipart only** (JSON ⇒ 415) | 201 `{created_teams, appended_teams, player_count, row_count}` |
-| GET `/api/teams/import/template/` | `import_template` (`team-import-template`) | — | 200 raw `text/csv`, **not enveloped**, byte-identical (body + `Content-Disposition`) to the HTML `import_roster_template` |
+| GET `/api/teams/import/template/` | `import_template` (`team-import-template`) | — | 200 raw `text/csv`, **not enveloped**, body from `build_roster_template_csv()` |
 | GET `/api/players/` | `list` (`player-list`) | — | 200 paginated `PlayerSerializer` |
 | GET `/api/players/<pk>/` | `retrieve` (`player-detail`) | — | 200 `PlayerSerializer` |
 | PATCH `/api/players/<pk>/` | `partial_update` (`player-detail`) | `PlayerForm` over `merged_form_data` + `full_clean()`; `team` is not a form field (cannot move a Player) | 200 `PlayerSerializer` |
@@ -78,7 +77,7 @@ Player is **404 on every read and write**, and the row is left unchanged.
 | GET `/api/teams/<pk>/history/[?scope=…]` | `history` (`team-history`, ANG-06-9) | — (`scope` repeated: absent = every scope, `?scope=` = none, unknown keys ignored) | 200 Team match history via `matches.team_match_history` (owned games only); see `docs/agents/matches/api.md` |
 | GET `/api/players/head-to-head/?player_a=&player_b=[&role=&provenance=&from=&to=]` | `head_to_head` (`player-head-to-head`, ANG-01b) | `PlayerH2HParamsForm` (`matches/api_forms.py`) | 200 `{player_a, player_b, role, provenance, date_from, date_to, round_record, score_margin, tag_stats, per_role_breakdown, per_map_breakdown, detail_list, margin_series, cumulative_wl_series}` via `matches.services.build_player_h2h`; empty corpus ⇒ zeroed aggregates |
 | GET `/api/players/<pk>/career/[?threshold=&display=]` | `career` (`player-career`, ANG-01b) | `BenchmarkParamsForm` (`teams/api_forms.py`) | 200 `{player, total_rounds, has_rounds, career, per_role, trend, min_rounds, display, stat_keys, per_role_with_benchmarks}` via `build_career_stats` |
-| GET `/api/players/benchmarks/[?threshold=&display=]` | `benchmarks` (`player-benchmarks`, ANG-01b) | `BenchmarkParamsForm` | 200 `{min_rounds, display, roles, stat_keys, benchmarks, any_data}` via `build_role_benchmarks(..., user=request.user)` (the template-only `benchmarks_by_role` is dropped); **UXP-14:** scoped to the caller's own + Unmanaged Rounds |
+| GET `/api/players/benchmarks/[?threshold=&display=]` | `benchmarks` (`player-benchmarks`, ANG-01b) | `BenchmarkParamsForm` | 200 `{min_rounds, display, roles, stat_keys, benchmarks, any_data}` via `build_role_benchmarks(..., user=request.user)`; **UXP-14:** scoped to the caller's own + Unmanaged Rounds |
 
 **405s (locked):** PUT / DELETE `/api/teams/<pk>/` (**there is no team DELETE**), GET on `slots/` and
 `players/`, POST / PUT `/api/players/`, PUT `/api/players/<pk>/`, GET on `generate/` and `import/`,
@@ -95,27 +94,25 @@ cross-field error ⇒ `field: null`. Free-agent mode (`num_teams="0"`) returns `
 `roster_import_errors_to_envelope` (`row:0` = file-level / header errors); the import is atomic, so
 any error writes nothing.
 
-**Services (`teams/services.py`, ANG-01a).** Shared by the HTML views and the API so both run one
-code path (HTML output byte-identical):
+**Services (`teams/services.py`, ANG-01a).** The logic behind the API views:
 
 | Name | What |
 |---|---|
-| `run_player_generation(cleaned_data, *, manager) -> GenerationResult` | `@transaction.atomic`; the post-validation half of `generate_players`, same RNG order; `GenerationResult(created_teams, free_agent_count)` (frozen dataclass) |
+| `run_player_generation(cleaned_data, *, manager) -> GenerationResult` | `@transaction.atomic`; generation after the Form validates; `GenerationResult(created_teams, free_agent_count)` (frozen dataclass) |
 | `run_roster_import(csv_text, *, manager) -> RosterImportResult` | parse → `_check_db_slot_collisions` → `_apply_roster` inside one `transaction.atomic()`; `RosterImportResult(created_teams, appended_teams, player_count, row_count)`; `RosterImportError` propagates after rollback |
 | `resolve_import_teams(names, *, manager) -> dict[str, Team]` | name → Team over `owned_queryset(...)` (own + Unmanaged), highest id wins on a duplicated name |
-| `fill_preferred_slot(team, player) -> str \| None` | UXP-19: after HTML `player_add` / API `add_player` saves a Player, put it in the first **empty** slot of its `preferred_roles` (in list order; Scout = first empty of `slot_scout_1` / `slot_scout_2`); never displaces; returns the slot field or `None` (bench) |
-| `player_form_initial() -> dict` | the 19 stat defaults (50) + one `_random_player_profile()` draw — the HTML `player_add` GET initial **and** the API add-player defaults |
-| `annotate_overall_rating(qs)` | `overall_rating_db = (sum of 19 stats) / 19.0`, lifted from `player_list` |
+| `fill_preferred_slot(team, player) -> str \| None` | UXP-19: after API `add_player` saves a Player, put it in the first **empty** slot of its `preferred_roles` (in list order; Scout = first empty of `slot_scout_1` / `slot_scout_2`); never displaces; returns the slot field or `None` (bench) |
+| `player_form_initial() -> dict` | the 19 stat defaults (50) + one `_random_player_profile()` draw — the API add-player defaults |
+| `annotate_overall_rating(qs)` | `overall_rating_db = (sum of 19 stats) / 19.0` |
 | `build_roster_template_csv() -> str` | the LG-00b template body (`ALL_COLUMNS` + `_ROSTER_TEMPLATE_ROWS`) |
 
-The LG-00 / LG-00b private helpers **moved here** (`_pop_unique_name`, `_team_name_exists`,
+The LG-00 / LG-00b private helpers live here too (`_pop_unique_name`, `_team_name_exists`,
 `_player_name_exists_on_team`, `_resolve_count_marker`, `_build_player_kwargs`, `_assign_team_slots`,
 `_generate_teams`, `_generate_free_agents`, `_check_db_slot_collisions`, `_apply_roster`,
-`_ROSTER_TEMPLATE_ROWS`) and are **re-exported from `teams/views.py`**, so
-`from teams.views import _generate_teams, _apply_roster, ...` (League / Tournament views, tests) still
-works. To monkey-patch a dependency such as `draw_stats`, patch `teams.services`, not `teams.views`.
-The Player sort whitelist is `teams.services.PLAYER_SORT_KEYS` (ANG-08; `teams/views.py` keeps a
-`_SORT_KEYS` alias until D1). `_coerce_*` stay in `teams/views.py`.
+`_ROSTER_TEMPLATE_ROWS`); League and Tournament services import them from `teams.services`. To
+monkey-patch a dependency such as `draw_stats`, patch `teams.services`. The Player sort whitelist is
+`teams.services.PLAYER_SORT_KEYS` (public: `teams/api_views.py`, `matches/api_forms.py` and
+`matches/league_screen_services.py` import it), with its `_coerce_sort` / `_coerce_dir` param coercers.
 
 Analytics reads, filters + ordering, the ANG-01b builders, the roster-import ownership fix and the
 serializers: `docs/agents/teams/api.md`.
@@ -123,8 +120,6 @@ serializers: `docs/agents/teams/api.md`.
 ## URLs
 
 ```
-/teams/     → team list, team CRUD, player management (`/` is core's landing page)
-
 /api/teams/                    → TeamViewSet (list, create, detail, PATCH)
 /api/teams/<id>/slots/         → PUT: full-replace the 6 roster slots
 /api/teams/<id>/players/       → POST: add a Player to the Team
@@ -148,20 +143,20 @@ serializers: `docs/agents/teams/api.md`.
 - `test_api_writes.py` — ANG-01a writes: team create / PATCH / slots PUT / add player, generate (both modes), roster import (multipart, `row:<n>:<field>` errors, rollback, 415 on JSON), template CSV byte-equality, player PATCH / DELETE 204, every locked 405, cross-Account 404 on every write, manager stamping
 - `test_api_filters.py` — ANG-01a `TeamFilterSet` / `PlayerFilterSet` (free-agent default exclusion, `include_free_agents`, typed-filter 400s) and player ordering over the 23 `PLAYER_SORT_KEYS`
 - `test_services.py` — ANG-01a `teams/services.py` (`GenerationResult` / `RosterImportResult` fields, stamping, rollback, `resolve_import_teams` scope, `player_form_initial`, `annotate_overall_rating`, `build_roster_template_csv`)
-- `test_roster_import_ownership.py` — ANG-01a leak regression across HTML, API and service: importing a CSV that names another Account's Team creates a new stamped Team and never echoes the foreign player's name
+- `test_roster_import_ownership.py` — ANG-01a leak regression across API and service: importing a CSV that names another Account's Team creates a new stamped Team and never echoes the foreign player's name
 - `test_forms.py` — `PlayerForm` stat field completeness (all 19 fields present, defaults to 50) and save behavior
 - `test_models.py` — `_random_player_profile()` output validation (keys, value ranges, source lists); `stat_for_simulation` boost logic; roster validation
-- `test_career_stats.py` — HX-01 pure-unit tests for `teams/career_stats.py` (4 public functions, empty inputs, sum/sum tag-ratio direction, Heavy `SPECIAL_COST` fallback, `was_eliminated_at=1801` capping to 1800, role ordering, `rolling_mean` partial-then-full window, `points_trend` `(date, game_round_id)` tiebreaker, "no Django imports leaked" defensive check) **plus** Django `TestCase` view tests for `/players/<player_id>/stats/` (200 + 6 context keys, 200 empty state, 404 missing player, "Career stats" link on player detail)
+- `test_career_stats.py` — HX-01 pure-unit tests for `teams/career_stats.py` (4 public functions, empty inputs, sum/sum tag-ratio direction, Heavy `SPECIAL_COST` fallback, `was_eliminated_at=1801` capping to 1800, role ordering, `rolling_mean` partial-then-full window, `points_trend` `(date, game_round_id)` tiebreaker, "no Django imports leaked" defensive check); the `/api/players/<pk>/career/` endpoint is tested in `test_api_career.py`
 - `test_role_benchmarks.py` — HX-02 pure-unit tests for `teams/role_benchmarks.py` (6 public functions × empty / single-player / multi-player populations; threshold filtering; `mvp` derived-stat per-round-mean rule; `accuracy` sum/sum ratio shape pinned against an asymmetric two-player case; subject-inclusion policy — standalone row equals overlay cell for the same player; percentile-of-max equals `100.0`; "no Django imports leaked" defensive check mirroring the HX-01 / RES-04 / RV-03 precedent)
-- `test_role_benchmarks_view.py` — HX-02 Django `TestCase` view tests (`GET /players/benchmarks/` 200 + 5 `benchmark-table-{role}` ids in body; `?threshold=` + `?display=` query-param parsing; malformed-param fallback to defaults; `benchmark-no-data-notice` substring on empty DB; `— (need N+ rounds)` substring on below-threshold subjects; HX-01 page `/players/<id>/stats/` surfaces the new `per_role_with_benchmarks` / `min_rounds` / `display` / `stat_keys` context keys and the `role-benchmarks-link` anchor)
-- `test_role_benchmarks_cache.py` — HX-02 cache-behaviour tests (`PlayerRoundState.save()` + `.delete()` bump `role_benchmark_version` via the `teams/signals.py` handler; `BatchSimulator._flush_to_db` invokes `invalidate_role_benchmarks()` so a `bulk_create` round still busts the cache; single-scan-fills-all-keys hit-rate check — second request after invalidation hits cache for every `(role, stat)`; threshold-independence — toggling `?threshold=` does not bust the cache)
+- `test_role_benchmarks_cache.py` — HX-02 cache-behaviour tests (`PlayerRoundState.save()` + `.delete()` bump `role_benchmark_version` via the `teams/signals.py` handler; `BatchSimulator._flush_to_db` invokes `invalidate_role_benchmarks()` so a `bulk_create` round still busts the cache; a miss fills every `(role, stat)` key in one scan)
+- `test_api_career.py` — `/api/players/<pk>/career/` and `/api/players/benchmarks/` (params, 404 / 405 / 401, a Round saved after the first read shows on the next)
 
 ## Feature docs (`docs/agents/teams/`)
 
 Paths below are relative to the repo root.
 
-- Player field history (LG-04 development, LG-05 `potential`, FIN-01 `salary`, FIN-04 `games_unavailable`), `stat_for_simulation`, `PlayerForm`, `_random_player_profile()`, `ROLE_STATS`, `Team.is_draw_team` + draw-team `roster_errors` relaxation, Team finance fields / budgets / `injury_policy`, `Team.manager` (UX-01), Self-insert / "You" badge (UX-02), `PLAYER_NAMES` / `LASERFORCE_SITES` constants — `docs/agents/teams/models-and-fields.md`
+- Player field history (LG-04 development, LG-05 `potential`, FIN-01 `salary`, FIN-04 `games_unavailable`), `stat_for_simulation`, `PlayerForm`, `_random_player_profile()`, `ROLE_STATS`, `Team.is_draw_team` + draw-team `roster_errors` relaxation, Team finance fields / budgets / `injury_policy`, `Team.manager` (UX-01), Self-insert (UX-02), `PLAYER_NAMES` / `LASERFORCE_SITES` constants — `docs/agents/teams/models-and-fields.md`
 - API analytics reads (head-to-head, career, benchmarks params), `TeamFilterSet` / `PlayerFilterSet` + ordering, `build_career_stats` / `build_role_benchmarks`, roster-import ownership fix, serializer split / `PlayerSerializer` fields, `team_name` / `TeamSerializer.manager` (ANG-01a, ANG-01b, ANG-06a, ANG-06b, ANG-06-8) — `docs/agents/teams/api.md`
-- Career stats page, `teams/career_stats.py`, 12-stat benchmark extension, Role benchmarks, percentile rank, benchmark cache + ownership scope (HX-01, HX-01b, HX-02, UXP-14) — `docs/agents/teams/career-and-benchmarks.md`
+- Career stats, `teams/career_stats.py`, 12-stat benchmark extension, Role benchmarks, percentile rank, benchmark cache + ownership scope (HX-01, HX-01b, HX-02, UXP-14) — `docs/agents/teams/career-and-benchmarks.md`
 - Bulk generation, `GenerateLeagueForm`, `teams/player_generator.py`, League spread / tier means, CSV roster import + template (LG-00, CRE-02, LG-00b), the Angular Generate Players / Import Roster screens (ANG-06 2b) — `docs/agents/teams/generation-and-import.md`
-- Sortable / paginated `/players/` tab, `_SORT_KEYS`, `?per_page=` (LG-00c) — `docs/agents/teams/players-tab.md`
+- Sortable / paginated Players list, `PLAYER_SORT_KEYS`, `_coerce_sort` / `_coerce_dir` (LG-00c) — `docs/agents/teams/players-tab.md`

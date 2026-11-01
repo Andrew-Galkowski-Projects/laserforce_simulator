@@ -1,4 +1,4 @@
-"""FIN-01 — tests for the lazy writer ``matches.league_views._ensure_team_finances``
+"""FIN-01 — tests for the lazy writer ``matches.league_services._ensure_team_finances``
 plus the salary-recompute sites (seam contract §5 / §8).
 
 The writer ensures one ``TeamSeasonFinance`` row per (Team, Season) for every

@@ -1,6 +1,6 @@
 """ANG-01a — normalise ``request.data`` for binding an existing Django Form.
 
-API writes bind the same ``Form`` the HTML view binds (ADR-0039). These helpers
+API writes bind a Django ``Form`` (ADR-0039). These helpers
 turn a JSON ``dict`` or a ``QueryDict`` into the plain ``dict`` a Form accepts,
 restricted to the Form's own fields (unknown keys are dropped silently).
 """

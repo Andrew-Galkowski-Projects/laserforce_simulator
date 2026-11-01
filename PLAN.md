@@ -57,7 +57,7 @@ API-02 (REST API) to be complete and deployed (Phase 7) before starting.
 **Approach:** migrate one feature area at a time. Django templates remain live until the Angular
 equivalent is complete and verified. Django Admin is a permanent exception and is never migrated.
 
-### ANG-06 · Migrate views by feature area
+### ANG-06 · [DONE] Migrate views by feature area
 
 Migrate one area at a time in order of complexity. Each item: build the Angular route/component,
 verify feature parity with the existing Django template. The Django template + view stays: removal
@@ -195,6 +195,19 @@ Questions to answer:
   pools), the bundled map / media files, and where logs go.
 - **Distribution:** Windows first. Cover code signing / SmartScreen, auto-update vs. manual download,
   and macOS / Linux feasibility.
+
+### ANG-10 · [NOT STARTED] Serve the SPA on Fly.io
+
+Since ANG-08, Fly.io serves the API and Django Admin only, with no UI
+([ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md) Consequences: "Fly.io serves
+the API and Admin only, with no UI, until a follow-up task serves the SPA there"). Only the Docker
+stacks (`docker-compose.yml`, `docker-compose.selfhost.yml`) put the nginx front door
+(`frontend/Dockerfile`) in front of Django. Decide how the Fly deploy serves the built SPA at `/`
+with the same split as nginx (`/api/`, `/admin/`, `/static/`, `/media/` to Django, every other path
+to the SPA with an `index.html` fallback), e.g. an nginx process in the Fly machine, a second Fly app,
+or WhiteNoise serving the bundle. Then update `fly.toml`, the CI deploy step and the docs (README,
+`docs/self-hosting.md`'s "Fly.io is the canonical deploy" note). Needs its own grill; record the
+choice in an ADR if it differs from ADR-0047's nginx split.
 
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
@@ -337,15 +350,14 @@ Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found
 top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
 
 **Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
-so is the look (ANG-04b, ADR-0043) and the client layer (ANG-05). Remaining, in order:
+so is the look (ANG-04b, ADR-0043), the client layer (ANG-05), every screen (ANG-06) and the Docker
+front door (ANG-07). Remaining, in order:
 
 ```
-ANG-06  Migrate views by feature area (Teams, Players, Matches, Round detail, Event timeline, Playback [done] -> Event charts [done] -> Map editor)   <- NEXT
-        + still to scope: League / Season, League screens,
-          Tournaments, Accounts
-    -> ANG-08  Remove Django template views (Admin stays; moves the SPA from /app/ to /, ADR-0046)
-      -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
-        -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
+ANG-08  Remove Django template views (Admin stays; the SPA is served at /, ADR-0047)   <- NOW
+  -> ANG-09  Standalone single-player executable spike (go / no-go ADR)
+  -> ANG-10  Serve the SPA on Fly.io (Fly is API + Admin only until then)
+    -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
@@ -421,18 +433,6 @@ The following were explicitly scoped out and should not be implemented until re-
   silently break another Manager's rotation. A per-map `is_public` flag is the correct end state and
   needs the cross-League referencing rules settled first (what happens to a running rotation when a
   referenced map goes private)
-- **Self-insert badge in JS-drawn views** (UX-02 follow-up) — the "You" badge is a server-side
-  template tag, so it covers only server-rendered Player names. The round **playback map** and its
-  play-synced event feed (`game_round_events.html`), the movement-heatmap roster, the
-  `play_week_live.html` live-play feed and every chart build their Player labels in JavaScript from
-  `json_script` / `|escapejs` data and show no badge. Reopening it needs `self_insert_player_id`
-  shipped to the page (e.g. one `json_script`) plus a per-view JS hook to decorate the matching label
-- **Self-insert badge on the PLAY-01 live leaders card** (UX-02 follow-up) — the live-dashboard
-  fragments are re-rendered by `matches.league_views._render_live_play_panels` through
-  `render_to_string` with **no request**, so the context processor never runs and the badge drops off
-  a JS-patched leaders card mid-run (it returns on reload). Fix by passing `request=` (or the
-  `self_insert_player_id` key) into that `render_to_string` call, checking the poll endpoint's query
-  budget
 - **Ownership-filtered head-to-head / career / benchmark corpora** (ANG-01b follow-up) — the HX-03 /
   HX-04 round sets (`_h2h_matches_qs`, `_h2h_rounds_qs`, `_player_h2h_rounds_qs`) and the HX-01 career
   round set are **not ownership-filtered** (the HX-02 benchmark population was scoped by UXP-14), in HTML or the API: a

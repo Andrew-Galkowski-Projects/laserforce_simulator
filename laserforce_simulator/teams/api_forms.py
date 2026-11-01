@@ -1,9 +1,8 @@
 """ANG-01b — strict query-param Form for the HX-01 / HX-02 API actions.
 
 Bound as ``BenchmarkParamsForm(data=plain_form_data(BenchmarkParamsForm,
-request.query_params))`` then ``validate_form_or_raise(form)``. Unlike the
-lenient HTML ``_coerce_threshold`` / ``_coerce_display`` parsing, a bad value is
-a 400 (a negative threshold is ``min_value``; the HTML page clamps it to 0).
+request.query_params))`` then ``validate_form_or_raise(form)``. A bad value is
+a 400 (a negative threshold is ``min_value``).
 Defaults are applied in ``clean_<field>`` so ``cleaned_data`` is complete.
 """
 

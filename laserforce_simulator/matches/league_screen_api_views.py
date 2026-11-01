@@ -4,7 +4,7 @@
 ``LeagueViewSet`` (``matches.league_api_views``), so every action resolves its
 League with ``self.get_object()``: another Account's League is a 404 and an
 anonymous request is DRF's 401. All computation lives in
-``matches.league_screen_services`` (shared with the HTML views). Follows
+``matches.league_screen_services``. Follows
 ADR-0039: one envelope, strict param Forms (bad value = 400), views raise and
 never build a 4xx ``Response``. No action reads or writes
 ``request.session["last_league_id"]`` or builds sidebar links.

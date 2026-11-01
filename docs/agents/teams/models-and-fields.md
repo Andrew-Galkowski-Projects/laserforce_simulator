@@ -44,7 +44,7 @@ pre-FIN-04. The roll/decrement/roster-resolution mechanics live in
 
 `stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
-`PlayerForm` exposes all 19 stat fields (default 50) with "Set All to Average (50)" and "Set All to Elite (90)" preset buttons. Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, the view pre-fills them via `_random_player_profile()`.
+`PlayerForm` exposes all 19 stat fields (default 50). Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, `teams.services.player_form_initial()` pre-fills them via `_random_player_profile()` (the add-player API fills omitted fields from it).
 
 `_random_player_profile()` (in `models.py`) returns a dict of randomised profile values drawn from `teams/constants.py`. Age is 16–50; started_playing_age is 16–age; total_games is 0–5000; height is 4'0"–6'10"; home_site is drawn from `LASERFORCE_SITES`; name is drawn from `PLAYER_NAMES`.
 
@@ -65,8 +65,8 @@ are **ZenGM 1–100 budget levels** (`matches.finance.DEFAULT_LEVEL = 34` is the
 mid-range cost, zero effect) converted to dollars via `finance.level_to_amount`; `ticket_price` /
 `cash` (`FloatField(default=0.0)`) are dollar amounts (`cash` accumulates each Season's profit and
 carries across the rollover). **No choices, no validators** — the per-League `finance_enabled` toggle
-+ AI defaults keep the levels in band, and `matches.forms.TeamFinancesForm` (ANG-01e, shared by the
-HTML POST and `PATCH /api/leagues/<id>/teams/<team_id>/finances/`) rejects out-of-range input
++ AI defaults keep the levels in band, and `matches.forms.TeamFinancesForm` (ANG-01e, bound by
+`PATCH /api/leagues/<id>/teams/<team_id>/finances/`) rejects out-of-range input
 (levels `1..MAX_LEVEL`, `ticket_price >= 0`) instead of clamping it.
 
 **FIN-04 health budget + injury/availability** lands the **fourth budget** — `budget_health`
@@ -95,14 +95,14 @@ column** (one FK per aggregate — `Player` resolves its Manager by traversing `
 `manager IS NULL` is an **Unmanaged row**: readable **and** writable by any authenticated Account,
 and listed to all of them. `SET_NULL` means deleting an Account in Admin **demotes** its Teams to
 Unmanaged rather than cascading their Matches and events away. `_generate_teams` gained a
-keyword-only `manager=None` parameter (appended last, so existing callers are source-compatible; since
-ANG-01a it lives in `teams/services.py`, re-exported from `teams.views`), and
-`team_create` stamps `manager_or_none(request)` via `form.save(commit=False)`. `team_list` and
-`player_list` are filtered through `accounts.permissions.owned_queryset` (`path="team"` for Players),
-and every `get_object_or_404` in `teams/views.py` became `get_owned_or_404(..., request, ...)`.
+keyword-only `manager=None` parameter (in `teams/services.py`, so existing callers are
+source-compatible), and `TeamViewSet.create` stamps `manager_or_none(request)` via
+`form.save(commit=False)`. The `TeamViewSet` / `PlayerViewSet` querysets are filtered through
+`accounts.permissions.owned_queryset` (`path="team"` for Players), and the head-to-head lookups use
+`get_owned_or_404(..., request, ...)`.
 
 The global `"Free Agents"` singleton (`get_free_agents_team()`) is **deliberately never stamped** — it
-is a cross-Account shared pool, and stamping it would let the first Account to run `generate_players`
+is a cross-Account shared pool, and stamping it would let the first Account to run generation
 with `num_teams == 0` capture it permanently and 404 it for everyone else. `_generate_free_agents`
 and `get_free_agents_team()` keep their signatures verbatim.
 
@@ -130,20 +130,9 @@ the Player later leaves the Account's ownership (Team demoted to Unmanaged, Play
 Agents"), the link has **drifted** — `get_self_insert` returns `None` at read time with no write, and
 the link reappears if ownership returns.
 
-**Sandbox surfaces:**
-
-- `templates/teams/player_detail.html` (`player_detail`, `/teams/<team_id>/player/<player_id>/`) — a
-  POST form in the identity card directly under the Team name: *This is me*
-  (`self-insert-link-form` / `self-insert-link-button`, posting to `self_insert_link`) when `team` is
-  managed by this Account and the Player is not already the Self-insert; *Unlink*
-  (`self-insert-unlink-form` / `self-insert-unlink-button`, posting to `self_insert_unlink`) when it
-  is; nothing on an Unmanaged Team. **No view change.** This page is also the fixed target of the
-  topnav **"My player"** link (`account-my-player-link`).
-- The **"You" badge** (`{% load self_insert_tags %}` … `{% you_badge player.id %}`, rendering the
-  `you-badge` span) follows every server-rendered Player name on: `player_detail.html` (the `<h3>`),
-  `team_detail.html` (active roster + bench), `player_list.html` (`/players/`),
-  `player_career_stats.html` (the `<h1>`) and `player_delete.html`. Not on `<title>`, the avatar
-  initial, `<option>` text or form widgets (`team_slots_form.html`). No `teams` view changed.
+**Sandbox surfaces:** the SPA Player detail screen (`/teams/:id/players/:playerId`) offers *This is me* /
+*Unlink* (only when the Team is managed by this Account) and is the target of the account menu's
+**"My player"** item.
 
 Full contract in [`../accounts/CLAUDE.md`](../../../laserforce_simulator/accounts/CLAUDE.md) **Self-insert (UX-02)**.
 

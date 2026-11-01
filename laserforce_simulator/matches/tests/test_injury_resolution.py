@@ -1,8 +1,8 @@
 """FIN-04 — DB tests for the per-fixture injury resolver (seam contract §4 / §6 / §8).
 
 Django ``TestCase`` exercising the two module-level play-loop helpers
-``matches.league_views.resolve_injuries_for_fixture(season, team_red, team_blue)``
-and ``matches.league_views.restore_after_fixture(token)`` plus the
+``matches.league_play_services.resolve_injuries_for_fixture(season, team_red, team_blue)``
+and ``matches.league_play_services.restore_after_fixture(token)`` plus the
 ``games_unavailable`` rollover reset and the health expense line.
 
 What is pinned here (schema-level outcomes ONLY — roster validity,

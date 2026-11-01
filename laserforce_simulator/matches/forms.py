@@ -640,7 +640,7 @@ class ConferencePartitionForm(forms.Form):
         self.season = season
 
     def clean_conferences(self) -> "list[tuple[str, list[int], list[int]]]":
-        # Lazy: ``league_services`` imports models / teams.views; importing it
+        # Lazy: ``league_services`` imports models / teams.services; importing it
         # at module load would create a ``forms`` -> ``league_services`` edge.
         from .league_services import _validate_conference_partition
 

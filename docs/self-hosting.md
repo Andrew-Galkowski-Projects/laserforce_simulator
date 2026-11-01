@@ -6,14 +6,15 @@ HTTPS URL. You need no domain, no router port-forwarding, and your home IP stays
 
 ```
 browser --HTTPS--> Tailscale Funnel --tunnel--> tailscale container --HTTP--> nginx (:80)
-                                                                              /app/ -> the Angular SPA
-                                                                              else  -> app (gunicorn :8000)
+                                                                              /api/ /admin/ /static/ /media/ -> app (gunicorn :8000)
+                                                                              else  -> the Angular SPA
                                                                               worker (Celery)
                                                                               db (Postgres 16), redis
 ```
 
-nginx is the front door (ADR-0046): the Angular SPA is at `https://<name>.<tailnet>.ts.net/app/`,
-and every other path (the Django pages, `/api/`, `/admin/`) is proxied to the app.
+nginx is the front door (ADR-0047): the Angular SPA is at `https://<name>.<tailnet>.ts.net/`, and
+only `/api/`, `/admin/`, `/static/` and `/media/` are proxied to the app. An old `/app/<path>` link
+redirects to `/<path>`.
 
 Files: `docker-compose.selfhost.yml`, `deploy/tailscale/serve.json`, `.env.selfhost.example`,
 `frontend/Dockerfile` (the nginx image) and `frontend/nginx/default.conf.template`.
@@ -64,9 +65,9 @@ docker compose --env-file .env.selfhost -f docker-compose.selfhost.yml exec app 
     python laserforce_simulator/manage.py createsuperuser
 ```
 
-The app container runs `migrate` on every start (`entrypoint.sh`); the worker skips it. The site
-is also reachable at <http://localhost:8000> on the PC itself, bound to loopback only (Django
-directly, without nginx or the SPA).
+The app container runs `migrate` on every start (`entrypoint.sh`); the worker skips it. Django is
+also reachable at <http://localhost:8000/admin/> (and `/api/`) on the PC itself, bound to loopback
+only (Django directly, without nginx or the SPA).
 
 Then, once the node appears under *Machines* in the admin console:
 
@@ -78,9 +79,10 @@ Then, once the node appears under *Machines* in the admin console:
 
 ## Inviting people
 
-Registration is invite-only. Sign in as a superuser, open `/admin/accounts/invite/` and **Add
-invite** (optionally lock it to the person's email). The confirmation message shows the sign-up
-link, `https://<name>.<tailnet>.ts.net/accounts/register/?invite=<code>`, and the invite list keeps
+Registration is invite-only. Sign in to Django Admin (`/admin/`) as a superuser, open
+`/admin/accounts/invite/` and **Add invite** (optionally lock it to the person's email). The
+confirmation message shows the SPA's sign-up link,
+`https://<name>.<tailnet>.ts.net/register?invite=<code>`, and the invite list keeps
 it while it still works.
 
 An invite is single-use by default. For a group, set **Max uses** (say 10) and an **Expires at**, and

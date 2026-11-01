@@ -9,8 +9,8 @@ A **read-only / derived** league screen: per-Season awards recomputed **on rende
 (transient)** from frozen `PlayerRoundState` rows — **NO model change, NO migration,
 NO simulator change, NO Score Calibration re-baseline, NO persisted award rows, NO
 caching**. Mirrors the `matches/season_player_stats.py` / `matches/league_leaders_logic.py`
-pure-module precedent and the LG-01z league-screen view shell. A new Django-free pure
-module `matches/season_awards.py` computes the award set; the view does ALL ORM work and
+pure-module precedent. A new Django-free pure
+module `matches/season_awards.py` computes the award set; `matches.league_services` does ALL ORM work and
 hands the pure fn a flat `list[dict]`. The **regular-season corpus** is
 `PlayerRoundState.objects.filter(game_round__match__season=season)` — season-embedded
 **playoff** Matches carry `season=NULL` (the Part2c-1 #3 decision) and are therefore
@@ -30,8 +30,8 @@ fields, pinned order) and `AwardSet(most_points, best_accuracy, kd_by_role, best
 most_efficient_nuke, season_mvp, finals_mvp)` (7 fields, pinned order). Every winner slot
 is `Optional[AwardWinner]` → `None` when no qualifying player; `kd_by_role` is a mapping
 with **exactly 5 keys**, one per role (`commander`/`heavy`/`scout`/`medic`/`ammo` — the
-strings stored on `PlayerRoundState.role`), each an `Optional[AwardWinner]`. The view
-builds one seam dict per round-appearance with the required keys `player_id, player_name,
+strings stored on `PlayerRoundState.role`), each an `Optional[AwardWinner]`.
+`league_services._award_round_dict` builds one seam dict per round-appearance with the required keys `player_id, player_name,
 role, team_id, team_name, points_scored, tags_made, times_tagged, accuracy, mvp,
 resupplies_given, specials_used, own_specials_cancelled` — `accuracy` pre-computed from
 `PlayerRoundState.get_accuracy` (a `@property`, NO parens, int 0–100) and `mvp` from
@@ -40,7 +40,7 @@ per the `season_player_stats` precedent.
 
 **The 7 awards + metrics (pinned).** `compute_season_awards(player_rounds, *, min_games)`
 groups rows by `player_id` (last-row-wins for displayed name/role/team, rows passed
-id-ascending) and fills six slots; the view stamps the seventh (`finals_mvp`) separately
+id-ascending) and fills six slots; `league_services._compute_season_award_set` stamps the seventh (`finals_mvp`) separately
 (rebuilding the set, e.g. `dataclasses.replace(...)`). Metrics: `most_points` =
 `SUM(points_scored)` (any role); `best_accuracy` = `MEAN(accuracy)` (any role);
 `kd_by_role[role]` = `SUM(tags_made) / max(SUM(times_tagged), 1)` (per role, one winner
@@ -49,8 +49,8 @@ each → the 5 entries); `best_medic` = `SUM(resupplies_given)` (`role == "medic
 max(SUM(specials_used), 1)` (`role == "commander"` only); `season_mvp` = `MEAN(mvp)` (any
 role). **Rate-award qualifier (LOCKED):** the **mean / rate** awards — `season_mvp`,
 `best_accuracy`, `most_efficient_nuke` ONLY — require `games(player) >= min_games`; the
-**total / count** awards (`most_points`, `best_medic`, `kd_by_role`) are **NOT gated**. The
-view passes `min_games = ceil(max_games_any_player / 2)` (`max_games_any_player` = max
+**total / count** awards (`most_points`, `best_medic`, `kd_by_role`) are **NOT gated**.
+`_compute_season_award_set` passes `min_games = ceil(max_games_any_player / 2)` (`max_games_any_player` = max
 per-player row count over the corpus; `0`/empty ⇒ `min_games = 0` and every slot `None`,
 all 5 `kd_by_role` entries `None`). **Tiebreak ladder (deterministic):** primary metric
 value → `games_played` desc → `player_id` asc (the `league_leaders_logic._rank` shape).
@@ -70,81 +70,46 @@ GF2 `is_bye` / no real Series). The Finals-MVP rounds are ALL `GameRound`s of AL
 `SeriesMatch` rows on the deciding node (`BracketNode.series_matches` → `SeriesMatch.match` →
 `match.game_rounds` → `PlayerRoundState`); `pick_finals_mvp(final_round_dicts)` returns the
 `AwardWinner` with the best `MEAN(get_mvp)` over those rounds (same tiebreak ladder; empty
-input ⇒ `None`). The view stamps the result onto the `AwardSet`.
+input ⇒ `None`). `_compute_season_award_set` stamps the result onto the `AwardSet`.
 
-**View + URL + page shell.** `matches.league_views.season_awards(request, season_id)` at
-URL name **`season_awards`** / path **`/seasons/<int:season_id>/awards/`** (added to
-`matches/season_urls.py` alongside `season_standings` / `season_schedule`, bare name, no new
-include). It `get_object_or_404(Season, …)` (404 on missing), LOCKS a GET-only 405 guard
-(`HttpResponseNotAllowed(["GET"])`) as its first line, writes
-`request.session["last_league_id"] = season.league_id`, and renders
-`templates/seasons/awards.html` (extends `base.html`, the `d-flex` +
-`_partials/league_sidebar.html` shell) with `sidebar_links =
-_build_league_sidebar_links(league, displayed_season, sidebar_active=None)` (no sidebar
-entry matches the awards page, the `player_detail` precedent). It resolves teams via
-`team_color` against `game_round.team_red`/`team_blue`, mirroring
-`matches.league_screens.player_stats._build_round_dicts` (now
-`league_screen_services.build_round_dicts`). **LOCKED DOM ids:**
-`season-awards-table` (outer table, present when ≥ 1 winner), `season-awards-most-points`,
-`season-awards-best-accuracy`, `season-awards-kd-{role}` (the 5 — `kd-commander`/`kd-heavy`/
-`kd-scout`/`kd-medic`/`kd-ammo`), `season-awards-best-medic`,
-`season-awards-most-efficient-nuke`, `season-awards-season-mvp`, `season-awards-finals-mvp`,
-and `season-awards-empty-notice` (when the Season has no completed regular-season rounds). A
-`None` winner renders the em-dash `—` (the LG-01f / `player_detail` convention). Entry-point
-links: `season-dashboard-awards-link` on `templates/seasons/dashboard.html` and
-`league-history-awards-link-{season_id}` per row on `templates/leagues/history.html` (both
-`{% url 'season_awards' … %}`).
+**API.** `league_services.build_season_awards(season) -> {awards, kd_rows, has_rounds}` backs
+`GET /api/seasons/<id>/awards/` (the SPA's `leagues/seasons/season-awards/` screen). The seam
+dicts resolve teams via `team_color` against `game_round.team_red`/`team_blue`, the
+`league_screen_services.build_round_dicts` convention.
 
-**League History row — `_build_history_row` 11 → 13 keys (blast radius).**
-`matches.league_views._build_history_row(season, teams_by_id, *, is_in_progress)` grows from
-**11 keys** to **13** — appends `season_mvp` and `finals_mvp` (each `AwardWinner | None`).
-**REUSE policy (LOCKED):** the History row **reuses `compute_season_awards`** (building the
-same regular-season seam dicts) and takes only its `.season_mvp`, plus the `pick_finals_mvp`
-path for `.finals_mvp` — NOT a lighter bespoke helper; the regular-season-dicts +
-finals-corpus assembly is factored out of the `season_awards` view into a **shared private
-helper** so the view and the History row call ONE path. (PERF-01: the History callers now
+**League History row — `build_history_row` (12 keys).**
+`matches.league_services.build_history_row(season, teams_by_id, *, is_in_progress, award_set=None)`
+carries `season_mvp` and `finals_mvp` (each `AwardWinner | None`) on top of the LG-01f keys
+(ANG-08 dropped `season_url`), served by `GET /api/leagues/<id>/history/`.
+**REUSE policy (LOCKED):** the History row reads the same award set as the Awards screen
+(`compute_season_award_set`: the regular-season seam dicts + the `pick_finals_mvp` path),
+NOT a lighter bespoke helper. (PERF-01: the History callers
 batch the page's award sets through `compute_season_award_sets`, so the page runs a constant
-number of queries however many Seasons it shows; see `league-foundation.md` § PERF-01.) The template
-(`templates/leagues/history.html`) gains **2 rightmost columns** — Season MVP and Finals MVP —
-appended after the top-3 / Tournament-Champion cells, with cell DOM-id substrings
-`league-history-season-mvp-{season_id}` / `league-history-finals-mvp-{season_id}` (`None` →
-`—`). **Blast radius:** `matches/tests/test_league_history.py` — the existing 11-key shape and
-per-row column-count assertions (`TestLeagueHistoryCompletedRows`) break and are updated to the
-13-key / +2-column shape.
+number of queries however many Seasons it shows; see `league-foundation.md` § PERF-01.)
+Tests: `matches/tests/test_league_history.py`.
 
-**League player page — `league-player-awards-stub` → live `league-player-awards`.**
-`matches.league_screens.player_detail.player_detail` adds a new context key `player_awards:
+**League player page awards.**
+`matches.league_screen_services.build_player_detail(league, player)` returns `player_awards:
 list[dict]` — one entry per Season in which this player won ≥ 1 award in THIS league:
 `{"season_id": int, "season_name": str, "award_labels": list[str]}` (`award_labels` = the
 human labels of the awards the player won that Season, e.g. `["Season MVP", "Best Medic",
-"K/D — Scout", "Finals MVP"]`). It iterates the league's Seasons, runs the same shared helper
-(`compute_season_awards` + the finals-MVP path) per Season, and keeps the awards whose
-winner's `player_id == player.id`. `templates/leagues/player_detail.html` **replaces** the
-existing `league-player-awards-stub` block (the "Coming soon — awaiting an awards model."
-placeholder) with a live element that keeps the DOM id **`league-player-awards`** (the
-`-stub` suffix is removed), rendering one block per Season; when `player_awards` is empty it
-renders an empty notice inside `league-player-awards`. The global HX-01 career page
-(`player_career_stats` / `/players/<id>/stats/`) stays **UNCHANGED**.
+"K/D — Scout", "Finals MVP"]`, from `league_services._player_award_labels`). It batches the
+award sets of the Seasons the Player appeared in through `compute_season_award_sets` and keeps
+the awards whose winner's `player_id == player.id`. Served as `awards` by
+`GET /api/leagues/<id>/players/<player_id>/`.
 
 **Scope-out (LOCKED).** NO `PlayerRoundState` / `Match` / any model field, NO migration, NO
 simulator change, NO Score Calibration re-baseline, NO ADR, NO new GLOSSARY.md term, NO change
 to the global HX-01 career page, NO persisted award rows (every award recomputed on render),
-NO awards caching, NO API/DRF endpoint.
+NO awards caching (superseded for completed Seasons by UXP-09, below).
 
 **Locked names (NEW / CHANGED).**
 - `matches/season_awards.py` — **NEW** pure module (allowlist `dataclasses`, `typing`,
   `collections`): `AwardWinner` / `AwardSet` (frozen dataclasses),
   `compute_season_awards(player_rounds: list[dict], *, min_games: int) -> AwardSet`,
   `pick_finals_mvp(final_round_dicts: list[dict]) -> AwardWinner | None`.
-- `matches.league_views.season_awards(request, season_id) -> HttpResponse` — **NEW** view.
-- `season_awards` / `/seasons/<int:season_id>/awards/` — **NEW** URL name / path in
-  `matches/season_urls.py`.
-- `templates/seasons/awards.html` — **NEW** template.
-- `matches.league_views._build_history_row` — **CHANGED** (11 → 13 keys: `+ season_mvp`,
-  `+ finals_mvp`); `templates/leagues/history.html` gains 2 columns + the awards link.
-- `matches.league_screens.player_detail.player_detail` — **CHANGED** (`+ player_awards`
-  context); `templates/leagues/player_detail.html` — **CHANGED** (`league-player-awards-stub`
-  → live `league-player-awards`).
+- `matches.league_services.build_history_row` — `+ season_mvp`, `+ finals_mvp`.
+- `matches.league_screen_services.build_player_detail` — `+ player_awards`.
 
 ### UXP-09 completed-Season summary snapshot
 
@@ -247,13 +212,13 @@ audit trail. The develop math, per ZenGM's `developSeason` with coaching fixed a
   `total_games` tick: `rng.randint(0, max(0, median_active) // 2)` (degenerate no-active case
   `median_active == 0` returns `0` deterministically).
 
-Everything in `development.py` is pure (RNG injected); the view owns all ORM work
+Everything in `development.py` is pure (RNG injected); `matches.league_services` owns all ORM work
 (developing-set query, appearance-count + median, `Player` mutation/save, `PlayerSeasonRating`
 writes).
 
-**`league_create` baseline write — `_write_baseline_ratings(season, players)`
-(`matches/league_views.py`).** A new private module-level helper, inside `league_create`'s
-existing `@transaction.atomic`, AFTER the founding Teams + Players + `free_agent_pool` pool and
+**League-create baseline write — `_write_baseline_ratings(season, players)`
+(`matches/league_services.py`).** A private module-level helper, inside
+`create_league_and_season`'s `@transaction.atomic`, AFTER the founding Teams + Players + `free_agent_pool` pool and
 the founding draft `Season` exist. Writes an **as-generated** `PlayerSeasonRating` row for
 **every founding Player** — every competitive-Team player (active slots **and** bench) PLUS
 every `league.free_agent_pool` Player — tagged to the founding draft Season, carrying
@@ -261,10 +226,10 @@ every `league.free_agent_pool` Player — tagged to the founding draft Season, c
 `getattr(p, name)`, `overall_rating=p.overall_rating`, `potential=None`. **No development, no
 age tick, no `total_games` tick.** One `bulk_create` for the whole founding set.
 
-**`next_season` develop loop — `_develop_league_for_new_season(league, new_season,
-latest_completed)` (`matches/league_views.py`).** At the **END** of `next_season`'s body,
-INSIDE its `@transaction.atomic`, AFTER the team carry-forward / map-pool rehydrate / phase
-copy, and BEFORE the final redirect; rows tag to **`new_season`** (the NEW Season). A failure
+**Rollover develop loop — `_develop_league_for_new_season(league, new_season,
+latest_completed)` (`matches/league_services.py`).** At the **END** of `run_season_rollover`'s
+body (its callers own the `@transaction.atomic`), AFTER the team carry-forward / map-pool
+rehydrate / phase copy; rows tag to **`new_season`** (the NEW Season). A failure
 rolls back the whole rollover (new Season + carry-forward + development) atomically. It:
 1. builds a **fresh `random.Random()`** (no stored seed);
 2. gathers the **developing set** via `_developing_players(league)` — the snapshot Teams'
@@ -273,7 +238,7 @@ rolls back the whole rollover (new Season + carry-forward + development) atomica
    de-duplicated by pk, **ordered by id** (Teams, then each Team's players, then free agents;
    CI-01: the shared develop RNG is drawn in this order, and Postgres row order is not stable).
    Snapshot Team ids come from `latest_completed.starting_team_ids_json`
-   (the frozen snapshot `next_season` already uses for carry-forward). **League-isolated by
+   (the frozen snapshot the rollover already uses for carry-forward). **League-isolated by
    construction; NO cross-League guard** — a Player in a different League is not developed and
    gets no new-Season row;
 3. computes the completed-Season **appearance counts** once (ORM,
@@ -293,30 +258,14 @@ rolls back the whole rollover (new Season + carry-forward + development) atomica
 6. persists in **two bulk queries**: `Player.objects.bulk_update(players, fields=[*STAT_FIELDS,
    "age", "total_games"])` and `PlayerSeasonRating.objects.bulk_create(rows)`.
 
-**LG-06h player-page stub fill (`league-player-ratings-history`).**
-`matches.league_screens.player_detail.player_detail` gains a context key **`ratings_history:
+**League player page ratings history.**
+`matches.league_screen_services.build_player_detail(league, player)` returns **`ratings_history:
 list[dict]`** — one entry per `PlayerSeasonRating` row for this Player whose Season belongs to
 **this League**, **oldest-first** (ascending by `season_id`, so the trend reads left-to-right):
-`{season_id, season_name, age, overall_rating, potential (always None → renders "—"), stats:
+`{season_id, season_name, age, overall_rating, potential, stats:
 {name: value for STAT_FIELDS}}`. A Player with rows in another League does **not** see them.
-The key is added to `player_detail`'s frozen-keys docstring; imports `PlayerSeasonRating` and
-`from matches import development` (for `STAT_FIELDS`). `templates/leagues/player_detail.html`
-**replaces** the `league-player-ratings-history-stub` block with a live block whose DOM id
-drops the `-stub` suffix to **`league-player-ratings-history`** (the LG-03
-`league-player-awards` precedent — tests assert the live id present, the `-stub` id absent).
-Inside: a Chart.js overall-rating-over-time **trend** (`<canvas
-id="league-player-ratings-history-chart">` + a `json_script` id
-`league-player-ratings-history-data` of `[season_name, overall_rating]` pairs built in-template,
-the HX-01 pattern — solid per-Season line, dataset label `"Overall rating"`, x-axis `"Season"`,
-y-axis `"Overall rating"`, `pointRadius: 2`; the Chart.js CDN `<script>` is included on this
-page, NOT assumed from `base.html`), a per-Season stat table
-`<table id="league-player-ratings-history-table">` (`Season | Age | Ovr | Pot | <19 stat
-labels>`, oldest-first, `Pot` always `—` this slice, the 19 cells rendered explicitly in
-`STAT_FIELDS` order since Django can't dict-lookup by loop variable), and an empty-state
-`league-player-ratings-history-empty` (substring `"No ratings history"`). The global HX-01
-career page (`player_career_stats` / `/players/<id>/stats/`), the `league-player-awards` block,
-the other `-stub` cards, and the `league-player-potential` card (still `—` until LG-05) are
-**untouched**.
+Served as `ratings_history` by `GET /api/leagues/<id>/players/<player_id>/` (the SPA's
+`leagues/league-player/` screen).
 
 **Determinism / scope (LOCKED).** Fresh `random.Random()` per rollover, **no stored seed** (the
 `PlayerSeasonRating` row is the audit trail) — development sits **outside the SIM-07/08 seed
@@ -342,13 +291,11 @@ outside any rolling League never age (an accepted gap).
   `collections`): `STAT_FIELDS` (19), `STAT_MIN`/`STAT_MAX`, `_STAT_ARCHETYPE` (19),
   `base_change`, `base_change_noise`, `age_modifier`, `change_limits`, `develop_stat`,
   `develop_player_stats`, `free_agent_games_tick`, `_bound`, `_clamp_int`.
-- `matches.league_views._write_baseline_ratings(season, players)` — **NEW** (baseline
+- `matches.league_services._write_baseline_ratings(season, players)` — **NEW** (baseline
   bulk_create); `_developing_players(league)` — **NEW** (developing-set gatherer);
   `_develop_league_for_new_season(league, new_season, latest_completed)` — **NEW** (develop +
   persist orchestrator).
-- `matches.league_screens.player_detail.player_detail` — **CHANGED** (`+ ratings_history`
-  context); `templates/leagues/player_detail.html` — **CHANGED** (`league-player-ratings-history-stub`
-  → live `league-player-ratings-history` + chart/table/empty DOM ids).
+- `matches.league_screen_services.build_player_detail` — `+ ratings_history`.
 
 ## LG-05 player potential
 
@@ -408,7 +355,7 @@ outside a league flow. Migration **`teams/migrations/0012_player_potential.py`**
 new `matches` migration** — `PlayerSeasonRating.potential` already exists (LG-04); LG-05 just stops
 writing it as `None`.
 
-**Two write sites (`matches/league_views.py`), both inside the existing `@transaction.atomic`
+**Two write sites (`matches/league_services.py`), both inside the existing `@transaction.atomic`
 blocks.**
 - **`_write_baseline_ratings(season, players)` (CHANGED).** Builds a fresh `pot_rng =
   random.Random()`; for each founding Player computes `pot = compute_potential({name:
@@ -427,45 +374,18 @@ blocks.**
   EXISTING `Player.objects.bulk_update(players, fields=[*STAT_FIELDS, "age", "total_games",
   "potential"])`.
 
-**Sort wiring.** `teams.views._SORT_KEYS += {"potential": "potential"}` (URL key → ORM target;
-`Player.potential` is a real field — `_coerce_sort` then accepts `?sort=potential` with no edit).
-`matches.league_views.RATING_SORT_KEYS_DISPLAY += ("potential", "Pot", "Potential")` as the 24th
-and LAST entry (after `("special_usage", "SpcUse", "Special Usage")`), driving the sortable `<th>`
-loop on the two ratings screens. Because `Player.potential` is nullable, the `player_ratings` and
-`free_agents` ORM-sort branches special-case the key with **`F("potential").desc(nulls_last=True)`
-/ `.asc(nulls_last=True)`** (`F` already imported in both) so a player with no potential never
-floats to the top, preserving the `"name"` secondary tiebreak. `teams.views._SORT_KEYS_DISPLAY` (the
-SEPARATE 23-entry global `/players/` display constant) is **UNTOUCHED** — adding `"potential"` to
-`_SORT_KEYS` surfaces no header there (confirmed blast-radius; the global view harmlessly accepts
-`?sort=potential` with no clickable header).
-
-**Four template surfaces.**
-- **Sortable** (`templates/leagues/player_ratings.html`, `templates/leagues/free_agents.html`): the
-  fixed placeholder `<th id="...-th-potential" title="Potential">Pot</th>` + its trailing
-  `<td>-</td>` placeholder cell are removed; the `Pot` column now renders via the `sort_keys` loop
-  (emitting the `<screen>-th-potential` id as a sortable `<a sort=potential>` link) plus a live data
-  cell `<td>{{ player.potential|floatformat:1|default:"—" }}</td>` immediately after the
-  `special_usage` cell, matching the loop order. The live cell renders the **em-dash `—`** (matching
-  `player_detail`), where the removed placeholders rendered the ASCII hyphen.
-- **Render-only** (`templates/leagues/team_roster.html`): in BOTH the starting-roster and bench
-  tables the trailing `Pot` placeholder `<td>-</td>` (the cell under the existing `<th>Potential</th>`
-  header) becomes `<td>{{ player.potential|floatformat:1|default:"—" }}</td>` — matching how
-  `overall_rating` is rendered (`|floatformat:1`) plus the em-dash default. No sort infra added.
-- **LG-06h card + history** (`templates/leagues/player_detail.html`): the `#league-player-potential`
-  card's static `&#8212;` "Arrives with LG-05" stub becomes the live
-  `{{ player.potential|floatformat:1|default:"—" }}` (the card id stays); the LG-04 ratings-history
-  `Pot` column (the row dicts already carry a `potential` key built in `player_detail.py` — **no
-  Python change needed**) now renders real values for rows written after LG-05 and `—` for pre-LG-05
-  `potential=None` rows.
+**Sort wiring.** `teams.services.PLAYER_SORT_KEYS` carries `"potential": "potential"` (URL key →
+ORM target; `Player.potential` is a real field, so `_coerce_sort` accepts `?sort=potential`). Because
+`Player.potential` is nullable, `league_screen_services._order_rated_players` (the Player Ratings and
+Free Agents screens) special-cases the key with **`F("potential").desc(nulls_last=True)`
+/ `.asc(nulls_last=True)`** so a player with no potential never
+floats to the top, preserving the `"name"` secondary tiebreak.
 
 **Scope-out (LOCKED).** NO Score Calibration re-baseline (potential is never a sim input — no
 simulation mechanic changes). NO new ADR (reversible; recomputed each rollover). NO new `matches`
 migration (the `PlayerSeasonRating.potential` column already exists). NO new import in
 `matches/development.py` (`TestNoDjangoImportsLeaked` stays green). The global **HX-01 career page**
-(`templates/teams/player_career_stats.html` / `teams/views.py::player_career_stats`) is UNTOUCHED.
-**MMR / Rank** stay non-sortable `—` placeholders (STAT-PROXY-01) everywhere. `team_roster` is
-render-only (no sort infra). `teams.views._SORT_KEYS_DISPLAY` (the global `/players/` 23-entry
-constant) UNTOUCHED. `scouting_budget` is a FIXED CONSTANT (`DEFAULT_SCOUTING_BUDGET = 50`) — CAR-01
+is UNTOUCHED. `scouting_budget` is a FIXED CONSTANT (`DEFAULT_SCOUTING_BUDGET = 50`) — CAR-01
 promotes it to a per-team field.
 
 **Locked names (NEW).**
@@ -476,11 +396,6 @@ promotes it to a per-team field.
 - `teams.models.Player.potential` — **NEW** `FloatField(null=True, blank=True, default=None)`;
   migration `teams/migrations/0012_player_potential.py` (one `AddField`, dep `0011_team_is_draw_team`,
   no `RunPython`).
-- `matches.league_views._write_baseline_ratings` / `_develop_league_for_new_season` — **CHANGED**
-  (compute + persist `potential`); `matches.league_views.RATING_SORT_KEYS_DISPLAY` — **CHANGED**
-  (`+ ("potential", "Pot", "Potential")`).
-- `teams.views._SORT_KEYS` — **CHANGED** (`+ {"potential": "potential"}`).
-- `templates/leagues/player_ratings.html` / `free_agents.html` — **CHANGED** (placeholder `Pot` →
-  sortable column); `templates/leagues/team_roster.html` — **CHANGED** (render-only cell);
-  `templates/leagues/player_detail.html` — **CHANGED** (live `#league-player-potential` card + lit
-  history `Pot` column).
+- `matches.league_services._write_baseline_ratings` / `_develop_league_for_new_season` — **CHANGED**
+  (compute + persist `potential`).
+- `teams.services.PLAYER_SORT_KEYS` — **CHANGED** (`+ {"potential": "potential"}`).

@@ -1,6 +1,6 @@
 # core/
 
-The `core` app provides a 2D arena map importer and editor used to configure maps for match simulation.
+The `core` app provides the 2D arena map models, image processing and the `/api/maps/` editor API used to configure maps for match simulation.
 
 ## Models (`core/models.py`)
 
@@ -35,46 +35,17 @@ The `core` app provides a 2D arena map importer and editor used to configure map
 
 **`compute_high_los_ranking(sight_data)`** — returns all passable cells as `[[row, col], ...]` sorted by LOS count descending (most-visible cell first). Called automatically after sight line saves/computes to populate `MapCellRankingConfig`. The top 25% of this list seeds `HeavyStrongSpotsConfig`.
 
-**`compute_spawn_cells(zone_grid, base_cells, max_distance=5)`** — MAP-08. Returns `{"red": [[r,c],...], "blue": [[r,c],...]}` — all passable floor cells (value 1) within Manhattan distance ≤ `max_distance` of each team's base cell. Called by `core.services.update_spawn_cells` (formerly `_update_spawn_cells_in_zone_data`, still aliased in `core/views.py`) after every sight-line save or compute; results are stored inline in `MapZoneConfig.zone_data` as `red_spawn`/`blue_spawn`.
+**`compute_spawn_cells(zone_grid, base_cells, max_distance=5)`** — MAP-08. Returns `{"red": [[r,c],...], "blue": [[r,c],...]}` — all passable floor cells (value 1) within Manhattan distance ≤ `max_distance` of each team's base cell. Called by `core.services.update_spawn_cells` after every sight-line save or compute; results are stored inline in `MapZoneConfig.zone_data` as `red_spawn`/`blue_spawn`.
 
-## Map Editor UI (`templates/maps/map_editor.html`)
+## Map Editor UI
 
-**ANG-06h:** the Angular SPA has the same list and editor at `/maps` and `/maps/:id/editor`
+**ANG-06h:** the map list and editor are the Angular SPA at `/maps` and `/maps/:id/editor`
 (`frontend/src/app/maps/`, see [`frontend/CLAUDE.md`](../../frontend/CLAUDE.md) Layout), over the
-`/api/maps/` endpoints below. The Django template stays until ANG-08 and is the behavioural
-reference the SPA ports.
-
-Three modes toggled in the top bar:
-
-**Zones & Bases mode**: zone grid overlay on B&W processed image. Click base-type buttons (Red/Blue/Neutral 1–4) then click a cell to place. Clicking the same cell again removes it. Wall brush buttons (None, Low Wall, Windowed Wall, High Wall, Floor) let the user paint cell types 4/5/0/1 directly onto the grid; all wall brush buttons support bulk drag-select (click-drag draws a rectangle, releasing applies the wall type to all non-base cells in the region). When Windowed Wall is selected, a direction picker (N/S/E/W) sets the aperture facing stored in `wall_meta`. There is **no** wall-height input: a wall's `height` is set in `wall_meta` via JSON, and painting a cell replaces its `wall_meta` entry (windowed ⇒ `{facing}`, any other type ⇒ removed). Drags paint freehand; with the Zones **Bulk Edit** toggle on, a drag draws a rectangle applied on release (Sight Lines has its own Bulk Edit toggle). Spawn brush buttons (None, Red Spawn, Blue Spawn, Erase Spawn) overlay semi-transparent colored squares on spawn cells; activating a spawn brush dearms the wall and base brushes. Spawn cells auto-load from the server on zone-size selection and are included in the Save payload only when the user has manually edited them (`spawnEdited` flag). Elevation tools: the **Elevation Brush** lets the user enter a numeric elevation value and paint it onto individual cells (click or drag-select); the **Ramp Tool** lets the user click two cells to linearly interpolate elevation across all cells between them (both use the existing bulk drag-select pattern). "Save Configuration" POSTs `zone_size`, base pixel positions, the full `zones` grid, (when non-empty) `wall_meta` including any `height` entries, and (when non-empty) the `elevation` 2D float array; additionally sends `red_spawn`/`blue_spawn` arrays when user-edited. On zone-size change, `wallMeta`, `elevation`, and spawn cell sets are all reset with a console warning if unsaved placements are discarded.
-
-**Sight Lines mode**:
-- *Zone view*: click a cell (highlights yellow) to see its visible cells (green) and blocked cells (faint red). Click any cell to toggle its LOS link with the selected cell.
-- *Drag-select bulk edit*: with a cell selected, click-drag to draw a rectangle — all non-wall cells in the rectangle highlight purple. Release to toggle all selected cells at once (bidirectional).
-- *Base view* (dropdown): shows cells that can tag a specific base. Click to add/remove.
-- "Compute Sight Lines" triggers full all-pairs server computation (~0.1–1s depending on zone size).
-- "Save Sight Lines" batches the payload into chunks of 100 keys per POST to avoid the 2.5 MB Django request limit. First batch replaces, subsequent batches merge.
-
-**Heatmap mode (RES-04)**: a third mode toggle alongside Zones & Bases and Sight Lines, driven by the `mode-heatmap` button. Activating Heatmap mode hides the Zones & Bases and Sight Lines control blocks, shows `#heatmap-controls` (a team-color filter dropdown `heatmap-editor-filter-team` with options Both/Red/Blue, plus a `heatmap-editor-round-count` text span), hides the zone-paint and sight-line overlays, and renders a translucent heatmap canvas over `#zone-img`. The JS fetches `GET /maps/<id>/heatmap-data/?zone_size=<currently-selected>&team_color=<filter>` (URL name `map_heatmap_data`, view `core/views.py::map_heatmap_data`), which aggregates `GameRound.cell_occupancy_json` across every round on this map at the selected zone_size **that the requester can see** (`owned_game_round_q`, since ANG-01c — see **Heatmap scoping**; delegates to `services.aggregate_map_heatmap`) — server-side filtering by `team_color` joins the per-player occupancy entries against `PlayerRoundState.team_color` and sums the matching cells (cells whose final sum is `0` are omitted). The round count from the response populates `#heatmap-editor-round-count`. The same canvas-overlay routine is reused by the per-round view at `/matches/game-round/<id>/heatmap/` (see [`docs/agents/matches/round-views-and-analytics.md`](../../docs/agents/matches/round-views-and-analytics.md) — **RES-04 movement heatmap**); only the filter set differs (the editor exposes team color only, the round view exposes player/role/team).
+`/api/maps/` endpoints below.
 
 ## URLs
 
 ```
-/maps/                              → map list + upload
-/maps/<id>/editor/                  → map editor (zones, bases, sight lines)
-/maps/<id>/delete/                  → POST: delete map (cascades configs; image + processed cache cleaned up; GameRound.arena_map SET_NULL); refused with an error message + redirect while a non-completed Season uses it (ANG-01c)
-/maps/<id>/zones/                   → AJAX: zone detection for given zone_size
-/maps/<id>/processed-image/         → B&W cached map image
-/maps/<id>/save/                    → POST: save zone config + base positions
-/maps/<id>/sight-lines/             → GET: load existing sight line data
-/maps/<id>/sight-lines/compute/     → POST: run full all-pairs LOS computation
-/maps/<id>/sight-lines/single-cell/ → GET: lazy single-cell LOS (?zone_size=&r=&c=)
-/maps/<id>/sight-lines/save/        → POST: save sight lines (batched)
-/maps/<id>/strong-spots/            → GET: current HeavyStrongSpotsConfig cells (?zone_size=)
-/maps/<id>/strong-spots/save/       → POST: persist user-edited heavy strong spots
-/maps/<id>/spawn-cells/             → GET: red_spawn/blue_spawn lists from confirmed zone_data (no zone_size param — data is per-config)
-/maps/<id>/heatmap-data/            → GET: RES-04 multi-round movement heatmap aggregate (URL name "map_heatmap_data"; required ?zone_size=<n>, optional &team_color=red|blue; rounds scoped to the requester since ANG-01c)
-
 /api/maps/                                  → GET list (ANG-01a) / POST multipart upload, 201 (ANG-01c)   route "arenamap-list"
 /api/maps/<id>/                             → GET detail (ANG-01a) / DELETE 204, 409 map_in_use (ANG-01c) route "arenamap-detail"
 /api/maps/<id>/processed-image/             → GET raw image/png, not enveloped                           route "arenamap-processed-image"
@@ -104,7 +75,7 @@ registered in `laserforce_simulator/api_urls.py` as
 **API conventions** (envelope, error codes, `django-filter`, ADR-0039 — see
 [`../matches/CLAUDE.md`](../matches/CLAUDE.md)): views **raise**, never build a 4xx `Response`; writes
 bind the shared `core/forms.py` Forms; query params bind the strict `core/api_forms.py` Forms; all
-logic lives in `core/services.py` (shared with the HTML views). Seam contract:
+logic lives in `core/services.py`. Seam contract:
 [`.claude/worktrees/ang-01c-seam-contract.md`](../../.claude/worktrees/ang-01c-seam-contract.md).
 
 - **`ArenaMapViewSet(ListOnlyFilterMixin, ListModelMixin, RetrieveModelMixin, DestroyModelMixin,
@@ -117,14 +88,14 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
   `Exists` red `MapBaseConfig` **and** a blue one, the same rule as
   `matches.forms._maps_with_confirmed_config` (the League / Season map pickers). It is a filter
   input only, never a serializer field. `list()` first calls `services.ensure_default_maps()`, so a fresh database lists the
-  default maps through the API as it does through HTML `map_list`. Ordering `name` (default), `created_at`, `id`;
+  default maps. Ordering `name` (default), `created_at`, `id`;
   tiebreak `id`. Class-level `parser_classes = [MultiPartParser, FormParser]` (for `create`); every
   JSON action sets `parser_classes=[JSONParser]` on its GET decorator, which also covers its
   `.mapping.put` / `.mapping.patch` methods (DRF builds the route's initkwargs from the original
   action). No `update` / `partial_update`, so PUT / PATCH on the detail ⇒ **405**. Every action is
   `detail=True` and resolves the map through `self.get_object()` (unknown pk ⇒ 404 `not_found`).
 - **Not ownership-filtered — maps are shared.** Every authenticated Account sees, uploads, edits and
-  deletes every map (HTML parity) — the UX-01 posture below (ArenaMap is shared reference data,
+  deletes every map — the UX-01 posture below (ArenaMap is shared reference data,
   ADR-0038) carries over unchanged. No `manager` column.
 - **`ArenaMapSerializer`** fields, exactly: `id`, `name`, `image` (absolute URL when the request is in
   serializer context, else `null`), `is_default`, `img_width`, `img_height`, `created_at`,
@@ -134,8 +105,7 @@ logic lives in `core/services.py` (shared with the HTML views). Seam contract:
   `simulation_ready` (booleans — `true/false/1/0`; junk values are ignored, not 400). The Angular
   League create pickers read `?simulation_ready=true` (`MapListParams.simulation_ready`).
 
-**Endpoints (ANG-01c)** — read `data` equals the HTML JSON byte for byte (one service); write
-endpoints return the **saved state** (the matching GET's `data`), never `{"status": "ok"}`.
+**Endpoints (ANG-01c)** — write endpoints return the **saved state** (the matching GET's `data`), never `{"status": "ok"}`.
 
 | Method + path | Handler | Binds | `data` |
 |---|---|---|---|
@@ -157,7 +127,7 @@ endpoints return the **saved state** (the matching GET's `data`), never `{"statu
 | `GET …/spawn-cells/` | `spawn_cells` | — | `red_spawn, blue_spawn` |
 | `GET …/heatmap/` | `heatmap` | `HeatmapParamsForm` | `cell_occupancy, zone_size, rows, cols, round_count` (scoped, below) |
 
-- **`zone-config` PUT** is full-replace with the HTML carry-forward rules kept: absent `zones` ⇒
+- **`zone-config` PUT** is full-replace with these carry-forward rules: absent `zones` ⇒
   auto-detected from the image (`[]` too); absent `bases` ⇒ **all bases deleted**; absent `wall_meta`
   ⇒ dropped; absent `elevation` / spawns ⇒ carried forward from the confirmed config; spawns sent
   (even `[]`) ⇒ `spawn_user_edited = bool(red) or bool(blue)`. The GET shape round-trips (PUT body =
@@ -180,11 +150,10 @@ endpoints return the **saved state** (the matching GET's `data`), never `{"statu
 
 ## Map Forms (`core/forms.py`, `core/api_forms.py`) — ANG-01c
 
-**`core/forms.py`** — strict write Forms shared by the HTML views and the API. **`ParsedJSONField`**
-(a `forms.JSONField` subclass) takes **already-decoded** JSON (DRF `JSONParser` / the HTML view's
-`json.loads`): `to_python` returns the value unchanged (a string is never `json.loads`'d) and
+**`core/forms.py`** — strict write Forms the API binds. **`ParsedJSONField`**
+(a `forms.JSONField` subclass) takes **already-decoded** JSON (DRF `JSONParser`): `to_python` returns the value unchanged (a string is never `json.loads`'d) and
 `empty_values = [None]`, so `[]` / `{}` survive (`red_spawn: []` means "explicitly erased"). "int"
-excludes `bool` everywhere. Field order sets the envelope error order and the HTML "first error".
+excludes `bool` everywhere. Field order sets the envelope error order.
 
 - **`MapUploadForm`** — `name` (`CharField(max_length=100)`), `image` (`ImageField`).
 - **`ZoneConfigForm`** — `zone_size` (`IntegerField(10..200)`, required); `zones` (non-empty list of
@@ -210,11 +179,9 @@ bound as `Form(data=plain_form_data(Form, request.query_params))` + `validate_fo
 
 ## Map services (`core/services.py`) — ANG-01c
 
-Every map read / write / compute, shared by the HTML views and the API. Every function takes the
-**`ArenaMap` instance** (callers do the `get_object_or_404` / `get_object()` lookup); writes are
-`@transaction.atomic`; dict key insertion order is pinned so the HTML JSON bodies stay byte-identical.
-`services` never imports `core.views` (views import services, calling them as `services.<name>`
-because the names collide with view names) and imports `matches.models` / `accounts.permissions`
+Every map read / write / compute behind the API. Every function takes the
+**`ArenaMap` instance** (the API does the `get_object()` lookup); writes are
+`@transaction.atomic`. `services` imports `matches.models` / `accounts.permissions`
 **lazily inside functions** (the core→matches cycle).
 
 - **Upload / delete** — `upload_map(name, image_file) -> ArenaMap` (reads dimensions through storage;
@@ -235,16 +202,13 @@ because the names collide with view names) and imports `matches.models` / `accou
   spots, optional spawn override, spawn cells), `compute_single_cell`, `save_sight_lines(arena_map,
   zone_size, *, sight_data, base_sights, mode="replace" | "merge")`. **Bug fix:** a merge onto a
   **missing** `SightLineConfig` now stores the batch (previously it created `{}` and discarded it).
-- **Derived reads / writes** — `update_spawn_cells(arena_map, zone_size)` (the old
-  `_update_spawn_cells_in_zone_data`, verbatim; `views` keeps that name as an alias),
+- **Derived reads / writes** — `update_spawn_cells(arena_map, zone_size)`,
   `get_ranked_cells`, `get_strong_spots` / `save_strong_spots`, `get_spawn_cells`.
 - **Heatmap** — `aggregate_map_heatmap(arena_map, zone_size, team_color, user)` (below).
-- **Moved helpers** — `_get_image_local_path` and `_clear_processed_cache` now live here and are
-  **re-exported from `core/views.py`** (`core/tests.py` imports `_get_image_local_path` from `.views`).
+- **Moved helpers** — `_get_image_local_path` and `_clear_processed_cache` now live here.
   **ANG-06h** moved `_DEFAULT_MAPS`, `_seed_defaults` and `_restore_default_images` here too, behind
   `ensure_default_maps() -> None` (seed when no map exists, then restore missing default images),
-  which both HTML `map_list` and `ArenaMapViewSet.list` call; `views` re-exports `_DEFAULT_MAPS` /
-  `_seed_defaults` for `core/tests.py`. `original_image_path(arena_map) -> Path | None` backs the
+  which `ArenaMapViewSet.list` calls. `original_image_path(arena_map) -> Path | None` backs the
   API `image` action.
 
 ### Delete guard — `map_in_use` (ANG-01c)
@@ -256,45 +220,26 @@ snapshot `_resolve_fixture_map` actually reads), (3) `Season.map_rotation_ids_js
 `Conference.starting_map_rotation_ids_json` (Conferences of a non-completed Season). The JSON id-list
 membership check runs **in Python** (SQLite has no JSONField `contains`). A completed Season never
 blocks, even if its lists name the map; historical `GameRound`s and `Season.map_mode` alone do not
-count. API ⇒ **409 `map_in_use`**; HTML `delete_map` ⇒ `messages.error("Cannot delete map “<name>”:
-it is used by a Season that is not completed.")` + redirect to `/maps/`. Nothing is deleted either
-way.
+count. API ⇒ **409 `map_in_use`**; nothing is deleted.
 
 ### Heatmap scoping (ANG-01c behaviour change)
 
 `aggregate_map_heatmap` filters its rounds with `owned_game_round_q(user)` (own + Unmanaged + own /
-Unmanaged Match / League rounds), so **both** the API `…/heatmap/` and the HTML `map_heatmap_data`
-now aggregate only rounds **visible to the requester**, and `round_count` is the scoped count. The
-map itself stays unfiltered — only the round corpus is scoped. The HTML endpoint keeps its lenient
-parse (plain-text `"zone_size required"` / `"invalid team_color"` 400s, any-int zone_size).
+Unmanaged Match / League rounds), so the API `…/heatmap/` aggregates only rounds **visible to the
+requester** (summing `GameRound.cell_occupancy_json` at that zone_size), and `round_count` is the
+scoped count. `team_color` drops the players whose `PlayerRoundState.team_color` differs, not the
+round count; cells whose final sum is `0` are omitted. The map itself stays unfiltered — only the
+round corpus is scoped.
 
-### HTML vs API strictness
+## Storage Backend (`core/services.py`)
 
-The API is strict (`zone_size` required, 10..200). The HTML map views keep their lenient parse first
-and unchanged (`json.loads`, `int(zone_size)` with each view's existing parse-error body, then the
-clamp `max(10, min(zs, 200))` or default 50 on GETs), and only then bind the strict Form with the
-clamped `zone_size` and HTML defaults injected. Valid editor payloads ⇒ identical DB writes and
-**byte-identical** success bodies. Malformed payloads (non-list / ragged / out-of-set zones, bad
-`wall_meta`, non-list elevation, bad spawn pairs, unknown / duplicate base types, non-int pixels,
-malformed sight-line keys, bool cell pairs, non-object JSON bodies — previously saved, ignored or a
-500) are now 400 with each view's **existing** error body shape: `{"status": "error", "message":
-<first form error>}` (zone-config / sight-line / strong-spot saves; the sight-line save previously
-sent no `message`) or `{"error": <first form error>}` (compute). HTML upload with an invalid form
-(incl. a name > 100) or an unreadable image redirects to `/maps/` with no row created, and (UXP-04)
-flashes `Map upload failed: <field label>: <first form error>` (or `…: the file could not be read as
-an image.`).
-
-## Storage Backend (`core/services.py`, re-exported from `core/views.py`)
-
-**`_get_image_local_path(image_field: FieldFile) -> str`** — storage-agnostic helper (moved to `core/services.py` by ANG-01c, still importable from `core.views`) used by every view that needs to pass an image path to OpenCV/PIL. For local `FileSystemStorage`, returns `image_field.path` directly. For remote backends (R2/S3), downloads the image to `MEDIA_ROOT/maps/_remote_cache/<filename>` on first access and returns that cached local path on subsequent calls. Map images are treated as immutable after upload so the cache never goes stale.
+**`_get_image_local_path(image_field: FieldFile) -> str`** — storage-agnostic helper (moved to `core/services.py` by ANG-01c) used wherever an image path goes to OpenCV/PIL. For local `FileSystemStorage`, returns `image_field.path` directly. For remote backends (R2/S3), downloads the image to `MEDIA_ROOT/maps/_remote_cache/<filename>` on first access and returns that cached local path on subsequent calls. Map images are treated as immutable after upload so the cache never goes stale.
 
 **`_seed_defaults()`** — skips seeding entirely when the active storage backend is not `FileSystemStorage` (i.e., R2 is configured). Default map images cannot be seeded from the local `Screenshots_and_video_examples/` directory in production.
 
-**`serve_media` view (UXP-02)** — `re_path(r"^media/(?P<path>.*)$")` in the project URLconf, replacing the DEBUG-only `static()` helper. Under `DEBUG` (dev) or when `settings.SERVE_MEDIA` (env `SERVE_MEDIA`, default False; the self-host compose file sets it) is on it delegates to `django.views.static.serve` with `MEDIA_ROOT`, else 404. Read at request time, so `override_settings` works in tests (CI runs with `DEBUG=True`). Behind the global login gate. **`_restore_default_images()`** — called through `ensure_default_maps` by `map_list` and the API list on every request: copies back a default map's image from `Screenshots_and_video_examples/` when its row exists but the file is gone (fresh media volume / rebuilt container); never creates rows.
+**`serve_media` view (UXP-02)** — `re_path(r"^media/(?P<path>.*)$")` in the project URLconf, replacing the DEBUG-only `static()` helper. Under `DEBUG` (dev) or when `settings.SERVE_MEDIA` (env `SERVE_MEDIA`, default False; the self-host compose file sets it) is on it delegates to `django.views.static.serve` with `MEDIA_ROOT`, else 404. Read at request time, so `override_settings` works in tests (CI runs with `DEBUG=True`). Behind the global login gate. **`_restore_default_images()`** — called through `ensure_default_maps` by the API list on every request: copies back a default map's image from `Screenshots_and_video_examples/` when its row exists but the file is gone (fresh media volume / rebuilt container); never creates rows.
 
-**`upload_map` view** — binds `MapUploadForm` and delegates to `services.upload_map`, which reads image dimensions via `image_field.open("rb")` (works for both local and remote storage) instead of `image_field.path`. Handles corrupt/non-image uploads gracefully: deletes the partial record and redirects back to the map list rather than returning a 500.
-
-**`save_zone_config` view** — binds `ZoneConfigForm` and delegates to `services.save_zone_config`. Accepts an optional `elevation` 2D float array from the client. Server-side validation rejects payloads where any elevation value is outside `[0.0, 10.0]` (returns HTTP 400). Elevation is carried forward from the existing confirmed config when not sent by the client, and persisted inline in `MapZoneConfig.zone_data` under the `"elevation"` key.
+**`services.upload_map`** reads image dimensions via `image_field.open("rb")` (works for both local and remote storage) instead of `image_field.path`.
 
 ## Dependencies
 
@@ -305,8 +250,6 @@ an image.`).
 `core/tests.py`:
 - `GetImageLocalPathTests` — local storage path passthrough, remote download-to-cache, cache reuse (no duplicate downloads)
 - `SeedDefaultsTests` — skips seeding when non-`FileSystemStorage` is active
-- `UploadMapViewTests` — dimensions stored correctly after upload; corrupt uploads rejected and not persisted
-- `DeleteMapViewTests` — `delete_map` POST removes map + redirects to list, related configs cascade, GET → 405, missing map → 404, list page renders the Delete control
 
 `core/test_maps_api.py` (ANG-01a; a sibling of `core/tests.py` since `core` has no `tests/` package) — `/api/maps/` list / detail envelope, exact serializer fields, absolute `image` URL, `has_confirmed_config` true / false, `is_default` / `has_confirmed_config` filters, same maps visible to two different Accounts, anonymous 401, PUT / PATCH on the detail 405 (POST / DELETE coverage moved to `test_maps_api_writes.py` by ANG-01c). ANG-06h adds `confirmed_zone_size` (null / latest confirmed), the API list seeding the defaults on an empty DB, and `TestMapsOriginalImage` (raw PNG / guessed JPEG type, 404 unknown map / no image, 401); `test_map_services.py` gains `TestEnsureDefaultMaps`.
 
@@ -314,14 +257,12 @@ ANG-01c siblings (image fixtures are a tiny in-memory PIL PNG uploaded under `ov
 - `core/test_map_forms.py` (SimpleTestCase) — every `core/forms.py` field rule and pinned message (spawn `[]` vs absent, `zones: []` ⇒ `None`, ragged / out-of-set / bool values, `wall_meta` key / facing / height / extra key, elevation messages, duplicate / unknown base type, `sight_data` / `base_sights` shapes, `cells` message + `required`), `zone_size` bounds, `ParsedJSONField` not decoding strings, `MapUploadForm` `invalid_image`, and the `core/api_forms.py` param Forms
 - `core/test_map_services.py` (TestCase) — `save_zone_config` carry-forward / spawn tri-state / bases replace / cache clear; `save_sight_lines` replace vs merge (incl. the **merge-onto-missing-config regression**); `compute_and_store_sight_lines`; `compute_single_cell` off-grid ⇒ `[]`; `get_zone_config` shape; **`map_in_use` true for each of the 6 references** and false for completed Seasons / GameRound-only references; `delete_map`; `aggregate_map_heatmap` scoping
 - `core/test_maps_api_writes.py` (TestCase + APIClient) — all 10 actions by route name; upload 201 / 400s / 415; DELETE 204 / 409 / 404; PUT / PATCH detail 405; per-GET `data` key sets; zone-config PUT round-trip + auto-detect; sight-lines PUT then PATCH; compute ⇒ ranked cells / strong spots; strong-spots round-trip; heatmap scoping + `invalid_choice`; the error table; cross-Account shared writes; anonymous 401; processed-image PNG not enveloped
-- `core/test_map_views_html.py` (TestCase) — HTML delete of an in-use map (302 + error message, map survives); malformed HTML save payloads ⇒ 400 with the existing body shapes; valid editor payloads ⇒ exact success bytes; HTML heatmap excludes a foreign round; 101-char upload name ⇒ redirect, no row
-- `core/map_test_fixtures.py` — shared test-support module (not collected — its name matches no `python_files` glob) for the four ANG-01c files: the in-memory border-only PNG builder (zone_size 50 ⇒ a 4×4 grid with a 2×2 floor interior, so compute yields a non-empty ranking), `TempMediaMixin` (a `Path` `MEDIA_ROOT` under a temp dir + `rmtree` cleanup), `ClassTempMediaMixin` (the same for a whole class, set before `setUpTestData`, so class-level fixtures that write map files keep them; PERF-02), and the Season / Match / round builders used by the `map_in_use` and heatmap-scoping tests
+- `core/map_test_fixtures.py` — shared test-support module (not collected — its name matches no `python_files` glob) for the ANG-01c files: the in-memory border-only PNG builder (zone_size 50 ⇒ a 4×4 grid with a 2×2 floor interior, so compute yields a non-empty ranking), `TempMediaMixin` (a `Path` `MEDIA_ROOT` under a temp dir + `rmtree` cleanup), `ClassTempMediaMixin` (the same for a whole class, set before `setUpTestData`, so class-level fixtures that write map files keep them; PERF-02), and the Season / Match / round builders used by the `map_in_use` and heatmap-scoping tests
 
 **Session media dir (TEST-01).** Every pytest worker already runs with `MEDIA_ROOT` pointed at its own `lf-test-media-*` temp dir (root `conftest.py`, `pytest_configure`), removed at session end, so no test writes into the real `media/` even without a mixin. Use `TempMediaMixin` / `ClassTempMediaMixin` when a test needs an **empty** dir; they override the session dir. Guard: `laserforce_simulator/tests/test_media_root.py`.
 
 Map-processing tests for MAP-05/07 features live in `matches/tests/test_map.py` alongside the MAP-02–04 tests:
 - `TestMap05ComputeHighLosRanking` — sort correctness (highest-LOS cell first), all cells returned, empty input returns empty
-- `TestMap05StrongSpotsViews` — GET returns cells, returns `[]` when no config, POST persists cells, POST rejects non-list cells and non-int pairs, GET method not allowed on save endpoint
 - `TestMap07WallTypes` — 25 pure unit tests covering: movement adjacency (high/low/windowed wall block, legacy 2/3 passable), LOS (low wall transparent, windowed/high wall block), `compute_sight_lines` passable-origin filtering, `_can_tag_through_windowed_wall` N-S/E-W axis and unknown facing, `_get_los_targets` aperture hit and miss, proximity-based `_zone_from_cell` cases
 - `TestMap07DBIntegration` — 2 DB tests: `wall_meta` round-trip through `save_zone_config` → `_resolve_map_data`, and `wall_meta` key present in `_build_movement_ctx` result
 
@@ -332,25 +273,6 @@ MAP-09 tests live in `matches/tests/test_map_high_ground.py`:
 - `TestMap09LOSWithElevation` (pure) — 8 tests for `_has_los` with elevation: baseline blocking, flat elevation no help, elevated attacker opens LOS, insufficient elevation still blocked, windowed wall unaffected, missing height blocks, **asymmetric LOS** (`compute_sight_lines` gives A→B but not B→A when only A is elevated enough to shoot over the wall)
 - `TestMap09HitChanceModifier` (pure) — 10 tests for `elevation_hit_modifier`: level/downhill=1.0, uphill 1/3/5/6/large units, fractional diff, multiplicative application
 - `TestMap09BackwardsCompat` (pure) — 5 tests: `_elevation_at(None)`, empty dict, zero elevations, missing height, `_has_los` without new kwargs
-
-## LG-01a landing view
-
-The Angular port of this page (the SPA's `/`, ANG-06-20) is in
-[`docs/agents/matches/nav-and-play.md`](../../docs/agents/matches/nav-and-play.md) **ANG-06-20**.
-
-Mode-picker landing page at `GET /` (replaces the previous `path("", include("teams.urls"))` homepage redirect to the team list). Three mode cards — **Sandbox** (links to `/teams/`), **Single-player League** (links to `/leagues/`), **Multiplayer** (greyed `Coming soon`, non-anchor) — plus an in-progress Leagues card grid populated from `League.objects.filter(state="active")`. The `/leagues/` index itself lives in [`docs/agents/matches/league-foundation.md`](../../docs/agents/matches/league-foundation.md) **LG-01a leagues list**; this section covers only the landing view.
-
-**URL.** Mounted in `laserforce_simulator/urls.py` as `path("", core_views.landing, name="landing")` (after adding `from core import views as core_views` to the project URLconf imports). The previous `path("", include("teams.urls"))` line is replaced; the `path("teams/", include("teams.urls"))` mount is untouched so `{% url 'team_list' %}` still reverses to `/teams/`. The HX-01 ordering comment on `path("players/", ...)` stays accurate — there is still a `path("", ...)` catch-all, it just now points at `core_views.landing`.
-
-**View.** `core.views.landing(request) -> HttpResponse` — undecorated, GET-driven (no explicit method allowlist), placed at the bottom of `core/views.py` after `map_heatmap_data`. Body: **lazy-import `from matches.models import League` INSIDE the function body** (mirrors the existing `map_heatmap_data` lazy-import precedent in the same file — avoids the `core ↔ matches` apps-loading cycle), run **one ORM query** `in_progress_leagues = list(League.objects.filter(state="active").order_by("-id"))`, then `render("core/landing.html", {"in_progress_leagues": in_progress_leagues})`. Context (frozen): `{in_progress_leagues}`. **No `select_related` / `prefetch_related` on `League.active_season`** — it is a `@property` (not an FK), so per-card iteration issues one extra `Season.objects.exclude(state="completed").order_by("-id").first()` query; the LG-01a decision is to accept that cost (the landing list is user-bounded and the optimisation is non-breaking to add later via `Prefetch` if it ever bites).
-
-**Template.** NEW `templates/core/landing.html` extends `base.html`, `{% block title %}Laserforce Manager{% endblock %}`. Locked DOM ids: `mode-picker` (outer wrapper section/div), `mode-card-sandbox` (anchor `<a>` reversing `{% url 'team_list' %}`, title text contains `Sandbox`), `mode-card-league` (anchor reversing `{% url 'league_list' %}`, title text contains `Single-player League`), `mode-card-multiplayer` (**non-anchor `<div>`** with `aria-disabled="true"` + a `<span class="badge bg-secondary">Coming soon</span>`, visually greyed via Bootstrap `opacity-50` or equivalent — must NOT be wrapped in `<a>`), `in-progress-leagues` (wrapping `<section>` rendered ONLY when `in_progress_leagues` is non-empty — the empty branch emits no notice, the substring `id="in-progress-leagues"` must NOT appear in the body when zero active Leagues exist), and `in-progress-league-card-{league.id}` (one anchor per active League, `href="/leagues/{{ league.id }}/"` — **raw URL string**, NOT `{% url ... %}`). Each in-progress card renders the League name, either `Season: {{ league.active_season.name }}` (when `league.active_season` is truthy) or the literal substring `No active season` (otherwise), and a state badge whose `class` contains `state-badge`. **Deferred broken-link decision (locked):** the per-card `/leagues/<id>/` hrefs are known-broken until LG-01c — the `league_detail` URL name doesn't yet exist; raw strings are deliberate.
-
-**Navbar patch** (`templates/base.html`, two edits, no other nav-link touched). `navbar-brand` href: `{% url 'team_list' %}` → `{% url 'landing' %}` (the visible `⚡ Laserforce Manager` text + unicode `⚡` are unchanged). New `<a class="nav-link" id="leagues-nav-link" href="{% url 'league_list' %}">Leagues</a>` inserted as the FIRST child of `<div class="navbar-nav ms-auto">` above the existing `Teams` link.
-
-**Determinism / scope.** Read-only view — no writes, no RNG, no simulation, no `_flush_to_db` touch, no SIM-07 / SIM-08 contract interaction, no Score Calibration re-baseline. **No model change, no migration, no ADR, no GLOSSARY.md edit, no new domain term** (League / Season / Standings already defined under `### League and seasons` from LG-01), no new aggregation module, no JS, no new dependency. **No change to `/teams/`, the `team_list` view, the `team_list` URL name, or any existing `{% url 'team_list' %}` reference** — removing the duplicate `path("", include("teams.urls"))` mount does not affect the standalone `path("teams/", include("teams.urls"))` mount. **Tests.** Extended `core/tests.py` with 12 view tests covering 200 status + `in_progress_leagues` context key, the three mode-card DOM ids, sandbox → `team_list` and league → `league_list` href resolution, the multiplayer-card non-anchor + `Coming soon` + `aria-disabled="true"` shape, omission of `in-progress-leagues` when no active Leagues, active-League cards sorted `-id` with both ids present, deferred `/leagues/<id>/` href per card, `Season: <name>` shown when `active_season` exists, `No active season` shown otherwise, archived Leagues excluded from the in-progress section, and `reverse("landing") == "/"`. The navbar regression test (`test_base_html_navbar_brand_links_to_landing_and_leagues_nav_link_present` — `leagues-nav-link` present + brand href `/`) lives in either `core/tests.py` or `matches/tests/test_league_list.py`.
-
-**Locked names.** URL `GET /` (URL name `landing`); view `core.views.landing`; template `templates/core/landing.html`; DOM ids `mode-picker` / `mode-card-sandbox` / `mode-card-league` / `mode-card-multiplayer` / `in-progress-leagues` / `in-progress-league-card-{league.id}` / `leagues-nav-link`; context key `in_progress_leagues`. Seam contract: [`.claude/worktrees/lg-01a-seam-contract.md`](../../.claude/worktrees/lg-01a-seam-contract.md).
 - `TestMap09ResolvesElevationFromZoneData` (DB) — `_resolve_map_data` returns correct elevation array; returns None when key absent
 
 ## UX-01 ownership — `ArenaMap` is deliberately NOT an Ownership root
@@ -364,21 +286,14 @@ all, which `is_owned_by` treats as *always allowed* (shared reference data).
 Concretely, and verified as part of the slice:
 
 - **No migration.** `core` stays at `0004_map05_cell_ranking_and_strong_spots`.
-- **No filtering.** `map_list` is **not** wrapped in `owned_queryset`; every `/maps/` route returns
-  the same maps to every Account.
-- **No conversions.** All **14** `get_object_or_404(ArenaMap, ...)` sites in `core/views.py` are left
-  **byte-for-byte unchanged** — they are the 14 of the project's 97 sites that were *not* converted to
-  `get_owned_or_404` (the other 83 were).
-- `/maps/` is still behind the **global login gate** (`LoginRequiredMiddleware`) with **no**
-  `@login_not_required` exemption: authenticated, but unfiltered.
 - **ANG-01a** keeps the same posture on the API: `ArenaMapViewSet` (`/api/maps/`) is authenticated
   (DRF `IsAuthenticated`; it carries the usual API `login_not_required` middleware exemption so an
   anonymous caller gets a 401 JSON (403 before ANG-03) rather than a 302) but its queryset is **not** ownership-filtered.
-- **ANG-01c** keeps it for writes: any authenticated Account may upload / edit / delete any map, via
-  HTML or API (the only delete restriction is the Season-based `map_in_use` guard, not ownership).
+- **ANG-01c** keeps it for writes: any authenticated Account may upload / edit / delete any map
+  (the only delete restriction is the Season-based `map_in_use` guard, not ownership).
   The one ownership-aware piece is the **multi-round heatmap aggregate**: the *map* is unfiltered,
   but the *rounds* it sums are now scoped by `owned_game_round_q(request.user)` (rounds are owned
-  data). This does not add a `manager` column or convert any of the 14 lookups.
+  data). This does not add a `manager` column.
 
 **Why** ([ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md)): maps are
 referenced **across League boundaries** by `ArenaMap.is_default`, `Season.map_mode`, the CONF-06
@@ -389,6 +304,6 @@ rotations. A privately-owned map would therefore silently break *another* Manage
 **Deferred Items**), because the cross-League referencing rules have to be settled first: what a
 running rotation does when a map it references goes private.
 
-> Adding a `manager` FK to `ArenaMap` or any map-config model, filtering a `/maps/` queryset, or
-> converting one of those 14 lookups **breaks the UX-01 contract**. See
+> Adding a `manager` FK to `ArenaMap` or any map-config model, or ownership-filtering the
+> `ArenaMapViewSet` queryset, **breaks the UX-01 contract**. See
 > [`../accounts/CLAUDE.md`](../accounts/CLAUDE.md) and seam contract §2.4.

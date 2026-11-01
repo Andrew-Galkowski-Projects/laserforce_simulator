@@ -1,4 +1,4 @@
-"""CAR-02 — tests for the lazy writer ``matches.league_views._ensure_owner_evaluations``
+"""CAR-02 — tests for the lazy writer ``matches.league_services._ensure_owner_evaluations``
 (seam contract §3.1 / §6.3).
 
 The writer ensures one ``OwnerEvaluation`` row per completed Season of a League

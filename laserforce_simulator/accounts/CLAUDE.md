@@ -1,8 +1,8 @@
 # accounts/
 
 The fourth Django app, added by **UX-01**. It owns the **Account** (the row a human logs in as), the
-`/accounts/` auth surfaces, and the **permission seam** every other app calls to answer "may this
-Account see this row?".
+Accounts and JWT token APIs (`/api/accounts/`, `/api/token/`), invites, and the **permission seam**
+every other app calls to answer "may this Account see this row?".
 
 Vocabulary, straight from GLOSSARY.md — get these three apart before editing anything here:
 
@@ -12,8 +12,7 @@ Vocabulary, straight from GLOSSARY.md — get these three apart before editing a
 | **Manager** | *The Account a row belongs to.* Persisted as a nullable `manager` FK on each **Ownership root**. Widened by [ADR-0038](../../docs/adr/0038-accounts-and-uniform-manager-ownership.md) from the pre-UX-01 "implicit single local user". |
 | **Owner** | The **fictional boss** who judges and fires the Manager via the **Owner evaluation** ([ADR-0026](../../docs/adr/0026-manager-firing-owner-mood.md), `OwnerEvaluation`, `owner_mood.py`). **Never a login. Never renamed. Never touched by UX-01.** |
 
-> The word "owner" is **not** used for an Account anywhere — not in code, comments, templates, DOM
-> ids or docs. `OwnerEvaluation` gained no `manager` column (it derives via `league`).
+> The word "owner" is **not** used for an Account anywhere — not in code, comments or docs. `OwnerEvaluation` gained no `manager` column (it derives via `league`).
 
 ## Models (`accounts/models.py`)
 
@@ -70,8 +69,8 @@ Tournament's Manager equals its League's Manager" is held by **propagation at cr
 and a traversal would agree anyway.
 
 **`core.ArenaMap` and the six map-config models are deliberately NOT roots.** No `manager` column, no
-queryset filtering, no permission check on any `/maps/` route (they are still behind the global login
-gate — authenticated, unfiltered). Adding one breaks the contract; see
+queryset filtering, no permission check on any `/api/maps/` route (they still require
+`IsAuthenticated` — authenticated, unfiltered). Adding one breaks the contract; see
 [`../core/CLAUDE.md`](../core/CLAUDE.md).
 
 ## The Unmanaged-row rule
@@ -102,7 +101,7 @@ The **entire** public surface. Nothing else in the module is importable API.
 | `owned_queryset(qs, user, *, path="") -> QuerySet` | Filters to `manager = user OR manager IS NULL`. `path` is the ORM lookup prefix from the queryset's model to the root carrying `manager` (`""` for a root, `"team"` for `Player`, `"season__league"` for Season-scoped rows). **Not valid for `Match` / `GameRound`.** |
 | `owned_match_q(user) -> Q` | The `Match` predicate — flat on a sandbox Match, traversed through `season__league` for a Season Match. Deliberately longhand so the branch structure is auditable. |
 | `owned_game_round_q(user) -> Q` | The `GameRound` predicate — flat when standalone, else through its `Match` (which itself splits on `season`). |
-| `stamp_manager(obj, user) -> obj` | Sets `obj.manager` and persists **only that column** (`update_fields=["manager"]`). For rows created by code that has no `request` — the `BatchSimulator` return values in the sandbox create views. An unauthenticated `user` leaves the row Unmanaged. |
+| `stamp_manager(obj, user) -> obj` | Sets `obj.manager` and persists **only that column** (`update_fields=["manager"]`). For rows created by code that has no `request` — the `BatchSimulator` return values in `matches.services.create_sandbox_match` / `create_sandbox_round`. An unauthenticated `user` leaves the row Unmanaged. |
 | `manager_or_none(request) -> user \| None` | `request.user` when authenticated, else `None` (⇒ an Unmanaged row). |
 
 **404, never 403.** `get_owned_or_404` raises `Http404` on a cross-Account hit so another Account's
@@ -164,9 +163,10 @@ Do **not** re-derive these — they are deliberate and non-obvious:
 `LoginRequiredMiddleware` (Django 5.1+) sits immediately **after**
 `django.contrib.auth.middleware.AuthenticationMiddleware` and gates the whole project — chosen over
 ~220 per-view decorators. Settings added by UX-01, in a `# --- UX-01: Accounts (ADR-0038) ---` block
-after `AUTH_PASSWORD_VALIDATORS`: `AUTH_USER_MODEL = "accounts.User"`, `LOGIN_URL = "login"`,
-`LOGIN_REDIRECT_URL = "landing"`, `LOGOUT_REDIRECT_URL = "login"` (all three redirects are **URL
-names**, not paths, so they survive a mount change), plus
+after `AUTH_PASSWORD_VALIDATORS`: `AUTH_USER_MODEL = "accounts.User"` and
+`LOGIN_URL = "admin:login"` (ANG-08, ADR-0047: the Admin login is the only Django login page left,
+so the gate sends anonymous visitors there; there is no `LOGIN_REDIRECT_URL` /
+`LOGOUT_REDIRECT_URL`), plus
 `REST_FRAMEWORK["DEFAULT_PERMISSION_CLASSES"] = ["rest_framework.permissions.IsAuthenticated"]`
 (was `AllowAny`).
 
@@ -174,17 +174,17 @@ names**, not paths, so they survive a mount change), plus
 live URLconf. Adding an exemption means adding it to that test's allowlist, a deliberate security
 decision. There are two kinds:
 
-- **HTML views** are exempt only through an explicit `login_not_required`. Today these are Django's
-  `login`, `logout`, `password_change`, `password_change_done` and the admin login, plus
-  `accounts.views.register`. Every other HTML route stays gated, including every `/maps/` route.
+- **HTML views** are exempt only through an explicit `login_not_required`. The one exemption is the
+  Admin login: `HTML_EXEMPT_VIEWS == {"django.contrib.admin.sites.login"}`. Every other HTML route
+  (the rest of `/admin/`, `/media/`) stays gated and 302s to `/admin/login/?next=...`.
 - **Every DRF view is exempt automatically.** DRF 3.15+ `APIView.as_view()` sets
-  `login_required = False` itself. The API is gated instead by the settings-level `IsAuthenticated`,
-  which returns a **401 JSON** body (`WWW-Authenticate: Bearer`, ADR-0041) rather than the
-  middleware's HTML **302** to the login page.
-  Logging out of the browser session still locks the API. Only `RegisterAPIView`
-  (`permission_classes = [AllowAny]`) is anonymous-allowed. The
-  `@method_decorator(login_not_required, name="dispatch")` lines on the API views are redundant
-  under DRF 3.15+.
+  `login_required = False` itself, and the API views also carry
+  `@method_decorator(login_not_required, name="dispatch")` (redundant under DRF 3.15+). The API is
+  gated instead by the settings-level `IsAuthenticated`, which returns a **401 JSON** body
+  (`WWW-Authenticate: Bearer`, ADR-0041) rather than the middleware's HTML **302** to the login page.
+  Logging out of the browser session still locks the API. Only the `ANONYMOUS_API_VIEWS` allowlist
+  (`RegisterAPIView` and the three JWT token views, each `permission_classes = [AllowAny]`) is
+  anonymous-allowed.
 
 `process_view` receives the **resolved** view, so an `include()` cannot be wrapped. Both CBV forms
 work because `View.as_view()` copies `dispatch.__dict__` onto the returned callable.
@@ -200,9 +200,6 @@ through the same owned `get_queryset()` + `get_object()`, so a write against ano
 **404 and leaves the row unchanged**, and every create path stamps `manager_or_none(request)`.
 `ArenaMapViewSet` is authenticated but **not** owned (ArenaMap is shared reference data). The
 API-03 batch POST's team lookup is still not ownership-scoped (ANG-01b follow-up).
-
-`password_change_done` is exempt alongside `password_change` purely so the redirect target cannot
-bounce; both are only reachable post-login in practice.
 
 ## Invites (`accounts.models.Invite`, `accounts/admin.py::InviteAdmin`)
 
@@ -225,30 +222,13 @@ link (`/register?invite=<code>`, the SPA route, ANG-08). The changelist shows *U
 (Active / Used up / Expired) and a *Sign-up link* column while the invite is redeemable; the
 change page lists its redemptions in a read-only inline. Tests: `accounts/tests/test_invites.py`.
 
-## Auth surfaces (`accounts/urls.py`, `accounts/forms.py`, `accounts/views.py`)
+## Forms (`accounts/forms.py`)
 
-Mounted at `/accounts/` from the project URLconf, immediately after the `admin/` entry. **No
-`app_name`** — the project has no URL namespaces anywhere, and these five names are Django's own
-defaults, so `LOGIN_URL`, `PasswordChangeView.success_url` and `{% url %}` resolve with no extra
-config.
+**There is NO password reset** — deferred with OAuth for want of a mail provider. **Recovery is
+`manage.py changepassword`.**
 
-| URL name | Path | View | Template |
-|---|---|---|---|
-| `login` | `/accounts/login/` | `auth.views.LoginView` (`authentication_form=EmailAuthenticationForm`, `redirect_authenticated_user=True`) | `accounts/login.html` |
-| `logout` | `/accounts/logout/` | `auth.views.LogoutView` | — |
-| `register` | `/accounts/register/` | `accounts.views.register` | `accounts/register.html` |
-| `password_change` | `/accounts/password-change/` | `auth.views.PasswordChangeView` (`form_class=StyledPasswordChangeForm`) | `accounts/password_change.html` |
-| `password_change_done` | `/accounts/password-change/done/` | `auth.views.PasswordChangeDoneView` | `accounts/password_change_done.html` |
+Two classes, both bound by the Accounts API below:
 
-**There is NO password reset.** `password_reset`, `password_reset_done`, `password_reset_confirm` and
-`password_reset_complete` are not defined, not routed, not templated and not linked — deferred with
-OAuth for want of a mail provider. **Recovery is `manage.py changepassword`.**
-
-Forms — three classes, `accounts/forms.py`:
-
-- **`EmailAuthenticationForm(AuthenticationForm)`**. ⚠️ Django keeps the field **name** `username`
-  even when `USERNAME_FIELD` is `email`; only the widget and label change. **The login POST key is
-  `username`, carrying an email value** — tests post `{"username": <email>, "password": ...}`.
 - **`RegisterForm(UserCreationForm)`** — `Meta.model = User`, `fields = ("email",)`.
   **Invite-only** self-registration: email + password + confirm + `invite` (a code). Password
   matching and `AUTH_PASSWORD_VALIDATORS` come from `UserCreationForm`; email uniqueness from the
@@ -257,37 +237,9 @@ Forms — three classes, `accounts/forms.py`:
   email-locked invite meets another address (case-insensitive). `save` is atomic: it spends a
   use with a conditional `UPDATE ... SET use_count = use_count + 1 WHERE use_count < max_uses`
   (racing sign-ups for the last use cannot both win; the loser's Account rolls back), then writes
-  the `InviteRedemption`. Both the HTML view and `POST /api/accounts/register/` bind this form, so
-  the rule cannot drift between them.
-- **`StyledPasswordChangeForm(PasswordChangeForm)`** — the house DOM ids only.
-
-`accounts.views.register` is the one function view: GET renders the empty form, prefilling
-`invite` from `?invite=<code>` (the link the admin shows); a valid POST calls
-`form.save()`, `django.contrib.auth.login(request, user)` and redirects to `landing`; an invalid POST
-re-renders the bound form at **status 200**.
-
-### Templates and locked DOM ids
-
-House style, unchanged: Bootstrap 5.3 from CDN with no project stylesheet; templates live **only**
-under `laserforce_simulator/templates/`; every form field declares its DOM id in the widget `attrs`
-and its label hardcodes `for=` to that id; `<h1>` headings carry no id.
-
-| Template | Locked ids |
-|---|---|
-| `accounts/login.html` | `login-form`, `login-email`, `login-password`, `login-submit` (*Sign in*), `login-errors`, `login-register-link` |
-| `accounts/register.html` | `register-form`, `register-invite`, `register-email`, `register-password1`, `register-password2`, `register-submit` (*Create account*), `register-errors`, `register-login-link` |
-| `accounts/password_change.html` | `password-change-form`, `password-change-old-password`, `password-change-new-password1`, `password-change-new-password2`, `password-change-submit`, `password-change-errors` |
-| `accounts/password_change_done.html` | `password-change-done-notice`, `password-change-done-home-link` |
-| `_partials/topnav_auth.html` | authenticated: `account-nav-link`, `account-signed-in-as`, `account-password-change-link`, `account-sign-out-form`, `account-sign-out-button`, plus `account-my-player-link` (UX-02, only when a Self-insert resolves) — anonymous: `account-sign-in-link`, `account-register-link` |
-
-`_partials/topnav_auth.html` is included from `base.html` **once**, at the far right of
-`<div class="navbar-nav ms-auto">` and after the `app_mode` branch block, so it renders in all three
-nav modes. It follows the `topnav_tools_help.html` dropdown shape and branches on
-`{% if user.is_authenticated %}`; `django.contrib.auth.context_processors.auth` was already in
-`TEMPLATES.OPTIONS.context_processors`, so `{{ user }}` needed no settings change.
-
-> ⚠️ **Sign-out is a POST form, not a link.** Django 5.x `LogoutView` rejects GET. Writing
-> `<a href="{% url 'logout' %}">` breaks the contract.
+  the `InviteRedemption`.
+- **`StyledPasswordChangeForm(PasswordChangeForm)`** — the widgets keep the old DOM ids; only the
+  validation is load-bearing.
 
 ## Accounts API (ANG-01g, `accounts/api_views.py`)
 
@@ -304,19 +256,17 @@ of `get_self_insert(user)` or `null` — the raw column is never serialized, so 
 | GET | `accounts/me/` | `api_accounts_me` | 200 `me` |
 | POST | `accounts/register/` | `api_accounts_register` | Binds `RegisterForm` (so `invite` is required: 400 on `field: "invite"` when missing / invalid); 201 `me` of the new Account. **Does not log in** (the client then calls `POST /api/token/`); an authenticated caller keeps its own session. |
 | POST | `accounts/me/password/` | `api_accounts_password` | Binds `StyledPasswordChangeForm(request.user, ...)`; 204, then `update_session_auth_hash` so the session survives. |
-| PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`, bound through **`SelfInsertParamsForm`** (`accounts/api_forms.py`); 200 `me`. An integer string (`"5"`) is accepted, as on the HTML route; a missing `player` ⇒ 400 `required`, and `null` / a bool / a fractional float / a list / a non-numeric string ⇒ 400 `invalid`, both on `field: "player"`; a non-object body ⇒ 400 `parse_error`; missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with `NOT_ELIGIBLE_MESSAGE`, nothing written. |
+| PUT | `accounts/me/self-insert/` | `api_accounts_self_insert` | `{"player": <int>}`, bound through **`SelfInsertParamsForm`** (`accounts/api_forms.py`); 200 `me`. An integer string (`"5"`) is accepted; a missing `player` ⇒ 400 `required`, and `null` / a bool / a fractional float / a list / a non-numeric string ⇒ 400 `invalid`, both on `field: "player"`; a non-object body ⇒ 400 `parse_error`; missing or cross-Account Player ⇒ 404 (`get_owned_or_404`); Unmanaged Team ⇒ 400 `not_eligible` with `NOT_ELIGIBLE_MESSAGE`, nothing written. |
 | DELETE | `accounts/me/self-insert/` | `api_accounts_self_insert` | 204, idempotent; clears a drifted link too. |
 
-`NOT_ELIGIBLE_MESSAGE` lives in `accounts/self_insert.py`; the HTML `self_insert_link` error flash and
-the API `not_eligible` error both import it, so the text is identical on both surfaces.
+`NOT_ELIGIBLE_MESSAGE` lives in `accounts/self_insert.py`; the API `not_eligible` error imports it.
 
-Anonymous calls to everything except register are an enveloped 401 `not_authenticated`. The HTML
-`/accounts/` views are unchanged. Tests: `accounts/tests/test_api_accounts.py`.
+Anonymous calls to everything except register are an enveloped 401 `not_authenticated`.
+Tests: `accounts/tests/test_api_accounts.py`.
 
 **Angular screens (ANG-06 item 7).** The SPA's `/register`, `/account/password` and the Shell
 account menu (My player / Unlink Self-insert) call these endpoints through `AuthService`; see
-[`frontend/CLAUDE.md`](../../frontend/CLAUDE.md). The Django `/accounts/` templates stay until
-ANG-08, and the admin's invite "Sign-up link" still points at Django's `/accounts/register/`.
+[`frontend/CLAUDE.md`](../../frontend/CLAUDE.md).
 
 **CSRF.** DRF's `SessionAuthentication` enforces CSRF only for an *authenticated* session. An
 anonymous register POST therefore needs no token, but a logged-in browser caller (the ANG-04 client)
@@ -336,21 +286,21 @@ no session. Full contract: `docs/agents/matches/api.md` **ANG-03**; decision:
 ## Stamping — where `manager` is set
 
 Every site sets the Manager **at creation** from `request.user` via `manager_or_none(request)`.
-Thirteen sites: `team_create`; `_generate_teams` and `_create_league_and_season`, which each gained
-**one keyword-only `manager: AbstractBaseUser | None = None` parameter appended last** (so all
-existing callers stay source-compatible, and an omitted kwarg leaves the row Unmanaged); the League's
-free-agent pool Team; both `member_night_setup` draw Teams; `tournament_create`'s Tournament and
-`tournament_draw`'s drawn Team; the two sandbox create views' post-hoc `stamp_manager(...)` on the
-`Match` / `GameRound` **returned by** `BatchSimulator`; and the three `Season._build_*`
-embedded-Tournament sites (`manager=self.league.manager`).
+Sites: the API Team create; `teams.services._generate_teams` and
+`matches.league_services.create_league_and_season`, which each take **one keyword-only `manager`
+parameter** (an omitted kwarg leaves the row Unmanaged); the League's free-agent pool Team; both
+`league_play_services.setup_member_night` draw Teams; `tournament_services.create.create_tournament`'s
+Tournament and `tournament_services.draw.run_draw`'s drawn Team; the post-hoc `stamp_manager(...)`
+in `matches.services.create_sandbox_match` / `create_sandbox_round` on the `Match` / `GameRound`
+**returned by** `BatchSimulator`; and the three `Season._build_*` embedded-Tournament sites
+(`manager=self.league.manager`).
 
 **ANG-01a additions.** The roster-import helpers `_check_db_slot_collisions` / `_apply_roster`
 (now in `teams/services.py`) take a **required keyword `manager`**: Teams named in a CSV resolve only
 among the Account's own + Unmanaged Teams, and a miss creates a Team **stamped** with the importer —
 this closed a leak where importing appended to (and echoed player names from) another Account's
-same-named Team. Callers: the HTML `import_roster`, the API `POST /api/teams/import/`, and the
-Tournament participant import. The API `POST /api/teams/` and `POST /api/teams/generate/` stamp the
-same way as their HTML twins.
+same-named Team. Callers: the API `POST /api/teams/import/` and the Tournament participant import.
+The API `POST /api/teams/` and `POST /api/teams/generate/` stamp the same way.
 
 `manager` is deliberately **not** threaded through `BatchSimulator` or `matches/simulation/*` — those
 run in worker processes with no request. Rows they create stay Unmanaged, which is fully accessible.
@@ -412,86 +362,15 @@ not part of it. Exactly four public functions:
 
 | Name | Contract |
 |---|---|
-| `get_self_insert(user) -> Player \| None` | **The drift guard — read-only.** `None` for `None` / anonymous. `None` with **zero queries** when `user.self_insert_id is None` (the column is already on the loaded `User` row, so an unlinked Account's page renders cost nothing extra). Otherwise **one** query: the Player with `select_related("team")`, filtered `team__manager_id=user.pk`. Returns `None` when the link has **drifted** (the Player's Team is now Unmanaged, or another Account's — e.g. the Player moved to the global "Free Agents" Team). **Never writes**: a drifted link stays in the column and silently reappears if ownership returns. Does not touch the `user.self_insert` related-object cache. |
+| `get_self_insert(user) -> Player \| None` | **The drift guard — read-only.** `None` for `None` / anonymous. `None` with **zero queries** when `user.self_insert_id is None` (the column is already on the loaded `User` row, so an unlinked Account costs nothing extra). Otherwise **one** query: the Player with `select_related("team")`, filtered `team__manager_id=user.pk`. Returns `None` when the link has **drifted** (the Player's Team is now Unmanaged, or another Account's — e.g. the Player moved to the global "Free Agents" Team). **Never writes**: a drifted link stays in the column and silently reappears if ownership returns. Does not touch the `user.self_insert` related-object cache. |
 | `is_self_insert_eligible(player, user) -> bool` | **Strict.** True iff `user` is authenticated **and** `player.team.manager_id` is not `None` **and** equals `user.pk`. An **Unmanaged** Team's Players are **not** eligible — readable/writable under the Unmanaged-row rule, but not linkable until `claim_unmanaged` stamps them. The "Free Agents" singleton is never stamped, so its Players are never eligible. |
 | `set_self_insert(user, player) -> None` | Precondition (caller-checked): eligible. One `transaction.atomic()`: (1) **stale-link takeover** — clear any *other* Account's link to this Player (a drifted link elsewhere; the strictly-owning Account wins), run first so the OneToOne unique constraint never fires; (2) set and `save(update_fields=["self_insert"])`. Linking a second Player **replaces** the first; idempotent on the current link. Touches nothing else. |
 | `clear_self_insert(user) -> None` | Sets `None` and saves `update_fields=["self_insert"]`. Clears the raw column even when the link had drifted. |
 
-### Link / unlink views (`accounts/views.py`, `accounts/urls.py`)
-
-Both are **POST-only** (`@require_POST` ⇒ any other method **405**) and are **not**
-`@login_not_required` (see [The global login gate](#the-global-login-gate)). An anonymous POST is
-302'd to `LOGIN_URL` by the middleware.
-
-| URL name | Path | View |
-|---|---|---|
-| `self_insert_link` | `/accounts/self-insert/<int:player_id>/link/` | `self_insert_link(request, player_id)` |
-| `self_insert_unlink` | `/accounts/self-insert/unlink/` | `self_insert_unlink(request)` |
-
-- **`self_insert_link`:** resolves the Player via `get_owned_or_404(Player.objects.select_related("team"), request, pk=...)`
-  — nonexistent or another Account's ⇒ **404, never 403**. Not eligible (now reachable only for an
-  Unmanaged Team) ⇒ error flash *"Only a Player on a Team you manage can be your Self-insert."*, no
-  write. Otherwise `set_self_insert` + success flash *`"<name>" is now your Self-insert.`* Both
-  branches 302 to `next`, falling back to the sandbox `player_detail`.
-- **`self_insert_unlink`:** no link ⇒ info flash *"You have no Self-insert to unlink."* (no write);
-  otherwise `clear_self_insert` + success flash *"Self-insert unlinked."*; 302 to `next`, falling
-  back to `landing`.
-- `next` is honoured only when `url_has_allowed_host_and_scheme` accepts it for the request host
-  (private `_safe_next`); an off-host `next` falls back. Both buttons post
-  `next={{ request.get_full_path }}`, so the round-trip lands back on the page clicked from.
-
-### Context processor (`accounts/context_processors.py`)
-
-`self_insert(request)`, registered **last** in `TEMPLATES[0]["OPTIONS"]["context_processors"]` as
-`"accounts.context_processors.self_insert"` (after `core.context_processors.watch_list`). Returns
-exactly two keys on every request: `self_insert_player` (`get_self_insert(request.user)`) and
-`self_insert_player_id` (its id, or `None`). A request with no `user` attribute (bare
-`RequestFactory()`) or an anonymous one ⇒ both `None`, no query, no exception; a `DatabaseError` is
-swallowed to both `None` (the `core.context_processors` broken-transaction defence).
-
-### The "You" badge (`accounts/templatetags/self_insert_tags.py`)
-
-Library **`self_insert_tags`**, **not a builtin** — every template *and every included partial*
-that uses it must `{% load self_insert_tags %}` itself (`{% load %}` is not inherited from
-`base.html`).
-
-```python
-YOU_BADGE_HTML = '<span class="badge text-bg-primary ms-1 you-badge" title="Your Self-insert">You</span>'
-```
-
-`{% you_badge <player_id> %}` (`simple_tag(takes_context=True)`) renders `mark_safe(YOU_BADGE_HTML)`
-iff the context's `self_insert_player_id` is set and `int(player_id)` equals it (so `"5"` matches
-`5`); otherwise `""` — including a missing context key (`render_to_string` without a request),
-`None`, `""` or a non-int-coercible id. **Never raises.** `YOU_BADGE_HTML` is the exact rendered
-string (tests assert it verbatim); `you-badge` is the CSS hook; no project stylesheet is added.
-Usage: `{{ player.name }}{% you_badge player.id %}` — immediately after the name, and **after the
-closing `</a>`** when the name is a link, so the badge is not link text.
-
-**Coverage rule:** every **server-rendered, visible** Player-name site gets the badge (24 templates
-across the sandbox, League, Season, Round and Tournament pages — see the per-app guides). Excluded
-by rule: `{% block title %}` (no HTML in `<title>`), `<option>` text, the avatar initial, form
-widgets, free-text descriptions (`missile_log.html`), and **every JS-drawn view** (`|escapejs` /
-`json_script` consumers — playback map, heatmap roster, `play_week_live.html`, charts). The PLAY-01
-live-dashboard fragments re-rendered by `matches.league_views._render_live_play_panels` via
-`render_to_string` with no request get `""`, so the badge **disappears from a JS-patched leaders card
-until the page is reloaded** — accepted. Team / League / Season / map / Conference names are not
-Player names.
-
 ### Surfaces
 
-- **Nav — "My player":** `_partials/topnav_auth.html` gains `account-my-player-link`, immediately
-  after `account-signed-in-as`, rendered only when `self_insert_player` is set (hidden when
-  unlinked, drifted or anonymous). It **always** points at the **sandbox** `player_detail`
-  (`/teams/<team_id>/player/<player_id>/`): `get_self_insert` guarantees the Team is strictly owned,
-  so the link can never 404, and that page hosts the Unlink button; a League page would need a
-  `league_id` a Player does not carry.
-- **Buttons on both player detail pages** — the sandbox `teams/player_detail.html` (in the identity
-  card under the Team name) and the League `leagues/player_detail.html` (inside
-  `#league-player-header`, after the "Career stats (global)" link). Same DOM ids on both; neither
-  view changed. If the Player is the current Self-insert ⇒ `self-insert-unlink-form` /
-  `self-insert-unlink-button` (*Unlink*); else if the Player's Team is managed by this Account ⇒
-  `self-insert-link-form` / `self-insert-link-button` (*This is me*); else (Unmanaged) nothing. Both
-  forms are `method="post"` with `{% csrf_token %}` and a hidden `next`.
+Link and unlink go through `PUT` / `DELETE /api/accounts/me/self-insert/` (see
+[Accounts API](#accounts-api-ang-01g-accountsapi_viewspy)); `MeSerializer.self_insert` is the read.
 
 ## Migrations
 
@@ -536,19 +415,16 @@ Six files; only `0004_invite_max_uses_expiry` has a `RunPython`:
 ## Tests
 
 `accounts/tests/` — `test_user_model.py` (`USERNAME_FIELD`, `REQUIRED_FIELDS`, `username is None`,
-email uniqueness, both `UserManager` creators and their `ValueError`s), `test_auth_views.py` (the
-five URL names, templates and DOM ids; the `username`-keyed login POST; anonymous → 302 to
-`LOGIN_URL`; anonymous API → 401 JSON), `test_permissions.py` (every public name in the seam;
-traversal *behaviour*, never `_PARENT_FIELD`; **404 never 403**; the Unmanaged read/write/list rule)
-and `test_claim_unmanaged.py` (the six output lines, the counts, `CommandError`, idempotency), and
-`test_self_insert.py` (**UX-02** — the field, `SET_NULL` on Player and Team delete, OneToOne
-uniqueness; the four `self_insert.py` functions incl. zero queries when unlinked and drift ⇒ `None`
-with the column unchanged; both views' 405 / 302-to-login / 404 / flash / `next` handling; the
-context processor; the `you_badge` tag output; the `account-my-player-link` nav item). Badge and
-button coverage on pages lives in `teams/tests/test_self_insert_badges.py` and
-`matches/tests/test_self_insert_badges.py`.
+email uniqueness, both `UserManager` creators and their `ValueError`s), `test_auth_views.py`
+(anonymous API → 401 JSON envelope, never a 302), `test_permissions.py` (every
+public name in the seam; traversal *behaviour*, never `_PARENT_FIELD`; **404 never 403**; the
+Unmanaged read/write/list rule) and `test_claim_unmanaged.py` (the six output lines, the counts,
+`CommandError`, idempotency), and `test_self_insert.py` (**UX-02** — the field, `SET_NULL` on Player
+and Team delete, OneToOne uniqueness; the four `self_insert.py` functions incl. zero queries when
+unlinked and drift ⇒ `None` with the column unchanged). The gate's own 302 to the Admin login is
+pinned in `core/tests.py` `ServeMediaTests`.
 
-> **Fixture warning (UX-02):** most fixtures create **Unmanaged** Teams. A test expecting a badge or a
+> **Fixture warning (UX-02):** most fixtures create **Unmanaged** Teams. A test expecting a
 > successful link must first set `team.manager = get_shared_manager()` — otherwise `get_self_insert`
 > returns `None` by design.
 

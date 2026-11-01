@@ -1,32 +1,18 @@
 # matches: URLs
 
-Every `/matches/` and `/api/` route in the app.
-Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index there points here.
+Every `matches` route: all of them live under `/api/` (routed in
+`laserforce_simulator/api_urls.py`). Django serves no HTML pages (ADR-0047); the SPA owns every
+other path. The `/api/teams/`, `/api/players/`, `/api/maps/`, `/api/accounts/` and `/api/token/`
+routes are in their apps' docs.
 
 ## URLs
 
 ```
-/matches/                            → match list, create, detail
-/matches/create/                     → create a full 2-round match
-/matches/single-round/create/        → create a standalone game round (always detailed)
-/matches/game-round/<id>/            → detailed round view
-/matches/game-round/<id>/events/     → event timeline/filtering
-/matches/game-round/<id>/events/data/ → JSON {events, playback_map} fetched by the events page (UXP-06)
-/matches/game-round/<id>/missile-log/ → RES-03 missile usage log (URL name "missile_log")
-/matches/game-round/<id>/heatmap/    → RES-04 per-round movement heatmap (URL name "movement_heatmap")
-/matches/game-round/<id>/export/     → RV-03 round report PDF download (URL name "export_round_report")
-/matches/compare/?round_a=&round_b= → RV-01 side-by-side round comparison (URL name "compare_rounds")
-/matches/h2h/?team_a=&team_b=         → HX-03 head-to-head record (URL name "head_to_head")
-/matches/h2h/player/?player_a=&player_b= → HX-04 player head-to-head record (URL name "player_head_to_head")
-/matches/team/<id>/history/          → team win/loss history
-/matches/simulate-batch/             → run N in-memory simulations (enqueues simulate_batch_task; URL name "simulate_batch")
-/matches/simulate-batch/status/<job_id>/ → batch-simulate job status JSON (URL name "batch_simulate_status")
-/matches/save-batch-games/           → enqueue save_games_task for avg/outlier seeds (URL name "save_batch_games")
-/matches/save-batch-status/<job_id>/ → save-job status JSON (URL name "save_batch_status")
-
 /api/matches/                        → MatchViewSet (list, create, detail; filters + ordering)
 /api/rounds/                         → GameRoundViewSet (list, create, detail, actions; filters + ordering)
 /api/rounds/<id>/events/             → paginated, filterable GameEvent list for that round ("gameround-events")
+/api/rounds/<id>/timeline/           → ANG-06e event log timeline ("gameround-timeline")
+/api/rounds/<id>/playback/           → ANG-06f playback snapshots ("gameround-playback")
 /api/rounds/<id>/missile-log/        → ANG-01b RES-03 missile log ("gameround-missile-log")
 /api/rounds/<id>/heatmap/            → ANG-01b RES-04 heatmap data ("gameround-heatmap")
 /api/rounds/<id>/report/             → ANG-01b RV-03 round report PDF, raw ("gameround-report")
@@ -40,6 +26,7 @@ Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index ther
 /api/leagues/<id>/                   → ANG-01d-1 retrieve / DELETE ("league-detail")
 /api/leagues/<id>/delete-summary/    → ANG-06-14 GET delete counts ("league-delete-summary")
 /api/leagues/<id>/nav/               → ANG-06-14 GET League nav context ("league-nav")
+/api/leagues/<id>/play-controls/     → ANG-01d-2 GET Play menu state ("league-play-controls")
 /api/leagues/<id>/dashboard/         → ANG-01d-1 ("league-dashboard")
 /api/leagues/<id>/history/           → ANG-01d-1 paginated history rows ("league-history")
 /api/leagues/<id>/teams/<team_id>/schedule/ → ANG-01d-1 ("league-team-schedule")
@@ -48,12 +35,25 @@ Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index ther
 /api/leagues/<id>/reassign-team/     → ANG-01d-1 POST ("league-reassign-team")
 /api/seasons/                        → ANG-01d-1 SeasonViewSet list ("season-list")
 /api/seasons/<id>/                   → ANG-01d-1 retrieve ("season-detail")
+/api/seasons/<id>/start/             → ANG-01d-2 POST draft -> active ("season-start")
 /api/seasons/<id>/dashboard/         → ANG-01d-1 ("season-dashboard")
 /api/seasons/<id>/standings/         → ANG-01d-1 ?sort=&dir= ("season-standings")
 /api/seasons/<id>/schedule/          → ANG-01d-1 ("season-schedule")
 /api/seasons/<id>/awards/            → ANG-01d-1 ("season-awards")
 /api/seasons/<id>/owner-evaluation/  → ANG-01d-1 ("season-owner-evaluation")
 /api/seasons/<id>/conferences/       → ANG-01d-1 GET / PUT full replace ("season-conferences")
+/api/seasons/<id>/play-single-round/ → ANG-01d-2 POST sync play ("season-play-single-round")
+/api/seasons/<id>/play-week/         → ANG-01d-2 POST sync play ("season-play-week")
+/api/seasons/<id>/play-live/         → ANG-01d-2 POST enqueue One Week (Live) ("season-play-live")
+/api/seasons/<id>/play-two-months/   → ANG-01d-2 POST enqueue ("season-play-two-months")
+/api/seasons/<id>/play-until-end/    → ANG-01d-2 POST enqueue ("season-play-until-end")
+/api/seasons/<id>/play-playoffs/     → ANG-01d-2 POST enqueue ("season-play-playoffs")
+/api/seasons/<id>/play-cancel/       → ANG-01d-2 POST cancel the active play run ("season-play-cancel")
+/api/seasons/<id>/play-jobs/<job_id>/ → ANG-01d-2 GET Job status ("season-play-job")
+/api/seasons/<id>/member-night/      → ANG-01d-2 member-night setup ("season-member-night")
+/api/seasons/<id>/member-night/play/ → ANG-01d-2 POST enqueue ("season-member-night-play")
+/api/seasons/<id>/member-night/play-single/ → ANG-01d-2 POST sync play ("season-member-night-play-single")
+/api/seasons/<id>/member-night/play-live/ → ANG-01d-2 POST enqueue live ("season-member-night-play-live")
 /api/leagues/<id>/watch-list/        → ANG-01e GET rows / DELETE clear ("league-watch-list")
 /api/leagues/<id>/watch-list/<player_id>/ → ANG-01e PUT / DELETE one ("league-watch-player")
 /api/leagues/<id>/player-stats/      → ANG-01e ("league-player-stats")
@@ -87,10 +87,6 @@ Moved verbatim from `laserforce_simulator/matches/CLAUDE.md`; the app index ther
 /api/tournaments/<id>/play-all/      → ANG-01f POST enqueue play-all Job ("tournament-play-all")
 /api/tournaments/<id>/play-jobs/<job_id>/ → ANG-01f GET Job status ("tournament-play-job")
 ```
-
-The sandbox HTML Tournament routes (`/tournaments/…`, `matches/tournament_urls.py`, bare URL names)
-are listed in `tournaments-elimination.md` / `tournaments-rr-swiss-draw.md`; ANG-01f repointed them
-at the `matches/tournament_views/` package with names unchanged.
 
 The `simulate-batch/` extra paths in `api_urls.py` are ordered as above: the save-status path sits
 before `<job_id>/save/` because `simulate-batch/save/save/` matches both patterns.

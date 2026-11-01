@@ -1729,7 +1729,7 @@ class Season(models.Model):
 
         Called from FOUR sites, all with seed-then-continue semantics:
         ``play_playoffs_task``, ``play_season_task``'s ``_drain_one_stage``,
-        ``league_views.play_single_round`` and
+        ``league_play_services.play_single_round`` and
         ``activate_pending_tournament_phase`` (the recovery hook).
 
         IDEMPOTENT: returns the number of brackets seeded THIS call, ``0`` when
@@ -2085,11 +2085,12 @@ class Season(models.Model):
     def build_pending_worlds_bracket(self) -> bool:
         """CONF-04 — build the Worlds bracket when it is ready (ADR-0037).
 
-        The public build seam, called from FIVE hook sites with the same
+        The public build seam, called from these hook sites with the same
         do-it-if-ready semantics CONF-03 gave ``seed_pending_last_chance_brackets``:
         ``play_playoffs_task``, ``play_season_task``'s ``_drain_one_stage``,
-        ``league_views.play_single_round``, ``league_views.play_playoffs`` and
-        ``activate_pending_tournament_phase`` (the recovery hook).
+        ``league_play_services``' ``play_playoffs_run``, ``play_week`` and
+        ``play_single_round``, and ``activate_pending_tournament_phase`` (the
+        recovery hook).
 
         Returns ``True`` IFF it built the bracket on THIS call; ``False`` in
         every other case — no Worlds phase, already built, the Regional-playoff

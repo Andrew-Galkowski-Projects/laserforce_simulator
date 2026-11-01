@@ -1,9 +1,8 @@
-"""ANG-01c — map editor domain services shared by the HTML views and the API.
+"""ANG-01c — map editor domain services behind the API.
 
-Every read / write / compute behind the map editor lives here so the HTML AJAX
-views (``core/views.py``) and ``ArenaMapViewSet`` (``core/api_views.py``) run one
-code path. Every function takes the ``ArenaMap`` instance — the callers do the
-lookup (the HTML views keep their ``get_object_or_404``; the API uses
+Every read / write / compute behind the map editor lives here, called by
+``ArenaMapViewSet`` (``core/api_views.py``). Every function takes the
+``ArenaMap`` instance — the caller does the lookup (the API uses
 ``get_object()``). ArenaMap is shared reference data (ADR-0038): nothing here is
 ownership-filtered except the heatmap's GameRound corpus.
 

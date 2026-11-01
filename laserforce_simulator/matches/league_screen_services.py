@@ -516,7 +516,8 @@ def build_player_stats(
 def _annotate_overall_rating(qs: QuerySet[Player]) -> QuerySet[Player]:
     """Annotate ``overall_rating_db`` (mean of the 19 stats) so the LG-00c
     ``overall_rating`` sort key has an ORM target (mirrors
-    ``teams.views.player_list``, incl. the capital-O ``Offensive_synergy``)."""
+    ``teams.services.annotate_overall_rating``, incl. the capital-O ``Offensive_synergy``).
+    """
     total = F(STAT_FIELDS[0])
     for field in STAT_FIELDS[1:]:
         total = total + F(field)
@@ -1103,7 +1104,7 @@ def build_team_roster(team: Team) -> TeamRoster:
 
 
 # Team History -- moved from ``league_screens/team_history.py`` (LG-01z-e /
-# LG-06c); the HTML view and the API share these.
+# LG-06c); the API reads these.
 
 # Seasons-table sort keys (``record`` sorts on ``wins``).
 TEAM_HISTORY_SEASONS_SORT_KEYS: frozenset[str] = frozenset(

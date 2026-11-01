@@ -913,7 +913,7 @@ class TestAdditiveSignaturePin(TestCase):
 # §11.4 AMENDMENT — Team History counts regional playoffs
 # ===========================================================================
 #
-# ``matches/league_screens/team_history.py`` gains a third ``Q`` term on the
+# ``matches.league_screen_services._team_overall_record`` has a third ``Q`` term on the
 # Overall-tab Round corpus and a two-term ``Q`` OR on ``playoff_appearances``,
 # so a REGIONAL Tournament — linked by the forward ``Tournament.season_phase``
 # FK rather than by the ``season_phases`` reverse manager — is no longer

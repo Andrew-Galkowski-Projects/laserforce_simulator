@@ -77,8 +77,7 @@ LEG_KEYS = {
     "match_id",
 }
 
-# Short simulated rounds keep a played Round robin fast (the
-# ``test_tournament_views`` precedent).
+# Short simulated rounds keep a played Round robin fast.
 _FAST_TICKS = 40
 
 NODE_KEYS = {

@@ -1,4 +1,4 @@
-"""ANG-01f-4 -- Tournament setup writes shared by the HTML views and the API.
+"""ANG-01f-4 -- Tournament setup writes behind the API.
 
 - :class:`SeedsForm` / :func:`apply_seeds` -- a full ``{team_id: seed}`` map
   that must be exactly 1..N over the current participants.

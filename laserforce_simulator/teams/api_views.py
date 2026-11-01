@@ -91,7 +91,7 @@ _SLOT_FIELDS = (
 # `IsAuthenticated` is what actually gates it. The class-level `queryset` stays
 # for the router's basename/model introspection.
 #
-# ANG-01a — writes bind the same Django Forms the HTML views bind (ADR-0039);
+# ANG-01a — writes bind Django Forms (ADR-0039);
 # serializers are output-only. Every write resolves its Team through
 # `get_object()` on the owned queryset, so another Account's Team is a 404.
 # No `update` / `destroy` → PUT / DELETE on a team detail are 405.

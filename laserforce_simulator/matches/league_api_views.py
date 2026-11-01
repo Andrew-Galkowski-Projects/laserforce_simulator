@@ -4,7 +4,7 @@ Follows ADR-0039: one envelope, Form-bound writes, output-only serializers,
 views RAISE (never hand-build a 4xx ``Response``). Every League / Season /
 Team row resolves through ``owned_queryset`` / ``get_owned_or_404``, so a
 cross-Account row is a 404 and an anonymous request is DRF's 401. All
-computation is shared with the HTML views via ``matches.league_services``; the
+computation lives in ``matches.league_services``; the
 API never reads or writes ``request.session["last_league_id"]``.
 
 The play loop (start season, play week / months / playoffs, job status + cancel,
@@ -499,8 +499,8 @@ class LeagueViewSet(
         """The League dashboard body for its displayed Season.
 
         ANG-06-14 B5 adds five keys beside the shared body: ``mode``,
-        ``managed_team`` (career Leagues only, the ``managed_team_id`` rule the
-        HTML dashboard uses), ``has_owner_evaluations``, ``member_night_progress``
+        ``managed_team`` (career Leagues only, the ``managed_team_id`` rule),
+        ``has_owner_evaluations``, ``member_night_progress``
         and ``manager_awaiting_reassignment``. All but ``member_night_progress``
         are League-only: since ANG-06-18 the Season dashboard returns
         ``member_night_progress`` too.
@@ -534,8 +534,8 @@ class LeagueViewSet(
     def play_controls(self, request: Request, pk: str | None = None) -> Response:
         """The structured play controls for the League's displayed Season.
 
-        ANG-06-19 adds ``displayed_season`` here, not in ``build_play_controls``:
-        the HTML nav context merges every key of that helper.
+        ANG-06-19 adds ``displayed_season`` here, not in ``build_play_controls``
+        (the deleted HTML nav context merged every key of that helper).
         """
         league = self.get_object()
         displayed_season = pick_displayed_season(league)

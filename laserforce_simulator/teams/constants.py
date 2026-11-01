@@ -402,8 +402,8 @@ PLAYER_NAMES: list[str] = [
     "♥Sabo♥ didi hi",
 ]
 
-# LG-00 — themed laser-tag team names used by `teams.views.generate_players`.
-# Pure data; consumed by the view (NOT by the pure `player_generator` module).
+# LG-00 — themed laser-tag team names used by Team generation in `teams.services`.
+# Pure data; consumed by the service (NOT by the pure `player_generator` module).
 # Length must stay 30–50 and entries must be unique non-empty strings.
 TEAM_NAMES: tuple[str, ...] = (
     "Red Phoenix",

@@ -2,8 +2,8 @@
 
 Pure Python — no Django imports, no ORM, no I/O, no global RNG state.
 The RNG is INJECTED by the caller; this module never seeds `random` and never
-calls module-level `random.*` functions. The companion view in `teams/views.py`
-owns all Django-facing concerns (form, transaction, ORM writes).
+calls module-level `random.*` functions. The companion `teams/services.py`
+owns all Django-facing concerns (transaction, ORM writes).
 
 Public surface (frozen by the LG-00 seam contract):
 

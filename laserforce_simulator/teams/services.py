@@ -1,10 +1,9 @@
-"""ANG-01a — Team/Player write services shared by the HTML views and the REST API.
+"""ANG-01a — Team/Player write services behind the REST API.
 
 The post-validation halves of LG-00 generation and LG-00b roster import live
-here so ``teams.views`` (HTML) and ``teams.api_views`` (REST) run the exact
-same code path. The generation / roster helpers moved here from
-``teams.views`` (which re-exports them for existing importers) to avoid a
-views <-> services import cycle.
+here, called by ``teams.api_views`` and by the League / Tournament services.
+The generation / roster helpers moved here from the HTML ``teams.views``
+(deleted in ANG-08).
 """
 
 from __future__ import annotations
@@ -62,8 +61,8 @@ def player_form_initial() -> dict[str, object]:
 
     The form's own field initials (the 19 stat defaults of 50, from the model)
     plus one ``_random_player_profile()`` draw (name, age, started_playing_age,
-    total_games, home_site, height). The HTML ``player_add`` GET and the API
-    add-player defaults both use this, so they agree on every omitted field.
+    total_games, home_site, height). The API add-player defaults use this for
+    every omitted field.
     """
     return {
         **{
@@ -142,8 +141,7 @@ def _coerce_sort(raw: str | None, default: str = "team") -> str:
 
     Accepted: every key in ``PLAYER_SORT_KEYS`` plus the literal
     ``"preferred_roles"`` sentinel (handled Python-side by each caller).
-    Moved here from ``teams.views`` (ANG-08 D1): the League screens still
-    import it until their own deletion.
+    Moved here from ``teams.views`` (ANG-08 D1).
     """
     if raw in PLAYER_SORT_KEYS or raw == "preferred_roles":
         return raw
@@ -918,7 +916,7 @@ def build_career_stats(
     display: str,
     user: "AbstractBaseUser | None",
 ) -> dict:
-    """HX-01 + HX-02 career payload for one Player (the HTML context minus ``player``).
+    """HX-01 + HX-02 career payload for one Player (``player`` excluded).
 
     Aggregates every ``PlayerRoundState`` for the player into career totals,
     the per-role breakdown and the rolling-mean trend, then overlays the
@@ -969,7 +967,7 @@ def build_career_stats(
 def build_role_benchmarks(
     *, min_rounds: int, display: str, user: "AbstractBaseUser | None"
 ) -> dict:
-    """HX-02 role benchmarks payload (the HTML context, verbatim).
+    """HX-02 role benchmarks payload.
 
     UXP-14: scoped to the Rounds ``user`` may see -- its own plus Unmanaged
     (ADR-0038), never another Account's. ``benchmarks_by_role`` is a

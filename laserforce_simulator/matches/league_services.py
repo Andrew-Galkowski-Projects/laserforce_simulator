@@ -74,8 +74,7 @@ if TYPE_CHECKING:
 
 
 # ---------------------------------------------------------------------------
-# ANG-01d-1 — domain exceptions (the API maps them to 409 APIExceptions; the
-# HTML views map them to their existing redirect / 400 responses).
+# ANG-01d-1 — domain exceptions (the API maps them to 409 APIExceptions).
 # ---------------------------------------------------------------------------
 
 

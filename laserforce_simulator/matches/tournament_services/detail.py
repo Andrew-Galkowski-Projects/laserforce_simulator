@@ -2,8 +2,8 @@
 
 The bracket rounds, Series games, round-robin crosstable, Swiss rounds, stage
 and RR->DE cut labels behind the Tournament detail page, moved out of the view
-layer (ANG-01f-1) so the HTML views, the League playoffs screen and the API all
-build them from one place. This module imports no view module.
+layer (ANG-01f-1) so the League playoffs screen and the API build them from
+one place. This module imports no view module.
 """
 
 from dataclasses import asdict
