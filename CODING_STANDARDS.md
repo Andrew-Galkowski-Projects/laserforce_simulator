@@ -84,6 +84,7 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 
 - Each new public function has a happy-path test and an edge-case or failure test.
 - A bug fix has a regression test that fails without the fix.
+- A failure path driven by a fake also gets one test that triggers the real failure (a corrupt file, a closed port). Flag a failure path tested only through a fake that raises cleanly: DESK-01's fake `migrate()` did, and a real corrupt `db.sqlite3` left an open sqlite3 handle that Windows refused to move.
 - A filter or guard that ANDs conditions gets one fixture per condition that fails only that condition (ANG-06-14's `simulation_ready` had a red-only map and no blue-only one, so dropping the red-base check survived).
 - Tests go through public seams with real in-memory objects or Django `TestCase`. Flag a test that only checks that a mock returned what it was told to return.
 - Simulation tests use a fixed seed or injected deterministic stats. Flag an exact point-total assertion on an unseeded run.
