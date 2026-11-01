@@ -637,15 +637,14 @@ class TestTeamImport(_ApiTestCase):
 
 
 class TestImportTemplate(_ApiTestCase):
-    def test_template_byte_identical_to_html(self) -> None:
+    def test_template_is_the_service_csv_as_a_download(self) -> None:
+        # ANG-08 D1: was "byte-identical to the HTML download"; that view is gone.
+        from teams.services import build_roster_template_csv
+
         api_resp = self.api.get("/api/teams/import/template/")
-        html_resp = self.client.get(reverse("import_roster_template"))
         self.assertEqual(api_resp.status_code, 200)
-        self.assertEqual(api_resp.content, html_resp.content)
-        self.assertEqual(api_resp["Content-Type"], html_resp["Content-Type"])
-        self.assertEqual(
-            api_resp["Content-Disposition"], html_resp["Content-Disposition"]
-        )
+        self.assertEqual(api_resp.content.decode("utf-8"), build_roster_template_csv())
+        self.assertTrue(api_resp["Content-Type"].startswith("text/csv"))
         self.assertEqual(
             api_resp["Content-Disposition"],
             'attachment; filename="roster_template.csv"',

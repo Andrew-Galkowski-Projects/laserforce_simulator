@@ -340,8 +340,8 @@ class TestMapsOriginalImage(TempMediaMixin, TestCase):
 
 
 class TestMapsListSeedsDefaults(TempMediaMixin, TestCase):
-    """ANG-06h -- a fresh database lists the default maps through the API,
-    without first visiting the HTML ``/maps/`` list."""
+    """ANG-06h -- a fresh database lists the default maps through the API
+    (the HTML ``/maps/`` list that used to seed them went in ANG-08 D1)."""
 
     def test_empty_db_list_returns_the_defaults(self) -> None:
         api = APIClient()
@@ -353,11 +353,6 @@ class TestMapsListSeedsDefaults(TempMediaMixin, TestCase):
         )
         self.assertTrue(all(row["is_default"] for row in body["data"]))
         self.assertEqual(body["meta"]["count"], 2)
-
-    def test_html_list_on_empty_db_still_seeds(self) -> None:
-        self.client.force_login(get_shared_manager())
-        self.client.get("/maps/")
-        self.assertEqual(ArenaMap.objects.filter(is_default=True).count(), 2)
 
     def test_anonymous_list_seeds_nothing(self) -> None:
         response = APIClient().get("/api/maps/")

@@ -104,18 +104,6 @@ LEAGUE_SCOPED_URL_NAMES = {
     "coming_soon_prospects": "players_prospects",
     "coming_soon_hall_of_fame": "players_hall_of_fame",
 }
-HELP_TOOLS_URL_NAMES = {
-    "coming_soon_help_overview": "help_overview",
-    "coming_soon_help_changes": "help_changes",
-    "coming_soon_help_custom_rosters": "help_custom_rosters",
-    "coming_soon_help_debugging": "help_debugging",
-    "coming_soon_help_lol_gm_forums": "help_lol_gm_forums",
-    "coming_soon_help_zen_gm_forums": "help_zen_gm_forums",
-    "coming_soon_tools_achievements": "tools_achievements",
-    "coming_soon_tools_screenshot": "tools_screenshot",
-    "coming_soon_tools_debug_mode": "tools_debug_mode",
-    "coming_soon_tools_reset_db": "tools_reset_db",
-}
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +114,8 @@ HELP_TOOLS_URL_NAMES = {
 class TestComingSoonRouting(TestCase):
     """200 on every still-placeholder URL name; 405 on POST; 404 on stale
     ``league_id``; 404 on unknown ``feature_key``; sidebar rendered in
-    league branch; sidebar empty in Help / Tools branch; ``feature_label``
-    in the ``<h1>``; ``"Coming soon"`` substring; locked context keys;
-    ``app_mode`` matches the URL-prefix rule.
+    league branch; ``feature_label`` in the ``<h1>``; ``"Coming soon"``
+    substring; locked context keys; ``app_mode`` matches the URL-prefix rule.
     """
 
     @classmethod
@@ -146,43 +133,14 @@ class TestComingSoonRouting(TestCase):
                 response = self.client.get(url)
                 self.assertEqual(response.status_code, 200, f"{url_name} not 200")
 
-    def test_every_help_url_returns_200(self) -> None:
-        for url_name in (
-            "coming_soon_help_overview",
-            "coming_soon_help_changes",
-            "coming_soon_help_custom_rosters",
-            "coming_soon_help_debugging",
-            "coming_soon_help_lol_gm_forums",
-            "coming_soon_help_zen_gm_forums",
-        ):
-            with self.subTest(url_name=url_name):
-                response = self.client.get(reverse(url_name))
-                self.assertEqual(response.status_code, 200)
-
-    def test_every_tools_url_returns_200(self) -> None:
-        for url_name in (
-            "coming_soon_tools_achievements",
-            "coming_soon_tools_screenshot",
-            "coming_soon_tools_debug_mode",
-            "coming_soon_tools_reset_db",
-        ):
-            with self.subTest(url_name=url_name):
-                response = self.client.get(reverse(url_name))
-                self.assertEqual(response.status_code, 200)
+    # ANG-08 D1: the /help/ and /tools/ routes are deleted; only the
+    # League-scoped "Soon" routes still reach `coming_soon` (until D3).
 
     # -- 405 on POST ---------------------------------------------------------
 
     def test_post_returns_405_on_league_scoped_route(self) -> None:
         url = reverse("coming_soon_trade", kwargs={"league_id": self.league.id})
         response = self.client.post(url)
-        self.assertEqual(response.status_code, 405)
-
-    def test_post_returns_405_on_help_route(self) -> None:
-        response = self.client.post(reverse("coming_soon_help_overview"))
-        self.assertEqual(response.status_code, 405)
-
-    def test_post_returns_405_on_tools_route(self) -> None:
-        response = self.client.post(reverse("coming_soon_tools_achievements"))
         self.assertEqual(response.status_code, 405)
 
     # -- 404 on stale league_id ---------------------------------------------
@@ -211,14 +169,6 @@ class TestComingSoonRouting(TestCase):
         response = self.client.get(url)
         self.assertContains(response, 'id="league-sidebar"')
 
-    def test_sidebar_partial_not_rendered_in_help_branch(self) -> None:
-        response = self.client.get(reverse("coming_soon_help_overview"))
-        self.assertNotContains(response, 'id="league-sidebar"')
-
-    def test_sidebar_partial_not_rendered_in_tools_branch(self) -> None:
-        response = self.client.get(reverse("coming_soon_tools_achievements"))
-        self.assertNotContains(response, 'id="league-sidebar"')
-
     # -- feature_label injected into the <h1> -------------------------------
 
     def test_feature_label_in_h1_for_league_scoped(self) -> None:
@@ -227,20 +177,11 @@ class TestComingSoonRouting(TestCase):
         self.assertIn("Trade", response.content.decode())
         self.assertContains(response, 'id="coming-soon-header"')
 
-    def test_feature_label_in_h1_for_help_overview(self) -> None:
-        response = self.client.get(reverse("coming_soon_help_overview"))
-        self.assertIn("Overview", response.content.decode())
-
     # -- "Coming soon" substring --------------------------------------------
 
     def test_coming_soon_message_substring_present_league(self) -> None:
         url = reverse("coming_soon_trade", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
-        self.assertContains(response, 'id="coming-soon-message"')
-        self.assertIn("Coming soon", response.content.decode())
-
-    def test_coming_soon_message_substring_present_help(self) -> None:
-        response = self.client.get(reverse("coming_soon_help_overview"))
         self.assertContains(response, 'id="coming-soon-message"')
         self.assertIn("Coming soon", response.content.decode())
 
@@ -254,10 +195,6 @@ class TestComingSoonRouting(TestCase):
         self.assertNotIn("Blocked:", response.content.decode())
         # Nor the internal feature key.
         self.assertNotContains(response, "players_trade")
-
-    def test_no_blocker_note_for_help_screen(self) -> None:
-        response = self.client.get(reverse("coming_soon_help_overview"))
-        self.assertNotContains(response, 'id="coming-soon-blocker"')
 
     # -- Locked 7 context keys present (+ global app_mode) ------------------
 
@@ -278,37 +215,12 @@ class TestComingSoonRouting(TestCase):
             self.assertIn(key, ctx, f"missing context key {key!r}")
         self.assertIn("app_mode", ctx)
 
-    def test_locked_context_keys_present_help_branch(self) -> None:
-        response = self.client.get(reverse("coming_soon_help_overview"))
-        ctx = response.context
-        for key in (
-            "league",
-            "displayed_season",
-            "feature_key",
-            "feature_label",
-            "feature_section",
-            "blocker",
-            "sidebar_links",
-            "sidebar_active",
-        ):
-            self.assertIn(key, ctx, f"missing context key {key!r}")
-        self.assertIsNone(ctx["league"])
-        self.assertEqual(ctx["sidebar_links"], [])
-
     # -- app_mode matches the URL-prefix rule -------------------------------
 
     def test_app_mode_is_league_on_league_scoped_route(self) -> None:
         url = reverse("coming_soon_trade", kwargs={"league_id": self.league.id})
         response = self.client.get(url)
         self.assertEqual(response.context["app_mode"], "league")
-
-    def test_app_mode_is_sandbox_on_help_route(self) -> None:
-        response = self.client.get(reverse("coming_soon_help_overview"))
-        self.assertEqual(response.context["app_mode"], "sandbox")
-
-    def test_app_mode_is_sandbox_on_tools_route(self) -> None:
-        response = self.client.get(reverse("coming_soon_tools_achievements"))
-        self.assertEqual(response.context["app_mode"], "sandbox")
 
 
 # ---------------------------------------------------------------------------
@@ -465,9 +377,8 @@ class TestComingSoonFeatureRegistry(TestCase):
 
 
 class TestComingSoonSessionWrite(TestCase):
-    """GET on a league-scoped placeholder writes ``last_league_id``;
-    GET on Help / Tools does NOT.
-    """
+    """GET on a league-scoped placeholder writes ``last_league_id`` (the
+    Help / Tools cases went with their routes in ANG-08 D1)."""
 
     def test_league_scoped_get_writes_last_league_id(self) -> None:
         league = _make_league("SessWriteL")
@@ -486,11 +397,3 @@ class TestComingSoonSessionWrite(TestCase):
         url = reverse("coming_soon_trade", kwargs={"league_id": league.id})
         self.client.get(url)
         self.assertEqual(self.client.session.get("last_league_id"), league.id)
-
-    def test_help_get_does_not_write_last_league_id(self) -> None:
-        self.client.get(reverse("coming_soon_help_overview"))
-        self.assertNotIn("last_league_id", self.client.session)
-
-    def test_tools_get_does_not_write_last_league_id(self) -> None:
-        self.client.get(reverse("coming_soon_tools_achievements"))
-        self.assertNotIn("last_league_id", self.client.session)

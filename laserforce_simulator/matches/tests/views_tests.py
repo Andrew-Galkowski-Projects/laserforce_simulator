@@ -3065,22 +3065,6 @@ class TestHx04PlayerHeadToHead(_TestCase):
 
     # ------------------------------------------------------------------ §12 career-page anchor
 
-    def test_career_page_renders_player_h2h_link_anchor_with_player_a_prefilled(
-        self,
-    ):
-        """The HX-01 ``/players/<id>/stats/`` page renders a
-        ``player-h2h-link`` anchor whose href carries
-        ``player_a={{ player_a.id }}``."""
-        _team_a, players_a, _team_b, _ = self._make_two_teams()
-        player_a = players_a["commander"]
-        response = self.client.get(
-            reverse("player_career_stats", kwargs={"player_id": player_a.id})
-        )
-        self.assertEqual(response.status_code, 200)
-        body = response.content.decode("utf-8")
-        self.assertIn("player-h2h-link", body)
-        self.assertIn(f"player_a={player_a.id}", body)
-
     # ------------------------------------------------------------------ §13 standalone match_id
 
     def test_match_id_none_for_standalone_rounds_in_seam_dicts(self):

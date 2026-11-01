@@ -21,13 +21,9 @@ from django.urls import URLPattern, URLResolver, get_resolver
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.settings import api_settings
 
+# ANG-08 D1: the Admin login is the only Django login page left (ADR-0047).
 HTML_EXEMPT_VIEWS = {
     "django.contrib.admin.sites.login",
-    "django.contrib.auth.views.LoginView",
-    "django.contrib.auth.views.LogoutView",
-    "django.contrib.auth.views.PasswordChangeView",
-    "django.contrib.auth.views.PasswordChangeDoneView",
-    "accounts.views.register",
 }
 
 ANONYMOUS_API_VIEWS = {

@@ -10,7 +10,6 @@ Pins (cache layer only — ORM-materialisation tests live in
 - The ``BatchSimulator._flush_to_db`` chokepoint calls it too (the
   ``bulk_create`` path skips post_save, so the explicit hook is
   necessary).
-- A stale read after a mutation reflects the new data end-to-end.
 - ``compute_benchmarks_uncached`` is called exactly once per version on
   consecutive ``get_all_benchmark_data()`` calls — the cache absorbs the
   second probe.
@@ -25,7 +24,6 @@ from unittest import mock
 
 from django.core.cache import cache
 from django.test import TestCase, override_settings
-from django.urls import reverse
 
 from matches.models import GameRound, PlayerRoundState
 from teams.models import Player, Team
@@ -217,62 +215,8 @@ class TestSimulatorHook(TestCase):
         self.assertGreater(after, before)
 
 
-# ---------------------------------------------------------------------------
-# End-to-end stale-read invalidation
-# ---------------------------------------------------------------------------
-
-
-@override_settings(
-    CACHES={
-        "default": {
-            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
-            "LOCATION": "hx02-test-cache-stale",
-        }
-    }
-)
-class TestStaleReadInvalidated(TestCase):
-    """View call → cache primed → mutate row → next view call reflects it."""
-
-    def setUp(self) -> None:
-        cache.clear()
-
-    def test_mutation_reflected_in_next_view_call(self) -> None:
-        team, player = _make_player("Stale Team", "Stale Player")
-        with self.captureOnCommitCallbacks(execute=True):
-            _make_round_state(player, team, role="commander", points_scored=1000)
-
-        url = reverse("role_benchmarks")
-        first = self.client.get(url + "?threshold=0")
-        self.assertEqual(first.status_code, 200)
-        first_benchmarks = first.context["benchmarks"]
-        first_mean = next(
-            row["mean"]
-            for row in first_benchmarks["commander"]
-            if row["stat"] == "points_scored"
-        )
-        # Single 1000-point round → mean of one-player population = 1000.
-        self.assertAlmostEqual(first_mean, 1000.0)
-
-        # Mutate: add a second round with 3000 points. Wrap the write in
-        # captureOnCommitCallbacks(execute=True) so the deferred
-        # invalidate_role_benchmarks() fires inside the TestCase atomic
-        # block (otherwise the on_commit callback never runs).
-        with self.captureOnCommitCallbacks(execute=True):
-            _make_round_state(player, team, role="commander", points_scored=3000)
-
-        second = self.client.get(url + "?threshold=0")
-        self.assertEqual(second.status_code, 200)
-        second_mean = next(
-            row["mean"]
-            for row in second.context["benchmarks"]["commander"]
-            if row["stat"] == "points_scored"
-        )
-        # Player's career-mean is (1000+3000)/2 = 2000 — population
-        # contains exactly one player with career-mean 2000.
-        self.assertAlmostEqual(second_mean, 2000.0)
-        # And explicitly NOT the stale 1000 (would indicate caching skipped
-        # the invalidation).
-        self.assertNotAlmostEqual(second_mean, 1000.0)
+# The end-to-end stale-read case (``TestStaleReadInvalidated``) went with the
+# ``role_benchmarks`` HTML view (ANG-08 D1); its port is in ``test_api_career.py``.
 
 
 # ---------------------------------------------------------------------------

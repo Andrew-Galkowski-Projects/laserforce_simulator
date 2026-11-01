@@ -57,7 +57,8 @@
                                 <td class="text-end">{{ row.rank }}</td>
                                 <td>
                                     {% if team %}
-                                        <a href="{% url 'team_detail' team.id %}">{{ row.team_name }}</a>
+                                        {# ANG-08 D3: literal path, `team_detail` is deleted (D1). #}
+                                        <a href="/teams/{{ team.id }}/">{{ row.team_name }}</a>
                                     {% else %}
                                         {{ row.team_name }}
                                     {% endif %}

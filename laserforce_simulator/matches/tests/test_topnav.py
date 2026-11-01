@@ -24,127 +24,35 @@ RETIRED_LG01H_LEAGUE_IDS = (
     "league-power-rankings-topbar-link",
 )
 
-# ---------------------------------------------------------------------------
-# Locked Tools / Help dropdown child ids (LG-01h, preserved verbatim)
-# ---------------------------------------------------------------------------
 
-TOOLS_CHILD_IDS = (
-    "tools-achievements-topbar-link",
-    "tools-screenshot-topbar-link",
-    "tools-debug-mode-topbar-link",
-    "tools-reset-db-topbar-link",
-)
-
-HELP_CHILD_IDS = (
-    "help-overview-topbar-link",
-    "help-changes-topbar-link",
-    "help-custom-rosters-topbar-link",
-    "help-debugging-topbar-link",
-    "help-lol-gm-forums-topbar-link",
-    "help-zen-gm-forums-topbar-link",
-)
-
-# ---------------------------------------------------------------------------
-# UX-01 -- locked top-nav auth-control ids (seam contract section 9.6).
-#
-# ``_partials/topnav_auth.html`` is included from ``base.html`` ONCE, after the
-# ``app_mode`` branch block, so it must render in ALL THREE nav modes.
-# ---------------------------------------------------------------------------
-
-AUTH_CONTROL_AUTHENTICATED_IDS = (
-    "account-nav-link",
-    "account-signed-in-as",
-    "account-password-change-link",
-    "account-sign-out-form",
-    "account-sign-out-button",
-)
-
-AUTH_CONTROL_ANONYMOUS_IDS = (
-    "account-sign-in-link",
-    "account-register-link",
-)
-
-
-# ---------------------------------------------------------------------------
-# TestLg01kStartModeTopbar
-# ---------------------------------------------------------------------------
-
-
-class TestLg01kStartModeTopbar(TestCase):
-    """GET ``/`` (the LG-01a landing) renders the minimum-viable topnav:
-    only ``Tools ▾`` + ``Help ▾``. No Dashboard icon, no section
-    dropdowns, no flat sandbox links.
-    """
-
-    def test_start_mode_renders_only_tools_and_help(self) -> None:
-        response = self.client.get("/")
-        self.assertEqual(response.status_code, 200)
-        # Sanity: we ARE on the LG-01a landing.
-        self.assertContains(response, 'id="mode-picker"')
-        # Universal Tools / Help toggles present.
-        self.assertContains(response, 'id="tools-nav-link"')
-        self.assertContains(response, 'id="help-nav-link"')
-        # Every league-mode-only DOM id is ABSENT.
-        for dom_id in (
-            "dashboard-nav-link",
-            "league-nav-link",
-            "team-nav-link",
-            "players-nav-link",
-            "stats-nav-link",
-        ):
-            self.assertNotContains(response, f'id="{dom_id}"')
-        # Sandbox-mode-only DOM id is ABSENT.
-        self.assertNotContains(response, 'id="player-list-nav-link"')
-        # The retired LG-01h League toggle id is ABSENT.
-        self.assertNotContains(response, 'id="leagues-nav-link"')
-        # The flat sandbox link anchors must not appear in the navbar.
-        # ``href="/teams/"`` rendered as a ``nav-link`` is the canonical
-        # marker for the sandbox Teams anchor. The LG-01a landing template
-        # may render the literal ``Sandbox`` mode-card title in body text
-        # (which contains the substring "Teams"-adjacent labelling), so
-        # we scope the assertion to the exact navbar anchor markup.
-        body = response.content.decode()
-        self.assertNotIn(
-            f'<a class="nav-link" href="{reverse("team_list")}">',
-            body,
-        )
-
-    def test_start_mode_tools_dropdown_items_present(self) -> None:
-        response = self.client.get("/")
-        for dom_id in TOOLS_CHILD_IDS:
-            self.assertContains(response, f'id="{dom_id}"')
-
-    def test_start_mode_help_dropdown_items_present(self) -> None:
-        response = self.client.get("/")
-        for dom_id in HELP_CHILD_IDS:
-            self.assertContains(response, f'id="{dom_id}"')
+# The LG-01k start-mode (landing ``/``) top-bar tests went with the landing
+# page (ANG-08 D1).
 
 
 # ---------------------------------------------------------------------------
 # TestLg01kSandboxModeTopbar
 # ---------------------------------------------------------------------------
 
+# ANG-08 D1: the Teams / Players / Maps URL names are deleted, so base.html
+# renders their links as literal paths until it goes in D3.
+SANDBOX_PAGE = "/matches/"
+
 
 class TestLg01kSandboxModeTopbar(TestCase):
-    """GET ``/teams/`` (sandbox mode) renders the 6 flat sandbox anchors
+    """GET ``/matches/`` (sandbox mode) renders the 6 flat sandbox anchors
     plus ``Tools ▾`` + ``Help ▾``. NO ``League ▾`` dropdown anywhere.
     """
 
     def test_sandbox_mode_renders_6_flat_links(self) -> None:
-        response = self.client.get("/teams/")
+        response = self.client.get(SANDBOX_PAGE)
         self.assertEqual(response.status_code, 200)
         body = response.content.decode()
         # The 6 flat sandbox link anchors (scope to the exact navbar
         # anchor markup so sidebar / page-body labels cannot
         # false-positive).
+        self.assertIn('<a class="nav-link" href="/teams/">', body)
         self.assertIn(
-            f'<a class="nav-link" href="{reverse("team_list")}">',
-            body,
-        )
-        self.assertIn(
-            f'<a class="nav-link" id="player-list-nav-link" '
-            f'href="{reverse("player_list")}">',
-            body,
+            '<a class="nav-link" id="player-list-nav-link" href="/players/">', body
         )
         self.assertIn(
             f'<a class="nav-link" href="{reverse("match_list")}">',
@@ -154,14 +62,8 @@ class TestLg01kSandboxModeTopbar(TestCase):
             f'<a class="nav-link" href="{reverse("simulate_batch")}">',
             body,
         )
-        self.assertIn(
-            f'<a class="nav-link" href="{reverse("team_create")}">',
-            body,
-        )
-        self.assertIn(
-            f'<a class="nav-link" href="{reverse("map_list")}">',
-            body,
-        )
+        self.assertIn('<a class="nav-link" href="/teams/create/">', body)
+        self.assertIn('<a class="nav-link" href="/maps/">', body)
         # Players link DOM id preserved from LG-01a.
         self.assertContains(response, 'id="player-list-nav-link"')
         # Tools / Help toggles present.
@@ -183,7 +85,7 @@ class TestLg01kSandboxModeTopbar(TestCase):
         """LG-01k swaps the LG-01h Help-then-Tools order to
         Tools-then-Help across all 3 modes.
         """
-        response = self.client.get("/teams/")
+        response = self.client.get(SANDBOX_PAGE)
         body = response.content.decode()
         tools_idx = body.find('id="tools-nav-link"')
         help_idx = body.find('id="help-nav-link"')
@@ -199,7 +101,8 @@ class TestLg01kSandboxModeTopbar(TestCase):
         """The LG-01h ``League ▾`` dropdown is removed from sandbox mode
         entirely — the U+25BE toggle text must not appear.
         """
-        response = self.client.get("/teams/")
+        response = self.client.get(SANDBOX_PAGE)
+        self.assertEqual(response.status_code, 200)
         body = response.content.decode()
         self.assertNotIn(
             "League ▾",
@@ -301,11 +204,11 @@ class TestLg01kLeagueModeTopbar(TestCase):
         navbar_slice = body[start_idx:slice_end]
         # Every sandbox flat-anchor marker absent from the navbar slice.
         for anchor in (
-            f'<a class="nav-link" href="{reverse("team_list")}">',
+            '<a class="nav-link" href="/teams/">',
             f'<a class="nav-link" href="{reverse("match_list")}">',
             f'<a class="nav-link" href="{reverse("simulate_batch")}">',
-            f'<a class="nav-link" href="{reverse("team_create")}">',
-            f'<a class="nav-link" href="{reverse("map_list")}">',
+            '<a class="nav-link" href="/teams/create/">',
+            '<a class="nav-link" href="/maps/">',
         ):
             self.assertNotIn(
                 anchor,
@@ -516,109 +419,6 @@ class TestAppModeContextProcessor(TestCase):
         self.assertEqual(result, {"app_mode": "sandbox"})
 
 
-# ---------------------------------------------------------------------------
-# UX-01 -- the top-nav auth control across all three nav modes
-# ---------------------------------------------------------------------------
-
-
-class TestUx01TopnavAuthControl(TestCase):
-    """UX-01 (contract section 9.6) -- ``_partials/topnav_auth.html``.
-
-    ``base.html`` includes the partial once, *after* the ``app_mode`` branch
-    block and *before* the closing ``</div>`` of ``navbar-nav ms-auto``, so the
-    control renders in start, sandbox AND league mode, at the far right.
-
-    The project's autouse ``force_login_shared_manager`` fixture logs this
-    ``TestCase`` in, so the authenticated branch is the default; the anonymous
-    branch is reached by an explicit ``self.client.logout()``.
-    """
-
-    @classmethod
-    def setUpTestData(cls) -> None:
-        cls.league = League.objects.create(
-            name="Ux01AuthControl", mode="league", state="active"
-        )
-        cls.season = Season.objects.create(
-            league=cls.league,
-            name="S1",
-            start_date=date(2025, 1, 1),
-            state="active",
-            schedule_format="single_round_robin",
-            starting_team_ids_json=[],
-        )
-
-    def _mode_urls(self) -> dict[str, str]:
-        return {
-            "start": "/",
-            "sandbox": reverse("team_list"),
-            "league": f"/leagues/{self.league.id}/",
-        }
-
-    def test_authenticated_control_renders_in_all_three_modes(self) -> None:
-        for mode, url in self._mode_urls().items():
-            response = self.client.get(url)
-            self.assertEqual(response.status_code, 200, mode)
-            for dom_id in AUTH_CONTROL_AUTHENTICATED_IDS:
-                with self.subTest(mode=mode, dom_id=dom_id):
-                    self.assertContains(response, f'id="{dom_id}"')
-
-    def test_anonymous_ids_absent_while_signed_in(self) -> None:
-        for mode, url in self._mode_urls().items():
-            response = self.client.get(url)
-            for dom_id in AUTH_CONTROL_ANONYMOUS_IDS:
-                with self.subTest(mode=mode, dom_id=dom_id):
-                    self.assertNotContains(response, f'id="{dom_id}"')
-
-    def test_sign_out_is_a_post_form_not_an_anchor(self) -> None:
-        """Locked: Django 5.x ``LogoutView`` rejects GET, so a link would 405."""
-        body = self.client.get("/").content.decode()
-        self.assertIn('id="account-sign-out-form"', body)
-        self.assertIn('method="post"', body)
-        self.assertNotIn(f'<a href="{reverse("logout")}"', body)
-
-    def test_sign_out_form_posts_to_the_logout_url(self) -> None:
-        body = self.client.get("/").content.decode()
-        self.assertIn(f'action="{reverse("logout")}"', body)
-
-    def test_password_change_link_targets_the_password_change_url(self) -> None:
-        body = self.client.get("/").content.decode()
-        self.assertIn(f'href="{reverse("password_change")}"', body)
-
-    def test_anonymous_branch_renders_on_an_exempt_page(self) -> None:
-        self.client.logout()
-        response = self.client.get(reverse("login"))
-        self.assertEqual(response.status_code, 200)
-        for dom_id in AUTH_CONTROL_ANONYMOUS_IDS:
-            with self.subTest(dom_id=dom_id):
-                self.assertContains(response, f'id="{dom_id}"')
-
-    def test_authenticated_ids_absent_while_signed_out(self) -> None:
-        self.client.logout()
-        response = self.client.get(reverse("login"))
-        for dom_id in AUTH_CONTROL_AUTHENTICATED_IDS:
-            with self.subTest(dom_id=dom_id):
-                self.assertNotContains(response, f'id="{dom_id}"')
-
-    def test_signed_out_pages_show_no_app_menu(self) -> None:
-        """UXP-20 — Sign in / Register showed Teams, Players, Matches, Batch
-        Sim, Maps, Tournaments, Tools and Help, every one bouncing to sign-in."""
-        self.client.logout()
-        for url in (reverse("login"), reverse("register")):
-            body = self.client.get(url).content.decode()
-            with self.subTest(url=url):
-                self.assertNotIn(f'href="{reverse("team_list")}"', body)
-                self.assertNotIn(f'href="{reverse("map_list")}"', body)
-                self.assertNotIn('id="tools-nav-link"', body)
-                self.assertNotIn('id="help-nav-link"', body)
-                self.assertNotIn('id="tournaments-nav-link"', body)
-                for dom_id in AUTH_CONTROL_ANONYMOUS_IDS:
-                    self.assertIn(f'id="{dom_id}"', body)
-
-    def test_auth_control_does_not_disturb_the_tools_and_help_toggles(self) -> None:
-        """Regression guard: the partial is appended, not substituted."""
-        response = self.client.get("/")
-        self.assertContains(response, 'id="tools-nav-link"')
-        self.assertContains(response, 'id="help-nav-link"')
-        for dom_id in TOOLS_CHILD_IDS + HELP_CHILD_IDS:
-            with self.subTest(dom_id=dom_id):
-                self.assertContains(response, f'id="{dom_id}"')
+# The UX-01 top-nav auth-control tests went with the Accounts template views
+# (ANG-08 D1): its sign-in / register / sign-out / password links point at
+# deleted pages until base.html goes in D3.

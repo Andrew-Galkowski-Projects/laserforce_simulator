@@ -46,7 +46,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
-from teams.views import _coerce_dir, _coerce_sort
+from teams.services import _coerce_dir, _coerce_sort
 
 
 def player_ratings(request: HttpRequest, league_id: int) -> HttpResponse:

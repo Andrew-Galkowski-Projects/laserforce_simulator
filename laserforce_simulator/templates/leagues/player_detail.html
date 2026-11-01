@@ -23,17 +23,18 @@ league templates that does so on purpose.
         <div id="league-player-header" class="d-flex align-items-center gap-2 mb-3">
             {% include "_partials/watch_flag.html" with player_id=player.id %}
             <h1 class="mb-0">{{ player.name }}<span class="fs-6 align-middle">{% you_badge player.id %}</span></h1>
-            <a href="{% url 'player_career_stats' player.id %}"
+            {# ANG-08 D3: literal paths, the career-stats and Self-insert URL names are deleted (D1). #}
+            <a href="/players/{{ player.id }}/stats/"
                class="btn btn-sm btn-outline-secondary ms-2">Career stats (global)</a>
             {# UX-02 - Self-insert link / unlink #}
             {% if self_insert_player_id == player.id %}
-            <form method="post" id="self-insert-unlink-form" action="{% url 'self_insert_unlink' %}" class="d-inline ms-2">
+            <form method="post" id="self-insert-unlink-form" action="/accounts/self-insert/unlink/" class="d-inline ms-2">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{{ request.get_full_path }}">
                 <button type="submit" id="self-insert-unlink-button" class="btn btn-sm btn-outline-secondary">Unlink</button>
             </form>
             {% elif player.team.manager_id and player.team.manager_id == user.id %}
-            <form method="post" id="self-insert-link-form" action="{% url 'self_insert_link' player.id %}" class="d-inline ms-2">
+            <form method="post" id="self-insert-link-form" action="/accounts/self-insert/{{ player.id }}/link/" class="d-inline ms-2">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{{ request.get_full_path }}">
                 <button type="submit" id="self-insert-link-button" class="btn btn-sm btn-outline-primary">This is me</button>

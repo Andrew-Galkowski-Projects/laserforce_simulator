@@ -1,19 +1,13 @@
-"""UX-01 — the three auth forms (ADR-0038).
+"""UX-01 — the auth forms (ADR-0038) the Accounts API binds (ADR-0039).
 
-House style: every widget declares its DOM id explicitly in ``attrs`` so the
-hand-written ``<label for=...>`` in the template can hardcode it, and every
-input carries ``class="form-control"`` (Bootstrap 5.3 from CDN, no project
-stylesheet).
+The widgets still declare explicit DOM ids and ``class="form-control"`` from
+the deleted template pages (ANG-08); only the validation is load-bearing.
 """
 
 from typing import Any
 
 from django import forms
-from django.contrib.auth.forms import (
-    AuthenticationForm,
-    PasswordChangeForm,
-    UserCreationForm,
-)
+from django.contrib.auth.forms import PasswordChangeForm, UserCreationForm
 from django.db import transaction
 from django.db.models import F
 
@@ -22,38 +16,6 @@ from .models import Invite, InviteRedemption, User
 INVALID_INVITE_MESSAGE = "This invite code is invalid or has already been used."
 EXPIRED_INVITE_MESSAGE = "This invite has expired."
 WRONG_EMAIL_INVITE_MESSAGE = "This invite is for a different email address."
-
-
-class EmailAuthenticationForm(AuthenticationForm):
-    """UX-01 — `AuthenticationForm` with the house DOM ids and an email input.
-
-    Django keeps the field NAME ``username`` even when ``USERNAME_FIELD`` is
-    ``email``; only the widget and label change here. The POST key is
-    ``username`` — tests must post ``{"username": <email>, "password": ...}``.
-    """
-
-    username = forms.CharField(
-        label="Email",
-        widget=forms.EmailInput(
-            attrs={
-                "id": "login-email",
-                "class": "form-control",
-                "autocomplete": "email",
-                "autofocus": True,
-            }
-        ),
-    )
-    password = forms.CharField(
-        label="Password",
-        strip=False,
-        widget=forms.PasswordInput(
-            attrs={
-                "id": "login-password",
-                "class": "form-control",
-                "autocomplete": "current-password",
-            }
-        ),
-    )
 
 
 class RegisterForm(UserCreationForm):

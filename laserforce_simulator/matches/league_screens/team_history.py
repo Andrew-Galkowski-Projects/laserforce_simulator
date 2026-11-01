@@ -56,7 +56,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
-from teams.views import _coerce_dir
+from teams.services import _coerce_dir
 
 # LG-06c — sortable Seasons table (keys + builders live in
 # ``league_screen_services``). Default ``year`` desc reproduces the current

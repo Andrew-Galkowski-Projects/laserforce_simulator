@@ -262,7 +262,7 @@ class TestCoerceSortKey(TestCase):
     def test_import_resolves(self) -> None:
         # Smoke: the helper and the reused _coerce_dir both import cleanly.
         from matches.league_views import _coerce_sort_key  # noqa: F401
-        from teams.views import _coerce_dir  # noqa: F401
+        from teams.services import _coerce_dir  # noqa: F401
 
     def test_accepts_each_allowed_key(self) -> None:
         from matches.league_views import _coerce_sort_key

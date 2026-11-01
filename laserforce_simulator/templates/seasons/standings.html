@@ -62,7 +62,8 @@
                                 <td>{{ row.rank }}</td>
                                 <td>
                                     {% if team %}
-                                        <a href="{% url 'team_detail' team.id %}">{{ team.name }}</a>{% if managed_team_id and row.team_id == managed_team_id %} <span id="season-standings-managed-badge" class="badge bg-primary">You</span>{% endif %}
+                                        {# ANG-08 D3: literal path, `team_detail` is deleted (D1). #}
+                                        <a href="/teams/{{ team.id }}/">{{ team.name }}</a>{% if managed_team_id and row.team_id == managed_team_id %} <span id="season-standings-managed-badge" class="badge bg-primary">You</span>{% endif %}
                                     {% else %}
                                         <span class="text-muted">(unknown)</span>
                                     {% endif %}

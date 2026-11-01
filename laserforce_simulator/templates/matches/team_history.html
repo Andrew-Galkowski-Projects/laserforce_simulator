@@ -7,7 +7,8 @@
 {% block content %}
 <div class="d-flex justify-content-between align-items-center mb-4">
     <h1>{{ team.name }} - Match History</h1>
-    <a href="{% url 'team_detail' team.id %}" class="btn btn-secondary">Back to Team</a>
+    {# ANG-08 D2: literal paths here and below, `team_detail` / `player_career_stats` are deleted (D1). #}
+    <a href="/teams/{{ team.id }}/" class="btn btn-secondary">Back to Team</a>
 </div>
 
 {% if show_scope_filter %}
@@ -125,7 +126,7 @@
                                     <span class="text-warning" title="Mercenary (not a rostered member)">&#9888;</span>
                                     {% endif %}
                                 </td>
-                                <td><a href="{% url 'player_career_stats' row.player.id %}">{{ row.player.name }}</a>{% you_badge row.player.id %}</td>
+                                <td><a href="/players/{{ row.player.id }}/stats/">{{ row.player.name }}</a>{% you_badge row.player.id %}</td>
                                 <td class="text-center">{{ row.games_played }}</td>
                                 {% for cell in row.roles %}
                                 <td class="text-center border-start{% if not cell.games %} text-muted{% endif %}">{{ cell.games }}</td>

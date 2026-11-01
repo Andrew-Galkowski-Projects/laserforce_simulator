@@ -463,8 +463,10 @@ def game_round_events(request: HttpRequest, round_id: int) -> HttpResponse:
 
     # Map playback overlay: the routes arrive with the events JSON; the page
     # only needs to know whether to lay out the map stage.
+    # ANG-08 D2: the `processed_image` URL name went with core/urls.py (D1);
+    # a literal path until this page is deleted.
     processed_image_url = (
-        reverse("processed_image", args=[game_round.arena_map_id])
+        f"/maps/{game_round.arena_map_id}/processed-image/"
         if game_round.arena_map_id is not None
         else None
     )

@@ -17,7 +17,7 @@ from core.models import (
     MapZoneConfig,
     SightLineConfig,
 )
-from matches.models import GameRound, PlayerRoundState
+from matches.models import GameRound
 from matches.tests.conftest import make_team_with_slots
 from conftest import get_shared_manager
 
@@ -180,125 +180,9 @@ class TestRoundHeatmapView(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestMapHeatmapDataEndpoint(TestCase):
-    """``GET /maps/<id>/heatmap-data/?zone_size=<n>[&team_color=...]`` —
-    the cross-round aggregation endpoint."""
-
-    def test_map_heatmap_data_endpoint_returns_merged(self) -> None:
-        """Two rounds on the same map+zone_size → ``round_count == 2`` and
-        per-cell ticks summed across both rounds."""
-        arena_map, zone_size = _make_arena_map("Res04AggMap")
-        gr1, _r, _b = _make_round(
-            arena_map=arena_map,
-            zone_size=zone_size,
-            cell_occupancy_json={"101": {"5,5": 60}, "102": {"7,7": 10}},
-            red_prefix="Res04AggR1",
-            blue_prefix="Res04AggB1",
-        )
-        gr2, _r2, _b2 = _make_round(
-            arena_map=arena_map,
-            zone_size=zone_size,
-            cell_occupancy_json={"201": {"5,5": 40}, "202": {"8,8": 20}},
-            red_prefix="Res04AggR2",
-            blue_prefix="Res04AggB2",
-        )
-        # Use both rounds so the test reads as a real two-row aggregation.
-        _ = (gr1, gr2)
-
-        url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(url, {"zone_size": zone_size})
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertEqual(data["round_count"], 2)
-        # "5,5" appears in both rounds → 60 + 40 = 100
-        self.assertEqual(data["cell_occupancy"]["5,5"], 100)
-        # "7,7" appears only in round 1
-        self.assertEqual(data["cell_occupancy"].get("7,7"), 10)
-        # "8,8" appears only in round 2
-        self.assertEqual(data["cell_occupancy"].get("8,8"), 20)
-
-    def test_map_heatmap_data_team_color_filter(self) -> None:
-        """``team_color=red`` → only red players' cells contribute."""
-        arena_map, zone_size = _make_arena_map("Res04FilterMap")
-        gr, red_players, blue_players = _make_round(
-            arena_map=arena_map,
-            zone_size=zone_size,
-            cell_occupancy_json=None,
-            red_prefix="Res04FilterR",
-            blue_prefix="Res04FilterB",
-        )
-        # Wire keys against the actual Player PKs so the team-color join
-        # inside the view resolves cleanly.
-        gr.cell_occupancy_json = {
-            str(red_players["scout"].id): {"0,0": 100},
-            str(blue_players["scout"].id): {"1,1": 50},
-        }
-        gr.save(update_fields=["cell_occupancy_json"])
-        # Persist PlayerRoundState rows so the view can resolve
-        # player_id -> team_color.
-        PlayerRoundState.objects.create(
-            game_round=gr,
-            player=red_players["scout"],
-            team_color="red",
-            role="scout",
-        )
-        PlayerRoundState.objects.create(
-            game_round=gr,
-            player=blue_players["scout"],
-            team_color="blue",
-            role="scout",
-        )
-
-        url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(url, {"zone_size": zone_size, "team_color": "red"})
-        self.assertEqual(resp.status_code, 200)
-        data = resp.json()
-        self.assertIn("0,0", data["cell_occupancy"])
-        self.assertEqual(data["cell_occupancy"]["0,0"], 100)
-        self.assertNotIn("1,1", data["cell_occupancy"])
-
-    def test_map_heatmap_data_404_for_missing_map(self) -> None:
-        """Bogus map_id → 404."""
-        url = reverse("map_heatmap_data", kwargs={"map_id": 999999})
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(url, {"zone_size": 50})
-        self.assertEqual(resp.status_code, 404)
-
-    def test_map_heatmap_data_400_missing_zone_size(self) -> None:
-        """No ``zone_size`` query param → 400, body contains the locked
-        error string ``"zone_size required"``."""
-        arena_map, _zs = _make_arena_map("Res04Bad400Zone")
-        url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(url)
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("zone_size required", resp.content.decode("utf-8"))
-
-    def test_map_heatmap_data_400_invalid_team_color(self) -> None:
-        """``team_color=purple`` → 400, body contains the locked error
-        string ``"invalid team_color"``."""
-        arena_map, zone_size = _make_arena_map("Res04Bad400Team")
-        url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.get(url, {"zone_size": zone_size, "team_color": "purple"})
-        self.assertEqual(resp.status_code, 400)
-        self.assertIn("invalid team_color", resp.content.decode("utf-8"))
-
-    def test_map_heatmap_data_405_non_get(self) -> None:
-        """POST is not allowed; method-not-allowed → 405."""
-        arena_map, zone_size = _make_arena_map("Res04Bad405")
-        url = reverse("map_heatmap_data", kwargs={"map_id": arena_map.id})
-        client = Client()
-        client.force_login(get_shared_manager())
-        resp = client.post(url, {"zone_size": zone_size})
-        self.assertEqual(resp.status_code, 405)
+# The map-aggregate ``/maps/<id>/heatmap-data/`` HTML endpoint tests went with
+# the map template views (ANG-08 D1); ``GET /api/maps/<id>/heatmap/`` is
+# covered in ``core/test_maps_api_writes.py``.
 
 
 # Silence "unused import" for json — kept so future tests can decode payloads

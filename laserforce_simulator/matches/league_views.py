@@ -29,7 +29,7 @@ from django.urls import reverse
 
 from accounts.permissions import get_owned_or_404, manager_or_none, owned_queryset
 from teams.models import Team
-from teams.views import _coerce_dir
+from teams.services import _coerce_dir
 
 from . import league_play_services as play_services
 from .forms import (

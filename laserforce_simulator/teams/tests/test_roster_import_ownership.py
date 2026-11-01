@@ -8,8 +8,8 @@ Account's player name in the error.
 Scenario: Account B owns Team "Shared" whose commander slot is filled by
 "SecretPlayer". Account A imports a CSV with a "Shared" / commander row. The
 import must succeed, create a NEW "Shared" Team managed by A, leave B's Team
-untouched, and never surface "SecretPlayer" anywhere — through the HTML view,
-the API, the service, and the Tournament participant import.
+untouched, and never surface "SecretPlayer" anywhere — through the API and the
+service (the HTML view went in ANG-08 D1).
 
 Collision against A's own Team or an Unmanaged Team still errors with the
 existing message; duplicate same-name owned Teams must not raise
@@ -21,11 +21,9 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
-from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
-from matches.models import Tournament
 from teams.models import Player, Team
 from teams.roster_importer import REQUIRED_COLUMNS
 
@@ -95,29 +93,6 @@ class _LeakScenario(TestCase):
 # ---------------------------------------------------------------------------
 # The leak regression, per surface
 # ---------------------------------------------------------------------------
-
-
-class TestLeakRegressionHtml(_LeakScenario):
-    def test_html_import_creates_new_team_and_never_leaks(self) -> None:
-        response = self.client.post(
-            reverse("import_roster"), {"csv_file": _upload(self.csv)}
-        )
-        self.assertEqual(response.status_code, 200)
-        body = response.content.decode()
-        self.assertNotIn(SECRET, body)
-        self.assertIn("roster-import-confirm-summary", body)
-        self.assertNotIn("roster-import-errors", body)
-        self.assert_new_shared_team_for_a()
-        self.assert_b_team_untouched()
-
-    def test_html_context_reports_created_not_appended(self) -> None:
-        response = self.client.post(
-            reverse("import_roster"), {"csv_file": _upload(self.csv)}
-        )
-        self.assertEqual(
-            [t.name for t in response.context["created_teams"]], ["Shared"]
-        )
-        self.assertEqual(list(response.context["appended_teams"]), [])
 
 
 class TestLeakRegressionApi(_LeakScenario):
@@ -204,39 +179,9 @@ class TestLeakRegressionService(_LeakScenario):
             _apply_roster(parsed)  # type: ignore[call-arg]
 
 
-class TestLeakRegressionTournamentImport(_LeakScenario):
-    def test_tournament_participant_import_never_touches_foreign_team(self) -> None:
-        tournament = Tournament.objects.create(name="LeakCup", manager=self.user_a)
-        rows = _six_rows("Shared", "T")
-        for i in range(3):
-            rows.extend(_six_rows(f"LeakFresh{i}", f"L{i}"))
-        response = self.client.post(
-            reverse("tournament_import_participants", args=[tournament.pk]),
-            {"csv_file": _upload(_csv_text(*rows))},
-        )
-        self.assertEqual(response.status_code, 302, response.content[:500])
-        self.assertNotIn(SECRET, response.content.decode())
-        new_shared = Team.objects.get(name="Shared", manager=self.user_a)
-        self.assertEqual(new_shared.players.count(), 6)
-        participant_team_ids = set(
-            tournament.participants.values_list("team_id", flat=True)
-        )
-        self.assertIn(new_shared.pk, participant_team_ids)
-        self.assertNotIn(self.b_team.pk, participant_team_ids)
-        self.assert_b_team_untouched()
-
-    def test_tournament_created_teams_are_stamped(self) -> None:
-        tournament = Tournament.objects.create(name="StampCup", manager=self.user_a)
-        rows: list[str] = []
-        for i in range(4):
-            rows.extend(_six_rows(f"StampTeam{i}", f"S{i}"))
-        self.client.post(
-            reverse("tournament_import_participants", args=[tournament.pk]),
-            {"csv_file": _upload(_csv_text(*rows))},
-        )
-        for i in range(4):
-            team = Team.objects.get(name=f"StampTeam{i}")
-            self.assertEqual(team.manager_id, self.user_a.pk)
+# The Tournament participant-import case is covered through
+# ``POST /api/tournaments/<id>/import-participants/`` in
+# ``matches/tests/test_api_tournaments_setup.py`` (ANG-08 port d).
 
 
 # ---------------------------------------------------------------------------
@@ -296,17 +241,6 @@ class TestCollisionsStillFire(TestCase):
             response.json()["errors"][0]["message"], self._expected_message("Commons")
         )
 
-    def test_own_team_collision_html_still_renders_error(self) -> None:
-        self._filled_team("MineHtml", self.user_a)
-        response = self.client.post(
-            reverse("import_roster"),
-            {"csv_file": _upload(_csv_text(_row("MineHtml", "Extra", "commander")))},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("roster-import-errors", response.content.decode())
-        self.assertIn("MineHtmlCdr", response.content.decode())
-        self.assertFalse(Player.objects.filter(name="Extra").exists())
-
     def test_duplicate_same_name_owned_teams_do_not_raise(self) -> None:
         older = Team.objects.create(name="Dup", manager=self.user_a)
         newer = Team.objects.create(name="Dup", manager=self.user_a)
@@ -323,13 +257,3 @@ class TestCollisionsStillFire(TestCase):
         older.refresh_from_db()
         self.assertEqual(newer.slot_commander.name, "DupCdr")
         self.assertIsNone(older.slot_commander_id)
-
-    def test_duplicate_same_name_html_does_not_raise(self) -> None:
-        Team.objects.create(name="DupHtml", manager=self.user_a)
-        Team.objects.create(name="DupHtml")
-        response = self.client.post(
-            reverse("import_roster"),
-            {"csv_file": _upload(_csv_text(_row("DupHtml", "X", "heavy")))},
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("roster-import-confirm-summary", response.content.decode())

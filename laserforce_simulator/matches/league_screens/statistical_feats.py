@@ -36,7 +36,7 @@ from matches.league_views import (
     _LG01F_PER_PAGE_OPTIONS,
 )
 from matches.models import League
-from teams.views import _coerce_dir
+from teams.services import _coerce_dir
 
 # LG-06e — the sortable Statistical Feats columns (``_FEATS_SORT_KEYS``), the
 # nuke-detonation predicate and the sort extractor live in

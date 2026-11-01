@@ -825,8 +825,10 @@ def build_heatmap(game_round: GameRound) -> dict:
 
     has_map = game_round.arena_map_id is not None
     arena_map = game_round.arena_map if has_map else None
+    # ANG-08 D2: the `processed_image` URL name went with core/urls.py (D1);
+    # a literal path until D2 drops the `processed_image_url` field.
     processed_image_url = (
-        reverse("processed_image", args=[arena_map.pk]) if arena_map else None
+        f"/maps/{arena_map.pk}/processed-image/" if arena_map else None
     )
 
     # Roster: red first then blue, each ordered by (role, name).

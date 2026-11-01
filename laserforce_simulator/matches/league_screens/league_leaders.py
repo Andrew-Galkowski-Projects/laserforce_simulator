@@ -22,7 +22,7 @@ from matches.league_views import (
     _season_param,
 )
 from matches.models import League
-from teams.views import _coerce_dir
+from teams.services import _coerce_dir
 
 # LG-06c — the four League Leaders boards. Each gets its own namespaced
 # ``?<board>_sort=&<board>_dir=`` param pair so sorting one board never

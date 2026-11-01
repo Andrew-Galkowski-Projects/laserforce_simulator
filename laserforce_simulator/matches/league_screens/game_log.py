@@ -22,7 +22,7 @@ from matches.league_views import (
     _season_param,
 )
 from matches.models import League
-from teams.views import _coerce_dir
+from teams.services import _coerce_dir
 
 # LG-06c — sortable Game Log columns. Whitelist derived from the rendered
 # columns; default is ``date_played`` asc (reproduces the current

@@ -164,7 +164,8 @@ class TestLeaguePlayerDetail(_LeagueFixture):
         self.assertIn(LINK_FORM, html)
         self.assertIn(LINK_BUTTON, html)
         self.assertNotIn(UNLINK_FORM, html)
-        self.assertIn(reverse("self_insert_link", args=[self.star.id]), html)
+        # ANG-08 D3: a literal path, the `self_insert_link` name is deleted (D1).
+        self.assertIn(f"/accounts/self-insert/{self.star.id}/link/", html)
 
     def test_unlink_button_when_linked(self) -> None:
         self._link_star()
@@ -180,17 +181,6 @@ class TestLeaguePlayerDetail(_LeagueFixture):
         self.assertNotIn(LINK_BUTTON, html)
         self.assertNotIn(UNLINK_FORM, html)
         self.assertNotIn(UNLINK_BUTTON, html)
-
-    def test_link_round_trip_returns_to_league_page(self) -> None:
-        url = self._url(self.star)
-        response = self.client.post(
-            reverse("self_insert_link", args=[self.star.id]), {"next": url}
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(response["Location"], url)
-        html = self._get(url)
-        self.assertIn(BADGE, html)
-        self.assertIn(UNLINK_FORM, html)
 
 
 # ===========================================================================

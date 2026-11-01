@@ -2,7 +2,7 @@
 
 from django.test import TestCase
 
-from teams.forms import PlayerForm, TeamSlotForm
+from teams.forms import GenerateLeagueForm, PlayerForm, TeamSlotForm
 from teams.models import Player, Team
 
 ALL_STAT_FIELDS = [
@@ -369,3 +369,42 @@ class PlayerFormAutocompleteTest(TestCase):
                 if "autocomplete" not in widget.attrs:
                     missing.append(name)
         self.assertEqual(missing, [], f"widgets missing autocomplete: {missing}")
+
+
+_VALID_GENERATE = {
+    "num_teams": "3",
+    "players_per_team": "6",
+    "mean": "50",
+    "std_dev": "15",
+}
+
+
+class TestGenerateFormPerModeValidation(TestCase):
+    """UXP-16 -- the server enforces the right range per mode (form-level).
+
+    Moved from the deleted ``test_generate_view.py`` (ANG-08 D1)."""
+
+    def _form(self, num_teams: str, ppt: str) -> GenerateLeagueForm:
+        return GenerateLeagueForm(
+            data={**_VALID_GENERATE, "num_teams": num_teams, "players_per_team": ppt}
+        )
+
+    def test_team_mode_accepts_6_to_9_and_random_team(self) -> None:
+        for ppt in ("6", "9", "random_team"):
+            with self.subTest(ppt=ppt):
+                self.assertTrue(self._form("4", ppt).is_valid())
+
+    def test_team_mode_rejects_out_of_range(self) -> None:
+        for ppt in ("5", "10", "12", "random_pool"):
+            with self.subTest(ppt=ppt):
+                self.assertFalse(self._form("4", ppt).is_valid())
+
+    def test_pool_mode_accepts_12_to_100_and_random_pool(self) -> None:
+        for ppt in ("12", "100", "random_pool"):
+            with self.subTest(ppt=ppt):
+                self.assertTrue(self._form("0", ppt).is_valid())
+
+    def test_pool_mode_rejects_out_of_range(self) -> None:
+        for ppt in ("9", "11", "101", "random_team"):
+            with self.subTest(ppt=ppt):
+                self.assertFalse(self._form("0", ppt).is_valid())

@@ -111,7 +111,8 @@
                 </div>
                 <button type="submit" class="btn btn-secondary"
                         id="tournament-pool-import-submit">Import players</button>
-                <a href="{% url 'import_roster_template' %}"
+                {# ANG-08 D2: literal path, `import_roster_template` is deleted (D1). #}
+                <a href="/teams/import/template.csv"
                    id="tournament-pool-import-template-link" class="ms-2">Download a template CSV</a>
             </form>
             {% if pool_import_row_errors %}
@@ -222,7 +223,8 @@
                 {{ import_form.csv_file.errors }}
             </div>
             <button type="submit" class="btn btn-secondary" id="tournament-import-submit">Import Participants</button>
-            <a href="{% url 'import_roster_template' %}" id="tournament-import-template-link" class="ms-2">Download a template CSV</a>
+            {# ANG-08 D2: literal path, `import_roster_template` is deleted (D1). #}
+            <a href="/teams/import/template.csv" id="tournament-import-template-link" class="ms-2">Download a template CSV</a>
         </form>
         {% if import_row_errors %}
             <ul id="tournament-import-errors" class="alert alert-danger mt-2">
