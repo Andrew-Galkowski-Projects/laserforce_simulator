@@ -129,9 +129,9 @@ def _compute_team_overall(team: Team) -> float:
 
 
 # LG-06g — sortable Standings columns. Every column (the 9 LG-01 columns
-# plus the 8 form / side-detail columns) is sortable via the LG-06c
-# ``_coerce_sort_key`` / ``_coerce_dir`` pattern; sorting runs view-side on
-# the materialised rows and never renumbers ``rank`` (it stays the frozen
+# plus the 8 form / side-detail columns) is sortable; the API param Form
+# validates the key and sorting runs on the materialised rows. It never
+# renumbers ``rank`` (it stays the frozen
 # standings position, mirroring the LG-06c League-Leaders precedent).
 STANDINGS_SORT_KEYS: frozenset[str] = frozenset(
     {

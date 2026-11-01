@@ -25,11 +25,8 @@ from teams.models import FREE_AGENTS_TEAM_NAME, Player, Team, get_free_agents_te
 from teams.roster_importer import ALL_COLUMNS, REQUIRED_COLUMNS, RosterImportError
 from teams.serializers import _PLAYER_STAT_FIELDS
 from teams.services import (
-    PLAYER_SORT_KEYS,
     GenerationResult,
     RosterImportResult,
-    _coerce_dir,
-    _coerce_sort,
     annotate_overall_rating,
     build_roster_template_csv,
     fill_preferred_slot,
@@ -606,32 +603,3 @@ class TestPopUniqueNameSkipsTakenPoolNames(TestCase):
         self.assertEqual(
             _pop_unique_name([], "Fallback", taken.__contains__), "Fallback #2"
         )
-
-
-class TestCoerceSortAndDir(TestCase):
-    """LG-00c — ``_coerce_sort`` / ``_coerce_dir``, moved to ``teams.services``
-    with the ``teams.views`` deletion (ANG-08 D1); the League screens use them."""
-
-    def test_coerce_sort_accepts_every_orm_key(self) -> None:
-        for key in PLAYER_SORT_KEYS:
-            self.assertEqual(_coerce_sort(key), key)
-
-    def test_coerce_sort_accepts_preferred_roles_sentinel(self) -> None:
-        self.assertEqual(_coerce_sort("preferred_roles"), "preferred_roles")
-
-    def test_coerce_sort_falls_back_on_unknown_none_and_empty(self) -> None:
-        for raw in ("foo", None, ""):
-            with self.subTest(raw=raw):
-                self.assertEqual(_coerce_sort(raw), "team")
-
-    def test_coerce_dir_accepts_asc_and_desc(self) -> None:
-        self.assertEqual(_coerce_dir("asc"), "asc")
-        self.assertEqual(_coerce_dir("desc"), "desc")
-
-    def test_coerce_dir_falls_back_on_unknown_none_and_uppercase(self) -> None:
-        for raw in ("sideways", None, "ASC"):
-            with self.subTest(raw=raw):
-                self.assertEqual(_coerce_dir(raw), "asc")
-
-    def test_coerce_dir_honours_a_custom_default(self) -> None:
-        self.assertEqual(_coerce_dir(None, "desc"), "desc")

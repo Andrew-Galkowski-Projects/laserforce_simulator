@@ -20,16 +20,6 @@ def celery_state_to_job_status(state: str) -> str:
     return "running"
 
 
-def int_or_none(raw: str | None) -> int | None:
-    """Coerce a request GET param to int; return None on missing/invalid."""
-    if raw is None or raw == "":
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
 def build_batch_status_response(
     async_result: AsyncResult,
     *,

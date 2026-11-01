@@ -1,8 +1,4 @@
-"""UX-01 — the auth forms (ADR-0038) the Accounts API binds (ADR-0039).
-
-The widgets still declare explicit DOM ids and ``class="form-control"`` from
-the deleted template pages (ANG-08); only the validation is load-bearing.
-"""
+"""UX-01 — the auth forms (ADR-0038) the Accounts API binds (ADR-0039)."""
 
 from typing import Any
 
@@ -28,48 +24,16 @@ class RegisterForm(UserCreationForm):
         model = User
         fields = ("email",)
 
-    email = forms.EmailField(
-        label="Email",
-        widget=forms.EmailInput(
-            attrs={
-                "id": "register-email",
-                "class": "form-control",
-                "autocomplete": "email",
-            }
-        ),
-    )
+    email = forms.EmailField(label="Email")
     password1 = forms.CharField(
-        label="Password",
-        strip=False,
-        widget=forms.PasswordInput(
-            attrs={
-                "id": "register-password1",
-                "class": "form-control",
-                "autocomplete": "new-password",
-            }
-        ),
+        label="Password", strip=False, widget=forms.PasswordInput
     )
     password2 = forms.CharField(
-        label="Confirm password",
-        strip=False,
-        widget=forms.PasswordInput(
-            attrs={
-                "id": "register-password2",
-                "class": "form-control",
-                "autocomplete": "new-password",
-            }
-        ),
+        label="Confirm password", strip=False, widget=forms.PasswordInput
     )
     invite = forms.CharField(
         label="Invite code",
         error_messages={"required": "An invite code is required to register."},
-        widget=forms.TextInput(
-            attrs={
-                "id": "register-invite",
-                "class": "form-control",
-                "autocomplete": "off",
-            }
-        ),
     )
 
     def clean_invite(self) -> Invite:
@@ -109,39 +73,14 @@ class RegisterForm(UserCreationForm):
 
 
 class StyledPasswordChangeForm(PasswordChangeForm):
-    """UX-01 — `PasswordChangeForm` with the house DOM ids."""
+    """UX-01 — `PasswordChangeForm` with the house labels."""
 
     old_password = forms.CharField(
-        label="Current password",
-        strip=False,
-        widget=forms.PasswordInput(
-            attrs={
-                "id": "password-change-old-password",
-                "class": "form-control",
-                "autocomplete": "current-password",
-                "autofocus": True,
-            }
-        ),
+        label="Current password", strip=False, widget=forms.PasswordInput
     )
     new_password1 = forms.CharField(
-        label="New password",
-        strip=False,
-        widget=forms.PasswordInput(
-            attrs={
-                "id": "password-change-new-password1",
-                "class": "form-control",
-                "autocomplete": "new-password",
-            }
-        ),
+        label="New password", strip=False, widget=forms.PasswordInput
     )
     new_password2 = forms.CharField(
-        label="Confirm new password",
-        strip=False,
-        widget=forms.PasswordInput(
-            attrs={
-                "id": "password-change-new-password2",
-                "class": "form-control",
-                "autocomplete": "new-password",
-            }
-        ),
+        label="Confirm new password", strip=False, widget=forms.PasswordInput
     )

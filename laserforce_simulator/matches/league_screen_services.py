@@ -1054,36 +1054,9 @@ def build_playoffs(season: Season | None) -> PlayoffsScreen:
 
 
 # ---------------------------------------------------------------------------
-# Team screens: Team resolution (Team History / Roster / Finances), then the
-# Team History, Roster, Team Stats, Power Rankings and Game Log builders.
+# Team screens: the Team History, Roster, Team Stats, Power Rankings and Game
+# Log builders.
 # ---------------------------------------------------------------------------
-
-
-def parse_team_id(raw: str | None) -> int | None:
-    """A raw ``?team_id=`` as an int, or ``None`` when missing / malformed
-    (the HTML screens' forgiving read; the API validates in its param Form)."""
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def resolve_league_team(
-    league: League, season: Season, requested_team_id: int | None
-) -> Team | None:
-    """The Team a team screen shows: ``requested_team_id`` when enrolled, else
-    ``league.current_team`` when enrolled, else the alphabetically-first
-    enrolled Team (the LG-01g sidebar chain); ``None`` when none is enrolled.
-    """
-    teams = enrolled_teams(season)
-    by_id = {t.id: t for t in teams}
-    if requested_team_id is not None and requested_team_id in by_id:
-        return by_id[requested_team_id]
-    if league.current_team_id is not None and league.current_team_id in by_id:
-        return by_id[league.current_team_id]
-    return teams[0] if teams else None
 
 
 @dataclass(frozen=True)

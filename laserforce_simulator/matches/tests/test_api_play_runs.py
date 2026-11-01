@@ -20,6 +20,7 @@ from django.urls import reverse
 
 from matches.models import GameRound, Season, SeasonPhase
 from matches.simulation import BatchSimulator
+from matches.tests.conftest import FakeAsyncResult
 from matches.tests.league_api_fixtures import (
     LeagueApiTestCase,
     make_league,
@@ -261,7 +262,7 @@ class TestPlayJobs(LeagueApiTestCase):
 
     # --- ANG-08 (#464): ported from views_tests.py TestLg01dPlayStatus ------
 
-    def _status(self, job: "_FakeJob") -> dict:
+    def _status(self, job: FakeAsyncResult) -> dict:
         season = active_season(
             make_league("PjStL", manager=self.user_a), make_teams("PjSt", 2)
         )
@@ -269,7 +270,7 @@ class TestPlayJobs(LeagueApiTestCase):
             return self.ok(self.api.get(action(season.id, "play-jobs/abc")))
 
     def test_progress_reads_running_with_completed_and_total(self) -> None:
-        data = self._status(_FakeJob("PROGRESS", info={"completed": 5, "total": 12}))
+        data = self._status(FakeAsyncResult("PROGRESS", {"completed": 5, "total": 12}))
         self.assertEqual(
             data,
             {
@@ -282,7 +283,7 @@ class TestPlayJobs(LeagueApiTestCase):
         )
 
     def test_failure_reads_error_with_the_str_of_its_info(self) -> None:
-        data = self._status(_FakeJob("FAILURE", info=Exception("boom")))
+        data = self._status(FakeAsyncResult("FAILURE", Exception("boom")))
         self.assertEqual(
             data,
             {
@@ -294,6 +295,30 @@ class TestPlayJobs(LeagueApiTestCase):
             },
         )
 
+    # --- ANG-08d: ported from test_play_cancel.py -----------------------------
+
+    def test_a_cancelled_result_reads_complete_and_cancelled(self) -> None:
+        """A run that stopped on a cancel still reads ``complete``, with
+        ``cancelled`` set."""
+        data = self._status(
+            FakeAsyncResult("SUCCESS", {"completed": 1, "total": 2, "cancelled": True})
+        )
+        self.assertEqual(
+            data,
+            {
+                "status": "complete",
+                "completed": 1,
+                "total": 2,
+                "cancelled": True,
+                "error": None,
+            },
+        )
+
+    def test_a_normal_success_is_not_cancelled(self) -> None:
+        data = self._status(FakeAsyncResult("SUCCESS", {"completed": 2, "total": 2}))
+        self.assertEqual(data["status"], "complete")
+        self.assertFalse(data["cancelled"])
+
     def test_anonymous_is_401_and_cross_account_is_404(self) -> None:
         # ADR-0041: an anonymous /api/ request is 401 (was 403).
         foreign = active_season(self.foreign_league("PjF"), make_teams("PjF", 2))
@@ -303,15 +328,6 @@ class TestPlayJobs(LeagueApiTestCase):
             401,
             "not_authenticated",
         )
-
-
-class _FakeJob:
-    """Stand-in for the Celery result backend (``AsyncResult``)."""
-
-    def __init__(self, state: str, result=None, info=None) -> None:
-        self.state = state
-        self.result = result
-        self.info = info
 
 
 class TestEnqueueRecordsTheRun(LeagueApiTestCase):
@@ -370,41 +386,6 @@ class TestEnqueueRecordsTheRun(LeagueApiTestCase):
         )
         play_round_robin(season)
         self._assert_enqueued(season, "play-playoffs", play_playoffs_task, {})
-
-
-class TestPlayJobReadsCancelled(LeagueApiTestCase):
-    """ANG-08d (ported from ``test_play_cancel.py``): a run that stopped on a
-    cancel still reads ``complete``, with ``cancelled`` set."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.season = active_season(
-            make_league("PjcL", manager=self.user_a), make_teams("Pjc", 2)
-        )
-
-    def _status(self, job: _FakeJob) -> dict:
-        with patch("matches.league_play_services.AsyncResult", return_value=job):
-            return self.ok(self.api.get(action(self.season.id, "play-jobs/job-1")))
-
-    def test_a_cancelled_result_reads_complete_and_cancelled(self) -> None:
-        data = self._status(
-            _FakeJob("SUCCESS", result={"completed": 1, "total": 2, "cancelled": True})
-        )
-        self.assertEqual(
-            data,
-            {
-                "status": "complete",
-                "completed": 1,
-                "total": 2,
-                "cancelled": True,
-                "error": None,
-            },
-        )
-
-    def test_a_normal_success_is_not_cancelled(self) -> None:
-        data = self._status(_FakeJob("SUCCESS", result={"completed": 2, "total": 2}))
-        self.assertEqual(data["status"], "complete")
-        self.assertFalse(data["cancelled"])
 
 
 class TestPlayPlayoffsOnRegionalPhases(LeagueApiTestCase):

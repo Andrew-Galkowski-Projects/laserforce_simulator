@@ -30,7 +30,7 @@ derives ownership from its parent (see `accounts-ownership.md`).
 - `simulation/` — `BatchSimulator`, the sole engine: `round_loop.py` (per-tick), `entrypoints.py` (simulate/run/save/replay), `persistence.py` (`flush_to_db`).
 - `sim_helpers/` — pure engine helpers (see Sub-packages).
 - `tournament_services/` (ANG-01f) — the Tournament logic behind the API: `errors`, `detail` (bracket / standings builders, the API payloads), `seeding`, `create`, `setup`, `draw`, `play`. `tournament_engine.py` — the per-node bracket drain.
-- `job_status.py` — Celery state to Job status, plus `int_or_none` and the batch / save status payloads (`build_batch_status_response`, `build_save_status_response`).
+- `job_status.py` — Celery state to Job status, plus the batch / save status payloads (`build_batch_status_response`, `build_save_status_response`).
 - `tournament_api_views/` (ANG-01f) — `/api/tournaments/`: `base` (`TournamentViewSet`), `errors` (the `APIException`s + `translate_tournament_errors`), and the `create` / `setup` / `draw` / `play` action mixins.
 - `tasks.py` — Celery tasks (batch, save, play season / playoffs / tournament / member night).
 - Pure modules (Django-free, `TestNoDjangoImportsLeaked`-guarded): `bracket.py`, `standings.py`, `schedule_generator.py`, `season_dashboard.py`, `phase_composer.py`, `draw.py`, `member_night.py`, `worlds.py`, `development.py`, `finance.py`, `injury.py`, `owner_mood.py`, `season_awards.py`, `h2h_stats.py`, `player_h2h_stats.py`, `stat_feats.py`, `*_logic.py`.

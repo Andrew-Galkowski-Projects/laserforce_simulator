@@ -238,8 +238,8 @@ Two classes, both bound by the Accounts API below:
   use with a conditional `UPDATE ... SET use_count = use_count + 1 WHERE use_count < max_uses`
   (racing sign-ups for the last use cannot both win; the loser's Account rolls back), then writes
   the `InviteRedemption`.
-- **`StyledPasswordChangeForm(PasswordChangeForm)`** — the widgets keep the old DOM ids; only the
-  validation is load-bearing.
+- **`StyledPasswordChangeForm(PasswordChangeForm)`** — `PasswordChangeForm` with the house labels;
+  only the validation is load-bearing.
 
 ## Accounts API (ANG-01g, `accounts/api_views.py`)
 

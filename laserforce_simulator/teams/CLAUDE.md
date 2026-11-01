@@ -112,7 +112,7 @@ The LG-00 / LG-00b private helpers live here too (`_pop_unique_name`, `_team_nam
 `_ROSTER_TEMPLATE_ROWS`); League and Tournament services import them from `teams.services`. To
 monkey-patch a dependency such as `draw_stats`, patch `teams.services`. The Player sort whitelist is
 `teams.services.PLAYER_SORT_KEYS` (public: `teams/api_views.py`, `matches/api_forms.py` and
-`matches/league_screen_services.py` import it), with its `_coerce_sort` / `_coerce_dir` param coercers.
+`matches/league_screen_services.py` import it).
 
 Analytics reads, filters + ordering, the ANG-01b builders, the roster-import ownership fix and the
 serializers: `docs/agents/teams/api.md`.
@@ -159,4 +159,4 @@ Paths below are relative to the repo root.
 - API analytics reads (head-to-head, career, benchmarks params), `TeamFilterSet` / `PlayerFilterSet` + ordering, `build_career_stats` / `build_role_benchmarks`, roster-import ownership fix, serializer split / `PlayerSerializer` fields, `team_name` / `TeamSerializer.manager` (ANG-01a, ANG-01b, ANG-06a, ANG-06b, ANG-06-8) — `docs/agents/teams/api.md`
 - Career stats, `teams/career_stats.py`, 12-stat benchmark extension, Role benchmarks, percentile rank, benchmark cache + ownership scope (HX-01, HX-01b, HX-02, UXP-14) — `docs/agents/teams/career-and-benchmarks.md`
 - Bulk generation, `GenerateLeagueForm`, `teams/player_generator.py`, League spread / tier means, CSV roster import + template (LG-00, CRE-02, LG-00b), the Angular Generate Players / Import Roster screens (ANG-06 2b) — `docs/agents/teams/generation-and-import.md`
-- Sortable / paginated Players list, `PLAYER_SORT_KEYS`, `_coerce_sort` / `_coerce_dir` (LG-00c) — `docs/agents/teams/players-tab.md`
+- Sortable / paginated Players list, `PLAYER_SORT_KEYS` (LG-00c) — `docs/agents/teams/players-tab.md`

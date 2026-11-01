@@ -18,7 +18,7 @@ import pytest
 from rest_framework.test import APIClient
 
 from matches.simulation import BatchSimulator
-from matches.tests.conftest import make_team_with_slots
+from matches.tests.conftest import FakeAsyncResult, make_team_with_slots
 from conftest import get_shared_manager
 
 # ---------------------------------------------------------------------------
@@ -270,15 +270,6 @@ class TestSimulateBatchAPIStatusUnknownJobId:
         assert body["error"] is None
 
 
-class _StubAsyncResult:
-    """A hand-rolled ``AsyncResult`` stand-in carrying a fixed state / info."""
-
-    def __init__(self, state: str, info=None) -> None:
-        self.state = state
-        self.info = info
-        self.result = info
-
-
 @pytest.mark.django_db
 class TestSimulateBatchAPIStatusArenaMapCarry:
     """ANG-08e -- GET ``/api/simulate-batch/<job_id>/`` echoes the
@@ -327,7 +318,7 @@ class TestSimulateBatchAPIStatusProgress:
 
     def test_progress_reports_completed_and_partial_from_meta(self) -> None:
         aggregate = {"n": 3, "avg_seeds": [[7, False]]}
-        stub = _StubAsyncResult(
+        stub = FakeAsyncResult(
             "PROGRESS", {"completed": 3, "total": 10, "aggregate": aggregate}
         )
         client = APIClient()

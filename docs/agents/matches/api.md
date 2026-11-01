@@ -382,9 +382,7 @@ HTML callers since ANG-08). Reads no request. **Patch `matches.league_screen_ser
   (`offensive_synergy`, though the field is `Offensive_synergy`).
 - **Enrolment — the single definition:** `enrolled_team_ids(season)` = the activation snapshot
   `starting_team_ids_json`, falling back to the live `season.teams` M2M only for a draft (snapshot
-  `None`). `enrolled_teams(season | None)` (by name), `enrolled_team(season, team_id)`,
-  `parse_team_id(raw)`, `resolve_league_team(league, displayed_season, team_id)` (picker chain:
-  `?team_id=` → `current_team` → first enrolled; no live caller since ANG-08). Every screen, team picker and `team_id` allowlist
+  `None`). `enrolled_teams(season | None)` (by name), `enrolled_team(season, team_id)`. Every screen, team picker and `team_id` allowlist
   reads enrolment through these (before, some read the live M2M, so a Team added after the start
   leaked in).
 - **Watch list:** `watched_player_ids(account, league | league_id) -> set[int]` (anonymous ⇒
@@ -501,7 +499,6 @@ re-exports**: import from each submodule, and **patch `matches.tournament_servic
   carries a default message ("The Tournament is not active.", "The Tournament is no longer in
   setup.", "No Match is ready to play.", …) that the API sends.
 - `detail` — `build_rounds(t, bracket_type)` (`league_screen_services` imports it from here),
-  `build_detail_context(t, *, user)` (the former HTML context; no caller since ANG-08),
   `format_label(t)` ("Random Draw" for `player_pool` + `round_robin_double_elim`,
   else the format's display label), `is_embedded(t)` (referenced by any `SeasonPhase`, or carries a
   `season_phase` — regional / Worlds), `tournament_fields(t)` (the top-level fields shared by list rows
@@ -608,7 +605,7 @@ rewrite) and `test_tournament_services_boundary.py` (no view imports).
 
 **Known follow-ups.** `issues.md`: ANG01f5-D1 generated / imported pool Players land on the global,
 Unmanaged Free Agents Team; ANG01f5-D2 pool CSV import skips the DB slot-collision check; ANG01f-D3
-`build_detail_context` / `build_tournament_detail` mix several jobs. PLAN.md Deferred Items: the
+`build_tournament_detail` mixes several jobs. PLAN.md Deferred Items: the
 never-consumed `PENDING` play run.
 
 ## ANG-02 CORS configuration

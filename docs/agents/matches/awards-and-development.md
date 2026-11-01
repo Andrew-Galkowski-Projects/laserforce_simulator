@@ -375,7 +375,7 @@ blocks.**
   "potential"])`.
 
 **Sort wiring.** `teams.services.PLAYER_SORT_KEYS` carries `"potential": "potential"` (URL key →
-ORM target; `Player.potential` is a real field, so `_coerce_sort` accepts `?sort=potential`). Because
+ORM target; `Player.potential` is a real field, so `?sort=potential` is accepted). Because
 `Player.potential` is nullable, `league_screen_services._order_rated_players` (the Player Ratings and
 Free Agents screens) special-cases the key with **`F("potential").desc(nulls_last=True)`
 / `.asc(nulls_last=True)`** so a player with no potential never

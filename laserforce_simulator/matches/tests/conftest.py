@@ -32,6 +32,20 @@ def pdf_images_per_page(pdf: bytes) -> list[int]:
     return counts
 
 
+class FakeAsyncResult:
+    """Stand-in for a Celery ``AsyncResult`` with a fixed state. As in Celery,
+    ``info`` is ``result`` (the progress meta, the return value, or the
+    exception)."""
+
+    def __init__(self, state: str, result=None) -> None:
+        self.state = state
+        self.result = result
+
+    @property
+    def info(self):
+        return self.result
+
+
 def make_team_with_slots(prefix: str) -> tuple:
     """Create a fully-slotted team with 6 players (commander/heavy/2 scouts/medic/ammo).
 

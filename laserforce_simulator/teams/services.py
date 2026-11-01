@@ -133,30 +133,6 @@ PLAYER_SORT_KEYS: dict[str, str] = {
     "potential": "potential",
 }
 
-_VALID_DIRS: tuple[str, str] = ("asc", "desc")
-
-
-def _coerce_sort(raw: str | None, default: str = "team") -> str:
-    """LG-00c — invalid / missing → default.
-
-    Accepted: every key in ``PLAYER_SORT_KEYS`` plus the literal
-    ``"preferred_roles"`` sentinel (handled Python-side by each caller).
-    Moved here from ``teams.views`` (ANG-08 D1).
-    """
-    if raw in PLAYER_SORT_KEYS or raw == "preferred_roles":
-        return raw
-    return default
-
-
-def _coerce_dir(raw: str | None, default: str = "asc") -> str:
-    """LG-00c — only ``"asc"`` / ``"desc"`` accepted; everything else
-    → default. Case-sensitive: ``"ASC"`` falls back to the default.
-    Moved here from ``teams.views`` (ANG-08 D1) with ``_coerce_sort``.
-    """
-    if raw in _VALID_DIRS:
-        return raw
-    return default
-
 
 # Two example rows demonstrating: (a) team grouping (both rows on
 # "Red Phoenix"), (b) comma-split preferred_roles cell ("scout,medic"),

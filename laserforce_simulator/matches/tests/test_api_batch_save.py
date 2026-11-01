@@ -23,7 +23,7 @@ from rest_framework.test import APIClient
 from conftest import get_shared_manager
 from matches.models import GameRound
 from matches.simulation import BatchSimulator
-from matches.tests.conftest import make_team_with_slots
+from matches.tests.conftest import FakeAsyncResult, make_team_with_slots
 from teams.models import Team, get_free_agents_team
 
 User = get_user_model()
@@ -33,21 +33,9 @@ _UNKNOWN_JOB = "00000000-0000-0000-0000-000000000000"
 _SAVE_STATUS_KEYS = {"status", "error", "round_ids"}
 
 
-class _StubAsyncResult:
-    """A hand-rolled ``AsyncResult`` stand-in carrying a fixed state/result."""
-
-    def __init__(self, state: str, result=None) -> None:
-        self.state = state
-        self.result = result
-        self.info = result
-
-    def get(self, *args, **kwargs):  # pragma: no cover - defensive
-        return self.result
-
-
 def _stub_async_result(state: str, result=None):
     def _factory(job_id, *args, **kwargs):
-        return _StubAsyncResult(state, result)
+        return FakeAsyncResult(state, result)
 
     return _factory
 
