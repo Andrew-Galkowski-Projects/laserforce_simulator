@@ -1,0 +1,86 @@
+// The landing page (ADR-0043 layout B): `--lf-*` tokens only, no colour literals.
+@use '../shared/alerts';
+@use '../shared/badges';
+
+:host {
+  display: block;
+  color: var(--lf-text);
+}
+
+h1 {
+  margin: 0 0 1.5rem;
+  font-family: var(--lf-font-heading);
+}
+
+#in-progress-leagues > h2 {
+  margin: 2rem 0 0.75rem;
+  font-family: var(--lf-font-heading);
+  font-size: 1.15rem;
+}
+
+// Equal tiles share their rows (CODING_STANDARDS): three fit one row in the ~1010px page area.
+.landing__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+}
+
+.landing__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  background: var(--lf-surface);
+  color: inherit;
+  text-decoration: none;
+}
+
+a.landing__card:hover,
+a.landing__card:focus-visible {
+  border-color: var(--lf-accent);
+}
+
+.landing__card--off {
+  color: var(--lf-text-muted);
+  cursor: default;
+}
+
+.landing__card-title {
+  margin: 0;
+  font-family: var(--lf-font-heading);
+  font-size: 1.05rem;
+}
+
+.landing__card-text {
+  margin: 0;
+  color: var(--lf-text-muted);
+}
+
+// The disabled card says so in text, not colour alone (CODING_STANDARDS).
+.landing__soon {
+  margin-left: 0.25rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.league-state {
+  @include badges.league-state;
+
+  align-self: flex-start;
+}
+
+.landing__error {
+  @include alerts.error;
+
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 1.5rem;
+}

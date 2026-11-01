@@ -20,7 +20,7 @@ import {
   LeagueNavSection,
 } from '../league-nav';
 import { PlayRun, keepsOnPlayChange } from '../play/play-run';
-import { SoonBadge } from '../soon-badge/soon-badge';
+import { SoonBadge } from '../../shared/soon-badge/soon-badge';
 import { LeagueContext } from '../stats-shared/league-context';
 import { WatchState } from '../watch/watch-state';
 

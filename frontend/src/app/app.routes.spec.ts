@@ -13,6 +13,8 @@ import { PlayerCareer } from './players/player-career/player-career';
 import { PlayerList } from './players/player-list/player-list';
 import { RoleBenchmarks } from './players/role-benchmarks/role-benchmarks';
 import { releasePlayersLoads } from './players/testing/players-loads';
+import { Landing } from './landing/landing';
+import { releaseLeaguesLoads } from './leagues/testing/leagues-loads';
 import { Register } from './register/register';
 import { Shell } from './shell/shell';
 import { MatchDetail } from './matches/match-detail/match-detail';
@@ -60,6 +62,8 @@ describe('app routes', () => {
     releaseMatchesLoads();
     releaseMapsLoads();
     releasePlayersLoads();
+    // The landing page (spec #460) reads the active Leagues.
+    releaseLeaguesLoads();
     http.verify();
   });
 
@@ -80,10 +84,11 @@ describe('app routes', () => {
       expect(routerUrl()).toBe('/login?returnUrl=%2Fteams%2F5%2Fplayers%2F9%2Fedit');
     });
 
-    it('sends the app root to /login with /teams as the returnUrl', async () => {
+    // The root is the landing page since spec #460 (it redirected to /teams before).
+    it('sends the app root to /login with / as the returnUrl', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/');
-      expect(routerUrl()).toBe('/login?returnUrl=%2Fteams');
+      expect(routerUrl()).toBe('/login?returnUrl=%2F');
     });
 
     it('shows the sign-in page at /login', async () => {
@@ -99,22 +104,25 @@ describe('app routes', () => {
       await signIn();
     });
 
-    it('redirects the app root to /teams', async () => {
+    // Spec #460: the root renders the landing page, which is also HOME_URL (both were /teams).
+    it('renders the landing page at the app root, titled with the app name', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/');
-      expect(routerUrl()).toBe('/teams');
+      expect(routerUrl()).toBe('/');
+      expect(harness.fixture.debugElement.query(By.directive(Landing))).not.toBeNull();
+      expect(TestBed.inject(Title).getTitle()).toBe('Laserforce Simulator');
     });
 
-    it('redirects an unknown path to /teams', async () => {
+    it('redirects an unknown path to the landing page', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/no-such-page');
-      expect(routerUrl()).toBe('/teams');
+      expect(routerUrl()).toBe('/');
     });
 
-    it('sends a visit to /login on to /teams', async () => {
+    it('sends a visit to /login on to the landing page', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/login?returnUrl=%2Fteams%2F3');
-      expect(routerUrl()).toBe('/teams');
+      expect(routerUrl()).toBe('/');
     });
 
     it.each([
@@ -175,11 +183,11 @@ describe('app routes', () => {
       expect(TestBed.inject(Title).getTitle()).toBe('Create an account - Laserforce Simulator');
     });
 
-    it('sends a signed-in visit to /register on to /teams', async () => {
+    it('sends a signed-in visit to /register on to the landing page', async () => {
       await signIn();
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/register');
-      expect(routerUrl()).toBe('/teams');
+      expect(routerUrl()).toBe('/');
     });
 
     it('resolves /account/password inside the shell when signed in, with its title', async () => {

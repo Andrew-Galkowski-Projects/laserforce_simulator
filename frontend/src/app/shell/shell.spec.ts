@@ -291,6 +291,53 @@ describe('App shell (layout B)', () => {
     expect(button('Play')).toBeDefined();
   });
 
+  // Spec #460: the title goes home; Tools then Help sit after Play, before Account.
+  it('links the header title to the landing page', async () => {
+    await open('/teams');
+    const title = header()?.querySelector('.shell__title');
+    expect(title?.tagName).toBe('A');
+    expect(title?.getAttribute('href')).toBe('/');
+    expect(title?.textContent?.trim()).toBe('Laserforce Simulator');
+  });
+
+  it('puts Tools then Help after the Play menu and before Account, on every URL', async () => {
+    await open('/leagues/1');
+    const toolbar = header()?.querySelector('mat-toolbar');
+    const order = [...(toolbar?.children ?? [])].map((el) =>
+      el.tagName === 'APP-PLAY-MENU'
+        ? 'play'
+        : el.getAttribute('aria-label') === 'Account'
+          ? 'account'
+          : el.textContent?.trim() === 'Tools' || el.textContent?.trim() === 'Help'
+            ? el.textContent.trim()
+            : null,
+    );
+    expect(order.filter((name) => name !== null)).toEqual(['play', 'Tools', 'Help', 'account']);
+    http.expectOne(`${BASE}/leagues/1/play-controls/`);
+  });
+
+  it.each([
+    ['Tools', ['Achievements', 'Screenshot', 'Enable Debug Mode', 'Reset DB']],
+    [
+      'Help',
+      ['Overview', 'Changes', 'Custom Rosters', 'Debugging', 'LOL GM Forums', 'Zen GM Forums'],
+    ],
+  ])(
+    'lists the %s items in order, each a disabled Soon entry, never a link',
+    async (menu, labels) => {
+      await open('/teams');
+      button(menu)?.click();
+      await harness.fixture.whenStable();
+      const items = menuItems();
+      expect(items.map((item) => item.textContent?.replace(/\s*Soon$/, '').trim())).toEqual(labels);
+      expect(
+        items.every((item) => item.tagName === 'BUTTON' && item.hasAttribute('disabled')),
+      ).toBe(true);
+      expect(items.every((item) => item.querySelector('app-soon-badge .soon__badge'))).toBe(true);
+      expect(document.querySelector('.mat-mdc-menu-panel a')).toBeNull();
+    },
+  );
+
   it('shows no Play menu off League URLs', async () => {
     await open('/teams');
     expect(button('Play')).toBeUndefined();

@@ -11,9 +11,11 @@
         <span aria-hidden="true">&#9776;</span>
       </button>
     }
-    <span class="shell__title">{{ title }}</span>
+    <a class="shell__title" routerLink="/">{{ title }}</a>
     <span class="shell__spacer"></span>
     <app-play-menu />
+    <button mat-button type="button" [matMenuTriggerFor]="tools">Tools</button>
+    <button mat-button type="button" [matMenuTriggerFor]="help">Help</button>
     @if (roomy()) {
       <button
         mat-button
@@ -38,6 +40,16 @@
     }
   </mat-toolbar>
 </header>
+<mat-menu #tools="matMenu">
+  @for (label of toolsMenu; track label) {
+    <button mat-menu-item type="button" disabled><app-soon-badge [label]="label" /></button>
+  }
+</mat-menu>
+<mat-menu #help="matMenu">
+  @for (label of helpMenu; track label) {
+    <button mat-menu-item type="button" disabled><app-soon-badge [label]="label" /></button>
+  }
+</mat-menu>
 <mat-menu #account="matMenu" xPosition="before">
   @if (user()?.self_insert; as player) {
     <a mat-menu-item [routerLink]="['/teams', player.team, 'players', player.id]">My player</a>

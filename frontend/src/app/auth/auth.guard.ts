@@ -10,8 +10,11 @@ export const authGuard: CanActivateFn = (_route, state) => {
   return inject(Router).createUrlTree(['/login'], { queryParams: { returnUrl: state.url } });
 };
 
-/** Where a signed-in Account lands when nothing names a page: sign-in, register, this guard. */
-export const HOME_URL = '/teams';
+/**
+ * Where a signed-in Account lands when nothing names a page: sign-in, register, this guard. The
+ * landing page (spec #460).
+ */
+export const HOME_URL = '/';
 
 /** `/login` and `/register`: a signed-in visit goes straight to `HOME_URL`. */
 export const signedOutGuard: CanActivateFn = () =>
