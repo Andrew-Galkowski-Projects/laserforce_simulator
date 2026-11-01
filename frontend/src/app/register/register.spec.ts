@@ -98,6 +98,7 @@ describe('Register page', () => {
     expect(page().textContent).toContain('Account created. Please sign in.');
   });
 
+  // Spec #460: signedOutGuard sends a signed-in visit to HOME_URL, now / (it was /teams).
   it('sends a signed-in visitor on to /', async () => {
     await harness.navigateByUrl('/register');
     await submit();

@@ -42,12 +42,16 @@
 </header>
 <mat-menu #tools="matMenu">
   @for (label of toolsMenu; track label) {
-    <button mat-menu-item type="button" disabled><app-soon-badge [label]="label" /></button>
+    <button mat-menu-item type="button" class="shell__soon-item" disabled>
+      <app-soon-badge [label]="label" />
+    </button>
   }
 </mat-menu>
 <mat-menu #help="matMenu">
   @for (label of helpMenu; track label) {
-    <button mat-menu-item type="button" disabled><app-soon-badge [label]="label" /></button>
+    <button mat-menu-item type="button" class="shell__soon-item" disabled>
+      <app-soon-badge [label]="label" />
+    </button>
   }
 </mat-menu>
 <mat-menu #account="matMenu" xPosition="before">

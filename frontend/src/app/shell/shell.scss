@@ -27,6 +27,12 @@ mat-toolbar {
   text-decoration: none;
 }
 
+// A Tools / Help item is disabled and already muted by its Soon badge; Material's 0.38 fade on
+// top of that left it unreadable, so it reads like the League nav's Soon entries instead.
+.shell__soon-item.mat-mdc-menu-item[disabled] {
+  opacity: 1;
+}
+
 .shell__spacer {
   flex: 1;
 }

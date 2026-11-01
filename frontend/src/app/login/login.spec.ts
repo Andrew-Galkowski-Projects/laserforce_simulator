@@ -107,7 +107,8 @@ describe('Login page', () => {
     expect(routerUrl()).toBe('/teams/3/slots');
   });
 
-  // Each would resolve to a real screen (/teams/new) if it were used as-is.
+  // Each would resolve to a real screen (/teams/new) if it were used as-is. The fallback is
+  // HOME_URL, the landing page since spec #460 (it was /teams).
   it.each(['https://evil.example.com/teams/new', '//teams/new', '/\\teams/new', 'teams/new'])(
     'ignores a returnUrl that is not an in-app path (%s) and lands on /',
     async (returnUrl) => {

@@ -60,13 +60,9 @@ a.landing__card:focus-visible {
 
 // The disabled card says so in text, not colour alone (CODING_STANDARDS).
 .landing__soon {
+  @include badges.soon;
+
   margin-left: 0.25rem;
-  padding: 0 0.35rem;
-  border: 1px solid var(--lf-border);
-  border-radius: var(--lf-radius);
-  font-size: 0.7rem;
-  font-weight: 700;
-  white-space: nowrap;
 }
 
 .league-state {

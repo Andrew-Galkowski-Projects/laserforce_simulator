@@ -113,12 +113,14 @@ describe('app routes', () => {
       expect(TestBed.inject(Title).getTitle()).toBe('Laserforce Simulator');
     });
 
+    // Spec #460: '**' still redirects to '', now the landing page (it was /teams).
     it('redirects an unknown path to the landing page', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/no-such-page');
       expect(routerUrl()).toBe('/');
     });
 
+    // Spec #460: signedOutGuard sends a signed-in visit to HOME_URL, now / (it was /teams).
     it('sends a visit to /login on to the landing page', async () => {
       const harness = await RouterTestingHarness.create();
       await harness.navigateByUrl('/login?returnUrl=%2Fteams%2F3');
@@ -183,6 +185,7 @@ describe('app routes', () => {
       expect(TestBed.inject(Title).getTitle()).toBe('Create an account - Laserforce Simulator');
     });
 
+    // Spec #460: signedOutGuard sends a signed-in visit to HOME_URL, now / (it was /teams).
     it('sends a signed-in visit to /register on to the landing page', async () => {
       await signIn();
       const harness = await RouterTestingHarness.create();
