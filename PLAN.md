@@ -130,6 +130,8 @@ ANG-10 (serve the SPA from Django in every deploy) is **[DONE]**; see `PLAN-comp
 
 ### DESK-01 · [NOT STARTED] Desktop App code in `main`, with tests
 
+Spec: #486
+
 From ANG-09 ([ADR-0048](docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)); the
 `spike/ang-09` branch has working versions to start from. Merge the desktop settings and URLconf
 (in-process Celery worker thread, SQLite in the app-data folder, file logging; the SPA serving
@@ -138,6 +140,52 @@ the one local Account), the single-use launch-code sign-in, and `desktop` on `ac
 SPA hides Sign out, Change password, Register and the invite screens when `desktop` is set, and
 shows an in-app notice after a reset. Needs its own grill: the login-exemption guard's allowlist,
 and where the launcher lives.
+
+**Grill round 1 (owner, 2026-11-01).** Settled facts: ANG-10's `core.spa` already serves the SPA,
+so the spike's `spa_index` and catch-all route are dropped; the SPA has no invite screens (invites
+live in Django Admin), so "hide the invite screens" means `/register`; the guard walks only the
+Hosted URLconf today; `waitress` is not in `requirements.txt`. Decisions:
+
+1. **Layout.** One plain package `laserforce_simulator/desktop/` (not an `INSTALLED_APP`):
+   `settings.py`, `urls.py`, `launch_code.py` (mint / spend + the view), `launcher.py` (every
+   testable function). Repo-root `desktop/main.py` is a thin entry (`freeze_support`, `sys.path`,
+   `launcher.main()`) that DESK-02's PyInstaller spec points at.
+2. **`desktop` on `me`.** A base setting `DESKTOP_APP = False` (desktop settings: `True`);
+   `MeSerializer` always emits `desktop: bool`; TS `User.desktop` is required. No second `me` view.
+3. **Guard.** `test_login_exempt_surfaces.py` runs against both URLconfs; the desktop one's
+   `ANONYMOUS_API_VIEWS` is the Hosted set plus the launch-code view. `HTML_EXEMPT_VIEWS` unchanged.
+4. **Launch code.** In-process, single use, no expiry, one per launch. The view refuses a
+   `REMOTE_ADDR` other than `127.0.0.1` / `::1`, always redirects to the fixed `/` (no `next`), and
+   answers a missing / unknown / reused code with 403 "This launch link has been used. Restart the
+   app.". It sets the ordinary `refresh_token` cookie (httpOnly, `SameSite=Lax`, `path=/api/token/`).
+   Hostile inputs tested: missing, empty, wrong, reused code; two concurrent spends (one wins);
+   non-local address; a `next` / `//evil` parameter ignored.
+5. **Local Account.** `local@desktop.invalid`, `set_unusable_password()`, not staff, looked up by
+   email every launch.
+6. **Reset notice.** `me` gains `desktop_notice: string | null`, set by the launcher for the
+   process lifetime after `migrate_or_reset` moved the database aside (always `null` Hosted). The
+   Shell shows it as a dismissible alert (`shared/_alerts.scss`); dismissal lasts until reload.
+   Text as the spike's.
+7. **SPA hiding.** Sign out, the Change password menu entry, and `/account/password` (a guard
+   redirects to `/` when `desktop`). Nothing added to `/login` / `/register`: `signedOutGuard`
+   already keeps a signed-in user off them, and with no Sign out there is no way back. No anonymous
+   client-config endpoint; cleared cookies show the ordinary login page (restart fixes it).
+8. **Tests.** `migrate_or_reset` / `prepare_environment` / `local_account` take paths and a
+   `migrate` callable: `tmp_path` tests for the `.bak` reset, WAL / SHM cleanup, a failing fresh DB
+   re-raising, and the secret key kept across launches. One subprocess smoke in the normal suite
+   (`desktop/main.py --no-browser`, temp `LF_DESKTOP_HOME`, wait for `LF_READY`, spend the code,
+   refresh, `me` says `desktop: true`). `waitress` joins `requirements.txt`.
+9. **Desktop settings.** Port the spike's (DEBUG off, localhost hosts, empty CORS / CSRF origins,
+   `MEDIA_ROOT` in the data folder + `SERVE_MEDIA`, `memory://` / `cache+memory://` Celery, rotating
+   file log), drop the WhiteNoise lines ANG-10 owns, set `SPA_ROOT` from `LF_DESKTOP_SPA`. No
+   SQLite assert.
+10. **Out of scope.** The PyInstaller spec, `build.ps1`, `measure.py`, `upgrade_check.py` and the
+    requirements split (DESK-02); pywebview, tray, single-instance lock (DESK-03); default maps,
+    signing, update checks (DESK-04).
+
+**Grill round 2 (owner, 2026-11-01).** 11. The smoke also runs one real job: a 1-round batch POST
+through the API with the signed-in token, polled to SUCCESS (ADR-0048's garbage-collected-worker
+caveat). 12. One ticket, implemented by the orchestrator in the integration worktree.
 
 ### DESK-02 · [NOT STARTED] Desktop App build in CI
 
