@@ -137,6 +137,20 @@ Spec: #342
             "TEST-01 (missile spent twice) is **[DONE]**;", _move(plan=plan).plan
         )
 
+    def test_open_status_marker_is_replaced_by_done(self) -> None:
+        for marker in ("[NOT STARTED] ", "[IN PROGRESS] "):
+            with self.subTest(marker=marker):
+                plan = _PLAN.replace(
+                    "TEST-01 · Keep media", f"TEST-01 · {marker}Keep media"
+                )
+                result = _move(plan=plan)
+                self.assertIn(
+                    "### TEST-01 · [DONE] Keep media writes out\n", result.completed
+                )
+                self.assertIn(
+                    "TEST-01 (keep media writes out) is **[DONE]**;", result.plan
+                )
+
     def test_long_note_is_wrapped_at_100_columns(self) -> None:
         note = " ".join(["`word`"] * 40)
         completed = _move(note=note).completed

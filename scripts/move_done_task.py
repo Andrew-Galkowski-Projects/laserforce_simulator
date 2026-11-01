@@ -32,6 +32,10 @@ class MoveError(ValueError):
     """The move can't be applied; neither file is written."""
 
 
+#: An open-task status marker that ``[DONE]`` replaces (ANG-09 retro).
+_OPEN_STATUS = re.compile(r"\[(?:NOT STARTED|IN PROGRESS)\] ")
+
+
 class MoveResult(NamedTuple):
     plan: str
     completed: str
@@ -47,7 +51,7 @@ def _find_task(lines: list[str], task_id: str) -> tuple[int, int, str]:
     if len(found) > 1:
         raise MoveError(f"{task_id}: matches {len(found)} headings in PLAN.md")
     start, match = found[0]
-    title = match.group(2)
+    title = _OPEN_STATUS.sub("", match.group(2), count=1)
     if title.startswith("[DONE]"):
         raise MoveError(f"{task_id}: heading is already [DONE]")
     return start, len(match.group(1)), title
@@ -83,7 +87,8 @@ def _phase_heading(lines: list[str], start: int) -> str:
 
 
 def _done_section(section: list[str], note_lines: list[str]) -> list[str]:
-    heading = re.sub(r" · ", " · [DONE] ", section[0], count=1)
+    head, _, title = section[0].partition(" · ")
+    heading = f"{head} · [DONE] {_OPEN_STATUS.sub('', title, count=1)}"
     first = next((i for i in range(1, len(section)) if section[i].strip()), 0)
     has_spec_line = first > 0 and section[first].startswith("Spec: #")
     insert_at = first + 1 if has_spec_line else 1

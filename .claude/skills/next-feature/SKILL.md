@@ -242,6 +242,15 @@ integration branch. It is pushed but never merged, and the PR still says
 holds the screenshots and records the owner's choice on the issue. The tickets
 that build on that choice are blocked by the pick.
 
+A **spike** task (an investigation whose deliverable is an ADR, no merged code)
+is one ticket the orchestrator does itself, on a `spike/<task>` branch cut
+from the integration branch, pushed and never merged; the PR merges the docs.
+Its measurement scripts write each run to a new timestamped file, and every
+number the ADR states cites one of those files, committed on the spike
+branch. Before writing the ADR, map each acceptance criterion to the file that
+proves it: ANG-09's review found three ADR numbers backed only by an
+overwritten JSON or a console line, and two criteria never run.
+
 **The owner's approval of the breakdown authorises local commits** on this
 task's integration and ticket branches (the `CLAUDE.md` exception). Say so
 when asking. Once approved, commit the grill's docs (PLAN.md, GLOSSARY.md,
