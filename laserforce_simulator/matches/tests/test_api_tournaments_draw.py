@@ -255,6 +255,24 @@ class DrawTests(LeagueApiTestCase):
             )
             self.assertEqual(tiers, [1, 2, 3, 4, 5, 6])
 
+    def test_draw_never_changes_a_pooled_players_team(self) -> None:
+        # ANG-08e (port of test_tournament_views' no-reassign case): drawn
+        # Teams borrow pooled Players through their slot FKs only.
+        own_team = make_teams("DrawOwn", 1, manager=self.user_a)[0]
+        fa_players = _fill_pool(self.t, 18, "Fa")
+        own_players = _players(6, "Own", team=own_team)
+        for p in own_players:
+            TournamentPlayerEntry.objects.create(tournament=self.t, player=p)
+        before = {p.id: p.team_id for p in fa_players + own_players}
+
+        data = self.ok(self.draw())
+
+        self.assertEqual(len(data["participants"]), 4)
+        after = dict(Player.objects.filter(id__in=before).values_list("id", "team_id"))
+        self.assertEqual(after, before)
+        drawn_ids = {p["team"]["id"] for p in data["participants"]}
+        self.assertFalse(Player.objects.filter(team_id__in=drawn_ids).exists())
+
     def test_reroll_replaces_the_drawn_teams(self) -> None:
         _fill_pool(self.t, 24, "R")
         first = {p["team"]["id"] for p in self.ok(self.draw())["participants"]}

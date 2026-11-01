@@ -12,14 +12,15 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from conftest import get_shared_manager
+from matches.models import GameRound, PlayerRoundState
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
-from teams.models import Player
+from teams.models import Player, Team
 from teams.role_benchmarks import ROLES, STAT_KEYS
 
 User = get_user_model()
@@ -243,3 +244,54 @@ class TestRoleBenchmarks(_CareerTestCase):
     def test_anonymous_is_401(self) -> None:
         # ADR-0041: an anonymous /api/ request is 401 (was 403).
         self.assertEqual(APIClient().get("/api/players/benchmarks/").status_code, 401)
+
+
+@override_settings(
+    CACHES={
+        "default": {
+            "BACKEND": "django.core.cache.backends.locmem.LocMemCache",
+            "LOCATION": "ang08e-api-benchmarks-stale",
+        }
+    }
+)
+class TestRoleBenchmarksStaleReadInvalidated(TestCase):
+    """ANG-08e (port of test_role_benchmarks_cache's HTML stale-read case): a
+    Round saved after the first read shows on the next read."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        cache.clear()
+        self.api = APIClient()
+        self.api.force_login(get_shared_manager())
+        self.team = Team.objects.create(name="Stale Team")
+        self.player = Player.objects.create(team=self.team, name="Stale Player")
+        self.team.slot_commander = self.player
+        self.team.save()
+
+    def _add_round(self, points_scored: int) -> None:
+        game_round = GameRound.objects.create(
+            round_number=1, team_red=self.team, team_blue=self.team
+        )
+        PlayerRoundState.objects.create(
+            game_round=game_round,
+            player=self.player,
+            team_color="red",
+            role="commander",
+            points_scored=points_scored,
+        )
+
+    def _commander_points_mean(self) -> float:
+        response = self.api.get("/api/players/benchmarks/", {"threshold": 0})
+        self.assertEqual(response.status_code, 200, response.content)
+        rows = response.json()["data"]["benchmarks"]["commander"]
+        return next(row["mean"] for row in rows if row["stat"] == "points_scored")
+
+    def test_round_saved_after_first_read_shows_on_next_read(self) -> None:
+        with self.captureOnCommitCallbacks(execute=True):
+            self._add_round(1000)
+        self.assertAlmostEqual(self._commander_points_mean(), 1000.0)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            self._add_round(3000)
+        # Career mean of one Player over (1000, 3000) -- not the stale 1000.
+        self.assertAlmostEqual(self._commander_points_mean(), 2000.0)

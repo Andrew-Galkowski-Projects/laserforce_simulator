@@ -350,6 +350,25 @@ class TournamentRetrieveTests(LeagueApiTestCase):
         participant_ids = {str(p["team"]["id"]) for p in data["participants"]}
         self.assertEqual(set(data["cut_labels"]), participant_ids)
 
+    def test_rrde_after_the_round_robin_is_finals_with_both_brackets(self) -> None:
+        # ANG-08e (port of test_tournament_views' RRDE finals-stage case).
+        t = _locked(
+            "RRDEFinals",
+            4,
+            format="round_robin_double_elim",
+            wb_advancers=4,
+            lb_advancers=0,
+        )
+        _play_all_rr(t)
+        data = self.get(t)
+        self.assertEqual(data["stage"], "finals")
+        types = _bracket_types(data)
+        self.assertIn("round_robin", types)
+        self.assertIn("winners", types)
+        self.assertIn("losers", types)
+        self.assertIn("grand_final", types)
+        self.assertEqual(data["cut_labels"], {})
+
     def test_swiss_groups_and_standings(self) -> None:
         data = self.get(_locked("Swiss", 4, format="swiss"))
         self.assertEqual(_bracket_types(data), ["swiss"])

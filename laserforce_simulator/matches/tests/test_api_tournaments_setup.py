@@ -10,10 +10,34 @@ from __future__ import annotations
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 
+from matches.bracket import default_seed_order
 from matches.models import SeasonPhase, Tournament, TournamentParticipant
 from matches.tests.league_api_fixtures import LeagueApiTestCase, make_league, make_teams
-from teams.models import Team
+from matches.tournament_services.seeding import team_mean_rating
+from teams.models import Player, Team
 from teams.roster_importer import REQUIRED_COLUMNS
+
+_STAT_FIELDS = (
+    "player_awareness",
+    "game_awareness",
+    "resource_awareness",
+    "decision_making",
+    "positioning",
+    "stamina",
+    "speed",
+    "flexibility",
+    "adaptability",
+    "communication",
+    "teamwork",
+    "Offensive_synergy",
+    "defensive_synergy",
+    "midfield_synergy",
+    "resupply_synergy",
+    "resupply_efficiency",
+    "accuracy",
+    "survival",
+    "special_usage",
+)
 
 PLAYER_POOL_IMPORT_MSG = (
     "This Tournament uses a Player-pool draw; add Players to its pool instead."
@@ -270,6 +294,64 @@ class ImportParticipantsApiTests(LeagueApiTestCase):
         self.assertEqual([p["seed"] for p in rows], [1, 2, 3, 4])
         for name in ("ImpA", "ImpB", "ImpC"):
             self.assertEqual(Team.objects.get(name=name).manager, self.user_a)
+
+    def test_import_reseeds_the_whole_field_by_talent(self) -> None:
+        # ANG-08e (port of test_tournament_views' full-field reseed): the
+        # existing seed-1 participant is the weakest Team, so after the import
+        # the whole field is re-ordered by mean active-player rating.
+        t = _tournament("Reseed", manager=self.user_a, n_teams=1)
+        weak = t.participants.get().team
+        Player.objects.filter(team=weak).update(**{f: 1 for f in _STAT_FIELDS})
+
+        data = self.ok(self.post(t, _csv("RsA", "RsB", "RsC")), status=201)
+
+        by_seed = sorted(data["participants"], key=lambda p: p["seed"])
+        self.assertEqual([p["seed"] for p in by_seed], [1, 2, 3, 4])
+        actual = [p["team"]["id"] for p in by_seed]
+        expected = default_seed_order(
+            [
+                (team_id, team_mean_rating(Team.objects.get(pk=team_id)))
+                for team_id in actual
+            ]
+        )
+        self.assertEqual(actual, expected)
+        self.assertEqual(actual[-1], weak.id)
+        self.assertEqual(
+            dict(t.participants.values_list("team_id", "seed")),
+            {team_id: seed for seed, team_id in enumerate(actual, start=1)},
+        )
+
+    def test_csv_naming_a_foreign_team_creates_an_owned_team_and_never_leaks(
+        self,
+    ) -> None:
+        # ANG-08e (port of test_roster_import_ownership's Tournament import):
+        # Account B's "Shared" Team is invisible to A, so the CSV creates a new
+        # A-owned "Shared" Team, B's Team is untouched and its Player's name is
+        # never echoed.
+        b_team = Team.objects.create(name="Shared", manager=self.user_b)
+        secret = Player.objects.create(team=b_team, name="SecretPlayer")
+        b_team.slot_commander = secret
+        b_team.save()
+        t = _tournament("LeakCup", manager=self.user_a, n_teams=0)
+
+        response = self.post(
+            t, _csv("Shared", "LeakFreshA", "LeakFreshB", "LeakFreshC")
+        )
+
+        data = self.ok(response, status=201)
+        self.assertNotIn("SecretPlayer", response.content.decode())
+        new_shared = Team.objects.get(name="Shared", manager=self.user_a)
+        self.assertNotEqual(new_shared.pk, b_team.pk)
+        self.assertEqual(new_shared.players.count(), 6)
+        participant_ids = {p["team"]["id"] for p in data["participants"]}
+        self.assertIn(new_shared.pk, participant_ids)
+        self.assertNotIn(b_team.pk, participant_ids)
+        b_team.refresh_from_db()
+        self.assertEqual(b_team.manager_id, self.user_b.pk)
+        self.assertEqual(b_team.slot_commander_id, secret.pk)
+        self.assertEqual(
+            list(b_team.players.values_list("name", flat=True)), ["SecretPlayer"]
+        )
 
     def test_bad_csv_is_400_roster_invalid_with_row_fields(self) -> None:
         t = _tournament("Cup", manager=self.user_a, n_teams=0)
