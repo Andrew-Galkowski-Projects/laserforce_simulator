@@ -124,30 +124,7 @@ ANG-07 (serve Angular from Docker) is **[DONE]**; see `PLAN-completed.md`.
 
 ANG-08 (remove Django template views) is **[DONE]**; see `PLAN-completed.md`.
 
-### ANG-09 · [NOT STARTED] Investigate a standalone single-player executable
-
-**Investigation only — no shipped code.** Find out whether single-player mode (sandbox + single-player
-`league` / career mode) can be handed out as one downloadable executable that runs locally, with no
-hosted server. The deliverable is a spike plus a go / no-go ADR. If the answer is go, the ADR names the
-follow-up tasks. Starts after ANG-08, so the frontend is the built Angular SPA and Django is API-only.
-
-Questions to answer:
-- **Packaging:** PyInstaller, Briefcase or Nuitka for the Django + DRF backend and its native
-  dependencies. Measure binary size and cold-start time.
-- **Background jobs:** batch runs and the Season play loop use Celery + Redis (ADR-0013 / ADR-0016).
-  Find an in-process replacement (a thread / process pool or an eager mode), so the user doesn't have to
-  run a broker.
-- **Shell:** a native window (pywebview, Tauri or Electron) vs. opening the default browser to a
-  localhost port. How do the built Angular static files get served (Django + whitenoise, or the shell)?
-- **Database:** an embedded SQLite file in the user's app-data folder. This conflicts with ADR-0025
-  (PostgreSQL canonical, SQLite dev-only). Decide whether a desktop-only SQLite exception is acceptable,
-  and how `migrate` runs on first launch and on upgrade (ADR-0004: simulation data is disposable).
-- **Auth:** a single local Account created and signed in automatically. ANG-03 JWT vs. a local bypass.
-  Hide the `multiplayer` mode and the Account screens.
-- **Runtime:** simulation parallelism under a frozen binary (`multiprocessing.freeze_support`, process
-  pools), the bundled map / media files, and where logs go.
-- **Distribution:** Windows first. Cover code signing / SmartScreen, auto-update vs. manual download,
-  and macOS / Linux feasibility.
+ANG-09 (Investigate a standalone single-player executable) is **[DONE]**; see `PLAN-completed.md`.
 
 ### ANG-10 · [NOT STARTED] Serve the SPA on Fly.io
 
@@ -161,6 +138,45 @@ to the SPA with an `index.html` fallback), e.g. an nginx process in the Fly mach
 or WhiteNoise serving the bundle. Then update `fly.toml`, the CI deploy step and the docs (README,
 `docs/self-hosting.md`'s "Fly.io is the canonical deploy" note). Needs its own grill; record the
 choice in an ADR if it differs from ADR-0047's nginx split.
+
+### DESK-01 · [NOT STARTED] Desktop App code in `main`, with tests
+
+From ANG-09 ([ADR-0048](docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)); the
+`spike/ang-09` branch has working versions to start from. Merge the desktop settings and URLconf
+(WhiteNoise SPA serving with the `index.html` fallback, in-process Celery worker thread, SQLite in
+the app-data folder, file logging), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
+the one local Account), the single-use launch-code sign-in, and `desktop` on `accounts/me/`. The
+SPA hides Sign out, Change password, Register and the invite screens when `desktop` is set, and
+shows an in-app notice after a reset. Needs its own grill: the login-exemption guard's allowlist,
+and where the launcher lives.
+
+### DESK-02 · [NOT STARTED] Desktop App build in CI
+
+Blocked by DESK-01. A Windows runner on python.org CPython 3.12 (not conda: ADR-0048), a
+runtime / dev split of `requirements.txt`, the PyInstaller build, a launch-and-measure smoke
+(`desktop/measure.py` on the spike branch), and the zip as a GitHub Release asset on a tag.
+
+### DESK-03 · [NOT STARTED] Desktop App native window
+
+Blocked by DESK-01. pywebview (WebView2) frozen in the build, a tray icon or no-console build, and
+a single-instance lock. pywebview worked unfrozen in the ANG-09 spike.
+
+### DESK-04 · [NOT STARTED] Desktop App distribution
+
+Blocked by DESK-02. The download page, SmartScreen signing (unsigned plus a note first, then Azure
+Trusted Signing), a "new version available" check against GitHub Releases, and whether to bundle
+the default Arena maps (`ensure_default_maps` seeds from a folder the build does not ship).
+macOS / Linux builds are later (ADR-0048 Distribution).
+
+### BUG-SL-01 · [NOT STARTED] Sight-line compute fails after a saved zone config
+
+Found by ANG-09, frozen and unfrozen alike. `POST /api/maps/<id>/sight-lines/compute/` after a
+`PUT .../zone-config/` returns 500 `KeyError: 0`: `compute_sight_lines`
+(`core/map_processing.py`) falls back to the saved config's `blocked_edges` dict (keyed `"r,c"`)
+and `_has_los` indexes it as a 2D grid. The tests' 4x4 fixture only checks neighbouring cells, so
+the line walk never runs. Reproduce with either sample map in `Screenshots_and_video_examples/`.
+Also remove the import-time `logging.basicConfig(level=logging.DEBUG)` in
+`matches/simulation/entrypoints.py`.
 
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
@@ -308,9 +324,8 @@ front door (ANG-07) and the template removal (ANG-08: the SPA is served at /, AD
 in order:
 
 ```
-ANG-09  Standalone single-player executable spike (go / no-go ADR)   <- NOW
-  -> ANG-10  Serve the SPA on Fly.io (Fly is API + Admin only until then)
-    -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
+ANG-10  Serve the SPA on Fly.io (Fly is API + Admin only until then)   <- NOW
+  -> LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.

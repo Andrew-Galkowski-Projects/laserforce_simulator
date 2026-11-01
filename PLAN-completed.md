@@ -7711,6 +7711,93 @@ The app should have zero `.html` template files by the end of this phase, except
 12. **Out of scope:** new Angular screens or behaviour, the "Soon" items, the SPA on Fly,
     dropping `SessionAuthentication`, any model or migration change.
 
+### ANG-09 · [DONE] Investigate a standalone single-player executable
+
+Spec: #477 (ticket #478)
+
+**[DONE] Shipped (2026-11-01).** Go, with caveats: ADR-0048. A spike on the never-merged
+spike/ang-09 branch built a PyInstaller one-folder Windows Desktop App (99.8 MB zip) with an
+in-process Celery worker thread, SQLite in %LOCALAPPDATA%, WhiteNoise serving the SPA behind
+waitress, and launch-code sign-in. It met every go bar: 4.2-5.3 s first launch, frozen sims within
+~1.2x of unfrozen, live job progress, and upgrades that keep data or reset to .bak. The spike also
+found two app bugs (BUG-SL-01) and conda DLL clashes in the build. Follow-ups: DESK-01..04,
+BUG-SL-01.
+
+**Investigation only — no shipped code.** Find out whether single-player mode (sandbox + single-player
+`league` / career mode) can be handed out as one downloadable executable that runs locally, with no
+hosted server. The deliverable is a spike plus a go / no-go ADR. If the answer is go, the ADR names the
+follow-up tasks. Starts after ANG-08, so the frontend is the built Angular SPA and Django is API-only.
+
+Questions to answer:
+- **Packaging:** PyInstaller, Briefcase or Nuitka for the Django + DRF backend and its native
+  dependencies. Measure binary size and cold-start time.
+- **Background jobs:** batch runs and the Season play loop use Celery + Redis (ADR-0013 / ADR-0016).
+  Find an in-process replacement (a thread / process pool or an eager mode), so the user doesn't have to
+  run a broker.
+- **Shell:** a native window (pywebview, Tauri or Electron) vs. opening the default browser to a
+  localhost port. How do the built Angular static files get served (Django + whitenoise, or the shell)?
+- **Database:** an embedded SQLite file in the user's app-data folder. This conflicts with ADR-0025
+  (PostgreSQL canonical, SQLite dev-only). Decide whether a desktop-only SQLite exception is acceptable,
+  and how `migrate` runs on first launch and on upgrade (ADR-0004: simulation data is disposable).
+- **Auth:** a single local Account created and signed in automatically. ANG-03 JWT vs. a local bypass.
+  Hide the `multiplayer` mode and the Account screens.
+- **Runtime:** simulation parallelism under a frozen binary (`multiprocessing.freeze_support`, process
+  pools), the bundled map / media files, and where logs go.
+- **Distribution:** Windows first. Cover code signing / SmartScreen, auto-update vs. manual download,
+  and macOS / Linux feasibility.
+
+**Grill decisions (2026-11-01, round 1):**
+1. **Deliverable:** spike code lives on a pushed, never-merged `spike/ang-09` branch; the PR to
+   `main` carries docs only (the go / no-go ADR, the follow-up tasks in PLAN.md, GLOSSARY terms).
+2. **Depth:** a real Windows build that launches, signs in automatically and plays (a) one sandbox
+   Single Round and (b) one Season play-loop step of a single-player League, end to end. Batch runs,
+   PDF export and maps get a smoke check (works / crashes).
+3. **Packaging:** PyInstaller one-folder first; Nuitka only if PyInstaller hits a blocker; Briefcase
+   compared on paper.
+4. **Shell:** start Django on a free localhost port and open the default browser; pywebview as a
+   timed stretch; Tauri / Electron on paper only.
+5. **Go bar** (on the owner's machine): one-folder build zips to ~200 MB or less; cold start to a
+   usable screen ~15 s or less; a Single Round simulates no slower than 1.5x the dev server; no
+   broker, Docker or Postgres; an upgrade keeps or deliberately resets local data without a crash.
+   Missing one narrowly is "go with caveats", not "no-go".
+6. **Platforms:** measured on Windows only; macOS / Linux on paper (notarisation, no
+   PyInstaller cross-build).
+7. **Signing / updates:** research only, nothing bought; the ADR records SmartScreen options and
+   recommends manual download vs auto-update for a first release.
+8. **Breakdown:** one ticket, done by the orchestrator; no TDD / mutation (no merged code); the
+   Python suite is CI only; review reads the ADR against the spec.
+9. **Term:** **Desktop App** (vs **Hosted**) in GLOSSARY.md.
+
+**Settled facts (code read 2026-11-01):** eager Celery (`LF_CELERY_EAGER`, `memory://` broker)
+already runs without a broker; no guard refuses SQLite; the landing page's `multiplayer` card is
+already disabled; play mode is a `League.mode` field; `freeze_support` appears nowhere; maps are
+uploaded at run time (no bundled map data); PDF export is server-side (reportlab + matplotlib); no
+`LOGGING` config, and `matches/simulation/entrypoints.py` calls `basicConfig(DEBUG)` at import.
+
+**Grill decisions (round 2):**
+10. **Jobs:** try an in-process Celery worker thread on the `memory://` broker + cache result
+    backend first (`.delay()`, `AsyncResult` and polling unchanged); fall back to plain eager if
+    that fails frozen. The ADR records which held.
+11. **Parallelism:** the launcher calls `multiprocessing.freeze_support()` first; the smoke check
+    runs a batch of 50 or more Rounds (so the process pool starts) to completion.
+12. **Database:** SQLite at `%LOCALAPPDATA%\LaserforceSimulator\db.sqlite3`; `migrate` on every
+    launch; a failed upgrade `migrate` renames the file to `.bak` and starts fresh with a notice
+    (ADR-0004). A Desktop-only exception to ADR-0025, with a pointer added to ADR-0025.
+13. **Sign-in:** the launcher creates one local Account on first run (random, never-shown
+    password), mints a single-use launch code and opens `/api/accounts/desktop-login/?code=...`,
+    which sets the normal refresh cookie and redirects to `/`. Django binds to `127.0.0.1` only.
+14. **Account screens:** a runtime `desktop: true` flag on the current-user response hides them
+    (one SPA build). The spike hides Sign out only; the ADR lists the rest.
+15. **Serving:** WhiteNoise serves the built SPA at `/` with an `index.html` fallback (a
+    Desktop-only exception to ADR-0047; ANG-10 may reuse it), behind waitress.
+16. **Bundle:** everything bundled and measured per package; cuts (e.g. map upload's OpenCV) are
+    proposed in the ADR only. No default map shipped.
+17. **Lifecycle / logs:** a console window (closing it quits) plus a rotating log file under
+    `%LOCALAPPDATA%\LaserforceSimulator\logs\`; tray icon / no-console build and the DEBUG
+    `basicConfig` are ADR follow-ups.
+18. **Requirements:** `requirements-desktop.txt` on the spike branch only; a runtime / dev split
+    is an ADR follow-up.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

@@ -447,6 +447,14 @@ _Avoid_: the pre-LG-06e "category best" model (one row = the single best of each
 A registered human identity that logs in — `accounts.User`, a custom `AbstractUser` with `username = None` and a unique `email` as `USERNAME_FIELD` (UX-01). Self-registration is invite-only (an **Invite**: a code created in Django Admin, single-use by default, optionally with several uses, an expiry, or a lock to one email); account removal is a Django Admin action.
 _Avoid_: calling an Account an **Owner** (the **Owner** is the fictional boss who judges the **Manager**, never a login); using "user" as a domain noun where the **Manager** relationship is meant.
 
+**Desktop App**:
+A downloadable build of the app that runs on one person's machine, for one **Account**, with no hosted server — the single-player modes only. The opposite of the **Hosted** deploy.
+_Avoid_: "standalone", "offline", "exe" (say Desktop App); "standalone" already means a **Single Round** in older docs.
+
+**Hosted**:
+The deploy that serves many **Accounts** from a server — Fly.io or the Docker stacks — as opposed to the **Desktop App**.
+_Avoid_: "online version", "web version" (the Desktop App also renders in a browser).
+
 **Ownership root**:
 One of the five row kinds that carry a `manager` FK directly — **Team**, **League**, **Tournament**, a sandbox **Match** (`season IS NULL`) and a standalone **Round** (`GameRound.match IS NULL`). The rule is *a row is a root exactly when its parent FK is null*. Every other row derives its **Manager** by traversing its non-null parent FK (**Player** → Team; **Season** / **Conference** / **Season phase** → League; **Bracket node** / **Series** / participants → Tournament; **Round** → Match; **Player round state** / **Game event** → Round → Match). **Arena map** is deliberately *not* an Ownership root — it is shared reference data, because `is_default`, **Map pools** and **Map mode** rotations reference maps across League boundaries.
 _Avoid_: adding a `manager` column to a derived row (there is exactly one FK per aggregate); treating an **Arena map** as owned content.
