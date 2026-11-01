@@ -75,8 +75,8 @@ services:
     depends_on:
       - app
 
-  # ANG-07 (ADR-0046): the front door Funnel publishes. The SPA at /app/, every
-  # other path proxied to app.
+  # ADR-0047: the front door Funnel publishes. The SPA at /, with /api/, /admin/,
+  # /static/ and /media/ proxied to app.
   nginx:
     build: ./frontend
     restart: unless-stopped

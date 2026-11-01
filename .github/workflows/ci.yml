@@ -295,7 +295,7 @@ jobs:
           trap 'docker stop smoke 2>/dev/null || true' EXIT
           ready=false
           for i in $(seq 1 30); do
-            if curl -sf -o /dev/null http://localhost:8000/; then
+            if curl -sf -o /dev/null http://localhost:8000/admin/login/; then
               echo "App is ready after ${i}s"
               ready=true
               break
@@ -307,8 +307,8 @@ jobs:
             docker logs smoke
             exit 1
           fi
-          curl -f -L http://localhost:8000/
-          # ANG-07: the nginx front door, in front of the smoke container above.
+          curl -f -L http://localhost:8000/admin/login/
+          # ADR-0047: the nginx front door, in front of the smoke container above.
           bash scripts/smoke_nginx.sh
 
       - name: Set up flyctl

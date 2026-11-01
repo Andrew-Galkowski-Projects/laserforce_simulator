@@ -4,6 +4,10 @@ The proxy speaks HTTPS to the browser and plain HTTP to gunicorn, and marks the
 hop with ``X-Forwarded-Proto: https``. Django must trust that header, or the
 CSRF origin check compares the browser's ``https://`` Origin against an
 ``http://`` request and rejects every form POST, the login included.
+
+ANG-08 (ADR-0047): the Admin login is the surviving Django form, so the POST
+goes there. Its form names the email field ``username``. Bad credentials
+re-render the form (200) once CSRF passes; a CSRF failure is a 403.
 """
 
 from __future__ import annotations
@@ -11,27 +15,24 @@ from __future__ import annotations
 from django.test import Client, TestCase, override_settings
 from django.urls import reverse
 
-from conftest import SHARED_MANAGER_EMAIL, get_shared_manager
+from conftest import SHARED_MANAGER_EMAIL
 
 PROXY_HOST = "laserforce.example.ts.net"
-PASSWORD = "proxy-test-password"
+WRONG_PASSWORD = "not-the-password"
 
 
 @override_settings(ALLOWED_HOSTS=[PROXY_HOST], CSRF_TRUSTED_ORIGINS=[])
 class TestLoginBehindHttpsProxy(TestCase):
     def setUp(self) -> None:
         super().setUp()
-        user = get_shared_manager()
-        user.set_password(PASSWORD)
-        user.save()
         self.client = Client(enforce_csrf_checks=True, HTTP_HOST=PROXY_HOST)
 
     def _post_login(self, **headers: str) -> int:
-        self.client.get(reverse("login"), **headers)
+        self.client.get(reverse("admin:login"), **headers)
         token = self.client.cookies["csrftoken"].value
         response = self.client.post(
-            reverse("login"),
-            {"username": SHARED_MANAGER_EMAIL, "password": PASSWORD},
+            reverse("admin:login"),
+            {"username": SHARED_MANAGER_EMAIL, "password": WRONG_PASSWORD},
             HTTP_ORIGIN=f"https://{PROXY_HOST}",
             HTTP_X_CSRFTOKEN=token,
             **headers,
@@ -39,8 +40,9 @@ class TestLoginBehindHttpsProxy(TestCase):
         return response.status_code
 
     def test_login_post_via_https_proxy_passes_csrf(self) -> None:
+        """CSRF passes, so the bad credentials re-render the form."""
         status = self._post_login(HTTP_X_FORWARDED_PROTO="https")
-        self.assertEqual(status, 302)
+        self.assertEqual(status, 200)
 
     def test_https_origin_without_proxy_header_is_rejected(self) -> None:
         """Without the header the request really is plain HTTP, so an
