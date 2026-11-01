@@ -280,6 +280,163 @@ class TestServiceModuleBoundary(SimpleTestCase):
         )
 
 
+class _FakeJob:
+    """Stand-in for the Celery result backend (``AsyncResult``)."""
+
+    def __init__(self, state: str, result=None, info=None) -> None:
+        self.state = state
+        self.result = result
+        self.info = info
+
+
+class TestEnqueueRecordsTheRun(LeagueApiTestCase):
+    """ANG-08d (ported from ``test_play_cancel.py``): an enqueue clears a stale
+    cancel flag, records the job id it hands to ``apply_async`` and passes the
+    run's kwargs through unchanged."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.league = make_league("EnqL", manager=self.user_a)
+
+    def test_a_stale_cancel_flag_is_cleared_so_the_run_plays(self) -> None:
+        season = active_season(self.league, make_teams("EnqStale", 2))
+        Season.objects.filter(pk=season.pk).update(play_cancel_requested=True)
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(action(season.id, "play-two-months")))
+        season.refresh_from_db()
+        self.assertFalse(season.play_cancel_requested)
+        # A flag left set would have stopped the eager task before its first
+        # fixture.
+        self.assertTrue(GameRound.objects.filter(match__season=season).exists())
+
+    def _assert_enqueued(self, season: Season, path: str, task, kwargs: dict) -> None:
+        with patch.object(task, "apply_async") as apply_async:
+            data = self.ok(self.api.post(action(season.id, path)))
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id, **kwargs},
+            task_id=data["job_id"],
+            retry=False,
+        )
+        season.refresh_from_db()
+        self.assertEqual(season.active_play_job_id, data["job_id"])
+        self.assertFalse(season.play_cancel_requested)
+
+    def test_play_two_months_records_the_job_id_with_eight_matchdays(self) -> None:
+        from matches.tasks import play_season_task
+
+        season = active_season(self.league, make_teams("EnqP2m", 2))
+        self._assert_enqueued(
+            season, "play-two-months", play_season_task, {"max_matchdays": 8}
+        )
+
+    def test_play_until_end_records_the_job_id_with_no_matchday_cap(self) -> None:
+        from matches.tasks import play_season_task
+
+        season = active_season(self.league, make_teams("EnqPue", 2))
+        self._assert_enqueued(
+            season, "play-until-end", play_season_task, {"max_matchdays": None}
+        )
+
+    def test_play_playoffs_records_the_job_id(self) -> None:
+        from matches.tasks import play_playoffs_task
+
+        season = active_season(
+            self.league, make_teams("EnqPpo", 4), phases=("round_robin", "tournament")
+        )
+        play_round_robin(season)
+        self._assert_enqueued(season, "play-playoffs", play_playoffs_task, {})
+
+
+class TestPlayJobReadsCancelled(LeagueApiTestCase):
+    """ANG-08d (ported from ``test_play_cancel.py``): a run that stopped on a
+    cancel still reads ``complete``, with ``cancelled`` set."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.season = active_season(
+            make_league("PjcL", manager=self.user_a), make_teams("Pjc", 2)
+        )
+
+    def _status(self, job: _FakeJob) -> dict:
+        with patch("matches.league_play_services.AsyncResult", return_value=job):
+            return self.ok(self.api.get(action(self.season.id, "play-jobs/job-1")))
+
+    def test_a_cancelled_result_reads_complete_and_cancelled(self) -> None:
+        data = self._status(
+            _FakeJob("SUCCESS", result={"completed": 1, "total": 2, "cancelled": True})
+        )
+        self.assertEqual(
+            data,
+            {
+                "status": "complete",
+                "completed": 1,
+                "total": 2,
+                "cancelled": True,
+                "error": None,
+            },
+        )
+
+    def test_a_normal_success_is_not_cancelled(self) -> None:
+        data = self._status(_FakeJob("SUCCESS", result={"completed": 2, "total": 2}))
+        self.assertEqual(data["status"], "complete")
+        self.assertFalse(data["cancelled"])
+
+
+class TestPlayPlayoffsOnRegionalPhases(LeagueApiTestCase):
+    """ANG-08d (ported from ``test_regional_playoffs_drain.py``): Play Playoffs
+    reaches the N regional brackets and an unbuilt Worlds cursor (CONF-02 /
+    CONF-04), and still refuses a phase with no bracket."""
+
+    def test_a_regional_phase_is_200_and_enqueues(self) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tests.test_regional_playoffs import _built_regional_season
+
+        season, _conferences, _groups, _rr, phase = _built_regional_season("ApiPpoReg")
+        self.assertEqual(len(season.tournaments_for_phase(phase)), 2)
+        with patch.object(play_playoffs_task, "apply_async") as apply_async:
+            data = self.ok(self.api.post(action(season.id, "play-playoffs")))
+        self.assertEqual(data["season_id"], season.id)
+        apply_async.assert_called_once_with(
+            kwargs={"season_id": season.id}, task_id=data["job_id"], retry=False
+        )
+
+    def test_an_unbuilt_worlds_cursor_is_200_and_builds_worlds(self) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tests.test_worlds_tournament import (
+            _regionals_drained_season,
+            _worlds_phase_row,
+        )
+
+        season, _conferences, _groups, _rr, _phase = _regionals_drained_season(
+            "ApiPpoWorlds", [4, 4]
+        )
+        worlds_phase = _worlds_phase_row(season)
+        self.assertEqual(season.current_phase().pk, worlds_phase.pk)
+        self.assertIsNone(worlds_phase.tournament_id)
+        with patch.object(play_playoffs_task, "apply_async"):
+            data = self.ok(self.api.post(action(season.id, "play-playoffs")))
+        self.assertEqual(data["season_id"], season.id)
+        worlds_phase.refresh_from_db()
+        self.assertIsNotNone(worlds_phase.tournament_id)
+        self.assertEqual(worlds_phase.tournament.state, "active")
+
+    def test_a_regional_season_with_no_bracket_is_409_wrong_phase(self) -> None:
+        from matches.tasks import play_playoffs_task
+        from matches.tests.test_regional_playoffs import _conf_season
+
+        season, _conferences, _groups, _rr, phase = _conf_season(
+            "ApiPpoUnbuilt", [4, 4]
+        )
+        self.assertFalse(phase.regional_tournaments.exists())
+        with patch.object(play_playoffs_task, "apply_async") as apply_async:
+            self.error(
+                self.api.post(action(season.id, "play-playoffs")), 409, "wrong_phase"
+            )
+        apply_async.assert_not_called()
+        season.refresh_from_db()
+        self.assertIsNone(season.active_play_job_id)
+
+
 class TestTaskClearsOnlyItsOwnRun(LeagueApiTestCase):
     """A finishing task never clears another run's job id."""
 

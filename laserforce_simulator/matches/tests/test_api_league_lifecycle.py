@@ -405,3 +405,29 @@ class TestUxp03NotFired(LeagueApiTestCase):
         league.refresh_from_db()
         self.assertEqual(league.current_team_id, teams[0].id)
         self.assertEqual(Season.objects.filter(league=league).count(), 1)
+
+    def test_candidates_409_when_hot_seat(self) -> None:
+        # ANG-08b (port of test_reassign_team UXP-03): a hot-seat verdict is a
+        # warning, not a firing, so the picker's candidates are refused.
+        league, season, teams = ranked_career_league("Uxp03Hot", 8, manager=self.user_a)
+        evaluation = fired_evaluation(league, season, teams[0])
+        evaluation.verdict = "hot_seat"
+        evaluation.save(update_fields=["verdict"])
+        self.error(
+            self.api.get(url(league.id, "new-team-candidates")),
+            409,
+            "manager_not_fired",
+        )
+
+    def test_candidates_409_when_fired_but_already_reassigned(self) -> None:
+        # ANG-08b: fired, but current_team already moved off the fired team.
+        league, _season, teams = ranked_career_league(
+            "Uxp03Moved", 8, fired=True, manager=self.user_a
+        )
+        league.current_team = teams[-1]
+        league.save(update_fields=["current_team"])
+        self.error(
+            self.api.get(url(league.id, "new-team-candidates")),
+            409,
+            "manager_not_fired",
+        )

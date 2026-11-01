@@ -480,3 +480,146 @@ class RegionalPlayoffsTests(LeagueApiTestCase):
             self.assertIn("provenance", q)
             self.assertIn("seed", q)
             self.assertTrue(q["provenance_label"])
+
+    # --- ANG-08d: ported from test_season_playoffs.py (CONF-04 screen) ----
+
+    def _brackets(self, season) -> list[dict]:
+        return self.ok(self.api.get(_playoffs_url(season.league_id)))["brackets"]
+
+    def _by_key(self, season, key: str) -> dict | None:
+        return next((b for b in self._brackets(season) if b["key"] == key), None)
+
+    def test_the_pending_worlds_stub_key_equals_the_built_key(self) -> None:
+        from matches.tests.test_worlds_tournament import (
+            _regionals_drained_season,
+            _worlds_phase_row,
+        )
+
+        season, _conferences, _groups, _rr, _phase = _regionals_drained_season(
+            "PoStubKey", [4, 4]
+        )
+        key = f"{_worlds_phase_row(season).ordinal}-worlds"
+        before = self._by_key(season, key)
+        self.assertIsNotNone(before)
+        self.assertTrue(before["pending"])
+        self.assertEqual(before["rounds"], [])
+
+        self.assertTrue(season.build_pending_worlds_bracket())
+        after = self._by_key(season, key)
+        self.assertIsNotNone(after)
+        self.assertFalse(after["pending"])
+        self.assertEqual(before["key"], after["key"])
+
+    def test_the_built_worlds_entry_shape(self) -> None:
+        from matches.tests.test_worlds_tournament import _worlds_built_season
+
+        season, _c, _g, _phase, worlds_phase, worlds = _worlds_built_season(
+            "PoWorldsShape", [4, 4]
+        )
+        entry = self._by_key(season, f"{worlds_phase.ordinal}-worlds")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["stage"], "worlds")
+        self.assertEqual(entry["stage_label"], "Worlds")
+        self.assertIsNone(entry["conference"], "Worlds is Season-wide")
+        self.assertEqual(entry["name"], worlds.name)
+        self.assertIn("Worlds", entry["name"])
+        self.assertFalse(entry["pending"])
+        self.assertIsNone(entry["champion"])
+        self.assertEqual(len(entry["rounds"]), 1)
+
+    def test_the_worlds_champion_after_the_drain(self) -> None:
+        from matches.tests.test_worlds_tournament import (
+            _drain_bracket,
+            _worlds_built_season,
+        )
+
+        season, _c, _g, _phase, worlds_phase, worlds = _worlds_built_season(
+            "PoWorldsChamp", [4, 4]
+        )
+        _drain_bracket(worlds)
+        season.complete_if_finished()
+        season.refresh_from_db()
+        self.assertIsNotNone(season.champion_team_id)
+        entry = self._by_key(season, f"{worlds_phase.ordinal}-worlds")
+        self.assertEqual(
+            entry["champion"],
+            {"id": season.champion_team.id, "name": season.champion_team.name},
+        )
+
+    def test_a_regional_bracket_carries_an_empty_stage_label(self) -> None:
+        from matches.tests.test_worlds_tournament import _worlds_built_season
+
+        season, conferences, _g, phase, _wp, _w = _worlds_built_season(
+            "PoRegLabel", [4, 4]
+        )
+        for conference in conferences:
+            entry = self._by_key(season, f"{phase.ordinal}-{conference.ordinal}")
+            self.assertIsNotNone(entry)
+            self.assertEqual(entry["stage"], "regional_playoff")
+            self.assertEqual(entry["stage_label"], "")
+
+    def test_the_last_chance_key_stage_and_label(self) -> None:
+        from matches.tests.test_regional_playoffs import _built_regional_season
+
+        season, conferences, _groups, _rr, phase = _built_regional_season(
+            "PoLcKey", [9, 4], cut=4
+        )
+        entry = self._by_key(season, f"{phase.ordinal}-{conferences[0].ordinal}-lc")
+        self.assertIsNotNone(entry)
+        self.assertEqual(entry["stage"], "last_chance")
+        self.assertEqual(entry["stage_label"], "Last Chance Qualifier")
+        # Unseeded until its Regional playoff drains.
+        self.assertTrue(entry["pending"])
+
+    def test_exactly_one_key_ends_in_worlds(self) -> None:
+        from matches.tests.test_worlds_tournament import _worlds_built_season
+
+        season, _c, _g, _phase, worlds_phase, _w = _worlds_built_season(
+            "PoWorldsSuffix", [4, 4]
+        )
+        worlds_keys = [
+            b["key"] for b in self._brackets(season) if b["key"].endswith("-worlds")
+        ]
+        self.assertEqual(worlds_keys, [f"{worlds_phase.ordinal}-worlds"])
+
+    # --- ANG-08d: ported from test_last_chance_qualifier.py ---------------
+
+    def test_an_unbackfilled_regional_row_keeps_the_unsuffixed_key(self) -> None:
+        """CONF-03 read rule: a regional row with ``qualifier_stage == ""``
+        (created before the column existed) is a Regional playoff, not a
+        Last-chance bracket."""
+        from matches.tests.test_regional_playoffs import _built_regional_season
+
+        season, conferences, _groups, _rr, phase = _built_regional_season(
+            "PoLegacy", [9, 4], cut=4
+        )
+        phase.regional_tournaments.exclude(qualifier_stage="last_chance").update(
+            qualifier_stage=""
+        )
+        keys = [b["key"] for b in self._brackets(season)]
+        for conference in conferences:
+            self.assertIn(f"{phase.ordinal}-{conference.ordinal}", keys)
+        self.assertEqual(len([k for k in keys if k.endswith("-lc")]), 1)
+
+    # --- ANG-08d: ported from test_worlds_tournament.py -------------------
+
+    def test_a_one_conference_season_has_no_worlds_entry(self) -> None:
+        from matches.tests.test_regional_playoffs import (
+            _conf_season,
+            _hand_play_rr,
+        )
+
+        season, _conferences, groups, rr_phase, phase = _conf_season("PoOne", [5])
+        _hand_play_rr(season, rr_phase, [t.id for t in groups[0]])
+        season.refresh_from_db()
+        season.activate_pending_tournament_phase()
+        brackets = self._brackets(season)
+        self.assertEqual([b["key"] for b in brackets], [str(phase.ordinal)])
+        self.assertFalse([b for b in brackets if b["stage"] == "worlds"])
+
+    def test_a_zero_conference_bracket_has_a_blank_stage_label(self) -> None:
+        season, _teams, phase = _built_flat_season("PoZero", self.user_a)
+        brackets = self._brackets(season)
+        self.assertEqual([b["key"] for b in brackets], [str(phase.ordinal)])
+        self.assertEqual([b["stage"] for b in brackets], [""])
+        self.assertEqual([b["stage_label"] for b in brackets], [""])

@@ -180,6 +180,7 @@ class TestPlayPlayoffsTaskRegional(TestCase):
 # ===========================================================================
 
 
+# ANG-08 D3: ported -> test_api_sync_play.py::TestPlayWeekRegional
 class TestPlayWeekRegional(TestCase):
     """POST ``/seasons/<id>/play-week/`` on a 2-Conference tournament phase."""
 
@@ -349,6 +350,7 @@ class TestZeroConferenceDrainRegressionPin(TestCase):
         self.assertEqual(payload["total"], 2)
         self.assertEqual(payload["completed"], payload["total"])
 
+    # ANG-08 D3: ported -> test_api_sync_play.py::TestPlayWeekZeroConference
     def test_play_week_drains_one_stage_of_the_single_bracket(self) -> None:
         season, _teams, phase = _built_flat_season("ZeroWeek")
         tournament = phase.tournament
@@ -389,6 +391,7 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
             self.tournaments,
         ) = _built_two_conference_season("UiEntry")
 
+    # ANG-08 D3: ported -> test_api_play_runs.py::TestPlayPlayoffsOnRegionalPhases
     def test_play_playoffs_enqueues_instead_of_409(self) -> None:
         """The regression this fix exists for: the enqueue view used to 409."""
         # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
@@ -402,6 +405,7 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
             retry=False,
         )
 
+    # ANG-08 D3: ported -> test_api_sync_play.py::TestPlaySingleRoundRegional
     def test_play_single_round_resolves_exactly_one_node(self) -> None:
         before = sum(_resolved_by_tournament(self.phase).values())
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
@@ -452,12 +456,14 @@ class TestZeroConferenceUiEntryPointsUnchanged(TestCase):
     def setUp(self) -> None:
         self.season, self.teams, self.phase = _built_flat_season("UiFlat")
 
+    # ANG-08 D3: HTML-only (API: test_api_play_runs.py::TestPlayPlayoffs)
     def test_play_playoffs_still_enqueues(self) -> None:
         # ANG-01d-2: the enqueue path is ``enqueue_play_run`` -> ``apply_async``.
         with patch("matches.tasks.play_playoffs_task.apply_async"):
             response = self.client.post(reverse("play_playoffs", args=[self.season.id]))
         self.assertEqual(response.status_code, 202)
 
+    # ANG-08 D3: ported -> test_api_sync_play.py::TestPlaySingleRoundRegional
     def test_play_single_round_still_resolves_one_node(self) -> None:
         before = _resolved_node_count(self.phase.tournament)
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
@@ -477,6 +483,7 @@ class TestZeroConferenceUiEntryPointsUnchanged(TestCase):
         self.assertTrue(active)
         self.assertEqual(tournament_id, self.phase.tournament_id)
 
+    # ANG-08 D3: HTML-only (API: test_api_play_runs.py::TestPlayPlayoffs)
     def test_play_playoffs_409s_when_the_phase_has_no_bracket(self) -> None:
         """The guard still guards - an unbuilt phase is still a 409."""
         season, _teams, _rr_phase, phase = _flat_season("UiUnbuilt")
@@ -1023,6 +1030,10 @@ class TestWorldsDrainCrossesThePhaseBoundary(TestCase):
         self.assertNotEqual(self.season.state, "completed")
 
     # -- §6.D play_playoffs is not a 409 trap ------------------------------
+    # ANG-08 D3: the three HTML play_playoffs cases below are ported ->
+    # test_api_play_runs.py::TestPlayPlayoffsOnRegionalPhases; the four HTML
+    # play_single_round cases after them -> test_api_sync_play.py::
+    # TestPlaySingleRoundCrossesIntoWorlds.
 
     def test_play_playoffs_returns_202_on_an_unbuilt_worlds_cursor(self) -> None:
         """The regression this hook exists for (§11.5 item 10). With the cursor

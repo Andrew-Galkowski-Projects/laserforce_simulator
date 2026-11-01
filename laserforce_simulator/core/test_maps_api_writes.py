@@ -804,6 +804,41 @@ class TestHeatmapScoping(_MapsWriteTestCase):
         self.assertEqual(data["cell_occupancy"], {"1,1": 11})
 
 
+class TestHeatmapTeamColorFilter(_MapsWriteTestCase):
+    """ANG-08e (port of test_heatmap's HTML team_color case): ``team_color=red``
+    keeps the red players' cells and drops the blue ones."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        from matches.models import PlayerRoundState
+        from teams.models import Player
+
+        self.ok(self.put_json("zone-config", {"zone_size": 50, "zones": GRID}))
+        round_ = make_heatmap_round(self.map, {}, manager=self.user_a, prefix="Col")
+        red = Player.objects.create(team=round_.team_red, name="Col Red Scout")
+        blue = Player.objects.create(team=round_.team_blue, name="Col Blue Scout")
+        round_.cell_occupancy_json = {
+            str(red.id): {"0,0": 100},
+            str(blue.id): {"1,1": 50},
+        }
+        round_.save(update_fields=["cell_occupancy_json"])
+        PlayerRoundState.objects.create(
+            game_round=round_, player=red, team_color="red", role="scout"
+        )
+        PlayerRoundState.objects.create(
+            game_round=round_, player=blue, team_color="blue", role="scout"
+        )
+
+    def test_red_keeps_red_cells_and_drops_blue(self) -> None:
+        data = self.ok(self.get("heatmap", {"zone_size": 50, "team_color": "red"}))
+        self.assertEqual(data["cell_occupancy"], {"0,0": 100})
+        self.assertEqual(data["round_count"], 1)
+
+    def test_blue_keeps_blue_cells_and_drops_red(self) -> None:
+        data = self.ok(self.get("heatmap", {"zone_size": 50, "team_color": "blue"}))
+        self.assertEqual(data["cell_occupancy"], {"1,1": 50})
+
+
 # ---------------------------------------------------------------------------
 # Shared posture + anonymous
 # ---------------------------------------------------------------------------

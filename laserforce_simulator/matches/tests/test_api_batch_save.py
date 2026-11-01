@@ -16,7 +16,7 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
-from django.test import Client, TestCase
+from django.test import TestCase
 from django.urls import reverse
 from rest_framework.test import APIClient
 
@@ -155,13 +155,28 @@ class TestBatchSaveEndToEnd(_BatchSaveTestCase):
             self.assertEqual(game_round.manager_id, self.user_a.pk)
 
     def test_status_matches_html_save_status_json(self) -> None:
+        # ANG-08e: asserts the API save-status body on its own (the HTML
+        # ``save_batch_status`` endpoint it used to be compared with is going).
         batch_job = self._run_batch()
-        save_job = self.post_save(batch_job, self.payload()).json()["data"]["job_id"]
-        api_data = self.api.get(f"/api/simulate-batch/save/{save_job}/").json()["data"]
-        html = Client()
-        html.force_login(self.user_a)
-        html_data = html.get(reverse("save_batch_status", args=[save_job])).json()
-        self.assertEqual(api_data, html_data)
+        save_job = self.post_save(batch_job, self.payload(n=2)).json()["data"]["job_id"]
+        response = self.api.get(f"/api/simulate-batch/save/{save_job}/")
+        self.assertEqual(response.status_code, 200, response.content)
+        body = response.json()
+        self.assertEqual(body["meta"], {})
+        data = body["data"]
+        self.assertEqual(set(data), _SAVE_STATUS_KEYS)
+        self.assertEqual(data["status"], "complete")
+        self.assertIsNone(data["error"])
+        self.assertEqual(len(data["round_ids"]), 2)
+        self.assertTrue(all(isinstance(rid, int) for rid in data["round_ids"]))
+        self.assertEqual(
+            set(
+                GameRound.objects.filter(id__in=data["round_ids"]).values_list(
+                    "id", flat=True
+                )
+            ),
+            set(data["round_ids"]),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -257,6 +272,19 @@ class TestBatchSaveJobState(_BatchSaveTestCase):
             self.post_save(_UNKNOWN_JOB, self.payload(team_blue=foreign.pk)), 400
         )
         self.assertEqual(errors[0]["message"], f"Team {foreign.pk} does not exist.")
+
+    def test_failed_save_status_carries_error_message(self) -> None:
+        # ANG-08e: a failed save job's status reads ``error`` + its message.
+        with patch(
+            "matches.api_views.AsyncResult",
+            _stub_async_result("FAILURE", RuntimeError("save exploded")),
+        ):
+            response = self.api.get("/api/simulate-batch/save/failed-save-job/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.json()["data"],
+            {"status": "error", "error": "save exploded", "round_ids": []},
+        )
 
     def test_unknown_save_status_is_running(self) -> None:
         response = self.api.get(f"/api/simulate-batch/save/{_UNKNOWN_JOB}/")

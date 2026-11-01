@@ -86,6 +86,19 @@ class TeamFinancesGetTests(LeagueApiTestCase):
         self.assertEqual(data["history"], [])
         self.assert_session_untouched()
 
+    def test_availability_lists_a_player_with_games_unavailable(self) -> None:
+        # ANG-08e (port of test_finance_screens' availability display case).
+        current = self.teams[0]
+        starter = current.active_players[0]
+        starter.games_unavailable = 3
+        starter.save(update_fields=["games_unavailable"])
+        data = self.ok(self.api.get(_team_url(self.league.id, current.id)))
+        self.assertEqual(len(data["availability"]), 1)
+        row = data["availability"][0]
+        self.assertEqual(row["player"]["id"], starter.id)
+        self.assertEqual(row["player"]["name"], starter.name)
+        self.assertEqual(row["games_remaining"], 3)
+
     def test_full_payload_carries_the_budget_level_bounds(self) -> None:
         # ANG-06-17 B2.
         data = self.ok(self.api.get(_team_url(self.league.id, self.teams[0].id)))
@@ -123,6 +136,30 @@ class TeamFinancesPatchTests(LeagueApiTestCase):
         self.assertEqual(self.current.budget_scouting, 80)
         self.assertEqual(self.current.injury_policy, "play_hurt")
         self.assertEqual(self.current.budget_coaching, before_coaching)
+
+    def test_patch_persists_budget_health_ticket_price_and_auto_sub(self) -> None:
+        # ANG-08e (port of test_finance_screens' FIN-04 health POST cases).
+        # ``auto_sub`` is the default, so start from ``play_hurt``.
+        self.current.injury_policy = "play_hurt"
+        self.current.save(update_fields=["injury_policy"])
+        data = self.ok(
+            self.api.patch(
+                self.url,
+                {
+                    "budget_health": 65,
+                    "ticket_price": 25.0,
+                    "injury_policy": "auto_sub",
+                },
+                format="json",
+            )
+        )
+        self.assertEqual(data["budgets"]["health"], 65)
+        self.assertEqual(data["ticket_price"], 25.0)
+        self.assertEqual(data["injury_policy"], "auto_sub")
+        self.current.refresh_from_db()
+        self.assertEqual(self.current.budget_health, 65)
+        self.assertAlmostEqual(self.current.ticket_price, 25.0, places=4)
+        self.assertEqual(self.current.injury_policy, "auto_sub")
 
     def test_patch_meta_team_options_are_the_enrolled_teams_by_name(self) -> None:
         # ANG-06-17 B1: the PATCH answers through the same Team picker meta.
