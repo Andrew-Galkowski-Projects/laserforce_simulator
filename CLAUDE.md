@@ -265,6 +265,7 @@ The test harness is `laserforce_simulator/laserforce_simulator/testing.py`.
 - [`laserforce_simulator/teams/CLAUDE.md`](laserforce_simulator/teams/CLAUDE.md) — Team/Player models, roster rules, `/api/teams/` and `/api/players/`
 - [`laserforce_simulator/matches/CLAUDE.md`](laserforce_simulator/matches/CLAUDE.md) — index for Match/GameRound, the simulation engine, Leagues, tournaments and the API; feature detail in `docs/agents/matches/`
 - [`laserforce_simulator/core/CLAUDE.md`](laserforce_simulator/core/CLAUDE.md) — Maps, zone/LOS processing, `/api/maps/` (list, multipart upload, delete, editor actions), `serve_media`
+- [`laserforce_simulator/desktop_app/CLAUDE.md`](laserforce_simulator/desktop_app/CLAUDE.md) — the Desktop App (DESK-01, ADR-0048): desktop settings and URLconf, the Launch code sign-in, the launcher (`desktop/main.py`), the reset notice
 - [`frontend/CLAUDE.md`](frontend/CLAUDE.md) — the Angular 22 SPA (ANG-04, ADR-0042): npm commands, stack, the `apiBaseUrl` rule, the Windows BOM note
 
 ### REST API

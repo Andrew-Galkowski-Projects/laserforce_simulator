@@ -67,6 +67,8 @@ class DesktopLoginView(views.APIView):
 
 
 def _refused() -> HttpResponse:
+    # Built by hand on purpose (spec #486), not raised into the ADR-0039
+    # envelope: the browser opens this URL directly, so it shows a plain page.
     return HttpResponse(
         SPENT_MESSAGE, status=403, content_type="text/plain; charset=utf-8"
     )

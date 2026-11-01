@@ -188,6 +188,9 @@ decision. There are two kinds:
   Logging out of the browser session still locks the API. Only the `ANONYMOUS_API_VIEWS` allowlist
   (`RegisterAPIView` and the three JWT token views, each `permission_classes = [AllowAny]`) is
   anonymous-allowed.
+- **DESK-01:** the guard walks the Desktop App's URLconf (`desktop_app.urls`) too. Its allowlist is
+  `ANONYMOUS_API_VIEWS` plus `desktop_app.launch_code.DesktopLoginView`, the Launch code sign-in
+  (see [`../desktop_app/CLAUDE.md`](../desktop_app/CLAUDE.md)).
 
 `process_view` receives the **resolved** view, so an `include()` cannot be wrapped. Both CBV forms
 work because `View.as_view()` copies `dispatch.__dict__` onto the returned callable.
@@ -250,9 +253,11 @@ Four plain `APIView`s under `/api/accounts/`, routed as explicit `path()`s in
 `laserforce_simulator/api_urls.py` and following
 [ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md) (envelope, Form-bound
 writes, errors always raised). The output shape is **`MeSerializer`** (`accounts/serializers.py`):
-`{id, email, date_joined, is_staff, self_insert}`, where `self_insert` is `PlayerSerializer` output
-of `get_self_insert(user)` or `null` — the raw column is never serialized, so a drifted link reads
-`null`.
+`{id, email, date_joined, is_staff, self_insert, desktop, desktop_notice}`, where `self_insert` is
+`PlayerSerializer` output of `get_self_insert(user)` or `null` — the raw column is never
+serialized, so a drifted link reads `null`. **DESK-01:** `desktop` is `settings.DESKTOP_APP`
+(`false` Hosted; the SPA hides Sign out and Change password when it is set) and `desktop_notice`
+the Desktop App's reset notice (`desktop_app.notice`), always `null` Hosted.
 
 | Method | Path | URL name | Behaviour |
 |---|---|---|---|
@@ -284,7 +289,9 @@ on every refresh) lives only in the httpOnly `refresh_token` cookie scoped to `/
 no session. Full contract: `docs/agents/matches/api.md` **ANG-03**; decision:
 [ADR-0041](../../docs/adr/0041-jwt-api-auth-with-httponly-refresh-cookie.md). Tests:
 `accounts/tests/test_api_token.py`. The three views are in the login-exemption guard's
-`ANONYMOUS_API_VIEWS`. A password change does **not** revoke outstanding refresh tokens (deferred).
+`ANONYMOUS_API_VIEWS`. The cookie is `Secure` when `settings.REFRESH_COOKIE_SECURE` (default
+`True`; the Desktop App sets `False`) and `DEBUG` is off; `set_refresh_cookie(response, refresh)`
+is public so the Launch code view sets the same cookie (DESK-01). A password change does **not** revoke outstanding refresh tokens (deferred).
 
 ## Stamping — where `manager` is set
 
