@@ -1,32 +1,15 @@
-"""LG-01z-o — tests for the Player Stats (performance) league screen.
+"""LG-01z-o -- pure-unit tests for ``matches.season_player_stats``.
 
-Two layers:
-
-1. **Pure-unit** (``matches.season_player_stats``) — aggregation /
-   sum-vs-average split / sorting / forgiving coercers, plus the
-   ``TestNoDjangoImportsLeaked`` purity seam (subprocess fresh-import +
-   ``sys.modules`` walk, mirroring the HX-01 / HX-03 / RES-04 precedent).
-2. **View** (``matches.league_screens.player_stats.player_stats``) — a
-   Django ``TestCase`` exercising routing / 405 / 404 / session write /
-   empty-state / DOM ids / scope / sort / pagination. The view is not yet
-   URL-wired (the orchestrator wires ``stats_player_stats`` centrally), so
-   tests call it directly via ``RequestFactory`` with a real session.
-
-Fixtures hand-construct League / Season / Match / GameRound /
-PlayerRoundState rows — LG-01z runs NO simulation, so the simulator is
-never entered.
+Aggregation / sum-vs-average split / sorting / forgiving coercers, plus the
+``TestNoDjangoImportsLeaked`` purity seam. The HTML Player Stats screen's
+view tests went with the screen (ANG-08); the API serves the same rows
+(``GET /api/leagues/<id>/player-stats/``).
 """
 
 from __future__ import annotations
 
-from datetime import date
+from django.test import TestCase
 
-from django.contrib.sessions.middleware import SessionMiddleware
-from django.http import Http404
-from django.test import RequestFactory, TestCase
-
-from matches.league_screens.player_stats import player_stats
-from matches.models import GameRound, League, Match, PlayerRoundState, Season
 from matches.season_player_stats import (
     AVERAGED_KEYS,
     DERIVED_KEYS,
@@ -37,12 +20,10 @@ from matches.season_player_stats import (
     coerce_sort,
     sort_player_stats,
 )
-from matches.tests.conftest import make_team_with_slots
-from teams.models import Player, Team
 from laserforce_simulator.testing import run_project_python
 
 # ===========================================================================
-# Pure-unit — aggregation
+# Pure-unit -- aggregation
 # ===========================================================================
 
 
@@ -120,11 +101,11 @@ class TestAggregateGrouping(TestCase):
 class TestDerivedStats(TestCase):
     def test_derived_keys_are_not_in_stat_keys(self) -> None:
         # Derived keys are computed separately; they must not pollute the
-        # 12-key SUMMED ∪ AVERAGED partition.
+        # 12-key SUMMED + AVERAGED partition.
         self.assertEqual(set(DERIVED_KEYS) & set(STAT_KEYS), set())
 
     def test_tag_ratio_is_sum_over_sum(self) -> None:
-        # 10 tags / 0 tagged then 0 tags / 4 tagged ⇒ 10 / max(4,1) = 2.5,
+        # 10 tags / 0 tagged then 0 tags / 4 tagged => 10 / max(4,1) = 2.5,
         # NOT the mean of per-round ratios (which would be (inf + 0)/2).
         rounds = [
             _round_dict(1, tags_made=10, times_tagged=0),
@@ -152,7 +133,7 @@ class TestDerivedStats(TestCase):
 
 
 # ===========================================================================
-# Pure-unit — coercers + sorting
+# Pure-unit -- coercers + sorting
 # ===========================================================================
 
 
@@ -222,7 +203,7 @@ class TestSorting(TestCase):
 
 
 # ===========================================================================
-# Pure-unit — purity seam
+# Pure-unit -- purity seam
 # ===========================================================================
 
 
@@ -236,411 +217,3 @@ class TestNoDjangoImportsLeaked(TestCase):
         )
         result = run_project_python(code)
         self.assertIn("CLEAN", result.stdout, msg=result.stderr)
-
-
-# ===========================================================================
-# View helpers
-# ===========================================================================
-
-
-def _attach_session(request):
-    SessionMiddleware(lambda r: None).process_request(request)
-    request.session.save()
-    return request
-
-
-def _get(league_id: int, *, query: str = ""):
-    path = f"/leagues/{league_id}/stats/player-stats/"
-    if query:
-        path = f"{path}?{query}"
-    return _attach_session(RequestFactory().get(path))
-
-
-def _make_league(name: str = "PSLeague") -> League:
-    return League.objects.create(name=name)
-
-
-def _make_active_season(league: League, *, name: str = "S1", n_teams: int = 2):
-    season = Season.objects.create(
-        league=league, name=name, start_date=date(2026, 6, 1)
-    )
-    teams = []
-    for i in range(n_teams):
-        t, _ = make_team_with_slots(f"{league.name[:3]}T{i}")
-        teams.append(t)
-        season.teams.add(t)
-    season.start_season()
-    season.refresh_from_db()
-    return season, teams
-
-
-def _make_round_with_states(season, team_red, team_blue, states):
-    """Persist a Match + GameRound under ``season`` and the given PRS rows.
-
-    ``states`` is a list of (player, team_color, stat_kwargs) tuples.
-    Returns the GameRound.
-    """
-    match = Match.objects.create(
-        team_red=team_red, team_blue=team_blue, season=season, is_completed=True
-    )
-    game_round = GameRound.objects.create(
-        match=match,
-        round_number=1,
-        team_red=team_red,
-        team_blue=team_blue,
-        red_points=100,
-        blue_points=80,
-        is_completed=True,
-    )
-    for player, color, kwargs in states:
-        PlayerRoundState.objects.create(
-            game_round=game_round,
-            player=player,
-            team_color=color,
-            role=kwargs.pop("role", "scout"),
-            **kwargs,
-        )
-    return game_round
-
-
-# ===========================================================================
-# View — routing / 405 / 404 / session
-# ===========================================================================
-
-
-class TestPlayerStatsRouting(TestCase):
-    def test_get_returns_200(self) -> None:
-        league = _make_league()
-        _make_active_season(league)
-        response = player_stats(_get(league.id), league.id)
-        self.assertEqual(response.status_code, 200)
-
-    def test_post_returns_405(self) -> None:
-        league = _make_league()
-        request = _attach_session(
-            RequestFactory().post(f"/leagues/{league.id}/stats/player-stats/")
-        )
-        response = player_stats(request, league.id)
-        self.assertEqual(response.status_code, 405)
-
-    def test_bad_league_id_returns_404(self) -> None:
-        with self.assertRaises(Http404):
-            player_stats(_get(999999), 999999)
-
-    def test_writes_last_league_id_to_session(self) -> None:
-        league = _make_league()
-        _make_active_season(league)
-        request = _get(league.id)
-        player_stats(request, league.id)
-        self.assertEqual(request.session.get("last_league_id"), league.id)
-
-
-# ===========================================================================
-# View — empty state
-# ===========================================================================
-
-
-class TestPlayerStatsEmptyState(TestCase):
-    def test_no_season_renders_empty_notice(self) -> None:
-        league = _make_league()
-        response = player_stats(_get(league.id), league.id)
-        self.assertEqual(response.status_code, 200)
-        content = response.content.decode()
-        self.assertIn("player-stats-empty-notice", content)
-        self.assertIn("No Season", content)
-
-    def test_no_season_still_renders_sidebar(self) -> None:
-        league = _make_league()
-        response = player_stats(_get(league.id), league.id)
-        self.assertIn("league-sidebar", response.content.decode())
-
-    def test_active_season_no_rounds_renders_empty_notice(self) -> None:
-        league = _make_league()
-        _make_active_season(league)
-        response = player_stats(_get(league.id), league.id)
-        self.assertIn("player-stats-empty-notice", response.content.decode())
-
-
-# ===========================================================================
-# View — body / DOM ids / scope
-# ===========================================================================
-
-
-class TestPlayerStatsBody(TestCase):
-    def setUp(self) -> None:
-        self.league = _make_league()
-        self.season, self.teams = _make_active_season(self.league, n_teams=2)
-        self.red, self.blue = self.teams
-        self.red_player = self.red.active_players[0]
-        self.blue_player = self.blue.active_players[0]
-        _make_round_with_states(
-            self.season,
-            self.red,
-            self.blue,
-            [
-                (self.red_player, "red", {"points_scored": 500, "tags_made": 12}),
-                (self.blue_player, "blue", {"points_scored": 300, "tags_made": 8}),
-            ],
-        )
-
-    def test_table_dom_id_present(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        self.assertIn("player-stats-table", response.content.decode())
-
-    def test_sortable_header_dom_ids_present(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        content = response.content.decode()
-        self.assertIn("player-stats-th-points_scored", content)
-        self.assertIn("player-stats-th-mvp", content)
-        self.assertIn("player-stats-th-accuracy", content)
-        self.assertIn("player-stats-th-name", content)
-
-    def test_tag_ratio_and_survival_columns_present(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        content = response.content.decode()
-        self.assertIn("player-stats-th-tag_ratio", content)
-        self.assertIn("player-stats-th-survival", content)
-        self.assertIn("Tag Ratio", content)
-        self.assertIn("Survival", content)
-
-    def test_sidebar_active_is_player_stats(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        self.assertIn("sidebar-stats-player_stats", response.content.decode())
-
-    def test_enrolled_player_appears_with_career_link(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        content = response.content.decode()
-        self.assertIn(self.red_player.name, content)
-        # LG-06h: player-name link repointed to league_player_detail.
-        self.assertIn(
-            f"/leagues/{self.league.id}/players/{self.red_player.id}/", content
-        )
-
-    def test_player_with_no_rounds_excluded(self) -> None:
-        # A player on an enrolled team but with zero PlayerRoundState rows
-        # does not appear (this screen is performance-scoped, not roster).
-        bench = Player.objects.create(team=self.red, name="Benched Ghost")
-        response = player_stats(_get(self.league.id), self.league.id)
-        self.assertNotIn("Benched Ghost", response.content.decode())
-        self.assertIsNotNone(bench.id)
-
-
-# ===========================================================================
-# View — sort + pagination
-# ===========================================================================
-
-
-class TestPlayerStatsSorting(TestCase):
-    def setUp(self) -> None:
-        self.league = _make_league()
-        self.season, self.teams = _make_active_season(self.league, n_teams=2)
-        self.red, self.blue = self.teams
-        # Two enrolled players with distinct point totals.
-        self.hi = self.red.active_players[0]
-        self.lo = self.blue.active_players[0]
-        _make_round_with_states(
-            self.season,
-            self.red,
-            self.blue,
-            [
-                (self.hi, "red", {"points_scored": 900}),
-                (self.lo, "blue", {"points_scored": 100}),
-            ],
-        )
-
-    def test_default_sort_points_desc_high_scorer_first(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        content = response.content.decode()
-        self.assertLess(content.index(self.hi.name), content.index(self.lo.name))
-
-    def test_sort_points_asc_low_scorer_first(self) -> None:
-        response = player_stats(
-            _get(self.league.id, query="sort=points_scored&dir=asc"),
-            self.league.id,
-        )
-        content = response.content.decode()
-        self.assertLess(content.index(self.lo.name), content.index(self.hi.name))
-
-    def test_invalid_sort_falls_back_returns_200(self) -> None:
-        response = player_stats(
-            _get(self.league.id, query="sort=BOGUS&dir=SIDEWAYS"), self.league.id
-        )
-        self.assertEqual(response.status_code, 200)
-
-
-class TestPlayerStatsPagination(TestCase):
-    def test_per_page_paginates_and_carries_querystring(self) -> None:
-        league = _make_league()
-        season, teams = _make_active_season(league, n_teams=2)
-        red, blue = teams
-        # 15 distinct players each with one PRS row → 15 aggregated rows.
-        states = []
-        for i in range(15):
-            p = Player.objects.create(team=red, name=f"Extra{i:02d}")
-            states.append((p, "red", {"points_scored": i}))
-        _make_round_with_states(season, red, blue, states)
-        response = player_stats(_get(league.id, query="per_page=10&page=2"), league.id)
-        self.assertEqual(response.status_code, 200)
-        content = response.content.decode()
-        self.assertIn("player-stats-pagination", content)
-        self.assertIn("per_page=10", content)
-
-
-# ===========================================================================
-# View — LG-06a page-size <select> selector
-# ===========================================================================
-
-
-class TestPlayerStatsPerPageSelector(TestCase):
-    def setUp(self) -> None:
-        self.league = _make_league()
-        self.season, self.teams = _make_active_season(self.league, n_teams=2)
-        self.red, self.blue = self.teams
-        # One scoring player so the body (+ per-page form) renders.
-        _make_round_with_states(
-            self.season,
-            self.red,
-            self.blue,
-            [(self.red.active_players[0], "red", {"points_scored": 100})],
-        )
-
-    def test_per_page_select_dom_id_present(self) -> None:
-        response = player_stats(_get(self.league.id), self.league.id)
-        self.assertIn("player-stats-per-page-select", response.content.decode())
-
-    def test_selected_option_reflects_requested_per_page(self) -> None:
-        response = player_stats(
-            _get(self.league.id, query="per_page=25"), self.league.id
-        )
-        self.assertIn('value="25" selected', response.content.decode())
-
-    def test_per_page_form_carries_hidden_sort_and_dir(self) -> None:
-        response = player_stats(
-            _get(self.league.id, query="sort=points_scored&dir=asc&per_page=25"),
-            self.league.id,
-        )
-        content = response.content.decode()
-        self.assertIn('name="sort"', content)
-        self.assertIn('name="dir"', content)
-
-
-# ===========================================================================
-# View — LG-06b team filter
-# ===========================================================================
-
-
-class TestPlayerStatsTeamFilter(TestCase):
-    """LG-06b team filter via the Django test ``Client`` against the
-    wired ``stats_player_stats`` URL (so ``response.context`` exists)."""
-
-    URL_NAME = "stats_player_stats"
-
-    def setUp(self) -> None:
-        self.league = _make_league()
-        self.season, self.teams = _make_active_season(self.league, n_teams=2)
-        self.teams.sort(key=lambda t: t.name)
-        self.red, self.blue = self.teams
-        # A distinctly-named scoring player on each enrolled team.
-        self.red_player = Player.objects.create(team=self.red, name="Red Filtered")
-        self.blue_player = Player.objects.create(team=self.blue, name="Blue Filtered")
-        _make_round_with_states(
-            self.season,
-            self.red,
-            self.blue,
-            [
-                (self.red_player, "red", {"points_scored": 500}),
-                (self.blue_player, "blue", {"points_scored": 300}),
-            ],
-        )
-
-    def _get(self, *, query: str = ""):
-        from django.urls import reverse
-
-        url = reverse(self.URL_NAME, args=[self.league.id])
-        if query:
-            url = f"{url}?{query}"
-        return self.client.get(url)
-
-    def test_enrolled_teams_context_ordered_by_name(self) -> None:
-        response = self._get()
-        enrolled = response.context["enrolled_teams"]
-        names = [t.name for t in enrolled]
-        self.assertEqual(names, sorted(names))
-        self.assertEqual({t.id for t in enrolled}, {self.red.id, self.blue.id})
-
-    def test_selected_team_id_none_when_no_param(self) -> None:
-        response = self._get()
-        self.assertIsNone(response.context["selected_team_id"])
-
-    def test_selected_team_id_set_for_enrolled(self) -> None:
-        response = self._get(query=f"team_id={self.red.id}")
-        self.assertEqual(response.context["selected_team_id"], self.red.id)
-
-    def test_selected_team_id_none_for_non_enrolled(self) -> None:
-        outsider = Team.objects.create(name="PS Outsiders")
-        response = self._get(query=f"team_id={outsider.id}")
-        self.assertIsNone(response.context["selected_team_id"])
-
-    def test_filter_restricts_to_team_and_excludes_other(self) -> None:
-        content = self._get(
-            query=f"team_id={self.red.id}&per_page=100"
-        ).content.decode()
-        self.assertIn("Red Filtered", content)
-        self.assertNotIn("Blue Filtered", content)
-
-    def test_absent_param_shows_all_teams(self) -> None:
-        content = self._get(query="per_page=100").content.decode()
-        self.assertIn("Red Filtered", content)
-        self.assertIn("Blue Filtered", content)
-
-    def test_malformed_param_falls_back_to_all(self) -> None:
-        content = self._get(query="team_id=abc&per_page=100").content.decode()
-        self.assertIn("Red Filtered", content)
-        self.assertIn("Blue Filtered", content)
-
-    def test_non_enrolled_param_falls_back_to_all(self) -> None:
-        outsider = Team.objects.create(name="PS Outsiders")
-        content = self._get(
-            query=f"team_id={outsider.id}&per_page=100"
-        ).content.decode()
-        self.assertIn("Red Filtered", content)
-        self.assertIn("Blue Filtered", content)
-
-    def test_filter_form_and_select_dom_ids_present(self) -> None:
-        content = self._get().content.decode()
-        self.assertIn("player-stats-team-filter-form", content)
-        self.assertIn("player-stats-team-filter-select", content)
-
-    def test_default_all_teams_option_present(self) -> None:
-        content = self._get().content.decode()
-        # The default option carries value="" and the "All Teams" label;
-        # it may additionally carry ``selected`` when no team is picked.
-        self.assertIn('value=""', content)
-        self.assertIn("All Teams", content)
-
-    def test_selected_option_matches_selected_team_id(self) -> None:
-        content = self._get(query=f"team_id={self.red.id}").content.decode()
-        self.assertIn(f'value="{self.red.id}" selected', content)
-
-    def test_team_id_in_querystring_without_page(self) -> None:
-        response = self._get(query=f"team_id={self.red.id}&per_page=25")
-        qs = response.context["querystring_without_page"]
-        self.assertIn(f"team_id={self.red.id}", qs)
-
-    def test_team_id_in_querystring_without_sort_dir_page(self) -> None:
-        response = self._get(query=f"team_id={self.red.id}&per_page=25")
-        qs = response.context["querystring_without_sort_dir_page"]
-        self.assertIn(f"team_id={self.red.id}", qs)
-
-    def test_hidden_team_id_input_in_per_page_form(self) -> None:
-        content = self._get(query=f"team_id={self.red.id}&per_page=25").content.decode()
-        self.assertIn('name="team_id"', content)
-
-    def test_picker_form_omits_page(self) -> None:
-        content = self._get(
-            query=f"team_id={self.red.id}&page=2&per_page=10"
-        ).content.decode()
-        form_start = content.index("player-stats-team-filter-form")
-        form_end = content.index("</form>", form_start)
-        picker_block = content[form_start:form_end]
-        self.assertNotIn('name="page"', picker_block)

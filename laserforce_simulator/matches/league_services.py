@@ -1,16 +1,13 @@
 """ANG-01d-1 — League / Season lifecycle + read services.
 
-Shared by the HTML league views (``matches/league_views.py``) and the REST
-API (``matches/league_api_views.py``). League creation, the Season rollover,
-the owner-evaluation / finance writers, League teardown, the dashboard /
-standings / schedule / history / awards / conference builders all live here;
-the views only parse requests and render.
+Used by the REST API (``matches/league_api_views.py``). League creation, the
+Season rollover, the owner-evaluation / finance writers, League teardown, the
+dashboard / standings / schedule / history / awards / conference builders all
+live here; the views only parse requests and render.
 
-Must NOT import ``matches.league_views`` (the views import this module and
-re-export every moved name for back-compat). Randomness goes through
-``import random`` + ``random.Random()`` so a test patch on
-``matches.league_services.random.Random`` (the global ``random`` module) still
-reaches the moved code.
+Randomness goes through ``import random`` + ``random.Random()`` so a test
+patch on ``matches.league_services.random.Random`` (the global ``random``
+module) still reaches the moved code.
 """
 
 from __future__ import annotations
@@ -24,7 +21,6 @@ from typing import TYPE_CHECKING, Iterable, Optional, Sequence
 
 from django.db import transaction
 from django.db.models import Count, Q
-from django.urls import reverse
 from django.utils import timezone
 
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
@@ -106,7 +102,7 @@ class ManagerFiredError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Helpers moved verbatim from ``matches/league_views.py`` (contract §2.1).
+# League-creation and rollover helpers (contract §2.1).
 # ---------------------------------------------------------------------------
 
 
@@ -1455,8 +1451,7 @@ _BRACKET_FINALS_FORMATS: frozenset[str] = frozenset(
 def _award_round_dict(prs: PlayerRoundState) -> dict:
     """Build one LG-03 seam dict from a ``PlayerRoundState`` row.
 
-    Mirrors ``league_screens.player_stats._build_round_dicts`` team-resolution:
-    the team resolves from the Round's ``team_red`` / ``team_blue`` keyed on
+    Uses the Player Stats screen's team-resolution: the team resolves from the Round's ``team_red`` / ``team_blue`` keyed on
     the player's ``team_color``. ``accuracy`` / ``mvp`` are pre-computed here
     from the ``get_accuracy`` / ``get_mvp`` PROPERTIES (no parens) so the pure
     module never touches the MVP formula or the ORM.
@@ -1689,9 +1684,9 @@ def build_history_row(
 ) -> dict:
     """LG-01f / LG-03 — build one row of the League History table.
 
-    Returns a dict with 13 keys (the LG-01f 11 plus LG-03's
-    ``season_mvp`` / ``finals_mvp``). ``None`` values render as ``"—"``
-    in the template. The standings columns consume the pre-fetched
+    Returns a dict with 12 keys (the LG-01f 11 plus LG-03's
+    ``season_mvp`` / ``finals_mvp``, minus ``season_url``, which ANG-08
+    dropped with the HTML Season pages). The standings columns consume the pre-fetched
     ``season.matches.all()`` cache and the ``teams_by_id`` lookup with
     zero queries. The LG-03 award cells read ``award_set`` (PERF-01: the
     History callers batch their page through ``compute_season_award_sets``);
@@ -1765,7 +1760,6 @@ def build_history_row(
     return {
         "season_id": season.id,
         "season_name": season.name,
-        "season_url": reverse("season_dashboard", args=[season.id]),
         "start_date": season.start_date,
         "teams_enrolled": teams_enrolled,
         "matches_played": matches_played,

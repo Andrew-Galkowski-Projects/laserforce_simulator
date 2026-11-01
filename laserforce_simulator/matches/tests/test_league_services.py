@@ -6,10 +6,9 @@ Seam contract ``.claude/worktrees/ang-01d-1-seam-contract.md`` sections 2 / 3.1 
   ``start_next_season`` + its three domain exceptions, ``reassign_and_roll``,
   ``ensure_owner_evaluation``, the ``build_*`` readers, ``history_seasons``,
   ``replace_conferences``).
-* ``matches.league_services`` never imports ``matches.league_views``.
 * ``ConferencePartitionForm`` -- every step-1/2 message, the partition strings
   + bracket floor, str vs list rotation, the once-only rotate-by-conference
-  guard, and the combined error order == today's HTML list.
+  guard, and the combined error order.
 
 Hand-built fixtures only; no simulated point totals are asserted.
 """
@@ -19,7 +18,6 @@ from __future__ import annotations
 from datetime import date
 
 from django.test import TestCase
-from django.urls import reverse
 
 from core.map_test_fixtures import TempMediaMixin
 from matches import league_services
@@ -48,21 +46,6 @@ from matches.tests.league_api_fixtures import (
     not_enrolled_msg,
     ranked_career_league,
 )
-
-# ---------------------------------------------------------------------------
-# The service layer never imports the League views module
-# ---------------------------------------------------------------------------
-
-
-class TestNoLeagueViewsImport(TestCase):
-    def test_services_module_does_not_import_league_views(self) -> None:
-        import inspect
-
-        source = inspect.getsource(league_services)
-        self.assertNotIn("from matches.league_views", source)
-        self.assertNotIn("from .league_views", source)
-        self.assertNotIn("import matches.league_views", source)
-
 
 # ---------------------------------------------------------------------------
 # season_mode_for / latest_completed_season
@@ -709,24 +692,3 @@ class TestConferencePartitionForm(TempMediaMixin, TestCase):
                 ROTATION_GUARD_MSG,
             ],
         )
-
-    def test_combined_errors_match_html_manage_conferences(self) -> None:
-        """The HTML POST (indexed parse) and the API body (JSON) report the
-        identical error list for the equivalent submission."""
-        self.season.map_mode = "rotate_by_conference"
-        self.season.save(update_fields=["map_mode"])
-        form = self.form(self._combined_inputs())
-        self.assertFalse(form.is_valid())
-        response = self.client.post(
-            reverse("manage_conferences", args=[self.season.id]),
-            {
-                "conference_name": [" ", "East"],
-                "conference_rotation": ["abc", "999999"],
-                f"team_{self.ids[0]}_conference": "0",
-                f"team_{self.ids[2]}_conference": "1",
-                f"team_{self.ids[3]}_conference": "1",
-            },
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["errors"], _messages(form))
-        self.assertEqual(self.season.conferences.count(), 0)

@@ -76,17 +76,15 @@ ROOT_URLCONF = "laserforce_simulator.urls"
 TEMPLATES = [
     {
         "BACKEND": "django.template.backends.django.DjangoTemplates",
-        "DIRS": [BASE_DIR / "templates"],
+        # ANG-08 (ADR-0047): no project templates remain; Admin and the DRF
+        # browsable API load theirs from the apps (APP_DIRS).
+        "DIRS": [],
         "APP_DIRS": True,
         "OPTIONS": {
             "context_processors": [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "core.context_processors.league_nav",
-                "core.context_processors.app_mode",
-                "core.context_processors.watch_list",
-                "accounts.context_processors.self_insert",
             ],
         },
     },

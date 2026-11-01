@@ -79,25 +79,3 @@ class LateM2MTeamIsNotEnrolledTests(LeagueApiTestCase):
             "team_id",
         )
         self.assertEqual(feats["message"], ratings["message"])
-
-    def test_html_roster_picker_and_selection_exclude_it(self) -> None:
-        self.client.force_login(self.user_a)
-        response = self.client.get(
-            f"/leagues/{self.league.id}/team/roster/?team_id={self.late.id}"
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(
-            [t.id for t in response.context["enrolled_teams"]],
-            [t.id for t in sorted(self.teams, key=lambda t: t.name)],
-        )
-        self.assertEqual(response.context["team"].id, self.teams[0].id)
-
-    def test_html_feats_picker_excludes_it(self) -> None:
-        self.client.force_login(self.user_a)
-        response = self.client.get(
-            f"/leagues/{self.league.id}/stats/statistical-feats/"
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertNotIn(
-            self.late.id, {t.id for t in response.context["enrolled_teams"]}
-        )

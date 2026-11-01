@@ -50,9 +50,8 @@ from __future__ import annotations
 from unittest.mock import patch
 
 from django.test import TestCase
-from django.urls import reverse
 
-from matches.models import BracketNode, Tournament, TournamentParticipant
+from matches.models import Tournament, TournamentParticipant
 from matches.simulation import BatchSimulator
 from matches.tests.test_regional_playoffs import (
     _built_regional_season,
@@ -100,12 +99,6 @@ def _seed_order(tournament) -> list[int]:
         .order_by("seed")
         .values_list("team_id", flat=True)
     )
-
-
-def _resolved_node_count(tournament) -> int:
-    return BracketNode.objects.filter(
-        tournament=tournament, winner__isnull=False
-    ).count()
 
 
 def _lc_season(prefix: str, sizes=(9, 4), **kwargs):
@@ -642,104 +635,8 @@ class TestTournamentsForPhaseOrder(TestCase):
         self.assertIsInstance(season.tournaments_for_phase(phase), list)
 
 
-# ===========================================================================
-# 24. play_single_round is never a DEAD CLICK
-# ===========================================================================
-
-
-# ANG-08 D3: ported -> test_api_sync_play.py::
-# TestPlaySingleRoundSeedsTheLastChanceBracket
-class TestPlaySingleRoundIsNeverADeadClick(TestCase):
-    """§6.3 — the click that resolves the LAST Regional-playoff node would
-    otherwise leave every regional bracket ``completed`` and the Last-chance
-    sibling ``setup``, so the dashboard would read neither "active" nor
-    "completed" and would HIDE the playoff controls. Seeding before the
-    redirect closes that window.
-
-    Conference 2's Regional playoff is stamped complete up front so that the
-    final Conference-1 node really is the last regional node of the phase —
-    the exact transient the fix exists for.
-    """
-
-    def setUp(self) -> None:
-        (
-            self.season,
-            self.conferences,
-            self.groups,
-            self.rr_phase,
-            self.phase,
-        ) = _lc_season("LcClick", (9, 4), cut=4)
-        self.big, self.small = self.conferences
-        _stamp_bracket_completed(
-            _regional_row(self.phase, self.small), self.groups[1][0]
-        )
-        self.url = reverse("play_single_round", args=[self.season.id])
-
-    def _click(self):
-        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
-            return self.client.post(self.url)
-
-    def _dashboard(self):
-        return self.client.get(reverse("season_dashboard", args=[self.season.id]))
-
-    def test_the_dead_click_window_is_closed(self) -> None:
-        transition_seen = False
-        for _ in range(20):
-            response = self._click()
-            self.assertEqual(response.status_code, 302)
-            regional = _regional_row(self.phase, self.big)
-            if regional.state != "completed":
-                continue
-
-            # THE MOMENT UNDER TEST: every Regional playoff of the phase has
-            # drained. Without the §6.3 hook the Last-chance sibling would
-            # still be ``setup`` here and the controls would vanish.
-            last_chance = _last_chance_row(self.phase, self.big)
-            self.assertEqual(last_chance.state, "active")
-            self.assertEqual(last_chance.participants.count(), 4)
-
-            dashboard = self._dashboard()
-            self.assertEqual(dashboard.status_code, 200)
-            self.assertIs(dashboard.context["playoff_phase_active"], True)
-            self.assertIs(dashboard.context["playoff_completed"], False)
-            transition_seen = True
-            break
-        self.assertTrue(
-            transition_seen,
-            "the Regional playoff never drained — fixture or view regression",
-        )
-
-    def test_further_clicks_drain_the_last_chance_bracket_to_a_champion(self) -> None:
-        for _ in range(40):
-            self.season.refresh_from_db()
-            if self.season.state == "completed":
-                break
-            self._click()
-
-        last_chance = _last_chance_row(self.phase, self.big)
-        self.assertEqual(last_chance.state, "completed")
-        self.assertIsNotNone(last_chance.champion_id)
-        self.assertIn(last_chance.champion_id, _ids(self.groups[0]))
-
-        self.season.refresh_from_db()
-        self.assertEqual(self.season.state, "completed")
-        # CONF-04 — the click chain no longer stops at a championless Season:
-        # it carries on through the derived Worlds phase and crowns a champion
-        # (ADR-0037). ``play_single_round`` builds the Worlds bracket before its
-        # redirect, which is what stops the boundary click being dead.
-        self.assertIsNotNone(self.season.champion_team_id)
-
-    def test_no_click_is_wasted_once_seeding_has_happened(self) -> None:
-        # Drive to the transition, then assert the NEXT click resolves a node
-        # in the newly-seeded bracket rather than doing nothing.
-        for _ in range(20):
-            self._click()
-            if _regional_row(self.phase, self.big).state == "completed":
-                break
-        last_chance = _last_chance_row(self.phase, self.big)
-        before = _resolved_node_count(last_chance)
-        self._click()
-        self.assertGreater(_resolved_node_count(last_chance), before)
+# (24. ``play_single_round`` is never a dead click: ported to
+# ``test_api_sync_play.py::TestPlaySingleRoundSeedsTheLastChanceBracket``.)
 
 
 # ===========================================================================
@@ -877,21 +774,6 @@ class TestUnbackfilledRegionalRowReadRule(TestCase):
         ]
         self.assertEqual([q.team_id for q in tier1], [self.groups[0][0].id])
         self.assertEqual(tier1[0].provenance, PROVENANCE_CHAMPION)
-
-    # ANG-08 D3: ported -> test_api_feats_playoffs.py::RegionalPlayoffsTests
-    def test_the_blank_row_renders_with_the_unsuffixed_key(self) -> None:
-        response = self.client.get(
-            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
-        )
-        self.assertEqual(response.status_code, 200)
-        keys = [entry["key"] for entry in response.context["brackets"]]
-        self.assertIn(f"{self.phase.ordinal}-{self.big.ordinal}", keys)
-        self.assertIn(f"{self.phase.ordinal}-{self.small.ordinal}", keys)
-        # Only the genuine Last-chance row carries the ``-lc`` discriminator.
-        self.assertEqual(
-            len([k for k in keys if k.endswith("-lc")]),
-            1,
-        )
 
 
 # ===========================================================================

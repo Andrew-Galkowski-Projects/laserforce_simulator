@@ -17,7 +17,6 @@ from dataclasses import replace
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from django.urls import reverse
 
 from matches.league_services import (
     build_history_row,
@@ -25,7 +24,7 @@ from matches.league_services import (
     compute_season_award_sets,
     history_seasons,
 )
-from matches.models import League, Season
+from matches.models import Season
 from matches.season_awards import AwardSet
 from matches.season_snapshot import _refresh_names
 from matches.tests.test_season_summary_snapshot import _build_season, _fresh
@@ -184,26 +183,6 @@ class TestHistoryRowTakesAwardSet(TestCase):
         _, _, teams_by_id = history_seasons(season.league)
         row = build_history_row(_fresh(season), teams_by_id, is_in_progress=False)
         self.assertEqual(row["season_mvp"], _uncached(season).season_mvp)
-
-
-class TestHtmlHistoryQueryCount(TestCase):
-    """The HTML History screen batches its page's award sets too."""
-
-    def _count(self, league: League) -> int:
-        url = reverse("league_history", args=[league.id])
-        self.client.get(url)  # warm every snapshot
-        with CaptureQueriesContext(connection) as ctx:
-            self.assertEqual(self.client.get(url).status_code, 200)
-        return len(ctx.captured_queries)
-
-    def test_constant_in_completed_seasons(self) -> None:
-        small = _build_season()[0].league
-        big = _build_season()[0].league
-        for _ in range(2):
-            extra = _build_season()[0]
-            Season.objects.filter(pk=extra.pk).update(league=big)
-        self.assertEqual(Season.objects.filter(league=big).count(), 3)
-        self.assertEqual(self._count(big), self._count(small))
 
 
 def _uncached(season: Season) -> AwardSet:

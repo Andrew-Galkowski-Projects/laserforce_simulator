@@ -1,19 +1,18 @@
 """UX-02 — the Account's Self-insert (User -> Player one-to-one link).
 
 Seam contract: `.claude/worktrees/ux-02-seam-contract.md` §1 (field), §2
-(`accounts/self_insert.py`), §4 (context processor), §5 (`you_badge` tag) and
-§9 (test boundary). The §3 link / unlink views and the §7 nav "My player" link
-went with the template UI (ANG-08 D1).
+(`accounts/self_insert.py`) and §9 (test boundary). The §3 link / unlink
+views, the §4 context processor, the §5 `you_badge` tag and the §7 nav
+"My player" link went with the template UI (ANG-08).
 
 Boundary discipline (§9): this module asserts only the public surface — the
-`User.self_insert` field and its `self_insert_of` reverse, the four helpers,
-the two context keys and the exact `YOU_BADGE_HTML` / `""` tag output. Query
-shapes (beyond "zero queries when unlinked") are internal and never asserted.
+`User.self_insert` field and its `self_insert_of` reverse and the four
+helpers. Query shapes (beyond "zero queries when unlinked") are internal and
+never asserted.
 
 Fixture warning (§9): Teams built here are **Unmanaged** unless a test stamps
-`manager`. Anything that expects a successful link, a non-None
-`get_self_insert` or a badge first stamps `team.manager = get_shared_manager()`
-— the Account the autouse fixture logs `self.client` in as.
+`manager`. Anything that expects a successful link or a non-None
+`get_self_insert` first stamps `team.manager = get_shared_manager()`.
 """
 
 from __future__ import annotations
@@ -21,27 +20,18 @@ from __future__ import annotations
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import AnonymousUser
 from django.db import IntegrityError, transaction
-from django.template import Context, Template
-from django.test import RequestFactory, TestCase
-from django.urls import reverse
+from django.test import TestCase
 
-from accounts.context_processors import self_insert as self_insert_context
 from accounts.self_insert import (
     clear_self_insert,
     get_self_insert,
     is_self_insert_eligible,
     set_self_insert,
 )
-from accounts.templatetags.self_insert_tags import YOU_BADGE_HTML
 from conftest import get_shared_manager
 from teams.models import Player, Team, get_free_agents_team
 
 User = get_user_model()
-
-EXPECTED_BADGE = (
-    '<span class="badge text-bg-primary ms-1 you-badge" '
-    'title="Your Self-insert">You</span>'
-)
 
 
 def _reload(user: "User") -> "User":
@@ -253,117 +243,6 @@ class TestSetAndClearSelfInsert(_SelfInsertFixture):
         self.assertTrue(Player.objects.filter(pk=self.my_player.pk).exists())
 
 
-# §3 — the link / unlink HTML views went in ANG-08 D1; the API's
+# §3 / §4 / §5 -- the link / unlink HTML views, the context processor and the
+# `you_badge` template tag went with the template UI (ANG-08); the API's
 # `PUT` / `DELETE /api/accounts/me/self-insert/` are in `test_api_accounts.py`.
-
-
-# ===========================================================================
-# §4 — the context processor
-# ===========================================================================
-
-
-class TestSelfInsertContextProcessor(_SelfInsertFixture):
-    def test_request_without_user_attribute(self) -> None:
-        request = RequestFactory().get("/")
-        self.assertFalse(hasattr(request, "user"))
-        with self.assertNumQueries(0):
-            context = self_insert_context(request)
-        self.assertEqual(
-            context, {"self_insert_player": None, "self_insert_player_id": None}
-        )
-
-    def test_anonymous_request(self) -> None:
-        request = RequestFactory().get("/")
-        request.user = AnonymousUser()
-        context = self_insert_context(request)
-        self.assertIsNone(context["self_insert_player"])
-        self.assertIsNone(context["self_insert_player_id"])
-
-    def test_unlinked_account_zero_queries(self) -> None:
-        request = RequestFactory().get("/")
-        request.user = _reload(self.me)
-        with self.assertNumQueries(0):
-            context = self_insert_context(request)
-        self.assertIsNone(context["self_insert_player"])
-        self.assertIsNone(context["self_insert_player_id"])
-
-    def test_linked_account(self) -> None:
-        set_self_insert(self.me, self.my_player)
-        request = RequestFactory().get("/")
-        request.user = _reload(self.me)
-        context = self_insert_context(request)
-        self.assertEqual(context["self_insert_player"].pk, self.my_player.pk)
-        self.assertEqual(context["self_insert_player_id"], self.my_player.id)
-
-    def test_drifted_link(self) -> None:
-        set_self_insert(self.me, self.my_player)
-        Team.objects.filter(pk=self.my_team.pk).update(manager=None)
-        request = RequestFactory().get("/")
-        request.user = _reload(self.me)
-        context = self_insert_context(request)
-        self.assertIsNone(context["self_insert_player"])
-        self.assertIsNone(context["self_insert_player_id"])
-
-    def test_keys_reach_rendered_page_context(self) -> None:
-        set_self_insert(self.me, self.my_player)
-        # ANG-08 D1 / D2: `team_list` and `match_list` are gone; any page still
-        # on base.html will do (D3 deletes this context processor with it).
-        response = self.client.get(reverse("league_list"))
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.context["self_insert_player_id"], self.my_player.id)
-        self.assertEqual(response.context["self_insert_player"].pk, self.my_player.pk)
-
-
-# ===========================================================================
-# §5 — the you_badge template tag
-# ===========================================================================
-
-
-def _render_badge(player_id_expr: str, context: dict) -> str:
-    template = Template(
-        "{% load self_insert_tags %}{% you_badge " + player_id_expr + " %}"
-    )
-    return template.render(Context(context))
-
-
-class TestYouBadgeTag(TestCase):
-    def test_constant_is_the_locked_markup(self) -> None:
-        self.assertEqual(YOU_BADGE_HTML, EXPECTED_BADGE)
-
-    def test_match_renders_exact_badge(self) -> None:
-        out = _render_badge("pid", {"pid": 5, "self_insert_player_id": 5})
-        self.assertEqual(out, EXPECTED_BADGE)
-
-    def test_badge_is_not_escaped(self) -> None:
-        out = _render_badge("pid", {"pid": 5, "self_insert_player_id": 5})
-        self.assertNotIn("&lt;", out)
-
-    def test_string_id_matches_int(self) -> None:
-        out = _render_badge("pid", {"pid": "5", "self_insert_player_id": 5})
-        self.assertEqual(out, EXPECTED_BADGE)
-
-    def test_mismatch_renders_empty(self) -> None:
-        out = _render_badge("pid", {"pid": 6, "self_insert_player_id": 5})
-        self.assertEqual(out, "")
-
-    def test_missing_context_key_renders_empty(self) -> None:
-        self.assertEqual(_render_badge("pid", {"pid": 5}), "")
-
-    def test_none_context_value_renders_empty(self) -> None:
-        out = _render_badge("pid", {"pid": 5, "self_insert_player_id": None})
-        self.assertEqual(out, "")
-
-    def test_none_player_id_renders_empty(self) -> None:
-        out = _render_badge("pid", {"pid": None, "self_insert_player_id": 5})
-        self.assertEqual(out, "")
-
-    def test_empty_string_player_id_renders_empty(self) -> None:
-        out = _render_badge("pid", {"pid": "", "self_insert_player_id": 5})
-        self.assertEqual(out, "")
-
-    def test_non_numeric_player_id_renders_empty(self) -> None:
-        out = _render_badge('"abc"', {"self_insert_player_id": 5})
-        self.assertEqual(out, "")
-
-    def test_undefined_variable_renders_empty(self) -> None:
-        self.assertEqual(_render_badge("nope", {"self_insert_player_id": 5}), "")

@@ -74,7 +74,6 @@ from unittest.mock import patch
 
 from django.core.exceptions import ValidationError
 from django.test import TestCase
-from django.urls import reverse
 
 from matches.models import (
     BracketNode,
@@ -1187,29 +1186,6 @@ class TestZeroConferenceSeasonIsUnchanged(TestCase):
         self.assertEqual(self.season.state, "completed")
         self.assertEqual(self.season.champion_team_id, self.teams[0].id)
 
-    # ANG-08 D3: HTML-only
-    def test_the_playoffs_screen_carries_no_worlds_dom_id(self) -> None:
-        response = self.client.get(
-            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "-worlds")
-        self.assertNotContains(response, 'id="league-playoffs-worlds"')
-
-    # ANG-08 D3: ported -> test_api_feats_playoffs.py::RegionalPlayoffsTests
-    def test_the_playoffs_screen_keys_are_the_bare_phase_ordinal(self) -> None:
-        response = self.client.get(
-            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
-        )
-        keys = [bracket["key"] for bracket in response.context["brackets"]]
-        self.assertEqual(keys, [str(self.phase.ordinal)])
-        self.assertEqual(
-            [bracket["stage"] for bracket in response.context["brackets"]], [""]
-        )
-        self.assertEqual(
-            [bracket["stage_label"] for bracket in response.context["brackets"]], [""]
-        )
-
 
 class TestOneConferenceSeasonIsUnchanged(TestCase):
     """CONF-04 §12 invariant 1 - the same pins on the 1-Conference shape, whose
@@ -1244,14 +1220,6 @@ class TestOneConferenceSeasonIsUnchanged(TestCase):
         self.season.refresh_from_db()
         self.assertEqual(self.season.state, "completed")
         self.assertEqual(self.season.champion_team_id, self.groups[0][0].id)
-
-    # ANG-08 D3: ported -> test_api_feats_playoffs.py::RegionalPlayoffsTests
-    def test_the_playoffs_screen_carries_no_worlds_dom_id(self) -> None:
-        response = self.client.get(
-            reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "-worlds")
 
 
 class TestTwoConferenceSeasonWithNoTournamentPhase(TestCase):

@@ -1,12 +1,10 @@
-"""ANG-01e -- the League screen builders shared by the HTML views and the API.
+"""ANG-01e -- the League screen builders behind the API.
 
-The ``league_screens/*`` HTML views and the ``/api/leagues/<id>/...`` screen
-actions call the same functions here, so the two never drift apart. Nothing in
-this module reads a request: callers pass the League, the resolved Season
-scope and the screen's already-validated params.
-
-Must not import ``matches.league_views`` or ``matches.league_screens`` (they
-import this module); tests patch ``matches.league_screen_services.*``.
+The ``/api/leagues/<id>/...`` screen actions call the functions here (the
+HTML ``league_screens`` views that once shared them went in ANG-08). Nothing
+in this module reads a request: callers pass the League, the resolved Season
+scope and the screen's already-validated params. Tests patch
+``matches.league_screen_services.*``.
 """
 
 from __future__ import annotations

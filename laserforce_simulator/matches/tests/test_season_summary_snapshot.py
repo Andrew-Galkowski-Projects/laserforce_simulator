@@ -26,7 +26,6 @@ from unittest import mock
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from django.urls import reverse
 
 from matches import league_services
 from matches.league_screen_services import build_leaderboards, resolve_season_scope
@@ -289,49 +288,6 @@ class TestSnapshotFreshness(TestCase):
         )
 
 
-class TestViewsUseSnapshot(TestCase):
-    """End-to-end: the second GET of each whole-Season page skips the corpus."""
-
-    def setUp(self) -> None:
-        self.season, players_by_team = _build_season()
-        self.league = self.season.league
-        self.player = next(iter(players_by_team.values()))["scout"]
-
-    def _warm_prs_queries(self, url: str) -> tuple[list[str], list[str]]:
-        with CaptureQueriesContext(connection) as cold:
-            self.assertEqual(self.client.get(url).status_code, 200)
-        with CaptureQueriesContext(connection) as warm:
-            self.assertEqual(self.client.get(url).status_code, 200)
-        return _prs_queries(cold), _prs_queries(warm)
-
-    def test_season_awards_page(self) -> None:
-        cold, warm = self._warm_prs_queries(
-            reverse("season_awards", args=[self.season.id])
-        )
-        self.assertTrue(cold)
-        # Only the cheap ``has_rounds`` EXISTS probe remains.
-        self.assertLessEqual(len(warm), 1)
-
-    def test_season_dashboard_page(self) -> None:
-        cold, warm = self._warm_prs_queries(
-            reverse("season_dashboard", args=[self.season.id])
-        )
-        self.assertTrue(cold)
-        self.assertEqual(warm, [])
-
-    def test_league_leaders_page(self) -> None:
-        url = (
-            reverse("stats_league_leaders", args=[self.league.id])
-            + f"?season={self.season.id}"
-        )
-        cold, warm = self._warm_prs_queries(url)
-        self.assertTrue(cold)
-        self.assertEqual(warm, [])
-
-    def test_league_player_page_skips_award_corpus(self) -> None:
-        url = reverse("league_player_detail", args=[self.league.id, self.player.id])
-        cold, warm = self._warm_prs_queries(url)
-        # Every warm PRS query is scoped to this one Player.
-        self.assertLess(len(warm), len(cold))
-        for sql in warm:
-            self.assertIn('."player_id" = ', sql)
+# The HTML pages' warm-read query checks (``TestViewsUseSnapshot``) moved to
+# the API in ``test_api_screen_query_counts.py`` (ANG-08), which reuses
+# ``_build_season`` and ``_prs_queries`` from this file.

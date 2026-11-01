@@ -1366,7 +1366,6 @@ class TestLeagueHistory(LeagueApiTestCase):
             self.assertEqual(set(row), HISTORY_ROW_KEYS)
             self.assertEqual(len(row["top_three"]), 3)
             self.assertIsInstance(row["start_date"], str)
-            self.assertIsInstance(row["season_url"], str)
             for slot in ("season_mvp", "finals_mvp"):
                 if row[slot] is not None:
                     self.assertEqual(set(row[slot]), WINNER_KEYS)

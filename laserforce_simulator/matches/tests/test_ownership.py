@@ -11,15 +11,12 @@ The project's autouse `force_login_shared_manager` fixture logs each
 
 from __future__ import annotations
 
-import re
-
 from datetime import date
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.db import models
 from django.test import TestCase
-from django.urls import reverse
 
 from conftest import get_shared_manager
 from matches.forms import CreateLeagueForm
@@ -188,118 +185,12 @@ class TestLeagueVisibilityColumn(TestCase):
         self.assertEqual(league.visibility, "open")
 
 
-class TestLeagueVisibilityIsDormant(TestCase):
-    """§2.5 / §13 — **nothing reads it**. This is a load-bearing guard.
-
-    The strongest available proof of dormancy is a *same-row flip*: take ONE
-    League, render it, flip only `visibility`, render it again, and require
-    the two renders to be **byte-identical** — no ids, names or dates differ,
-    so the only variable in the experiment is the dormant column itself. If a
-    future slice starts branching on `visibility` without lifting the
-    dormancy, this fails immediately and unambiguously.
-    """
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.me = get_shared_manager()
-        self.league = League.objects.create(
-            name="Dormant League", visibility="closed", manager=self.me
-        )
-        self.season = Season.objects.create(
-            league=self.league,
-            name="S1",
-            start_date=date(2026, 1, 1),
-            state="active",
-            schedule_format="single_round_robin",
-            starting_team_ids_json=[],
-        )
-
-    def _flip_to_open(self) -> None:
-        self.league.visibility = "open"
-        self.league.save(update_fields=["visibility"])
-
-    def test_league_detail_renders_byte_identically_across_the_flip(self) -> None:
-        url = f"/leagues/{self.league.id}/"
-        closed_body = self._normalise(self.client.get(url))
-        self._flip_to_open()
-        open_body = self._normalise(self.client.get(url))
-        self.assertEqual(closed_body, open_body)
-
-    def test_season_dashboard_renders_byte_identically_across_the_flip(self) -> None:
-        url = reverse("season_dashboard", kwargs={"season_id": self.season.id})
-        closed_body = self._normalise(self.client.get(url))
-        self._flip_to_open()
-        open_body = self._normalise(self.client.get(url))
-        self.assertEqual(closed_body, open_body)
-
-    def test_league_list_renders_byte_identically_across_the_flip(self) -> None:
-        closed_body = self._normalise(self.client.get(reverse("league_list")))
-        self._flip_to_open()
-        open_body = self._normalise(self.client.get(reverse("league_list")))
-        self.assertEqual(closed_body, open_body)
-
-    def test_no_view_context_key_varies_with_the_visibility_value(self) -> None:
-        """The context is compared key-by-key, so a leak names its own key."""
-        url = f"/leagues/{self.league.id}/"
-        closed_ctx = self._flat_context(self.client.get(url))
-        self._flip_to_open()
-        open_ctx = self._flat_context(self.client.get(url))
-
-        self.assertEqual(set(closed_ctx), set(open_ctx))
-        for key in closed_ctx:
-            if key == "league":
-                # The League object itself legitimately carries the column.
-                continue
-            with self.subTest(key=key):
-                self.assertEqual(
-                    repr(closed_ctx[key]),
-                    repr(open_ctx[key]),
-                    f"context key {key!r} varies with the dormant `visibility`",
-                )
-
-    def test_the_league_is_listed_whatever_its_visibility(self) -> None:
-        """`open` must not make a League public, nor `closed` hide it."""
-        self._flip_to_open()
-        active = self.client.get(reverse("league_list")).context["active_leagues"]
-        self.assertIn(self.league, active)
-
-    def test_the_rendered_page_never_shows_the_word_visibility(self) -> None:
-        self._flip_to_open()
-        body = self.client.get(f"/leagues/{self.league.id}/").content.decode()
-        self.assertNotIn("visibility", body.lower())
-
-    @staticmethod
-    def _normalise(response) -> str:
-        """Rendered body with the per-request CSRF token scrubbed out.
-
-        The token is regenerated on every request, so it is request-scoped
-        noise rather than anything the dormant column could influence. The
-        scrub is applied identically to both sides, and every `visibility`
-        value is far too short to match, so it can only ever hide a
-        difference it caused itself -- never mask a real leak.
-        """
-        body = response.content.decode()
-        return re.sub(r'value="[A-Za-z0-9]{32,}"', 'value="[scrubbed]"', body)
-
-    @staticmethod
-    def _flat_context(response) -> dict:
-        flat: dict = {}
-        for context in response.context:
-            flat.update(context.flatten())
-        # `request`/`csrf_token` legitimately differ between two requests.
-        for volatile in ("request", "csrf_token", "view", "True", "False", "None"):
-            flat.pop(volatile, None)
-        return flat
+# ANG-08: the HTML dormancy guard (``TestLeagueVisibilityIsDormant``, a
+# same-row flip over the League / Season pages) went with those pages.
 
 
 class TestLeagueCreateStoresVisibility(TestCase):
     """§13 — the create form authors the marker; nothing else touches it."""
-
-    def test_create_advanced_does_not_render_the_control(self) -> None:
-        # UXP-21 — the dormant control did nothing, so the page no longer
-        # offers it; the form field still binds (API / tests below).
-        body = self.client.get(reverse("league_create_advanced")).content.decode()
-        self.assertNotIn('id="league-create-visibility"', body)
 
     def test_form_field_is_optional_and_defaults_to_closed(self) -> None:
         form = CreateLeagueForm(VALID_LEAGUE_PAYLOAD)
@@ -378,34 +269,15 @@ class TestCreateLeagueAndSeasonManagerKwarg(TestCase):
         self.assertNotIn("manager", {f.name for f in Season._meta.get_fields()})
 
 
-class TestLeagueCreateViewStamps(TestCase):
-    """§6.2 — the create view threads `manager_or_none(request)` through."""
-
-    def test_post_stamps_the_league_to_the_signed_in_account(self) -> None:
-        payload = dict(VALID_LEAGUE_PAYLOAD, league_name="View Authored")
-        response = self.client.post(reverse("league_create_advanced"), payload)
-        self.assertEqual(response.status_code, 302)
-        league = League.objects.get(name="View Authored")
-        self.assertEqual(league.manager_id, get_shared_manager().pk)
-
-    def test_a_second_account_gets_its_own_stamp(self) -> None:
-        other = User.objects.create_user(
-            email="league-other@example.com", password="Str0ng-Passphrase-9"
-        )
-        self.client.force_login(other)
-        payload = dict(VALID_LEAGUE_PAYLOAD, league_name="Other Authored")
-        self.client.post(reverse("league_create_advanced"), payload)
-        self.assertEqual(League.objects.get(name="Other Authored").manager_id, other.pk)
-
-
 # ---------------------------------------------------------------------------
-# Stamping sites #7, #9, #10 — the create views (§6.4)
+# Stamping sites #5, #7, #9, #10 — the create views (§6.2, §6.4)
 # ---------------------------------------------------------------------------
 
 
-# ANG-08 D2: the Tournament / Match / single-Round create-view stamping tests
-# went with those HTML views; the API create stamps are pinned in
-# test_api_tournaments_create.py and test_api_match_create.py.
+# ANG-08: the League / Tournament / Match / single-Round create-view stamping
+# tests went with those HTML views; the API create stamps are pinned in
+# test_api_leagues.py (TestLeagueCreate), test_api_tournaments_create.py and
+# test_api_match_create.py.
 
 
 # ---------------------------------------------------------------------------
@@ -463,50 +335,9 @@ class TestEmbeddedTournamentInheritsLeagueManager(TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestLeagueListScoping(TestCase):
-    """§7 — `league_list` filters both the active and archived lists."""
-
-    def setUp(self) -> None:
-        super().setUp()
-        self.me = get_shared_manager()
-        self.other = User.objects.create_user(
-            email="ll-other@example.com", password="Str0ng-Passphrase-9"
-        )
-        self.mine = League.objects.create(
-            name="LL Mine", state="active", manager=self.me
-        )
-        self.theirs = League.objects.create(
-            name="LL Theirs", state="active", manager=self.other
-        )
-        self.open_league = League.objects.create(name="LL Open", state="active")
-        self.mine_archived = League.objects.create(
-            name="LL Mine Arch", state="archived", manager=self.me
-        )
-        self.theirs_archived = League.objects.create(
-            name="LL Theirs Arch", state="archived", manager=self.other
-        )
-
-    def test_active_list_shows_own_and_unmanaged_only(self) -> None:
-        active = set(self.client.get(reverse("league_list")).context["active_leagues"])
-        self.assertEqual(active, {self.mine, self.open_league})
-
-    def test_archived_list_shows_own_and_unmanaged_only(self) -> None:
-        archived = set(
-            self.client.get(reverse("league_list")).context["archived_leagues"]
-        )
-        self.assertEqual(archived, {self.mine_archived})
-
-    def test_isolation_holds_in_the_reverse_direction(self) -> None:
-        self.client.force_login(self.other)
-        context = self.client.get(reverse("league_list")).context
-        self.assertEqual(
-            set(context["active_leagues"]), {self.theirs, self.open_league}
-        )
-        self.assertEqual(set(context["archived_leagues"]), {self.theirs_archived})
-
-
-# ANG-08 D2: the `tournament_list` / `match_list` HTML scoping tests went with
-# those views; TestApiQuerysetScoping below pins the API list scoping.
+# ANG-08: the `league_list` / `tournament_list` / `match_list` HTML scoping
+# tests went with those views; the API list scoping is pinned in
+# test_api_leagues.py (TestLeagueList) and TestApiQuerysetScoping below.
 
 
 # ---------------------------------------------------------------------------

@@ -57,8 +57,8 @@ from __future__ import annotations
 from datetime import date
 
 from django.test import TestCase
-from django.urls import reverse
 
+from matches.league_screen_services import build_team_history
 from matches.models import (
     BracketNode,
     Conference,
@@ -1024,12 +1024,9 @@ class TestRegionalPlayoffTeamHistory(TestCase):
         self.league.save(update_fields=["current_team"])
 
     def _record(self):
-        response = self.client.get(
-            reverse("team_history", args=[self.league.id]),
-            {"team_id": self.team.id},
-        )
-        self.assertEqual(response.status_code, 200)
-        return response.context["overall_record"]
+        # ANG-08: read through the service the API's Team History uses (the
+        # HTML page this went through is gone).
+        return build_team_history(self.team).overall
 
     # -- playoff_appearances ------------------------------------------------
 

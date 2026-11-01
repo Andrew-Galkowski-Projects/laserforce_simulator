@@ -1,7 +1,6 @@
 """PERF-01 T4 -- ``build_player_detail`` runs a constant number of queries.
 
-The League player page (API ``league-player`` action and the HTML screen) used
-to run a PlayerRoundState query, an ``exists()`` and an award-set read per
+The League player page (API ``league-player`` action) used to run a PlayerRoundState query, an ``exists()`` and an award-set read per
 Season. These tests pin the batched path: the query count does not grow with
 the Seasons the Player played, and a Player who played only some Seasons gets
 exactly the per-Season rows and awards badges the per-Season path gave.
@@ -14,7 +13,6 @@ from datetime import date
 from django.db import connection
 from django.test import TestCase
 from django.test.utils import CaptureQueriesContext
-from django.urls import reverse
 
 from matches.league_screen_services import build_player_detail
 from matches.league_services import _player_award_labels, compute_season_award_set
@@ -98,18 +96,6 @@ class TestPlayerDetailQueryCount(TestCase):
             self._add_season()
         large = self._warm_count(call)
         self.assertEqual(len(build_player_detail(self.league, self.player).rs_rows), 4)
-        self.assertEqual(small, large)
-
-    def test_html_player_page_constant_in_seasons_played(self) -> None:
-        url = reverse("league_player_detail", args=[self.league.id, self.player.id])
-
-        def call() -> None:
-            self.assertEqual(self.client.get(url).status_code, 200)
-
-        small = self._warm_count(call)
-        for _ in range(3):
-            self._add_season()
-        large = self._warm_count(call)
         self.assertEqual(small, large)
 
 

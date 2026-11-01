@@ -13,12 +13,9 @@ and persisted rows -- never on simulated point totals.
 
 from __future__ import annotations
 
-import ast
 from datetime import date
-from pathlib import Path
 from unittest.mock import patch
 
-from django.test import SimpleTestCase
 from django.urls import reverse
 
 from matches.models import GameRound, Season, SeasonPhase
@@ -257,26 +254,6 @@ class TestPlayJobs(LeagueApiTestCase):
             self.anon.get(action(foreign.id, "play-jobs/abc")),
             401,
             "not_authenticated",
-        )
-
-
-class TestServiceModuleBoundary(SimpleTestCase):
-    """``league_play_services`` must not import the League views module (the
-    views import the service), so the dependency only points one way."""
-
-    def test_does_not_import_league_views(self) -> None:
-        import matches.league_play_services as services
-
-        tree = ast.parse(Path(services.__file__).read_text(encoding="utf-8"))
-        imported: set[str] = set()
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                imported.update(alias.name for alias in node.names)
-            elif isinstance(node, ast.ImportFrom):
-                imported.add(node.module or "")
-                imported.update(f"{node.module}.{a.name}" for a in node.names)
-        self.assertFalse(
-            [name for name in imported if "league_views" in name], imported
         )
 
 

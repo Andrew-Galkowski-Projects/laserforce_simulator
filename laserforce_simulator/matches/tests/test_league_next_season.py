@@ -1,11 +1,11 @@
-"""LG-01e — Django ``TestCase`` tests for the Start Next Season endpoint
-at ``POST /leagues/<int:league_id>/next-season/`` (URL name ``next_season``,
-view ``matches.views.next_season``).
+"""LG-01e — Django ``TestCase`` tests for Start Next Season, driven through
+``POST /api/leagues/<int:league_id>/next-season/`` (ANG-08: the HTML
+``next_season`` view and its redirect / session / picker cases are gone).
 
 The seam contract is locked at
 ``.claude/worktrees/lg-01e-seam-contract.md`` (§1, §2, §7a, §8). The
-view is POST-only, decorated ``@transaction.atomic``, and on success
-creates one new ``Season`` in the same ``League`` with:
+rollover is atomic and on success creates one new ``Season`` in the same
+``League`` with:
 
   - ``state="draft"``
   - ``name = f"Season {league.seasons.count() + 1}"`` (count taken
@@ -14,9 +14,6 @@ creates one new ``Season`` in the same ``League`` with:
   - ``schedule_format = latest_completed.schedule_format``
   - Teams M2M populated from the previous Season's
     ``starting_team_ids_json`` snapshot (NOT the live ``teams.all()``)
-
-Then redirects (HTTP 302) to ``reverse("season_dashboard",
-season_id=new_season.id)``.
 
 Locked per the seam contract: NO ``mock.patch`` on
 ``League.objects.get`` / ``League.seasons.filter`` /
@@ -33,7 +30,6 @@ from datetime import date
 from unittest.mock import patch
 
 from django.test import TestCase
-from django.urls import reverse
 from rest_framework.response import Response
 from rest_framework.test import APIClient
 
@@ -89,58 +85,10 @@ def _make_teams(prefix: str, n: int) -> list[Team]:
 
 
 def _api_next_season(league: League) -> Response:
-    """ANG-08b: ``POST /api/leagues/<id>/next-season/`` as the shared manager.
-
-    The cases that assert database state drive the API endpoint (the HTML
-    view's replacement). A case that asserts only the HTML view's redirect,
-    session write or picker redirect still posts to the HTML view and is
-    marked ``# ANG-08 D3: HTML-only`` for the deletion ticket.
-    """
+    """ANG-08b: ``POST /api/leagues/<id>/next-season/`` as the shared manager."""
     api = APIClient()
     api.force_login(get_shared_manager())
     return api.post(f"/api/leagues/{league.id}/next-season/", format="json")
-
-
-# ---------------------------------------------------------------------------
-# TestNextSeasonRouting
-# ---------------------------------------------------------------------------
-
-
-# ANG-08 D3: HTML-only (HTML route; the API's 405 / 404 live in test_api_league_lifecycle)
-class TestNextSeasonRouting(TestCase):
-    """URL reverse, 405 on GET/PUT/DELETE, 404 on missing League."""
-
-    def test_reverse_resolves_to_expected_path(self) -> None:
-        league = _make_league("RouteRev")
-        self.assertEqual(
-            reverse("next_season", kwargs={"league_id": league.id}),
-            f"/leagues/{league.id}/next-season/",
-        )
-
-    def test_get_returns_405(self) -> None:
-        league = _make_league("RouteGet")
-        response = self.client.get(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 405)
-
-    def test_put_returns_405(self) -> None:
-        league = _make_league("RoutePut")
-        response = self.client.put(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 405)
-
-    def test_delete_returns_405(self) -> None:
-        league = _make_league("RouteDel")
-        response = self.client.delete(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 405)
-
-    def test_post_returns_404_for_missing_league(self) -> None:
-        response = self.client.post(reverse("next_season", kwargs={"league_id": 99999}))
-        self.assertEqual(response.status_code, 404)
 
 
 # ---------------------------------------------------------------------------
@@ -175,21 +123,6 @@ class TestNextSeasonHappyPath(TestCase):
         # starting_team_ids_json is written by the activation (start_season),
         # never at create — LG-01 precedent.
         self.assertEqual(new_season.starting_team_ids_json, sorted(t.id for t in teams))
-
-    # ANG-08 D3: HTML-only
-    def test_post_redirects_to_new_season_dashboard(self) -> None:
-        league, _prev, _teams = self._setup()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[new_season.id]),
-        )
-        # Path-level equality cross-check.
-        self.assertEqual(response["Location"], f"/seasons/{new_season.id}/")
 
     def test_post_increments_season_count_by_exactly_one(self) -> None:
         league, _prev, _teams = self._setup()
@@ -446,63 +379,8 @@ class TestNextSeasonTeamsCopiedFromSnapshot(TestCase):
 
 
 class TestNextSeasonActiveSeasonGuard(TestCase):
-    """Draft/active Season ⇒ 302 to that Season's dashboard; no new Season."""
-
-    # ANG-08 D3: HTML-only (the API's 409 season_in_progress is in test_api_league_lifecycle)
-    def test_post_redirects_when_active_season_exists(self) -> None:
-        league = _make_league("ActGuard")
-        teams = _make_teams("AG", 2)
-        # Completed prev Season + currently-active Season.
-        _make_completed_season(
-            league,
-            name="Season 1",
-            start_date=date(2024, 1, 1),
-            team_ids=[t.id for t in teams],
-        )
-        active = Season.objects.create(
-            league=league,
-            name="Season 2",
-            start_date=date(2025, 1, 1),
-            state="active",
-        )
-        pre_count = league.seasons.count()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[active.id]),
-        )
-        # No new Season was created.
-        self.assertEqual(league.seasons.count(), pre_count)
-
-    # ANG-08 D3: HTML-only
-    def test_post_redirects_when_draft_season_exists(self) -> None:
-        league = _make_league("DraftGuard")
-        teams = _make_teams("DG", 2)
-        _make_completed_season(
-            league,
-            name="Season 1",
-            start_date=date(2024, 1, 1),
-            team_ids=[t.id for t in teams],
-        )
-        draft = Season.objects.create(
-            league=league,
-            name="Season 2",
-            start_date=date(2025, 1, 1),
-            state="draft",
-        )
-        pre_count = league.seasons.count()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[draft.id]),
-        )
-        self.assertEqual(league.seasons.count(), pre_count)
+    """Draft/active Season => no new Season (the API's 409
+    ``season_in_progress`` is pinned in test_api_league_lifecycle)."""
 
     def test_active_season_guard_does_not_create_new_season(self) -> None:
         """Cross-check: Season.objects.count() is unchanged across the
@@ -534,19 +412,8 @@ class TestNextSeasonActiveSeasonGuard(TestCase):
 
 
 class TestNextSeasonNoCompletedGuard(TestCase):
-    """Zero completed Seasons ⇒ 400 + body substring; count unchanged."""
-
-    # ANG-08 D3: HTML-only (the API's 409 no_completed_season is in test_api_league_lifecycle)
-    def test_post_returns_400_when_no_completed_season_exists(self) -> None:
-        # League with zero Seasons total — the active-Season guard does
-        # NOT fire (no non-completed Season exists either), so the
-        # no-completed-Season guard is the one that trips.
-        league = _make_league("NoCompL")
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertIn(b"No completed Season in this League.", response.content)
+    """Zero completed Seasons => count unchanged (the API's 409
+    ``no_completed_season`` is pinned in test_api_league_lifecycle)."""
 
     def test_post_returns_400_does_not_create_season(self) -> None:
         league = _make_league("NoCompCount")
@@ -627,36 +494,6 @@ class TestNextSeasonAtomicity(TestCase):
                 _api_next_season(league)
         self.assertEqual(Season.objects.count(), pre_season_count)
         self.assertEqual(league.seasons.count(), 1)
-
-
-# ---------------------------------------------------------------------------
-# TestLg01fNextSeasonSessionWrite (LG-01f — appended per seam contract §9g)
-# ---------------------------------------------------------------------------
-
-
-# ANG-08 D3: HTML-only
-class TestLg01fNextSeasonSessionWrite(TestCase):
-    """LG-01f — ``next_season`` writes
-    ``request.session["last_league_id"] = league.id`` BEFORE the 302
-    redirect so the session middleware commits the cookie alongside the
-    redirect response.
-    """
-
-    def test_lg01f_session_writes_last_league_id_before_redirect(self) -> None:
-        league = _make_league("LfNxtSess")
-        teams = _make_teams("LfNS", 2)
-        _make_completed_season(
-            league,
-            name="Season 1",
-            start_date=date(2025, 1, 1),
-            team_ids=[t.id for t in teams],
-        )
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        # 302 redirect AND session has been written.
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(self.client.session["last_league_id"], league.id)
 
 
 # ---------------------------------------------------------------------------
@@ -1510,8 +1347,8 @@ def _fin05_add_win(season, team, opp):
 
 
 class TestFin05NextSeasonChallengeFireRedirectsToPicker(TestCase):
-    """A challenge-fired-and-unreassigned manager hitting next_season ⇒ 302 to
-    new_team_picker, no new Season created (same route as a mood fire)."""
+    """A challenge-fired-and-unreassigned manager hitting next_season => no new
+    Season created (same route as a mood fire)."""
 
     def _setup(self) -> tuple[League, Season]:
         team, _ = make_team_with_slots("Fin05NxtT")
@@ -1536,18 +1373,6 @@ class TestFin05NextSeasonChallengeFireRedirectsToPicker(TestCase):
         # Managed team paid the luxury tax in the latest Season.
         _Fin05TSF.objects.create(team=team, season=latest, luxury_tax=50_000.0)
         return league, latest
-
-    # ANG-08 D3: HTML-only
-    def test_redirects_to_new_team_picker(self) -> None:
-        league, _latest = self._setup()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(
-            response["Location"],
-            reverse("new_team_picker", kwargs={"league_id": league.id}),
-        )
 
     def test_no_new_season_created(self) -> None:
         league, _latest = self._setup()
@@ -2065,17 +1890,6 @@ class TestCar02NonFiredRolloverByteEquivalent(TestCase):
         self.assertEqual(len(phases), 1)
         self.assertEqual(phases[0].phase_type, "round_robin")
 
-    # ANG-08 D3: HTML-only
-    def test_non_fired_redirects_to_new_season_dashboard(self) -> None:
-        league, _prev, _teams = self._setup()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(
-            response["Location"], reverse("season_dashboard", args=[new_season.id])
-        )
-
     def test_owner_evaluation_row_written_for_just_completed_season(self) -> None:
         league, prev, _teams = self._setup()
         _api_next_season(league)
@@ -2089,8 +1903,8 @@ class TestCar02NonFiredRolloverByteEquivalent(TestCase):
 
 
 class TestCar02FiredUnreassignedBlocked(TestCase):
-    """A fired-and-unreassigned Manager hitting ``next_season`` is redirected to
-    ``new_team_picker`` and NO new Season is created."""
+    """A fired-and-unreassigned Manager hitting ``next_season`` creates NO new
+    Season (the API's 409 ``manager_fired`` is in test_api_league_lifecycle)."""
 
     def _setup(self) -> tuple[League, Season, Team]:
         teams = _make_teams("Car02Fired", 2)
@@ -2125,18 +1939,6 @@ class TestCar02FiredUnreassignedBlocked(TestCase):
             hot_seat_level=0,
         )
         return league, prev, manager_team
-
-    # ANG-08 D3: HTML-only (picker redirect; the API's 409 manager_fired is in test_api_league_lifecycle)
-    def test_fired_unreassigned_redirects_to_new_team_picker(self) -> None:
-        league, _prev, _team = self._setup()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(
-            response["Location"],
-            reverse("new_team_picker", kwargs={"league_id": league.id}),
-        )
 
     def test_fired_unreassigned_creates_no_new_season(self) -> None:
         league, _prev, _team = self._setup()
@@ -2188,7 +1990,7 @@ class TestCar02VerdictGateAtomicity(TestCase):
 
 class TestCar03MultiplayerNextSeason(TestCase):
     """CAR-03 — on a ``multiplayer`` League the owner-mood verdict gate is inert:
-    a completed Season simply rolls into a fresh Season (302) with NO
+    a completed Season simply rolls into a fresh Season with NO
     ``OwnerEvaluation`` row written and ``current_team`` unchanged."""
 
     def _setup(self) -> tuple[League, Season, Team]:
@@ -2214,23 +2016,13 @@ class TestCar03MultiplayerNextSeason(TestCase):
         _car02_add_win(prev, manager_team, teams[1])
         return league, prev, manager_team
 
-    # ANG-08 D3: HTML-only
-    def test_post_redirects_to_new_started_season(self) -> None:
+    def test_post_creates_a_new_started_season(self) -> None:
         league, _prev, _mgr = self._setup()
         pre_count = league.seasons.count()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
-        # A new Season was created (UXP-18 — and started) and is the redirect
-        # target.
+        self.assertEqual(_api_next_season(league).status_code, 201)
+        # A new Season was created (UXP-18 -- and started).
         self.assertEqual(league.seasons.count(), pre_count + 1)
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(new_season.state, "active")
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[new_season.id]),
-        )
+        self.assertEqual(league.seasons.order_by("-id").first().state, "active")
 
     def test_post_writes_no_owner_evaluation_row(self) -> None:
         league, _prev, _mgr = self._setup()
@@ -2918,21 +2710,30 @@ class TestConf06NextSeasonRotateByConferenceDowngrade(TestCase):
             self.assertEqual(new_season.map_mode, mode, f"mode={mode}")
 
 
-# ---------------------------------------------------------------------------
-# UXP-18 — the Start Next Season POST creates AND starts the new Season
-# ---------------------------------------------------------------------------
+# (UXP-18 -- the HTML next-season redirect targets went with ANG-08; the
+# started / kept-draft states are pinned by test_api_league_lifecycle.py and
+# TestRollAndStartNextSeasonService below.)
 
 from matches.models import Conference as _Uxp18Conference  # noqa: E402
 
+# ---------------------------------------------------------------------------
+# ANG-06-14 B6 — ``roll_and_start_next_season`` (shared by HTML + API)
+# ---------------------------------------------------------------------------
 
-# ANG-08 D3: HTML-only (redirect targets; states pinned by the API TestNextSeason + TestRollAndStartNextSeasonService)
-class TestUxp18NextSeasonStartsTheNewSeason(TestCase):
-    """UXP-18 — confirming Start Next Season (the owner-evaluation CTA, or the
-    non-career dashboard / topnav button) rolls the Season AND starts it, so the
-    Manager lands on an ACTIVE Season's dashboard without a separate
-    "Start Season" click. A Season that must be edited in DRAFT first (the
-    previous Season was partitioned into Conferences, which the rollover does
-    not carry) stays a draft and lands on Manage Conferences."""
+from matches.league_play_services import (  # noqa: E402
+    NextSeasonResult,
+    roll_and_start_next_season,
+)
+from matches.league_services import (  # noqa: E402
+    ManagerFiredError,
+    NoCompletedSeasonError,
+    SeasonInProgressError,
+)
+
+
+class TestRollAndStartNextSeasonService(TestCase):
+    """The rollover then (UXP-18) the start, unless the previous Season had
+    Conferences (``needs_conferences``). A refused start leaves the draft."""
 
     def _setup(self, *, mode: str = "league", n_teams: int = 2) -> League:
         teams = _make_teams(f"Uxp18{mode}{n_teams}", n_teams)
@@ -2955,94 +2756,6 @@ class TestUxp18NextSeasonStartsTheNewSeason(TestCase):
         if n_teams >= 2:
             _car02_add_win(prev, teams[0], teams[1])
         return league
-
-    def _post(self, league: League):
-        return self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
-
-    def test_career_confirm_creates_an_active_season_and_redirects_to_it(
-        self,
-    ) -> None:
-        league = self._setup(mode="league")
-        response = self._post(league)
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(new_season.name, "Season 2")
-        self.assertEqual(new_season.state, "active")
-        # Activation ran (the snapshot is only written by start_season).
-        self.assertEqual(
-            new_season.starting_team_ids_json,
-            sorted(new_season.teams.values_list("id", flat=True)),
-        )
-        self.assertEqual(response.status_code, 302)
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[new_season.id]),
-        )
-
-    def test_non_career_start_next_season_also_starts_it(self) -> None:
-        league = self._setup(mode="multiplayer")
-        response = self._post(league)
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(new_season.state, "active")
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[new_season.id]),
-        )
-
-    def test_start_failure_leaves_the_rolled_draft_and_lands_on_its_dashboard(
-        self,
-    ) -> None:
-        # A 1-team snapshot cannot start (< 2 teams) — the rollover still
-        # commits as a draft, exactly the pre-UXP-18 outcome.
-        league = self._setup(mode="multiplayer", n_teams=1)
-        response = self._post(league)
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(new_season.name, "Season 2")
-        self.assertEqual(new_season.state, "draft")
-        self.assertEqual(
-            response["Location"],
-            reverse("season_dashboard", args=[new_season.id]),
-        )
-
-    def test_conference_league_keeps_draft_and_lands_on_manage_conferences(
-        self,
-    ) -> None:
-        league = self._setup(mode="league", n_teams=4)
-        prev = league.seasons.get(name="Season 1")
-        teams = list(prev.teams.order_by("id"))
-        for ordinal, members in ((1, teams[:2]), (2, teams[2:])):
-            conf = _Uxp18Conference.objects.create(
-                season=prev, name=f"C{ordinal}", ordinal=ordinal
-            )
-            conf.teams.add(*members)
-        response = self._post(league)
-        new_season = league.seasons.order_by("-id").first()
-        self.assertEqual(new_season.state, "draft")
-        self.assertEqual(
-            response["Location"],
-            reverse("manage_conferences", kwargs={"season_id": new_season.id}),
-        )
-
-
-# ---------------------------------------------------------------------------
-# ANG-06-14 B6 — ``roll_and_start_next_season`` (shared by HTML + API)
-# ---------------------------------------------------------------------------
-
-from matches.league_play_services import (  # noqa: E402
-    NextSeasonResult,
-    roll_and_start_next_season,
-)
-from matches.league_services import (  # noqa: E402
-    ManagerFiredError,
-    NoCompletedSeasonError,
-    SeasonInProgressError,
-)
-
-
-class TestRollAndStartNextSeasonService(TestCase):
-    """The rollover then (UXP-18) the start, unless the previous Season had
-    Conferences (``needs_conferences``). A refused start leaves the draft."""
-
-    _setup = TestUxp18NextSeasonStartsTheNewSeason._setup
 
     def test_rolls_and_starts_the_new_season(self) -> None:
         league = self._setup(mode="league")

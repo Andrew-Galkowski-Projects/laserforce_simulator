@@ -1,22 +1,15 @@
-"""LG-06d — Pure-unit tests for the Season selector + rate toggle seam.
+"""LG-06d — Pure-unit tests for the rate toggle seam.
 
-Three pure surfaces (no DB / no Django in the assertion path):
+``matches.season_player_stats.apply_rate(rows, rate)`` (no DB / no Django in
+the assertion path) — transforms the 10 SUMMED_KEYS only; ``total`` is
+identity, ``per_game`` divides by ``games``, ``per_10`` scales by
+``600 / (survival * games)`` with a ``<= 0``-denominator guard → ``0.0``.
+AVERAGED_KEYS (mvp / accuracy) + DERIVED_KEYS (tag_ratio / survival) +
+``games`` are untouched. Returns NEW rows (no mutation of the inputs).
 
-* ``matches.season_player_stats.apply_rate(rows, rate)`` — transforms the
-  10 SUMMED_KEYS only; ``total`` is identity, ``per_game`` divides by
-  ``games``, ``per_10`` scales by ``600 / (survival * games)`` with a
-  ``<= 0``-denominator guard → ``0.0``. AVERAGED_KEYS (mvp / accuracy) +
-  DERIVED_KEYS (tag_ratio / survival) + ``games`` are untouched. Returns
-  NEW rows (no mutation of the inputs).
-* ``matches.league_views._coerce_season(raw, valid_season_ids, default)``
-  — ``"career"`` sentinel, valid id → ``int``, invalid / non-enrolled /
-  non-int → default, ``None`` default supported.
-* ``matches.league_views._coerce_rate(raw, default="total")`` — each of
-  the three valid values passes through; anything else → ``default``.
-
-These assert against the APPROVED LG-06d seam contract verbatim. They are
-expected to FAIL until the Code agent lands ``apply_rate`` /
-``_coerce_season`` / ``_coerce_rate`` (TDD — red first).
+ANG-08: the HTML views' ``_coerce_season`` / ``_coerce_rate`` went with
+``league_views``; the API validates ``season`` / ``rate`` through its params
+forms.
 """
 
 from __future__ import annotations
@@ -229,81 +222,6 @@ class TestApplyRateInvariants(unittest.TestCase):
 
     def test_empty_input_returns_empty_list(self) -> None:
         self.assertEqual(apply_rate([], "per_game"), [])
-
-
-# ===========================================================================
-# _coerce_season
-# ===========================================================================
-
-
-class TestCoerceSeason(unittest.TestCase):
-    def setUp(self) -> None:
-        from matches.league_views import _coerce_season
-
-        self._coerce = _coerce_season
-        self.valid = {10, 20, 30}
-
-    def test_career_sentinel_returns_career(self) -> None:
-        self.assertEqual(self._coerce("career", self.valid, 20), "career")
-
-    def test_valid_id_returns_int(self) -> None:
-        self.assertEqual(self._coerce("20", self.valid, 10), 20)
-
-    def test_unenrolled_id_returns_default(self) -> None:
-        self.assertEqual(self._coerce("999", self.valid, 10), 10)
-
-    def test_non_int_returns_default(self) -> None:
-        self.assertEqual(self._coerce("abc", self.valid, 10), 10)
-
-    def test_none_returns_default(self) -> None:
-        self.assertEqual(self._coerce(None, self.valid, 10), 10)
-
-    def test_empty_string_returns_default(self) -> None:
-        self.assertEqual(self._coerce("", self.valid, 10), 10)
-
-    def test_none_default_supported(self) -> None:
-        self.assertIsNone(self._coerce("abc", self.valid, None))
-        self.assertIsNone(self._coerce(None, self.valid, None))
-
-    def test_career_takes_precedence_over_default(self) -> None:
-        # Even with a None default, "career" still resolves to the sentinel.
-        self.assertEqual(self._coerce("career", self.valid, None), "career")
-
-    def test_empty_valid_set_falls_back(self) -> None:
-        self.assertEqual(self._coerce("20", set(), 99), 99)
-
-
-# ===========================================================================
-# _coerce_rate
-# ===========================================================================
-
-
-class TestCoerceRate(unittest.TestCase):
-    def setUp(self) -> None:
-        from matches.league_views import _coerce_rate
-
-        self._coerce = _coerce_rate
-
-    def test_total_passthrough(self) -> None:
-        self.assertEqual(self._coerce("total"), "total")
-
-    def test_per_game_passthrough(self) -> None:
-        self.assertEqual(self._coerce("per_game"), "per_game")
-
-    def test_per_10_passthrough(self) -> None:
-        self.assertEqual(self._coerce("per_10"), "per_10")
-
-    def test_invalid_falls_back_to_total(self) -> None:
-        self.assertEqual(self._coerce("bogus"), "total")
-
-    def test_none_falls_back_to_total(self) -> None:
-        self.assertEqual(self._coerce(None), "total")
-
-    def test_empty_string_falls_back_to_total(self) -> None:
-        self.assertEqual(self._coerce(""), "total")
-
-    def test_custom_default_honoured(self) -> None:
-        self.assertEqual(self._coerce("bogus", default="per_game"), "per_game")
 
 
 # ===========================================================================
