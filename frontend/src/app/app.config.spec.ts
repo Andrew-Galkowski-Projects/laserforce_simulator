@@ -23,7 +23,15 @@ describe('appConfig', () => {
     http.expectOne(`${BASE}/token/refresh/`).flush({ data: { access: 'boot' }, meta: {} });
     await Promise.resolve();
     http.expectOne(`${BASE}/accounts/me/`).flush({
-      data: { id: 1, email: 'a@b.c', date_joined: '', is_staff: false, self_insert: null },
+      data: {
+        id: 1,
+        email: 'a@b.c',
+        date_joined: '',
+        is_staff: false,
+        self_insert: null,
+        desktop: false,
+        desktop_notice: null,
+      },
       meta: {},
     });
     await vi.waitFor(() => expect(auth.isSignedIn()).toBe(true));

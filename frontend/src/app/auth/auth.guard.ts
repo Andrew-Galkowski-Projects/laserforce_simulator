@@ -16,6 +16,10 @@ export const authGuard: CanActivateFn = (_route, state) => {
  */
 export const HOME_URL = '/';
 
+/** `/account/password`: the Desktop App's Local Account has no password, so it goes home. */
+export const hostedOnlyGuard: CanActivateFn = () =>
+  inject(AuthService).currentUser()?.desktop ? inject(Router).parseUrl(HOME_URL) : true;
+
 /** `/login` and `/register`: a signed-in visit goes straight to `HOME_URL`. */
 export const signedOutGuard: CanActivateFn = () =>
   inject(AuthService).isSignedIn() ? inject(Router).parseUrl(HOME_URL) : true;

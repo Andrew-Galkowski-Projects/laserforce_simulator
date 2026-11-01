@@ -41,6 +41,19 @@ ANONYMOUS_API_VIEWS = {
     "accounts.token_api_views.TokenLogoutAPIView",
 }
 
+HOSTED_URLCONF = "laserforce_simulator.urls"
+DESKTOP_URLCONF = "desktop_app.urls"
+# DESK-01 (ADR-0048): the Desktop App's URLconf adds one anonymous view, the
+# Launch code sign-in (loopback only, single use).
+DESKTOP_ANONYMOUS_API_VIEWS = ANONYMOUS_API_VIEWS | {
+    "desktop_app.launch_code.DesktopLoginView",
+}
+ANONYMOUS_BY_URLCONF = {
+    HOSTED_URLCONF: ANONYMOUS_API_VIEWS,
+    DESKTOP_URLCONF: DESKTOP_ANONYMOUS_API_VIEWS,
+}
+both_urlconfs = pytest.mark.parametrize("urlconf", [HOSTED_URLCONF, DESKTOP_URLCONF])
+
 
 def _patterns(patterns: list[Any]) -> Iterator[URLPattern]:
     for pattern in patterns:
@@ -54,8 +67,10 @@ def _dotted(obj: Any) -> str:
     return f"{obj.__module__}.{obj.__name__}"
 
 
-def _callbacks() -> list[Callable[..., Any]]:
-    return [pattern.callback for pattern in _patterns(get_resolver().url_patterns)]
+def _callbacks(urlconf: str = HOSTED_URLCONF) -> list[Callable[..., Any]]:
+    return [
+        pattern.callback for pattern in _patterns(get_resolver(urlconf).url_patterns)
+    ]
 
 
 def _api_permissions(callback: Callable[..., Any]) -> list[type]:
@@ -73,9 +88,16 @@ def _api_permissions(callback: Callable[..., Any]) -> list[type]:
     return list(default)
 
 
-def test_html_login_exemptions_match_the_allowlist() -> None:
+def test_the_launch_code_view_is_the_desktop_apps_only_addition() -> None:
+    assert DESKTOP_ANONYMOUS_API_VIEWS - ANONYMOUS_API_VIEWS == {
+        "desktop_app.launch_code.DesktopLoginView"
+    }
+
+
+@both_urlconfs
+def test_html_login_exemptions_match_the_allowlist(urlconf: str) -> None:
     exempt = set()
-    for callback in _callbacks():
+    for callback in _callbacks(urlconf):
         if hasattr(callback, "cls"):
             continue  # DRF: covered by the permission test below
         if getattr(callback, "login_required", True) is False:
@@ -84,15 +106,18 @@ def test_html_login_exemptions_match_the_allowlist() -> None:
     assert exempt == HTML_EXEMPT_VIEWS
 
 
-def test_every_api_view_requires_authentication_unless_allowlisted() -> None:
+@both_urlconfs
+def test_every_api_view_requires_authentication_unless_allowlisted(
+    urlconf: str,
+) -> None:
     anonymous = set()
-    for callback in _callbacks():
+    for callback in _callbacks(urlconf):
         if not hasattr(callback, "cls"):
             continue
         permissions = _api_permissions(callback)
         if IsAuthenticated not in permissions:
             anonymous.add(_dotted(callback.cls))  # type: ignore[attr-defined]
-    assert anonymous == ANONYMOUS_API_VIEWS
+    assert anonymous == ANONYMOUS_BY_URLCONF[urlconf]
 
 
 def _routes(patterns: list[Any], prefix: str = "") -> Iterator[str]:
@@ -104,7 +129,8 @@ def _routes(patterns: list[Any], prefix: str = "") -> Iterator[str]:
             yield route
 
 
-def test_django_serves_only_admin_api_media_and_the_spa_routes() -> None:
+@both_urlconfs
+def test_django_serves_only_admin_api_media_and_the_spa_routes(urlconf: str) -> None:
     # ANG-08 (ADR-0047): the SPA owns every other path. ANG-10 (ADR-0049):
     # Django serves it, through exactly these two routes and nothing else.
     allowed = ("admin/", "api/", "^media/")
@@ -114,7 +140,7 @@ def test_django_serves_only_admin_api_media_and_the_spa_routes() -> None:
     }
     stray = [
         r
-        for r in _routes(get_resolver().url_patterns)
+        for r in _routes(get_resolver(urlconf).url_patterns)
         if not r.startswith(allowed) and r not in spa_routes
     ]
     assert stray == []
@@ -150,11 +176,12 @@ def test_no_custom_context_processor_is_registered() -> None:
     assert custom == []
 
 
-def test_anonymous_api_views_are_explicitly_allow_any() -> None:
+@both_urlconfs
+def test_anonymous_api_views_are_explicitly_allow_any(urlconf: str) -> None:
     by_name = {
         _dotted(callback.cls): callback  # type: ignore[attr-defined]
-        for callback in _callbacks()
+        for callback in _callbacks(urlconf)
         if hasattr(callback, "cls")
     }
-    for name in ANONYMOUS_API_VIEWS:
+    for name in ANONYMOUS_BY_URLCONF[urlconf]:
         assert _api_permissions(by_name[name]) == [AllowAny]

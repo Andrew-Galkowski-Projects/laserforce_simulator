@@ -12,11 +12,12 @@ from __future__ import annotations
 from typing import Any
 
 from django.contrib.auth import get_user_model
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from rest_framework.test import APIClient
 
 from accounts.forms import RegisterForm
+from desktop_app.notice import set_notice
 from accounts.models import Invite
 from accounts.models import User as UserModel
 from conftest import get_shared_manager
@@ -45,13 +46,48 @@ class MeTests(_Base):
         response = self.api.get(ME_URL)
         self.assertEqual(response.status_code, 200)
         data = response.json()["data"]
+        # DESK-01 added `desktop` / `desktop_notice` (Hosted: false / null).
         self.assertEqual(
-            set(data), {"id", "email", "date_joined", "is_staff", "self_insert"}
+            set(data),
+            {
+                "id",
+                "email",
+                "date_joined",
+                "is_staff",
+                "self_insert",
+                "desktop",
+                "desktop_notice",
+            },
         )
         self.assertEqual(data["id"], self.user.pk)
         self.assertEqual(data["email"], self.user.email)
         self.assertFalse(data["is_staff"])
         self.assertIsNone(data["self_insert"])
+
+    def test_hosted_me_is_not_desktop_and_has_no_notice(self) -> None:
+        data = self.api.get(ME_URL).json()["data"]
+        self.assertIs(data["desktop"], False)
+        self.assertIsNone(data["desktop_notice"])
+
+    @override_settings(DESKTOP_APP=True)
+    def test_desktop_me_says_desktop(self) -> None:
+        data = self.api.get(ME_URL).json()["data"]
+        self.assertIs(data["desktop"], True)
+        self.assertIsNone(data["desktop_notice"])
+
+    @override_settings(DESKTOP_APP=True)
+    def test_desktop_me_carries_the_reset_notice(self) -> None:
+        set_notice("Your saved data could not be upgraded.")
+        self.addCleanup(set_notice, None)
+        data = self.api.get(ME_URL).json()["data"]
+        self.assertEqual(
+            data["desktop_notice"], "Your saved data could not be upgraded."
+        )
+
+    def test_hosted_me_never_shows_a_notice(self) -> None:
+        set_notice("stray")
+        self.addCleanup(set_notice, None)
+        self.assertIsNone(self.api.get(ME_URL).json()["data"]["desktop_notice"])
 
     def test_me_with_self_insert_is_full_player(self) -> None:
         player = self._managed_player()

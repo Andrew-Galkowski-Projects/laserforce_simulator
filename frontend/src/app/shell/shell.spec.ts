@@ -4,7 +4,7 @@ import { HttpTestingController, provideHttpClientTesting } from '@angular/common
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
-import { SELF_INSERT, USER, signIn } from '../api/testing/auth-fixtures';
+import { DESKTOP_USER, SELF_INSERT, USER, signIn } from '../api/testing/auth-fixtures';
 import { User } from '../auth/user';
 import { releaseLeaguesLoads } from '../leagues/testing/leagues-loads';
 import { releaseMatchesLoads } from '../matches/testing/matches-loads';
@@ -201,6 +201,57 @@ describe('App shell (layout B)', () => {
     await harness.fixture.whenStable();
     expect(routerUrl()).toBe('/login');
     expect(shell().textContent).not.toContain('ann@example.com');
+  });
+
+  // DESK-01 (spec #486): the Desktop App has one Local Account and no password.
+  describe('in the Desktop App', () => {
+    const DESKTOP_LINKED: User = { ...DESKTOP_USER, self_insert: SELF_INSERT };
+    const NOTICE =
+      'Your saved data could not be upgraded (RuntimeError). It was moved to ' +
+      'db.sqlite3.20261101-120000.bak and a fresh database was started.';
+    const notice = (): HTMLElement | null => shell().querySelector('.shell__notice');
+
+    it('offers only the Self-insert items, never Change password or Sign out', async () => {
+      await open('/teams', 1280, DESKTOP_LINKED);
+      await openAccountMenu();
+      expect(menuItems().map((item) => item.textContent?.trim())).toEqual([
+        'My player',
+        'Unlink Self-insert',
+      ]);
+    });
+
+    it('shows no Account button while no Self-insert is linked (its menu would be empty)', async () => {
+      await open('/teams', 1280, DESKTOP_USER);
+      expect(button('Account')).toBeUndefined();
+      expect(header()?.textContent).not.toContain('local@desktop.invalid');
+    });
+
+    it('sends /account/password to the landing page', async () => {
+      await open('/account/password', 1280, DESKTOP_USER);
+      releaseLeaguesLoads();
+      expect(routerUrl()).toBe('/');
+      expect(shell().textContent).not.toContain('Change password');
+    });
+
+    it('shows the reset notice above the page until it is dismissed', async () => {
+      await open('/teams', 1280, { ...DESKTOP_USER, desktop_notice: NOTICE });
+      expect(notice()?.getAttribute('role')).toBe('status');
+      expect(notice()?.textContent).toContain(NOTICE);
+      button('Dismiss')?.click();
+      await harness.fixture.whenStable();
+      expect(notice()).toBeNull();
+    });
+
+    it('shows no notice when there is none', async () => {
+      await open('/teams', 1280, DESKTOP_USER);
+      expect(notice()).toBeNull();
+    });
+  });
+
+  it('keeps /account/password for a Hosted Account', async () => {
+    await open('/account/password');
+    expect(routerUrl()).toBe('/account/password');
+    expect(shell().querySelector('app-password-change')).not.toBeNull();
   });
 
   // ANG-06-14: Leagues comes first, before Teams (the spec, F3).

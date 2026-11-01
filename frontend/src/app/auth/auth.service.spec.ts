@@ -19,6 +19,8 @@ const USER: User = {
   date_joined: '2026-10-01T09:00:00Z',
   is_staff: false,
   self_insert: null,
+  desktop: false,
+  desktop_notice: null,
 };
 
 describe('AuthService', () => {

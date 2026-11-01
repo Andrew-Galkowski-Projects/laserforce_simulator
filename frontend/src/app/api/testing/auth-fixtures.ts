@@ -14,7 +14,12 @@ export const USER: User = {
   date_joined: '2026-10-01T09:00:00Z',
   is_staff: false,
   self_insert: null,
+  desktop: false,
+  desktop_notice: null,
 };
+
+/** The Desktop App's Local Account (DESK-01): `desktop` hides the Account screens. */
+export const DESKTOP_USER: User = { ...USER, email: 'local@desktop.invalid', desktop: true };
 
 /** A Player on Team 3, to link as `USER`'s Self-insert. */
 export const SELF_INSERT: Player = {
