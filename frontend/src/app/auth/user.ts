@@ -9,6 +9,8 @@ export interface User {
   is_staff: boolean;
   /** The linked Self-insert Player, or null. */
   self_insert: Player | null;
+  /** ANG-09 spike: true only in the Desktop App, which hides Sign out. */
+  desktop?: boolean;
 }
 
 /** `RegisterForm` fields: an invite code is required. */

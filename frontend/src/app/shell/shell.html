@@ -60,7 +60,9 @@
     <button mat-menu-item type="button" (click)="unlinkSelfInsert()">Unlink Self-insert</button>
   }
   <a mat-menu-item routerLink="/account/password">Change password</a>
-  <button mat-menu-item type="button" (click)="signOut()">Sign out</button>
+  @if (!user()?.desktop) {
+    <button mat-menu-item type="button" (click)="signOut()">Sign out</button>
+  }
 </mat-menu>
 <mat-sidenav-container class="shell__body">
   <mat-sidenav #nav [mode]="wide() ? 'side' : 'over'" [opened]="wide()" class="shell__nav">
