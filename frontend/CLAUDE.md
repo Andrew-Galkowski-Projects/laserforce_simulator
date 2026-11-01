@@ -88,14 +88,19 @@ src/
     app-title.ts          APP_TITLE, shared by the header and the route titles
     app.config.ts         providers (router, HttpClient + authInterceptor, auth initializer)
     app.routes.ts         'login' + 'register' (signedOutGuard, lazy) | '' -> lazy Shell behind
-                          authGuard: '' -> /teams, 'account/password', 'teams' -> lazy
+                          authGuard: '' -> lazy landing/landing.ts (ANG-06-20),
+                          'account/password', 'teams' -> lazy
                           teams/teams.routes.ts, 'players' -> lazy players/players.routes.ts,
                           'matches' / 'rounds' -> lazy matches/matches.routes.ts
                           (MATCHES_ROUTES / ROUNDS_ROUTES, one chunk), 'maps' -> lazy
                           maps/maps.routes.ts, 'tournaments' -> lazy
                           tournaments/tournaments.routes.ts, 'leagues' -> lazy
                           leagues/leagues.routes.ts | '**' -> ''
-    shell/                layout B: header (title, the "Account" menu: My player / Unlink
+    landing/              ANG-06-20, `/` and HOME_URL: the three mode cards and an In Progress
+                          card per active League (hidden when none), load error + Retry
+    shell/                layout B: header (title linking to `/`, the Play menu, the Tools /
+                          Help menus of disabled Soon items from stub-menus.ts (TOOLS_MENU,
+                          HELP_MENU, ANG-06-20), the "Account" menu: My player / Unlink
                           Self-insert when linked, Change password, Sign out; the email, or its
                           initial below 600px) + mat-sidenav (side >= 768px, over drawer below);
                           toolbar colours via mat.toolbar-overrides
@@ -129,6 +134,9 @@ src/
                           then `upload(send, done)`; roster-import, participant-import,
                           tournament-pool), not-found-or-error.ts (notFoundOrError: a
                           404 sets notFound, anything else the apiMessage),
+                          soon-badge/ (app-soon-badge: a not-yet-built target as a
+                          disabled span, never an <a>; the League nav and the Shell's
+                          Tools / Help menus, moved here by ANG-06-20),
                           head-to-head/ (ANG-06-9: h2h-query.ts URL readers incl. queryId,
                           the cards, per-map table and charts both H2H screens share)
     players/              ANG-06-8, players.routes.ts (PLAYERS_ROUTES): /players (player-list:
@@ -253,8 +261,7 @@ src/
                           _stats-page.scss. watch/ (ANG-06-16): WatchState (provided by
                           LeagueLayout) and app-watch-flag, the star toggle (☆ off, ★ on).
                           league-nav.ts (LEAGUE_NAV_ENTRIES:
-                          23 entries, 19 live), soon-badge/ (app-soon-badge:
-                          a not-yet-ported target as a disabled span, never an <a>),
+                          23 entries, 19 live; Soon entries use shared/soon-badge/),
                           league-delete.ts (LeagueDelete + canDeleteLeague: summary ->
                           ConfirmDialog -> DELETE, shared by list + dashboard); testing/
                           (league-fixtures, league-stats-fixtures, league-team-fixtures,

@@ -26,7 +26,12 @@ export const routes: Routes = [
     canActivate: [authGuard],
     canActivateChild: [authGuard],
     children: [
-      { path: '', pathMatch: 'full', redirectTo: 'teams' },
+      {
+        path: '',
+        pathMatch: 'full',
+        loadComponent: () => import('./landing/landing').then((m) => m.Landing),
+        title: APP_TITLE,
+      },
       {
         path: 'teams',
         loadChildren: () => import('./teams/teams.routes').then((m) => m.TEAMS_ROUTES),

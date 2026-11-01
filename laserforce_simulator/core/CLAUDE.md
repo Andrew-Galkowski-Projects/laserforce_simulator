@@ -335,6 +335,9 @@ MAP-09 tests live in `matches/tests/test_map_high_ground.py`:
 
 ## LG-01a landing view
 
+The Angular port of this page (the SPA's `/`, ANG-06-20) is in
+[`docs/agents/matches/nav-and-play.md`](../../docs/agents/matches/nav-and-play.md) **ANG-06-20**.
+
 Mode-picker landing page at `GET /` (replaces the previous `path("", include("teams.urls"))` homepage redirect to the team list). Three mode cards — **Sandbox** (links to `/teams/`), **Single-player League** (links to `/leagues/`), **Multiplayer** (greyed `Coming soon`, non-anchor) — plus an in-progress Leagues card grid populated from `League.objects.filter(state="active")`. The `/leagues/` index itself lives in [`docs/agents/matches/league-foundation.md`](../../docs/agents/matches/league-foundation.md) **LG-01a leagues list**; this section covers only the landing view.
 
 **URL.** Mounted in `laserforce_simulator/urls.py` as `path("", core_views.landing, name="landing")` (after adding `from core import views as core_views` to the project URLconf imports). The previous `path("", include("teams.urls"))` line is replaced; the `path("teams/", include("teams.urls"))` mount is untouched so `{% url 'team_list' %}` still reverses to `/teams/`. The HX-01 ordering comment on `path("players/", ...)` stays accurate — there is still a `path("", ...)` catch-all, it just now points at `core_views.landing`.

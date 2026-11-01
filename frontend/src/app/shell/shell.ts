@@ -14,6 +14,8 @@ import { PlayMenu } from '../leagues/play/play-menu';
 import { ROOMY } from '../shared/breakpoints';
 import { GENERIC_ERROR_MESSAGE } from '../shared/form-errors';
 import { injectNotify } from '../shared/notify';
+import { SoonBadge } from '../shared/soon-badge/soon-badge';
+import { HELP_MENU, TOOLS_MENU } from './stub-menus';
 
 /** At this width and wider the sidebar sits beside the page; below it is a drawer (ADR-0043). */
 const WIDE = '(min-width: 768px)';
@@ -36,6 +38,7 @@ const WIDE = '(min-width: 768px)';
     RouterLink,
     RouterLinkActive,
     RouterOutlet,
+    SoonBadge,
   ],
   selector: 'app-shell',
   styleUrl: './shell.scss',
@@ -46,6 +49,8 @@ export class Shell {
   private readonly notify = injectNotify();
 
   protected readonly title = APP_TITLE;
+  protected readonly toolsMenu = TOOLS_MENU;
+  protected readonly helpMenu = HELP_MENU;
   protected readonly user = this.auth.currentUser;
   protected readonly wide = toSignal(
     inject(BreakpointObserver)

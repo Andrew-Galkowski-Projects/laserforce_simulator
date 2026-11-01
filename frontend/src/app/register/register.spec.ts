@@ -5,6 +5,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
 import { USER } from '../api/testing/auth-fixtures';
+import { releaseLeaguesLoads } from '../leagues/testing/leagues-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
@@ -29,6 +30,8 @@ describe('Register page', () => {
 
   afterEach(() => {
     releaseTeamsLoads();
+    // The landing page (HOME_URL, spec #460) reads the active Leagues.
+    releaseLeaguesLoads();
     http.verify();
   });
 
@@ -72,7 +75,8 @@ describe('Register page', () => {
     );
   }
 
-  it('creates the Account, signs it in with the new password and lands on /teams', async () => {
+  // HOME_URL is the landing page since spec #460 (it was /teams).
+  it('creates the Account, signs it in with the new password and lands on /', async () => {
     await harness.navigateByUrl('/register');
     await submit();
     answerRegister();
@@ -81,7 +85,7 @@ describe('Register page', () => {
     token.flush({ data: { access: 'acc-1' }, meta: {} });
     http.expectOne(`${BASE}/accounts/me/`).flush({ data: USER, meta: {} });
     await harness.fixture.whenStable();
-    expect(routerUrl()).toBe('/teams');
+    expect(routerUrl()).toBe('/');
   });
 
   it('lands on /login with "Account created. Please sign in." when the sign-in after it fails', async () => {
@@ -94,7 +98,8 @@ describe('Register page', () => {
     expect(page().textContent).toContain('Account created. Please sign in.');
   });
 
-  it('sends a signed-in visitor on to /teams', async () => {
+  // Spec #460: signedOutGuard sends a signed-in visit to HOME_URL, now / (it was /teams).
+  it('sends a signed-in visitor on to /', async () => {
     await harness.navigateByUrl('/register');
     await submit();
     answerRegister();
@@ -102,7 +107,7 @@ describe('Register page', () => {
     http.expectOne(`${BASE}/accounts/me/`).flush({ data: USER, meta: {} });
     await harness.fixture.whenStable();
     await harness.navigateByUrl('/register?invite=X');
-    expect(routerUrl()).toBe('/teams');
+    expect(routerUrl()).toBe('/');
   });
 
   it('links back to the sign-in page', async () => {

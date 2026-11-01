@@ -5,6 +5,7 @@ import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
 import { environment } from '../../environments/environment';
 import { USER } from '../api/testing/auth-fixtures';
+import { releaseLeaguesLoads } from '../leagues/testing/leagues-loads';
 import { releaseTeamsLoads } from '../teams/testing/teams-loads';
 import { routes } from '../app.routes';
 import { authInterceptor } from '../auth/auth.interceptor';
@@ -39,6 +40,8 @@ describe('Login page', () => {
 
   afterEach(() => {
     releaseTeamsLoads();
+    // The landing page (HOME_URL, spec #460) reads the active Leagues.
+    releaseLeaguesLoads();
     http.verify();
   });
 
@@ -89,11 +92,12 @@ describe('Login page', () => {
     await harness.fixture.whenStable();
   });
 
-  it('lands on /teams after signing in when there is no returnUrl', async () => {
+  // HOME_URL is the landing page since spec #460 (it was /teams).
+  it('lands on / after signing in when there is no returnUrl', async () => {
     await harness.navigateByUrl('/login');
     await submit('ann@example.com', 'Secret-123');
     await answerSignIn();
-    expect(routerUrl()).toBe('/teams');
+    expect(routerUrl()).toBe('/');
   });
 
   it('returns to the returnUrl after signing in', async () => {
@@ -103,14 +107,15 @@ describe('Login page', () => {
     expect(routerUrl()).toBe('/teams/3/slots');
   });
 
-  // Each would resolve to a real screen (/teams/new) if it were used as-is.
+  // Each would resolve to a real screen (/teams/new) if it were used as-is. The fallback is
+  // HOME_URL, the landing page since spec #460 (it was /teams).
   it.each(['https://evil.example.com/teams/new', '//teams/new', '/\\teams/new', 'teams/new'])(
-    'ignores a returnUrl that is not an in-app path (%s) and lands on /teams',
+    'ignores a returnUrl that is not an in-app path (%s) and lands on /',
     async (returnUrl) => {
       await harness.navigateByUrl(`/login?returnUrl=${encodeURIComponent(returnUrl)}`);
       await submit('ann@example.com', 'Secret-123');
       await answerSignIn();
-      expect(routerUrl()).toBe('/teams');
+      expect(routerUrl()).toBe('/');
     },
   );
 

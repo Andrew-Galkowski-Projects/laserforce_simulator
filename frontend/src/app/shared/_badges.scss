@@ -13,6 +13,19 @@
   line-height: 1.4;
 }
 
+// A not-yet-built marker: SoonBadge's "Soon" and the landing page's Multiplayer "Coming soon"
+// (spec #409 I1, #460). The text says it, so the muted colour is never the only signal.
+@mixin soon {
+  margin-left: 0.15rem;
+  padding: 0 0.35rem;
+  border: 1px solid var(--lf-border);
+  border-radius: var(--lf-radius);
+  color: var(--lf-text-muted);
+  font-size: 0.7rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
 // A League's State badge (Leagues list, ANG-06-14): on an element with `data-state` = active /
 // archived. The label always shows, so the colour is never the only signal.
 @mixin league-state {

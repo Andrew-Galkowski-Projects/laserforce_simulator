@@ -1,0 +1,42 @@
+<h1>{{ title }}</h1>
+
+<section class="landing__grid" aria-label="Choose a mode">
+  <a id="mode-card-sandbox" class="landing__card" routerLink="/teams">
+    <h2 class="landing__card-title">Sandbox</h2>
+    <p class="landing__card-text">Quick one-off matches with custom teams.</p>
+  </a>
+  <a id="mode-card-league" class="landing__card" routerLink="/leagues">
+    <h2 class="landing__card-title">Single-player League</h2>
+    <p class="landing__card-text">Run a multi-Season campaign against the CPU.</p>
+  </a>
+  <div id="mode-card-multiplayer" class="landing__card landing__card--off" aria-disabled="true">
+    <h2 class="landing__card-title">Multiplayer <span class="landing__soon">Coming soon</span></h2>
+    <p class="landing__card-text">Play against other humans online.</p>
+  </div>
+</section>
+
+@if (loadError(); as message) {
+  <div class="landing__error" role="alert">
+    <span>{{ message }}</span>
+    <button mat-stroked-button type="button" (click)="load()">Retry</button>
+  </div>
+} @else if (inProgress().length > 0) {
+  <section id="in-progress-leagues">
+    <h2>In Progress</h2>
+    <div class="landing__grid">
+      @for (l of inProgress(); track l.id) {
+        <a class="landing__card landing__league" [routerLink]="['/leagues', l.id]">
+          <h3 class="landing__card-title">{{ l.name }}</h3>
+          <p class="landing__card-text">
+            @if (l.active_season; as season) {
+              Season: {{ season.name }}
+            } @else {
+              No active season
+            }
+          </p>
+          <span class="league-state" [attr.data-state]="l.state">{{ stateLabel(l) }}</span>
+        </a>
+      }
+    </div>
+  </section>
+}

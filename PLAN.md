@@ -102,11 +102,7 @@ below (13b, 14, 16); the item's grill confirms it.
 17. **[DONE] League finances** (ANG-06-17, in `PLAN-completed.md`).
 18. **[DONE] Season screens** (ANG-06-18, in `PLAN-completed.md`).
 19. **[DONE] Season play loop** (ANG-06-19, in `PLAN-completed.md`).
-20. **Landing & nav (ANG-06-20)** — landing page, the Shell's Tools / Help top-nav sections (Play ships
-    with ANG-06-19), and one
-    shared Angular "Coming soon" route for every stub (the 10 help / tools pages plus trade, trading
-    block, prospects, hall of fame) — no per-stub components. Replaces `core/landing`,
-    `_partials/topnav_*`, `_placeholder`.
+20. **[DONE] Landing & nav** (ANG-06-20, in `PLAN-completed.md`).
 
 Settled (owner, 2026-10-25): ANG-08 stays blocked until 7-20 are all `[DONE]` (no per-area
 template removal in between); Phase 3.5 (LFS-01 / LFS-02) waits until after all of ANG-06.
