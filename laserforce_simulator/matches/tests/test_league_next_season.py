@@ -34,7 +34,10 @@ from unittest.mock import patch
 
 from django.test import TestCase
 from django.urls import reverse
+from rest_framework.response import Response
+from rest_framework.test import APIClient
 
+from conftest import get_shared_manager
 from matches.models import League, Season
 from matches.tests.conftest import make_team_with_slots
 from teams.models import Team
@@ -85,11 +88,25 @@ def _make_teams(prefix: str, n: int) -> list[Team]:
     return teams
 
 
+def _api_next_season(league: League) -> Response:
+    """ANG-08b: ``POST /api/leagues/<id>/next-season/`` as the shared manager.
+
+    The cases that assert database state drive the API endpoint (the HTML
+    view's replacement). A case that asserts only the HTML view's redirect,
+    session write or picker redirect still posts to the HTML view and is
+    marked ``# ANG-08 D3: HTML-only`` for the deletion ticket.
+    """
+    api = APIClient()
+    api.force_login(get_shared_manager())
+    return api.post(f"/api/leagues/{league.id}/next-season/", format="json")
+
+
 # ---------------------------------------------------------------------------
 # TestNextSeasonRouting
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: HTML-only (HTML route; the API's 405 / 404 live in test_api_league_lifecycle)
 class TestNextSeasonRouting(TestCase):
     """URL reverse, 405 on GET/PUT/DELETE, 404 on missing League."""
 
@@ -147,7 +164,7 @@ class TestNextSeasonHappyPath(TestCase):
 
     def test_post_creates_new_started_season_with_locked_fields(self) -> None:
         league, _prev, teams = self._setup()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         # The new Season is the highest-id Season in this League.
         new_season = league.seasons.order_by("-id").first()
         self.assertIsNotNone(new_season)
@@ -159,6 +176,7 @@ class TestNextSeasonHappyPath(TestCase):
         # never at create — LG-01 precedent.
         self.assertEqual(new_season.starting_team_ids_json, sorted(t.id for t in teams))
 
+    # ANG-08 D3: HTML-only
     def test_post_redirects_to_new_season_dashboard(self) -> None:
         league, _prev, _teams = self._setup()
         response = self.client.post(
@@ -176,7 +194,7 @@ class TestNextSeasonHappyPath(TestCase):
     def test_post_increments_season_count_by_exactly_one(self) -> None:
         league, _prev, _teams = self._setup()
         pre = league.seasons.count()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         post = league.seasons.count()
         self.assertEqual(post, pre + 1)
 
@@ -198,7 +216,7 @@ class TestNextSeasonNameFormat(TestCase):
             start_date=date(2025, 1, 1),
             team_ids=[t.id for t in teams],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.name, "Season 2")
 
@@ -218,7 +236,7 @@ class TestNextSeasonNameFormat(TestCase):
             start_date=date(2025, 1, 1),
             team_ids=[t.id for t in teams],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.name, "Season 3")
 
@@ -232,7 +250,7 @@ class TestNextSeasonNameFormat(TestCase):
                 start_date=date(2020 + i, 1, 1),
                 team_ids=[t.id for t in teams],
             )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.name, "Season 6")
 
@@ -254,7 +272,7 @@ class TestNextSeasonStartDate(TestCase):
             start_date=date(2025, 3, 15),
             team_ids=[t.id for t in teams],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.start_date, date(2026, 1, 1))
 
@@ -267,7 +285,7 @@ class TestNextSeasonStartDate(TestCase):
             start_date=date(2025, 1, 1),
             team_ids=[t.id for t in teams],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.start_date, date(2026, 1, 1))
 
@@ -280,7 +298,7 @@ class TestNextSeasonStartDate(TestCase):
             start_date=date(2025, 12, 31),
             team_ids=[t.id for t in teams],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         # Locked: date(prev.year + 1, 1, 1) — NOT prev + 365 days.
         self.assertEqual(new_season.start_date, date(2026, 1, 1))
@@ -302,7 +320,7 @@ class TestNextSeasonStartDate(TestCase):
         )
         expected_years = [2025, 2026, 2027]
         for expected_year in expected_years:
-            self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+            _api_next_season(league)
             new_season = league.seasons.order_by("-id").first()
             self.assertEqual(
                 new_season.start_date,
@@ -335,7 +353,7 @@ class TestNextSeasonScheduleFormatCarry(TestCase):
             schedule_format="single_round_robin",
             team_ids=[t.id for t in teams],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.schedule_format, "single_round_robin")
 
@@ -358,7 +376,7 @@ class TestNextSeasonTeamsCopiedFromSnapshot(TestCase):
             start_date=date(2025, 1, 1),
             team_ids=team_ids,
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_team_ids = set(new_season.teams.values_list("id", flat=True))
         self.assertEqual(new_team_ids, set(team_ids))
@@ -386,7 +404,7 @@ class TestNextSeasonTeamsCopiedFromSnapshot(TestCase):
         self.assertEqual(prev.teams.count(), 5)
         self.assertEqual(len(prev.starting_team_ids_json), 4)
 
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_team_ids = set(new_season.teams.values_list("id", flat=True))
         self.assertEqual(new_team_ids, set(snapshot_ids))
@@ -413,11 +431,9 @@ class TestNextSeasonTeamsCopiedFromSnapshot(TestCase):
         prev.starting_team_ids_json = snapshot_ids
         prev.save()
 
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        # No error path — must redirect (302), not 400/500.
-        self.assertEqual(response.status_code, 302)
+        response = _api_next_season(league)
+        # No error path — must succeed (201), not 400/500.
+        self.assertEqual(response.status_code, 201)
         new_season = league.seasons.order_by("-id").first()
         new_team_ids = set(new_season.teams.values_list("id", flat=True))
         self.assertEqual(new_team_ids, set(existing_ids))
@@ -432,6 +448,7 @@ class TestNextSeasonTeamsCopiedFromSnapshot(TestCase):
 class TestNextSeasonActiveSeasonGuard(TestCase):
     """Draft/active Season ⇒ 302 to that Season's dashboard; no new Season."""
 
+    # ANG-08 D3: HTML-only (the API's 409 season_in_progress is in test_api_league_lifecycle)
     def test_post_redirects_when_active_season_exists(self) -> None:
         league = _make_league("ActGuard")
         teams = _make_teams("AG", 2)
@@ -460,6 +477,7 @@ class TestNextSeasonActiveSeasonGuard(TestCase):
         # No new Season was created.
         self.assertEqual(league.seasons.count(), pre_count)
 
+    # ANG-08 D3: HTML-only
     def test_post_redirects_when_draft_season_exists(self) -> None:
         league = _make_league("DraftGuard")
         teams = _make_teams("DG", 2)
@@ -506,7 +524,7 @@ class TestNextSeasonActiveSeasonGuard(TestCase):
             state="active",
         )
         pre_total = Season.objects.count()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         self.assertEqual(Season.objects.count(), pre_total)
 
 
@@ -518,6 +536,7 @@ class TestNextSeasonActiveSeasonGuard(TestCase):
 class TestNextSeasonNoCompletedGuard(TestCase):
     """Zero completed Seasons ⇒ 400 + body substring; count unchanged."""
 
+    # ANG-08 D3: HTML-only (the API's 409 no_completed_season is in test_api_league_lifecycle)
     def test_post_returns_400_when_no_completed_season_exists(self) -> None:
         # League with zero Seasons total — the active-Season guard does
         # NOT fire (no non-completed Season exists either), so the
@@ -532,7 +551,7 @@ class TestNextSeasonNoCompletedGuard(TestCase):
     def test_post_returns_400_does_not_create_season(self) -> None:
         league = _make_league("NoCompCount")
         pre_total = Season.objects.count()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         # No Season was created in the 400 branch.
         self.assertEqual(Season.objects.count(), pre_total)
         self.assertEqual(league.seasons.count(), 0)
@@ -576,9 +595,7 @@ class TestNextSeasonAtomicity(TestCase):
             side_effect=Exception("contrived create failure"),
         ):
             with self.assertRaises(Exception):
-                self.client.post(
-                    reverse("next_season", kwargs={"league_id": league.id})
-                )
+                _api_next_season(league)
 
         # No new Season row.
         self.assertEqual(Season.objects.count(), pre_season_count)
@@ -589,12 +606,35 @@ class TestNextSeasonAtomicity(TestCase):
         prev.refresh_from_db()
         self.assertEqual(prev.teams.count(), pre_prev_m2m_count)
 
+    def test_late_develop_failure_rolls_back_the_created_season(self) -> None:
+        """ANG-08b — a failure AFTER ``Season.objects.create`` (in the develop
+        pass) must still leave no new Season: the endpoint's atomic boundary
+        undoes the row, the team M2M and the copied phases."""
+        league = _make_league("AtomicLateL")
+        teams = _make_teams("AtomLate", 2)
+        _make_completed_season(
+            league,
+            name="Season 1",
+            start_date=date(2025, 1, 1),
+            team_ids=[t.id for t in teams],
+        )
+        pre_season_count = Season.objects.count()
+        with patch(
+            "matches.league_services._develop_league_for_new_season",
+            side_effect=RuntimeError("contrived develop failure"),
+        ):
+            with self.assertRaises(RuntimeError):
+                _api_next_season(league)
+        self.assertEqual(Season.objects.count(), pre_season_count)
+        self.assertEqual(league.seasons.count(), 1)
+
 
 # ---------------------------------------------------------------------------
 # TestLg01fNextSeasonSessionWrite (LG-01f — appended per seam contract §9g)
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: HTML-only
 class TestLg01fNextSeasonSessionWrite(TestCase):
     """LG-01f — ``next_season`` writes
     ``request.session["last_league_id"] = league.id`` BEFORE the 302
@@ -680,7 +720,7 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
         league, _prev, _teams = self._setup_completed_with_map_config(
             "CarryNone", map_mode="none", snapshot_ids=[]
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.map_mode, "none")
         self.assertEqual(new_season.map_pool.count(), 0)
@@ -690,7 +730,7 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
         league, _prev, _teams = self._setup_completed_with_map_config(
             "CarrySingle", map_mode="single", snapshot_ids=[m.id]
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.map_mode, "single")
         ids = list(new_season.map_pool.values_list("id", flat=True))
@@ -703,7 +743,7 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
             map_mode="random_per_round",
             snapshot_ids=[m.id for m in ms],
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.map_mode, "random_per_round")
         ids = sorted(new_season.map_pool.values_list("id", flat=True))
@@ -721,10 +761,8 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
             map_mode="random_per_round",
             snapshot_ids=[m1.id, m2.id, 999_999],
         )
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
+        response = _api_next_season(league)
+        self.assertEqual(response.status_code, 201)
         new_season = league.seasons.order_by("-id").first()
         ids = sorted(new_season.map_pool.values_list("id", flat=True))
         self.assertEqual(ids, sorted([m1.id, m2.id]))
@@ -756,7 +794,7 @@ class TestNextSeasonMapConfigCarryForward(TestCase):
         self.assertEqual(prev.map_pool.count(), 3)
         self.assertEqual(len(prev.starting_map_pool_ids_json), 2)
 
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         ids = sorted(new_season.map_pool.values_list("id", flat=True))
         # New Season inherits ONLY the snapshot (2 ids), NOT m3.
@@ -799,7 +837,7 @@ class TestNextSeasonRotateByMatchdayCarryForward(TestCase):
         # NON-ascending author order — proves the carry preserves order.
         rotation_ids = [30, 10, 20]
         league = self._setup_completed_rotate(rotation_ids=rotation_ids)
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.map_mode, "rotate_by_matchday")
         self.assertEqual(new_season.map_rotation_ids_json, rotation_ids)
@@ -808,7 +846,7 @@ class TestNextSeasonRotateByMatchdayCarryForward(TestCase):
 
     def test_single_rotation_id_carried_forward(self) -> None:
         league = self._setup_completed_rotate(rotation_ids=[42])
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.map_mode, "rotate_by_matchday")
         self.assertEqual(new_season.map_rotation_ids_json, [42])
@@ -860,7 +898,7 @@ class TestLg02Part2aNextSeasonSeasonPhase(TestCase):
 
     def test_next_season_creates_exactly_one_round_robin_phase(self) -> None:
         league = self._setup()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         # The new Season was created (and, UXP-18, started).
         self.assertEqual(new_season.state, "active")
@@ -871,7 +909,7 @@ class TestLg02Part2aNextSeasonSeasonPhase(TestCase):
 
     def test_next_season_phase_linked_to_new_season_only(self) -> None:
         league = self._setup()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         # The new Season carries exactly one phase, pointing at itself — the
         # carry-forward copies onto the NEW Season only (the source keeps its
@@ -931,7 +969,7 @@ class TestLg02Part2bNextSeasonCopiesComposition(TestCase):
 
     def test_next_season_copies_full_composition_forward(self) -> None:
         league, _prev = self._setup_completed_with_phases()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_phases = list(new_season.phases.all())  # Meta.ordering=["ordinal"]
         self.assertEqual(len(new_phases), 3)
@@ -943,7 +981,7 @@ class TestLg02Part2bNextSeasonCopiesComposition(TestCase):
 
     def test_next_season_copies_schedule_format_verbatim(self) -> None:
         league, _prev = self._setup_completed_with_phases()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_phases = list(new_season.phases.all())
         # RR rows keep single_round_robin; the tournament row keeps None.
@@ -953,7 +991,7 @@ class TestLg02Part2bNextSeasonCopiesComposition(TestCase):
 
     def test_next_season_resets_tournament_fk_to_none(self) -> None:
         league, _prev = self._setup_completed_with_phases()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         for phase in new_season.phases.all():
             self.assertIsNone(
@@ -1006,7 +1044,7 @@ class TestLg02Part2c3bNextSeasonCarriesTournamentMode(TestCase):
 
     def test_non_default_mode_is_carried_forward(self) -> None:
         league = self._setup_completed_with_mode("strength")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_phases = list(new_season.phases.all())
         self.assertEqual(new_phases[0].tournament_mode, "standings")  # RR row default
@@ -1014,7 +1052,7 @@ class TestLg02Part2c3bNextSeasonCarriesTournamentMode(TestCase):
 
     def test_standings_mode_is_carried_forward(self) -> None:
         league = self._setup_completed_with_mode("standings")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         self.assertEqual(new_season.phases.all()[1].tournament_mode, "standings")
 
@@ -1070,7 +1108,7 @@ class TestLg02Part2c3dNextSeasonCarriesCutAndFormat(TestCase):
 
     def test_cut_and_format_carried_forward_verbatim(self) -> None:
         league = self._setup_completed_with_cut_and_format(cut=8, fmt="swiss")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_phases = list(new_season.phases.all())  # Meta.ordering=["ordinal"]
 
@@ -1088,7 +1126,7 @@ class TestLg02Part2c3dNextSeasonCarriesCutAndFormat(TestCase):
         league = self._setup_completed_with_cut_and_format(
             cut=0, fmt="single_elimination"
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_phases = list(new_season.phases.all())
         self.assertEqual(new_phases[1].tournament_cut, 0)
@@ -1153,7 +1191,7 @@ class TestLg02Part2c3eNextSeasonCarriesSubConfig(TestCase):
             lb_advancers=0,
             swiss_rounds=6,
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         new_phases = list(new_season.phases.all())  # Meta.ordering=["ordinal"]
 
@@ -1176,7 +1214,7 @@ class TestLg02Part2c3eNextSeasonCarriesSubConfig(TestCase):
             lb_advancers=4,
             swiss_rounds=0,
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         t = list(new_season.phases.all())[1]
 
@@ -1200,7 +1238,7 @@ class TestLg02Part2c3eNextSeasonCarriesSubConfig(TestCase):
             lb_advancers=0,
             swiss_rounds=0,
         )
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         rr = list(new_season.phases.all())[0]
         # The RR row carries the column defaults (inert there).
@@ -1341,7 +1379,7 @@ class TestLg04NextSeasonAgeTick(TestCase):
                 player.age = 22
                 player.save(update_fields=["age"])
                 before[player.id] = 22
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         for pid, old_age in before.items():
             player = _Lg04Player.objects.get(id=pid)
             self.assertEqual(player.age, old_age + 1, f"player {pid} age tick")
@@ -1351,7 +1389,7 @@ class TestLg04NextSeasonAgeTick(TestCase):
         for p in fa:
             p.age = 30
             p.save(update_fields=["age"])
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         for p in fa:
             p.refresh_from_db()
             self.assertEqual(p.age, 31)
@@ -1499,6 +1537,7 @@ class TestFin05NextSeasonChallengeFireRedirectsToPicker(TestCase):
         _Fin05TSF.objects.create(team=team, season=latest, luxury_tax=50_000.0)
         return league, latest
 
+    # ANG-08 D3: HTML-only
     def test_redirects_to_new_team_picker(self) -> None:
         league, _latest = self._setup()
         response = self.client.post(
@@ -1513,7 +1552,7 @@ class TestFin05NextSeasonChallengeFireRedirectsToPicker(TestCase):
     def test_no_new_season_created(self) -> None:
         league, _latest = self._setup()
         pre_count = league.seasons.count()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         self.assertEqual(league.seasons.count(), pre_count)
 
 
@@ -1523,7 +1562,7 @@ class TestLg04NextSeasonStatRangeInvariants(TestCase):
 
     def test_all_developed_stats_remain_in_range(self) -> None:
         league, prev, teams, fa = _lg04_developing_setup("RangeL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         developing_ids = set()
         for team in teams:
             developing_ids |= set(team.players.values_list("id", flat=True))
@@ -1543,7 +1582,7 @@ class TestLg04NextSeasonStatRangeInvariants(TestCase):
                 for name in _Lg04StatFields:
                     setattr(player, name, 0)
                 player.save()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         for team in teams:
             for player in team.players.all():
                 player.refresh_from_db()
@@ -1566,7 +1605,7 @@ class TestLg04NextSeasonTotalGamesTick(TestCase):
         pa.save(update_fields=["total_games"])
         for _ in range(3):
             _lg04_add_regular_round(prev, team_a, team_b, [(pa, "red")])
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         pa.refresh_from_db()
         self.assertEqual(pa.total_games, 10 + 3)
 
@@ -1577,7 +1616,7 @@ class TestLg04NextSeasonTotalGamesTick(TestCase):
         pa.total_games = 7
         pa.save(update_fields=["total_games"])
         # No PlayerRoundState rows ⇒ zero appearances ⇒ no tick.
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         pa.refresh_from_db()
         self.assertEqual(pa.total_games, 7)
 
@@ -1593,7 +1632,7 @@ class TestLg04NextSeasonTotalGamesTick(TestCase):
         _lg04_add_regular_round(prev, team_a, team_b, [(pa, "red")])
         _lg04_add_playoff_round(team_a, team_b, [(pa, "red")])
         _lg04_add_playoff_round(team_a, team_b, [(pa, "red")])
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         pa.refresh_from_db()
         # Only the single regular-season round counts.
         self.assertEqual(pa.total_games, 5 + 1)
@@ -1609,7 +1648,7 @@ class TestLg04NextSeasonTotalGamesTick(TestCase):
         for p in fa:
             p.total_games = 0
             p.save(update_fields=["total_games"])
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         # median_active over the active set; the free-agent tick lands in
         # [0, median_active // 2]. We can't pin the exact median view-side, but
         # the tick is never negative and never exceeds the active appearance
@@ -1631,7 +1670,7 @@ class TestLg04NextSeasonRatingRows(TestCase):
 
     def test_one_developed_row_per_player_tagged_to_new_season(self) -> None:
         league, prev, teams, fa = _lg04_developing_setup("RowL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         developing_ids = set()
         for team in teams:
@@ -1647,7 +1686,7 @@ class TestLg04NextSeasonRatingRows(TestCase):
         pa = team_a.players.first()
         pa.age = 24
         pa.save(update_fields=["age"])
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         pa.refresh_from_db()
         row = _Lg04PlayerSeasonRating.objects.get(season=new_season, player=pa)
@@ -1657,7 +1696,7 @@ class TestLg04NextSeasonRatingRows(TestCase):
 
     def test_developed_row_overall_is_mean_of_developed_stats(self) -> None:
         league, prev, teams, _fa = _lg04_developing_setup("RowOvrL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         row = (
             _Lg04PlayerSeasonRating.objects.filter(season=new_season)
@@ -1678,7 +1717,7 @@ class TestLg04NextSeasonRatingRows(TestCase):
         # LG-05 supersedes the LG-04 "potential is None" contract: the developed
         # row now carries a computed potential, floored at the row's overall.
         league, prev, teams, _fa = _lg04_developing_setup("RowPotL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         rows = list(_Lg04PlayerSeasonRating.objects.filter(season=new_season))
         self.assertTrue(rows)
@@ -1705,7 +1744,7 @@ class TestLg04NextSeasonLeagueIsolation(TestCase):
         before_acc = other_player.accuracy
 
         # Roll only the rolling League forward.
-        self.client.post(reverse("next_season", kwargs={"league_id": rolling.id}))
+        _api_next_season(rolling)
 
         other_player.refresh_from_db()
         # The other-League Player is untouched: no age tick, no stat change.
@@ -1726,7 +1765,7 @@ class TestLg04NextSeasonLeagueIsolation(TestCase):
         before_other_rows = _Lg04PlayerSeasonRating.objects.filter(
             season__league=other
         ).count()
-        self.client.post(reverse("next_season", kwargs={"league_id": rolling.id}))
+        _api_next_season(rolling)
         after_other_rows = _Lg04PlayerSeasonRating.objects.filter(
             season__league=other
         ).count()
@@ -1769,7 +1808,7 @@ class TestLg05NextSeasonPotentialRecomputed(TestCase):
 
     def test_developed_players_potential_is_non_none(self) -> None:
         league, _prev, teams, fa = _lg04_developing_setup("PotNonNoneL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         for pid in self._developing_ids(teams, fa):
             player = _Lg04Player.objects.get(id=pid)
             self.assertIsNotNone(
@@ -1778,7 +1817,7 @@ class TestLg05NextSeasonPotentialRecomputed(TestCase):
 
     def test_developed_players_potential_within_overall_and_100(self) -> None:
         league, _prev, teams, fa = _lg04_developing_setup("PotRangeL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         for pid in self._developing_ids(teams, fa):
             player = _Lg04Player.objects.get(id=pid)
             self.assertIsNotNone(player.potential)
@@ -1800,7 +1839,7 @@ class TestLg05NextSeasonRatingRowPotentialFilled(TestCase):
 
     def test_developed_rating_rows_potential_non_none(self) -> None:
         league, _prev, teams, fa = _lg04_developing_setup("RowPotFilledL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         rows = _Lg04PlayerSeasonRating.objects.filter(season=new_season)
         self.assertTrue(rows.exists())
@@ -1811,7 +1850,7 @@ class TestLg05NextSeasonRatingRowPotentialFilled(TestCase):
 
     def test_rating_row_potential_within_overall_and_100(self) -> None:
         league, _prev, teams, fa = _lg04_developing_setup("RowPotRangeL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         for row in _Lg04PlayerSeasonRating.objects.filter(season=new_season):
             self.assertIsNotNone(row.potential)
@@ -1820,7 +1859,7 @@ class TestLg05NextSeasonRatingRowPotentialFilled(TestCase):
 
     def test_rating_row_potential_matches_live_player_potential(self) -> None:
         league, _prev, teams, fa = _lg04_developing_setup("RowPotMatchL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         new_season = league.seasons.order_by("-id").first()
         for row in _Lg04PlayerSeasonRating.objects.filter(
             season=new_season
@@ -1849,7 +1888,7 @@ class TestLg05PlayerOutsideLeagueFlowHasNonePotential(TestCase):
         other, _o_prev, o_teams, _o_fa = _lg04_developing_setup("OtherPotL")
         other_player = o_teams[0].players.first()
         self.assertIsNone(other_player.potential)
-        self.client.post(reverse("next_season", kwargs={"league_id": rolling.id}))
+        _api_next_season(rolling)
         other_player.refresh_from_db()
         self.assertIsNone(
             other_player.potential, "other-League player potential must stay None"
@@ -1882,7 +1921,7 @@ class TestLg05DevelopRngIndependentOfPotentialRng(TestCase):
             "matches.league_services.random.Random", side_effect=_tracking_random
         ):
             league, _prev, _teams, _fa = _lg04_developing_setup("TwoRngL")
-            self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+            _api_next_season(league)
 
         # At least two Random() instances were constructed during the develop
         # path, and they are DISTINCT objects (develop rng != potential rng).
@@ -1903,7 +1942,7 @@ class TestLg05DevelopRngIndependentOfPotentialRng(TestCase):
         # clamp to [0,100] (the LG-04 invariant is unperturbed by the separate
         # potential draw).
         league, _prev, teams, fa = _lg04_developing_setup("DevStillRangeL")
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         developing_ids: set[int] = set()
         for team in teams:
             developing_ids |= set(team.players.values_list("id", flat=True))
@@ -2008,13 +2047,11 @@ class TestCar02NonFiredRolloverByteEquivalent(TestCase):
 
     def test_non_fired_creates_byte_equivalent_new_season(self) -> None:
         league, _prev, teams = self._setup()
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
+        response = _api_next_season(league)
+        self.assertEqual(response.status_code, 201)
         new_season = league.seasons.order_by("-id").first()
         # Same Season name / start / teams / schedule_format as today's rollover
-        # (UXP-18 — the HTML POST then starts it).
+        # (UXP-18 — the POST then starts it).
         self.assertEqual(new_season.state, "active")
         self.assertEqual(new_season.name, "Season 2")
         self.assertEqual(new_season.start_date, date(2026, 1, 1))
@@ -2028,6 +2065,7 @@ class TestCar02NonFiredRolloverByteEquivalent(TestCase):
         self.assertEqual(len(phases), 1)
         self.assertEqual(phases[0].phase_type, "round_robin")
 
+    # ANG-08 D3: HTML-only
     def test_non_fired_redirects_to_new_season_dashboard(self) -> None:
         league, _prev, _teams = self._setup()
         response = self.client.post(
@@ -2040,7 +2078,7 @@ class TestCar02NonFiredRolloverByteEquivalent(TestCase):
 
     def test_owner_evaluation_row_written_for_just_completed_season(self) -> None:
         league, prev, _teams = self._setup()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         # The verdict gate ensured the just-completed Season's eval row.
         self.assertTrue(
             _Car02OwnerEvaluation.objects.filter(league=league, season=prev).exists()
@@ -2088,6 +2126,7 @@ class TestCar02FiredUnreassignedBlocked(TestCase):
         )
         return league, prev, manager_team
 
+    # ANG-08 D3: HTML-only (picker redirect; the API's 409 manager_fired is in test_api_league_lifecycle)
     def test_fired_unreassigned_redirects_to_new_team_picker(self) -> None:
         league, _prev, _team = self._setup()
         response = self.client.post(
@@ -2102,7 +2141,7 @@ class TestCar02FiredUnreassignedBlocked(TestCase):
     def test_fired_unreassigned_creates_no_new_season(self) -> None:
         league, _prev, _team = self._setup()
         pre_count = league.seasons.count()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         self.assertEqual(league.seasons.count(), pre_count)
 
 
@@ -2137,9 +2176,7 @@ class TestCar02VerdictGateAtomicity(TestCase):
             side_effect=Exception("contrived create failure"),
         ):
             with self.assertRaises(Exception):
-                self.client.post(
-                    reverse("next_season", kwargs={"league_id": league.id})
-                )
+                _api_next_season(league)
         # No new Season row leaked past the rollback.
         self.assertEqual(Season.objects.count(), pre_season_count)
 
@@ -2177,6 +2214,7 @@ class TestCar03MultiplayerNextSeason(TestCase):
         _car02_add_win(prev, manager_team, teams[1])
         return league, prev, manager_team
 
+    # ANG-08 D3: HTML-only
     def test_post_redirects_to_new_started_season(self) -> None:
         league, _prev, _mgr = self._setup()
         pre_count = league.seasons.count()
@@ -2196,12 +2234,12 @@ class TestCar03MultiplayerNextSeason(TestCase):
 
     def test_post_writes_no_owner_evaluation_row(self) -> None:
         league, _prev, _mgr = self._setup()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         self.assertEqual(_Car02OwnerEvaluation.objects.count(), 0)
 
     def test_current_team_unchanged(self) -> None:
         league, _prev, manager_team = self._setup()
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         league.refresh_from_db()
         self.assertEqual(league.current_team_id, manager_team.id)
 
@@ -2355,9 +2393,9 @@ class TestFin02NextSeasonByteIdenticalOff(TestCase):
         league_b, _prev_b, teams_b = self._build("Fin02OffByteB")
 
         with _fin02_seeded_random_patch():
-            self.client.post(reverse("next_season", kwargs={"league_id": league_a.id}))
+            _api_next_season(league_a)
         with _fin02_seeded_random_patch():
-            self.client.post(reverse("next_season", kwargs={"league_id": league_b.id}))
+            _api_next_season(league_b)
 
         # The two finance-OFF Leagues, same pinned seed + same pinned input
         # stats, develop their first roster player identically (coaching 0.0).
@@ -2398,11 +2436,9 @@ class TestFin02NextSeasonFasterWithCoaching(TestCase):
         )
 
         with _fin02_seeded_random_patch():
-            self.client.post(reverse("next_season", kwargs={"league_id": league_hi.id}))
+            _api_next_season(league_hi)
         with _fin02_seeded_random_patch():
-            self.client.post(
-                reverse("next_season", kwargs={"league_id": league_neutral.id})
-            )
+            _api_next_season(league_neutral)
 
         p_hi = team_hi.players.order_by("name").first()
         p_neutral = team_neutral.players.order_by("name").first()
@@ -2576,10 +2612,8 @@ class TestFin03BudgetsFrozenAcrossRollover(TestCase):
             ]
         )
 
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
+        response = _api_next_season(league)
+        self.assertEqual(response.status_code, 201)
 
         team.refresh_from_db()
         # next_season did NOT re-seed: the AI budget levels are frozen.
@@ -2618,6 +2652,32 @@ class TestFin03NextSeasonThreadsBandViaHelper(TestCase):
         sd_hi = _Fin03Development.POTENTIAL_MAX_SD * (1 - hi_band / 100)
         sd_lo = _Fin03Development.POTENTIAL_MAX_SD * (1 - lo_band / 100)
         self.assertLess(sd_hi, sd_lo)
+
+
+class TestFin03NextSeasonScoutingBandReachesPotential(TestCase):
+    """ANG-08b — the per-Team scouting band actually reaches the potential draw
+    at rollover. At the MAX scouting level the band is 100, so the noise sd is
+    0 and each developed Player's potential is exactly the noise-free ceiling
+    (whatever the RNG draws); the default band (50) would add gauss noise."""
+
+    def test_max_scouting_level_lands_the_noise_free_ceiling(self) -> None:
+        league, _prev, teams = _fin02_finance_league("Fin03SdZeroL")
+        team = teams[0]
+        team.budget_scouting = _Fin02Finance.MAX_LEVEL
+        team.save(update_fields=["budget_scouting"])
+        _fin02_pin_young_stats(team)
+
+        response = _api_next_season(league)
+        self.assertEqual(response.status_code, 201)
+
+        players = list(team.players.all())
+        self.assertTrue(players)
+        for player in players:
+            stats = {name: getattr(player, name) for name in _Lg04StatFields}
+            floor = sum(stats.values()) / len(_Lg04StatFields)
+            ceiling = _Fin03Development._project_peak_overall(stats, player.age)
+            expected = min(max(ceiling, floor), 100.0)
+            self.assertAlmostEqual(player.potential, expected, places=6)
 
 
 # ---------------------------------------------------------------------------
@@ -2681,7 +2741,7 @@ class TestConf04NextSeasonSkipsTheWorldsPhase(TestCase):
         return league
 
     def _roll(self, league: League) -> Season:
-        self.client.post(reverse("next_season", kwargs={"league_id": league.id}))
+        _api_next_season(league)
         return league.seasons.order_by("-id").first()
 
     def test_fixture_precondition_the_source_has_three_phases(self) -> None:
@@ -2823,10 +2883,8 @@ class TestConf06NextSeasonRotateByConferenceDowngrade(TestCase):
         return league
 
     def _roll(self, league: League) -> Season:
-        response = self.client.post(
-            reverse("next_season", kwargs={"league_id": league.id})
-        )
-        self.assertEqual(response.status_code, 302)
+        response = _api_next_season(league)
+        self.assertEqual(response.status_code, 201)
         return league.seasons.order_by("-id").first()
 
     def test_rotate_by_conference_downgrades_to_none(self) -> None:
@@ -2867,6 +2925,7 @@ class TestConf06NextSeasonRotateByConferenceDowngrade(TestCase):
 from matches.models import Conference as _Uxp18Conference  # noqa: E402
 
 
+# ANG-08 D3: HTML-only (redirect targets; states pinned by the API TestNextSeason + TestRollAndStartNextSeasonService)
 class TestUxp18NextSeasonStartsTheNewSeason(TestCase):
     """UXP-18 — confirming Start Next Season (the owner-evaluation CTA, or the
     non-career dashboard / topnav button) rolls the Season AND starts it, so the

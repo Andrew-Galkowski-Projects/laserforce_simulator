@@ -144,6 +144,7 @@ class TestLeagueDeleteRouting(TestCase):
     """reverse() resolves; GET on a league-mode League renders the confirm page
     with the locked context + DOM ids and a correct delete_summary."""
 
+    # ANG-08 D3: HTML-only
     def test_reverse_resolves_to_expected_path(self) -> None:
         league = _make_league("RouteRev")
         self.assertEqual(
@@ -151,16 +152,19 @@ class TestLeagueDeleteRouting(TestCase):
             f"/leagues/{league.id}/delete/",
         )
 
+    # ANG-08 D3: HTML-only
     def test_get_returns_200_for_league_mode(self) -> None:
         league = _make_league("GetOk")
         response = self.client.get(reverse("league_delete", args=[league.id]))
         self.assertEqual(response.status_code, 200)
 
+    # ANG-08 D3: HTML-only
     def test_get_uses_confirm_template(self) -> None:
         league = _make_league("GetTpl")
         response = self.client.get(reverse("league_delete", args=[league.id]))
         self.assertTemplateUsed(response, "leagues/league_confirm_delete.html")
 
+    # ANG-08 D3: HTML-only
     def test_get_context_has_league_and_delete_summary_keys(self) -> None:
         league = _make_league("GetCtx")
         response = self.client.get(reverse("league_delete", args=[league.id]))
@@ -169,6 +173,7 @@ class TestLeagueDeleteRouting(TestCase):
         for key in ("seasons", "matches", "tournaments", "teams", "players"):
             self.assertIn(key, summary, f"delete_summary missing key {key!r}")
 
+    # ANG-08 D3: HTML-only (counts: TestLeagueDeleteSummaryService + the API)
     def test_get_delete_summary_counts_match_fixture(self) -> None:
         # 1 completed Season, 2 enrolled Teams (6 players each), 1 season Match,
         # no embedded tournament, no current_team / pool. So:
@@ -190,6 +195,7 @@ class TestLeagueDeleteRouting(TestCase):
         self.assertEqual(summary["teams"], 2)
         self.assertEqual(summary["players"], 12)
 
+    # ANG-08 D3: HTML-only
     def test_get_renders_locked_dom_ids(self) -> None:
         league = _make_league("GetDom")
         response = self.client.get(reverse("league_delete", args=[league.id]))
@@ -254,12 +260,14 @@ class TestLeagueDeleteTeardown(TestCase):
             "evaluation": evaluation,
         }
 
+    # ANG-08 D3: HTML-only
     def test_post_redirects_to_league_list(self) -> None:
         f = self._build()
         response = self.client.post(reverse("league_delete", args=[f["league"].id]))
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response["Location"], reverse("league_list"))
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail
     def test_post_deletes_league_and_seasons_and_phases(self) -> None:
         f = self._build()
         league_id, season_id, phase_id = f["league"].id, f["season"].id, f["phase"].id
@@ -268,6 +276,7 @@ class TestLeagueDeleteTeardown(TestCase):
         self.assertFalse(Season.objects.filter(pk=season_id).exists())
         self.assertFalse(SeasonPhase.objects.filter(pk=phase_id).exists())
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail
     def test_post_deletes_matches_and_game_rounds(self) -> None:
         f = self._build()
         match_id = f["match"].id
@@ -277,6 +286,7 @@ class TestLeagueDeleteTeardown(TestCase):
         self.assertFalse(Match.objects.filter(pk=match_id).exists())
         self.assertFalse(GameRound.objects.filter(id__in=round_ids).exists())
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail
     def test_post_deletes_owned_teams_and_players(self) -> None:
         f = self._build()
         team_ids = [f["t1"].id, f["t2"].id, f["pool"].id]
@@ -288,6 +298,7 @@ class TestLeagueDeleteTeardown(TestCase):
         self.assertFalse(Team.objects.filter(id__in=team_ids).exists())
         self.assertFalse(Player.objects.filter(id__in=player_ids).exists())
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail
     def test_post_deletes_season_scoped_career_rows(self) -> None:
         f = self._build()
         rating_id = f["rating"].id
@@ -304,6 +315,7 @@ class TestLeagueDeleteTeardown(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail (whole class)
 class TestLeagueDeleteCrossContextSafety(TestCase):
     """The zero-reference guard must NOT cascade a Team that is still
     referenced by a surviving Season / Match outside the deleted League."""
@@ -364,6 +376,7 @@ class TestLeagueDeleteCrossContextSafety(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail (whole class)
 class TestLeagueDeleteTournamentTeardown(TestCase):
     """A Season with a SeasonPhase.tournament embed → the Tournament, its
     BracketNodes / SeriesMatches, and the playoff Match (season=NULL) + its
@@ -428,6 +441,7 @@ class TestLeagueDeleteTournamentTeardown(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail (whole class)
 class TestLeagueDeleteMemberNightTeams(TestCase):
     """L-10 -- the drawn Teams a member night creates (``is_draw_team=True``,
     never enrolled in the Season) are torn down with the League."""
@@ -444,6 +458,7 @@ class TestLeagueDeleteMemberNightTeams(TestCase):
         self.assertFalse(Team.objects.filter(is_draw_team=True).exists())
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueDetail (whole class)
 class TestLeagueDeleteModeGate(TestCase):
     """A non-``league``-mode League (sandbox / multiplayer) returns 400 on both
     GET and POST and deletes nothing."""
@@ -487,16 +502,19 @@ class TestLeagueDeleteEntryPoints(TestCase):
     """The dashboard + list delete links render for a league-mode League and
     are ABSENT for a non-league-mode League."""
 
+    # ANG-08 D3: HTML-only
     def test_dashboard_renders_delete_link_for_league_mode(self) -> None:
         league = _make_league("DashLink")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertIn('id="league-dashboard-delete-link"', response.content.decode())
 
+    # ANG-08 D3: HTML-only
     def test_dashboard_omits_delete_link_for_non_league_mode(self) -> None:
         league = _make_league("DashNoLink", mode="sandbox")
         response = self.client.get(reverse("league_dashboard", args=[league.id]))
         self.assertNotIn('id="league-dashboard-delete-link"', response.content.decode())
 
+    # ANG-08 D3: HTML-only
     def test_list_renders_delete_link_for_league_mode_row_only(self) -> None:
         league_mode = _make_league("ListLeague", mode="league")
         sandbox = _make_league("ListSandbox", mode="sandbox")
@@ -567,6 +585,7 @@ class TestLeagueDeleteSummaryService(TestCase):
             {"seasons": 0, "matches": 0, "tournaments": 0, "teams": 0, "players": 0},
         )
 
+    # ANG-08 D3: HTML-only
     def test_html_confirm_page_shows_the_service_counts(self) -> None:
         league = self._build_rich()
         response = self.client.get(reverse("league_delete", args=[league.id]))

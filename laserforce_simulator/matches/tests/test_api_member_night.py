@@ -258,6 +258,35 @@ class TestMemberNightSetup(MemberNightApiTestCase):
             self.assertTrue(shell.team_red.is_draw_team)
             self.assertEqual(shell.team_red.manager, self.user_a)
 
+    def test_drawn_teams_borrow_six_distinct_enrolled_players(self) -> None:
+        # ANG-08d (ported from test_member_night_views.py): each drawn Team's
+        # six slots are distinct REAL enrolled Players (borrowed, not cloned),
+        # and the borrow raises no "does not belong" roster error.
+        self.setup_games()
+        enrolled = set(
+            Player.objects.filter(team__in=self.season.teams.all()).values_list(
+                "id", flat=True
+            )
+        )
+        shells = self.shells().select_related("team_red", "team_blue")
+        self.assertTrue(shells)
+        for shell in shells:
+            for team in (shell.team_red, shell.team_blue):
+                slot_ids = [
+                    team.slot_commander_id,
+                    team.slot_heavy_id,
+                    team.slot_scout_1_id,
+                    team.slot_scout_2_id,
+                    team.slot_medic_id,
+                    team.slot_ammo_id,
+                ]
+                self.assertNotIn(None, slot_ids, team.name)
+                self.assertEqual(len(set(slot_ids)), 6, team.name)
+                self.assertLessEqual(set(slot_ids), enrolled, team.name)
+                self.assertEqual(
+                    [e for e in team.roster_errors if "does not belong" in e], []
+                )
+
     def test_a_repeat_setup_appends_games(self) -> None:
         first = self.setup_games()
         self.ok(self.api.post(mn_url(self.season.id), {"sites": ["SiteA"]}))
@@ -319,3 +348,36 @@ class TestMemberNightSetup(MemberNightApiTestCase):
             401,
             "not_authenticated",
         )
+
+
+class TestMemberNightTeamScheduleAppearances(MemberNightApiTestCase):
+    """ANG-08d (ported from test_member_night_views.py; the Team schedule
+    endpoint lives in test_api_leagues.py): once a member night is played,
+    the Team schedule lists the games its borrowed Players appeared in."""
+
+    def schedule(self, team) -> dict:
+        return self.ok(
+            self.api.get(f"/api/leagues/{self.league.id}/teams/{team.id}/schedule/")
+        )
+
+    def test_appearances_are_empty_before_the_night_is_played(self) -> None:
+        self.setup_games()
+        team = self.season.teams.order_by("id").first()
+        self.assertEqual(self.schedule(team)["member_night_appearances"], [])
+
+    def test_a_played_night_lists_the_teams_players(self) -> None:
+        n = self.setup_games()
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            self.ok(self.api.post(mn_url(self.season.id, "play/")))
+        self.assertEqual(self.shells().filter(is_completed=True).count(), n)
+        team = self.season.teams.order_by("id").first()
+        names = set(Player.objects.filter(team=team).values_list("name", flat=True))
+
+        appearances = self.schedule(team)["member_night_appearances"]
+        self.assertTrue(appearances)
+        shell_ids = set(self.shells().values_list("id", flat=True))
+        for game in appearances:
+            self.assertIn(game["match_id"], shell_ids)
+            self.assertTrue(game["is_completed"])
+            self.assertTrue(game["players"])
+            self.assertLessEqual(set(game["players"]), names)

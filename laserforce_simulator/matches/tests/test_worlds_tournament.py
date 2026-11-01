@@ -1187,6 +1187,7 @@ class TestZeroConferenceSeasonIsUnchanged(TestCase):
         self.assertEqual(self.season.state, "completed")
         self.assertEqual(self.season.champion_team_id, self.teams[0].id)
 
+    # ANG-08 D3: HTML-only
     def test_the_playoffs_screen_carries_no_worlds_dom_id(self) -> None:
         response = self.client.get(
             reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
@@ -1195,6 +1196,7 @@ class TestZeroConferenceSeasonIsUnchanged(TestCase):
         self.assertNotContains(response, "-worlds")
         self.assertNotContains(response, 'id="league-playoffs-worlds"')
 
+    # ANG-08 D3: ported -> test_api_feats_playoffs.py::RegionalPlayoffsTests
     def test_the_playoffs_screen_keys_are_the_bare_phase_ordinal(self) -> None:
         response = self.client.get(
             reverse("league_playoffs", kwargs={"league_id": self.season.league_id})
@@ -1243,6 +1245,7 @@ class TestOneConferenceSeasonIsUnchanged(TestCase):
         self.assertEqual(self.season.state, "completed")
         self.assertEqual(self.season.champion_team_id, self.groups[0][0].id)
 
+    # ANG-08 D3: ported -> test_api_feats_playoffs.py::RegionalPlayoffsTests
     def test_the_playoffs_screen_carries_no_worlds_dom_id(self) -> None:
         response = self.client.get(
             reverse("league_playoffs", kwargs={"league_id": self.season.league_id})

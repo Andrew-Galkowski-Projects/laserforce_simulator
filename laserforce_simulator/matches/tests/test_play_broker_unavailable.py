@@ -25,7 +25,7 @@ from matches.league_play_services import (
     BrokerUnavailableError,
     _ensure_broker_reachable,
 )
-from matches.models import GameRound, League, Season, SeasonPhase
+from matches.models import GameRound, League, Match, Season, SeasonPhase
 from matches.simulation import BatchSimulator
 from matches.tests.conftest import make_team_with_slots
 from matches.tests.league_api_fixtures import (
@@ -80,6 +80,8 @@ def _api_season(league, teams, *, phases=()) -> Season:
     return season
 
 
+# ANG-08 D3: HTML-only (member night ported ->
+# TestApiPlayBrokerDown::test_member_night_play_is_503)
 class TestHtmlAsyncPlayBrokerDown(TestCase):
     def _assert_503_and_released(self, response, season: Season) -> None:
         self.assertEqual(response.status_code, 503)
@@ -161,6 +163,19 @@ class TestApiPlayBrokerDown(LeagueApiTestCase):
                 response = self.api.post(_action(season.id, "play-live"))
         self._assert_503(response, season)
 
+    def test_member_night_play_is_503(self) -> None:
+        # ANG-08d (ported from TestHtmlAsyncPlayBrokerDown).
+        from matches.tests.test_api_member_night import mn_season
+
+        season = mn_season(self.league, "BrkMnApi")
+        self.ok(self.api.post(_action(season.id, "member-night"), {"sites": ["SiteA"]}))
+        with _broker_down("play_member_night_task"):
+            response = self.api.post(_action(season.id, "member-night/play"))
+        self._assert_503(response, season)
+        self.assertFalse(
+            Match.objects.filter(season=season, is_completed=True).exists()
+        )
+
 
 def _broker_unreachable():
     """Patch the pre-commit broker probe to report the broker down."""
@@ -185,6 +200,7 @@ class TestLiveBrokerDownCommitsNothing(LeagueApiTestCase):
         league.save(update_fields=["current_team"])
         return _api_season(league, teams)
 
+    # ANG-08 D3: HTML-only
     def test_html_live_commits_no_round(self) -> None:
         season = self._live_season("L7Html")
         self.client.force_login(self.user_a)

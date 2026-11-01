@@ -56,14 +56,17 @@ def _valid_payload(**overrides) -> dict:
 class TestLeagueCreateGet(TestCase):
     """LG-01b — GET ``/leagues/create/`` renders the create form."""
 
+    # ANG-08 D3: HTML-only
     def test_get_returns_200(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
 
+    # ANG-08 D3: HTML-only
     def test_template_used(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         self.assertTemplateUsed(response, "leagues/create_advanced.html")
 
+    # ANG-08 D3: HTML-only
     def test_all_locked_dom_ids_present(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         body = response.content.decode()
@@ -80,6 +83,7 @@ class TestLeagueCreateGet(TestCase):
         ):
             self.assertIn(f'id="{dom_id}"', body, f"missing DOM id {dom_id!r}")
 
+    # ANG-08 D3: HTML-only
     def test_dormant_visibility_control_not_rendered(self) -> None:
         # UXP-21 — UX-01 rendered a `visibility` select for the dormant
         # League.visibility column; changing it did nothing. Not offered any
@@ -88,6 +92,7 @@ class TestLeagueCreateGet(TestCase):
         self.assertNotIn('id="league-create-visibility"', body)
         self.assertNotIn("League visibility", body)
 
+    # ANG-08 D3: HTML-only
     def test_schedule_format_select_is_disabled(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         body = response.content.decode()
@@ -108,6 +113,7 @@ class TestLeagueCreateGet(TestCase):
             "schedule-format select missing `disabled` attribute",
         )
 
+    # ANG-08 D3: HTML-only
     def test_reverse_resolves_to_create_path(self) -> None:
         # CRE-01 — the full form moved to the Advanced screen; ``create/``
         # itself now serves the template chooser.
@@ -119,9 +125,11 @@ class TestLeagueCreateGet(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate, bar the HTML-only marks
 class TestLeagueCreatePost(TestCase):
     """LG-01b — POST ``/leagues/create/`` creates a League + Season + Teams."""
 
+    # ANG-08 D3: HTML-only
     def test_post_valid_returns_302(self) -> None:
         response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         self.assertEqual(response.status_code, 302)
@@ -164,6 +172,7 @@ class TestLeagueCreatePost(TestCase):
                 f"Team {team.name!r} has {team.players.count()} players, expected 6",
             )
 
+    # ANG-08 D3: HTML-only
     def test_post_redirects_to_league_dashboard(self) -> None:
         response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         season = Season.objects.get(name="Season 1")
@@ -171,6 +180,7 @@ class TestLeagueCreatePost(TestCase):
             response["Location"], reverse("league_dashboard", args=[season.league_id])
         )
 
+    # ANG-08 D3: HTML-only
     def test_redirect_target_renders_200(self) -> None:
         response = self.client.post(reverse("league_create_advanced"), _valid_payload())
         # Follow the redirect manually.
@@ -191,6 +201,7 @@ class TestLeagueCreatePost(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLeagueCreateFreeAgents(TestCase):
     """Creating a League seeds its own 100–200 pool of free agents."""
 
@@ -234,6 +245,7 @@ class TestLeagueCreateFreeAgents(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLeagueCreateFormValidation(TestCase):
     """LG-01b — invalid POSTs re-render the form and write nothing."""
 
@@ -297,6 +309,7 @@ class TestLeagueCreateFormValidation(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestSeamWithGenerateTeams(TestCase):
     """LG-01b — exercise the real ``_generate_teams`` and ``@transaction.atomic``."""
 
@@ -383,6 +396,7 @@ class TestSeamWithGenerateTeams(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg01gCurrentTeamAutoSet(TestCase):
     """LG-01g — ``league_create`` populates ``League.current_team`` to
     the alphabetically-first generated Team.
@@ -627,6 +641,8 @@ class TestLeagueCreateMapPool(TestCase):
         )
 
     # ---- Tamper POSTs through the view ----
+    # ANG-08 D3: the view_post tests below are ported to
+    # test_api_leagues.py::TestLeagueCreate; the form-clean tests above stay.
 
     def test_view_post_mode_none_with_pool_rejected_no_league_created(self) -> None:
         m = _lg01j_make_map_with_config("TamperNone")
@@ -720,6 +736,7 @@ class TestLeagueCreateMapPool(TestCase):
 from matches.models import SeasonPhase as _Lg02SeasonPhase  # noqa: E402
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
     """LG-02-Part2a — ``league_create`` seeds one explicit RR SeasonPhase."""
 
@@ -786,6 +803,7 @@ class TestLg02Part2aSeasonPhaseOnCreate(TestCase):
 # Appended as NEW classes; no existing class above is modified.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2bComposerMultiPhase(TestCase):
     """LG-02-Part2b — a multi-phase composer POST persists ordered rows."""
 
@@ -835,10 +853,12 @@ class TestLg02Part2bComposerMultiPhase(TestCase):
             )
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate, bar the HTML-only marks
 class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
     """LG-02-Part2b — a no-RR composition is rejected at the form layer with
     ZERO League / Season / SeasonPhase rows created (atomic boundary holds)."""
 
+    # ANG-08 D3: HTML-only
     def test_no_rr_composition_rerenders_form_200(self) -> None:
         payload = _valid_payload(league_name="NoRrL")
         payload["phases"] = "tournament"
@@ -909,6 +929,7 @@ class TestLg02Part2bComposerNoRoundRobinRejected(TestCase):
 # in the composer — the TDD red state, not a defect in this file.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
     """LG-02-Part2c-3a — composer persists a ``double_round_robin`` RR phase."""
 
@@ -958,10 +979,12 @@ class TestLg02Part2c3aComposerDoubleRoundRobin(TestCase):
         self.assertEqual(phases[0].schedule_format, "single_round_robin")
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate, bar the HTML-only marks
 class TestLg02Part2c3aComposerUnknownFormatRejected(TestCase):
     """LG-02-Part2c-3a — an unknown per-phase format is rejected at the form
     layer leaving ZERO rows (transaction atomicity)."""
 
+    # ANG-08 D3: HTML-only
     def test_unknown_format_rerenders_form_200(self) -> None:
         payload = _valid_payload(league_name="BadFmtL")
         payload["phases"] = "round_robin:triple_round_robin"
@@ -995,6 +1018,7 @@ class TestLg02Part2c3aComposerUnknownFormatRejected(TestCase):
 # Appended as a NEW class; no existing class above is modified.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2c3bComposerTournamentMode(TestCase):
     """LG-02-Part2c-3b — every composed phase persists tournament_mode=standings."""
 
@@ -1040,6 +1064,7 @@ class TestLg02Part2c3bComposerTournamentMode(TestCase):
 # guard relaxation — the TDD red state, not a defect in this file.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2c3cComposerTournamentMode(TestCase):
     """LG-02-Part2c-3c — composer stamps the per-phase ``tournament_mode``."""
 
@@ -1093,10 +1118,12 @@ class TestLg02Part2c3cComposerTournamentMode(TestCase):
         self.assertEqual(phases[1].tournament_mode, "standings")
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate, bar the HTML-only marks
 class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
     """LG-02-Part2c-3c — a tampered ``tournament:random_draw`` mode is rejected
     at the form layer leaving ZERO rows (transaction atomicity)."""
 
+    # ANG-08 D3: HTML-only
     def test_random_draw_mode_rerenders_form_200(self) -> None:
         payload = _valid_payload(league_name="RandomDrawL")
         payload["phases"] = "round_robin,tournament:random_draw"
@@ -1144,6 +1171,7 @@ class TestLg02Part2c3cComposerRandomDrawRejected(TestCase):
 # SeasonPhase columns — the TDD red state.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2c3dComposerTournamentCut(TestCase):
     """LG-02-Part2c-3d — a composed tournament phase persists ``tournament_cut``
     from the wire, and ``tournament_format`` defaults ``single_elimination``."""
@@ -1219,6 +1247,7 @@ class TestLg02Part2c3dComposerTournamentCut(TestCase):
 #   spec-loop kwargs + the 7 new SeasonPhase columns — the TDD red state.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg02Part2c3eComposerFullSubConfig(TestCase):
     """LG-02-Part2c-3e — a composed tournament phase persists all 8 new fields."""
 
@@ -1329,6 +1358,7 @@ from matches.development import STAT_FIELDS as _Lg04StatFields  # noqa: E402
 from matches.models import PlayerSeasonRating as _Lg04PlayerSeasonRating  # noqa: E402
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg04BaselineRatings(TestCase):
     """LG-04 — ``league_create`` writes one baseline rating per founding Player."""
 
@@ -1470,6 +1500,7 @@ class TestLg04BaselineRatings(TestCase):
 # land — the TDD red state, not a defect in this file.
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLg05BaselineRatingsPotential(TestCase):
     """LG-05 — ``league_create`` fills ``Player.potential`` + the baseline
     ``PlayerSeasonRating.potential`` for every founding Player."""
@@ -1566,7 +1597,10 @@ class TestCar01ManagerTeamName(TestCase):
     """CAR-01 — the manager's named team becomes one of the N + current_team."""
 
     # ---- Named-team path (``manager_team_name`` non-blank) ----
+    # ANG-08 D3: the view-POST tests are ported to
+    # test_api_leagues.py::TestLeagueCreate; the two form-level tests stay.
 
+    # ANG-08 D3: HTML-only
     def test_post_named_team_returns_302(self) -> None:
         response = self.client.post(
             reverse("league_create_advanced"),
@@ -1788,6 +1822,7 @@ class TestFin03SeedBudgetsByStrengthHelper(TestCase):
         self.assertLess(mid.budget_scouting, strong.budget_scouting)
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestFin03CreateSeedsBudgets(TestCase):
     """Finance-ON ``league_create`` seeds differentiated budgets across the
     generated teams, with ``current_team`` ALSO seeded; finance-OFF leaves every
@@ -1890,6 +1925,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
         self.assertTrue(form.is_valid(), form.errors)
         self.assertTrue(form.cleaned_data["challenge_fired_luxury_tax"])
 
+    # ANG-08 D3: HTML-only
     def test_dom_id_rendered(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
@@ -1898,6 +1934,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
             response.content.decode(),
         )
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate
     def test_checked_post_persists_true(self) -> None:
         response = self.client.post(
             reverse("league_create_advanced"),
@@ -1909,6 +1946,7 @@ class TestCreateLeagueChallengeLuxuryTax(TestCase):
         league = League.objects.get(name="ChalOnLeague")
         self.assertTrue(league.challenge_fired_luxury_tax)
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate
     def test_unchecked_post_persists_false(self) -> None:
         response = self.client.post(
             reverse("league_create_advanced"),
@@ -1962,6 +2000,7 @@ def _rotation_wire(ids: list[int]) -> str:
 class TestLeagueCreateRotateByMatchdayGet(TestCase):
     """SUB-01 — the rotate composer DOM ids render on GET."""
 
+    # ANG-08 D3: HTML-only
     def test_composer_dom_ids_present_on_get(self) -> None:
         response = self.client.get(reverse("league_create_advanced"))
         self.assertEqual(response.status_code, 200)
@@ -1976,6 +2015,7 @@ class TestLeagueCreateRotateByMatchdayGet(TestCase):
             )
 
 
+# ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (whole class)
 class TestLeagueCreateRotateByMatchdayPersist(TestCase):
     """SUB-01 — a ``rotate_by_matchday`` create persists
     ``map_rotation_ids_json`` in AUTHOR order with ``map_pool`` empty."""
@@ -2025,6 +2065,8 @@ class TestLeagueCreateRotateByMatchdayValidationMatrix(TestCase):
         self.assertFalse(form.is_valid())
         return form.errors.get(field, [])
 
+    # ANG-08 D3: this view half is ported to test_api_leagues.py::TestLeagueCreate;
+    # drop it and its calls, keep the form assertions.
     def _assert_view_writes_nothing(self, payload: dict) -> None:
         before = League.objects.count()
         response = self.client.post(reverse("league_create_advanced"), payload)
@@ -2146,6 +2188,7 @@ class TestConf05CreateLeagueConferences(TestCase):
         )
         self.assertTrue(form.is_valid(), form.errors)
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate (the redirect is HTML-only)
     def test_create_with_conferences_presplits_and_redirects(self):
         payload = _valid_payload(
             num_teams="8", number_of_conferences="2", league_name="ConfCreate"
@@ -2164,6 +2207,7 @@ class TestConf05CreateLeagueConferences(TestCase):
         )
         self.assertEqual(assigned, set(season.teams.values_list("id", flat=True)))
 
+    # ANG-08 D3: HTML-only
     def test_create_without_conferences_redirects_to_league_dashboard(self):
         payload = _valid_payload(league_name="FlatCreate")  # no conferences field
         response = self.client.post(reverse("league_create_advanced"), payload)
@@ -2349,6 +2393,7 @@ class TestConf06CreateLeagueRotateByConferenceGuards(TestCase):
             [str(e) for e in form.errors.get("number_of_conferences", [])],
         )
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate
     def test_invalid_create_writes_nothing(self) -> None:
         before = League.objects.count()
         response = self.client.post(
@@ -2358,6 +2403,7 @@ class TestConf06CreateLeagueRotateByConferenceGuards(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(League.objects.count(), before)
 
+    # ANG-08 D3: ported to test_api_leagues.py::TestLeagueCreate
     def test_valid_create_persists_the_mode_with_no_season_level_maps(self) -> None:
         """The Season-level pool/rotation stay empty — the rotation lives on
         each Conference, authored later on Manage Conferences."""

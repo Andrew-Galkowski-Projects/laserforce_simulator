@@ -159,6 +159,7 @@ class TestPlayPlayoffsTask(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: HTML-only (API: test_api_sync_play.py::TestPlaySingleRound)
 class TestPlaySingleRound(TestCase):
     """POST ``/seasons/<id>/play-single-round/`` plays ONE playoff Match."""
 
@@ -212,6 +213,7 @@ class TestPlaySingleRound(TestCase):
 # ---------------------------------------------------------------------------
 
 
+# ANG-08 D3: HTML-only (API: test_api_play_runs.py::TestPlayPlayoffs)
 class TestPlayPlayoffs(TestCase):
     """POST ``/seasons/<id>/play-playoffs/`` enqueues the drain task."""
 
@@ -1032,6 +1034,10 @@ def _conf04_playoffs_get(client, season):
     )
 
 
+# ANG-08 D3: the six context cases (stub key, built shape, champion, regional
+# label, last-chance key/label, one -worlds key) are ported ->
+# test_api_feats_playoffs.py::RegionalPlayoffsTests; the DOM-id cases are
+# HTML-only.
 class TestConf04WorldsPlayoffsScreen(TestCase):
     """CONF-04 §9 - the Worlds bracket section, the pending stub, and the
     byte-identity of every CONF-02 / CONF-03 key and DOM id."""

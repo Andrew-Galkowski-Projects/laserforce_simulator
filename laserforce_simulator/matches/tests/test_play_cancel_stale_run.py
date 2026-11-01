@@ -72,6 +72,7 @@ def _set_run(season: Season, job_id: str) -> None:
     )
 
 
+# ANG-08 D3: ported -> TestApiCancelReleasesStaleRun below
 class TestHtmlCancelReleasesStaleRun(TestCase):
     def _cancel(self, season: Season) -> bool:
         response = self.client.post(reverse("play_cancel", args=[season.id]))
@@ -162,3 +163,37 @@ class TestApiCancelReleasesStaleRun(LeagueApiTestCase):
         self.season.refresh_from_db()
         self.assertEqual(self.season.active_play_job_id, "live")
         self.assertTrue(self.season.play_cancel_requested)
+
+    # --- ANG-08d: ported from TestHtmlCancelReleasesStaleRun --------------
+
+    def test_terminal_states_release_the_run(self) -> None:
+        for state in ("SUCCESS", "FAILURE", "REVOKED"):
+            _set_run(self.season, "old")
+            self.assertEqual(self._cancel(state), {"cancel_requested": True})
+            self.season.refresh_from_db()
+            self.assertIsNone(self.season.active_play_job_id, state)
+
+    def test_started_and_retry_keep_the_column_and_set_the_flag(self) -> None:
+        for state in ("STARTED", "RETRY"):
+            _set_run(self.season, "live")
+            self.assertEqual(self._cancel(state), {"cancel_requested": True})
+            self.season.refresh_from_db()
+            self.assertEqual(self.season.active_play_job_id, "live", state)
+            self.assertTrue(self.season.play_cancel_requested, state)
+
+    def test_release_never_clears_a_different_runs_id(self) -> None:
+        _set_run(self.season, "dead")
+
+        def _new_run_claims() -> None:
+            Season.objects.filter(pk=self.season.pk).update(active_play_job_id="new")
+
+        with _stub_backend("PENDING", on_read=_new_run_claims):
+            self.ok(self.api.post(_action(self.season.id, "play-cancel")))
+        self.season.refresh_from_db()
+        self.assertEqual(self.season.active_play_job_id, "new")
+
+    def test_idle_season_does_not_consult_the_backend(self) -> None:
+        with patch("matches.league_play_services.AsyncResult") as backend:
+            data = self.ok(self.api.post(_action(self.season.id, "play-cancel")))
+        self.assertEqual(data, {"cancel_requested": False})
+        backend.assert_not_called()
