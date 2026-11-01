@@ -283,6 +283,7 @@ src/
                           LeagueFinancesService, INJURY_POLICY_LABELS, ANG-06-17); testing/ holds
                           shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
+    shared/testing/       spec helpers: poll-timers.ts (POLL_TIMERS), spaced-text.ts (spacedText)
     auth/                 auth.service.ts, auth.interceptor.ts, auth.initializer.ts,
                           auth.guard.ts (authGuard, signedOutGuard, HOME_URL),
                           auth.tokens.ts (TOKEN_PATH, SKIP_AUTH_REFRESH), user.ts
@@ -378,9 +379,12 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
   `fixture.debugElement.query(By.directive(Screen))`. A failing `toBeInstanceOf` / `toEqual` on a
   component instance makes Vitest print its whole object graph and run Node out of memory, with
   no test summary. A spec that lands on a screen it isn't testing (shell, login, routes) releases
-  that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`), right after the
-  navigation and before any assertion: a failed assertion then can't leave them open too
-  (ANG-06-11).
+  that screen's GETs before `verify()` (`teams/testing/teams-loads.ts`), on every path a failing
+  assertion can take (ANG-06-11): either right after the navigation, before any assertion, or in
+  `afterEach` ahead of `verify()`, as `login.spec.ts` and `app.routes.spec.ts` do. Follow the
+  placement the file already uses.
+  Read rendered text with `spacedText(el)` (`shared/testing/spaced-text.ts`): jsdom's
+  `textContent` runs sibling elements together ("SandboxQuick...").
 - **Timer-driven code** (a play loop, a poll, a timed flash): fake only the timers you drive, and
   only after the first render, so zoneless `whenStable` keeps its real `setTimeout`. A poll or loop
   on rxjs `timer` / `setInterval` fakes `POLL_TIMERS` (`shared/testing/poll-timers.ts`): the
