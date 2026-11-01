@@ -305,6 +305,18 @@ class SelfInsertPutTests(_Base):
         self.user.refresh_from_db()
         self.assertIsNone(self.user.self_insert_id)
 
+    def test_refused_unmanaged_link_keeps_the_existing_link(self) -> None:
+        # ANG-08e (port of test_self_insert's HTML refusal case).
+        mine = self._managed_player()
+        self.assertEqual(self._put({"player": mine.pk}).status_code, 200)
+        team = Team.objects.create(name="Unmanaged Team")
+        loose = Player.objects.create(team=team, name="Loose")
+        response = self._put({"player": loose.pk})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["errors"][0]["code"], "not_eligible")
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.self_insert_id, mine.pk)
+
     def test_link_never_changes_player_team(self) -> None:
         player = self._managed_player()
         team_id = player.team_id
@@ -335,6 +347,22 @@ class SelfInsertDeleteTests(_Base):
         self.user.refresh_from_db()
         self.assertIsNone(self.user.self_insert_id)
         self.assertTrue(Player.objects.filter(pk=player.pk).exists())
+
+    def test_delete_leaves_another_accounts_link_untouched(self) -> None:
+        # ANG-08e (port of test_self_insert's HTML unlink-isolation case).
+        mine = self._managed_player()
+        self.user.self_insert = mine
+        self.user.save()
+        other = User.objects.create_user("b@example.com", "B-Passw0rd-xyz")
+        theirs = self._managed_player("Theirs", manager=other)
+        other.self_insert = theirs
+        other.save()
+        response = self.api.delete(SELF_INSERT_URL)
+        self.assertEqual(response.status_code, 204)
+        self.user.refresh_from_db()
+        self.assertIsNone(self.user.self_insert_id)
+        other.refresh_from_db()
+        self.assertEqual(other.self_insert_id, theirs.pk)
 
     def test_delete_without_link_is_204(self) -> None:
         response = self.api.delete(SELF_INSERT_URL)

@@ -677,6 +677,119 @@ class TestSimulateBatchAPIStatusUnknownJobId:
         assert body["error"] is None
 
 
+class _StubAsyncResult:
+    """A hand-rolled ``AsyncResult`` stand-in carrying a fixed state / info."""
+
+    def __init__(self, state: str, info=None) -> None:
+        self.state = state
+        self.info = info
+        self.result = info
+
+
+@pytest.mark.django_db
+class TestSimulateBatchAPIStatusArenaMapCarry:
+    """ANG-08e -- GET ``/api/simulate-batch/<job_id>/`` echoes the
+    ``arena_map_id`` the POST was made with (query-param carry, §4.3)."""
+
+    def test_status_echoes_arena_map_id_from_post(self) -> None:
+        red, _ = make_team_with_slots("Ang08eMapCarryR")
+        blue, _ = make_team_with_slots("Ang08eMapCarryB")
+        arena_map = _make_minimal_arena_map("Ang08eMapCarryMap")
+        client = APIClient()
+        client.force_login(get_shared_manager())
+
+        with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+            post_resp = client.post(
+                "/api/simulate-batch/",
+                {
+                    "team_red": red.id,
+                    "team_blue": blue.id,
+                    "n": 2,
+                    "arena_map": arena_map.id,
+                },
+                format="json",
+            )
+        assert post_resp.status_code == 200, post_resp.content
+        post_body = post_resp.json()["data"]
+        assert post_body["arena_map_id"] == arena_map.id
+
+        status_resp = client.get(
+            f"/api/simulate-batch/{post_body['job_id']}/",
+            {
+                "team_red_id": red.id,
+                "team_blue_id": blue.id,
+                "arena_map_id": post_body["arena_map_id"],
+            },
+        )
+        assert status_resp.status_code == 200, status_resp.content
+        body = status_resp.json()["data"]
+        assert body["status"] == "complete"
+        assert body["arena_map_id"] == arena_map.id
+
+
+@pytest.mark.django_db
+class TestSimulateBatchAPIStatusProgress:
+    """ANG-08e -- a PROGRESS job reports ``completed`` / ``total`` /
+    ``partial`` from the task meta."""
+
+    def test_progress_reports_completed_and_partial_from_meta(self) -> None:
+        aggregate = {"n": 3, "avg_seeds": [[7, False]]}
+        stub = _StubAsyncResult(
+            "PROGRESS", {"completed": 3, "total": 10, "aggregate": aggregate}
+        )
+        client = APIClient()
+        client.force_login(get_shared_manager())
+        with patch("matches.api_views.AsyncResult", lambda job_id: stub):
+            response = client.get("/api/simulate-batch/progress-job/")
+        assert response.status_code == 200, response.content
+        body = response.json()["data"]
+        assert body["status"] == "running"
+        assert body["completed"] == 3
+        assert body["total"] == 10
+        assert body["partial"] == aggregate
+        assert body["error"] is None
+
+
+@pytest.mark.django_db
+class TestSimulateBatchAPIStatusError:
+    """ANG-08e (port of ``TestBatchSimulateStatusError``) -- a batch task that
+    raised reads ``status='error'`` with the exception message over the API."""
+
+    def test_error_status_propagates_exception_message(self) -> None:
+        from django.test import override_settings
+
+        red, _ = make_team_with_slots("Ang08eApiErrR")
+        blue, _ = make_team_with_slots("Ang08eApiErrB")
+        client = APIClient()
+        client.force_login(get_shared_manager())
+
+        def _raises(self, *args, **kwargs):
+            raise RuntimeError("contrived api-error")
+
+        # Celery must capture the failure as a FAILURE state rather than
+        # propagate it (see TestBatchSimulateStatusError).
+        with override_settings(CELERY_TASK_EAGER_PROPAGATES=False):
+            with patch.object(BatchSimulator, "ROUND_TICKS", 40):
+                with patch.object(BatchSimulator, "run_incremental", _raises):
+                    post_resp = client.post(
+                        "/api/simulate-batch/",
+                        {"team_red": red.id, "team_blue": blue.id, "n": 2},
+                        format="json",
+                    )
+        assert post_resp.status_code == 200, post_resp.content
+        job_id = post_resp.json()["data"]["job_id"]
+
+        status_resp = client.get(
+            f"/api/simulate-batch/{job_id}/",
+            {"team_red_id": red.id, "team_blue_id": blue.id},
+        )
+        assert status_resp.status_code == 200, status_resp.content
+        body = status_resp.json()["data"]
+        assert body["status"] == "error"
+        assert isinstance(body["error"], str)
+        assert "contrived api-error" in body["error"]
+
+
 # ---------------------------------------------------------------------------
 # Pure-unit truth table — celery_state_to_job_status (§5)
 # ---------------------------------------------------------------------------
