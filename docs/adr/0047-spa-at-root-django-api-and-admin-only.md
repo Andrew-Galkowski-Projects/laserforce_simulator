@@ -1,7 +1,8 @@
 # The SPA is served at `/`; Django serves only `/api/`, `/admin/` and `/media/`
 
 **Status:** Accepted (ANG-08, 2026-10-31). Supersedes
-[ADR-0046](0046-spa-at-app-prefix-behind-nginx-front-door.md).
+[ADR-0046](0046-spa-at-app-prefix-behind-nginx-front-door.md). In the Desktop App, Django
+(WhiteNoise) serves the SPA instead of nginx: [ADR-0048](0048-desktop-app-go-pyinstaller-in-process-jobs.md).
 
 ANG-08 deletes every Django template view, so nothing collides with the Angular routes any more.
 The nginx front door now serves the built SPA at `/` (no `--base-href /app/`), with deep links

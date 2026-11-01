@@ -1,6 +1,7 @@
 # PostgreSQL is the canonical database; SQLite is a guarded dev-only convenience
 
-**Status:** Accepted (INFRA-01, 2026-06-13)
+**Status:** Accepted (INFRA-01, 2026-06-13). The Desktop App's SQLite database is a
+Desktop-only exception: [ADR-0048](0048-desktop-app-go-pyinstaller-in-process-jobs.md).
 
 ## Context
 

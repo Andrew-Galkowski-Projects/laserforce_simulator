@@ -216,6 +216,45 @@ or WhiteNoise serving the bundle. Then update `fly.toml`, the CI deploy step and
 `docs/self-hosting.md`'s "Fly.io is the canonical deploy" note). Needs its own grill; record the
 choice in an ADR if it differs from ADR-0047's nginx split.
 
+### DESK-01 · [NOT STARTED] Desktop App code in `main`, with tests
+
+From ANG-09 ([ADR-0048](docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)); the
+`spike/ang-09` branch has working versions to start from. Merge the desktop settings and URLconf
+(WhiteNoise SPA serving with the `index.html` fallback, in-process Celery worker thread, SQLite in
+the app-data folder, file logging), the launcher (`freeze_support`, migrate-or-reset to `.bak`,
+the one local Account), the single-use launch-code sign-in, and `desktop` on `accounts/me/`. The
+SPA hides Sign out, Change password, Register and the invite screens when `desktop` is set, and
+shows an in-app notice after a reset. Needs its own grill: the login-exemption guard's allowlist,
+and where the launcher lives.
+
+### DESK-02 · [NOT STARTED] Desktop App build in CI
+
+Blocked by DESK-01. A Windows runner on python.org CPython 3.12 (not conda: ADR-0048), a
+runtime / dev split of `requirements.txt`, the PyInstaller build, a launch-and-measure smoke
+(`desktop/measure.py` on the spike branch), and the zip as a GitHub Release asset on a tag.
+
+### DESK-03 · [NOT STARTED] Desktop App native window
+
+Blocked by DESK-01. pywebview (WebView2) frozen in the build, a tray icon or no-console build, and
+a single-instance lock. pywebview worked unfrozen in the ANG-09 spike.
+
+### DESK-04 · [NOT STARTED] Desktop App distribution
+
+Blocked by DESK-02. The download page, SmartScreen signing (unsigned plus a note first, then Azure
+Trusted Signing), a "new version available" check against GitHub Releases, and whether to bundle
+the default Arena maps (`ensure_default_maps` seeds from a folder the build does not ship).
+macOS / Linux builds are later (ADR-0048 Distribution).
+
+### BUG-SL-01 · [NOT STARTED] Sight-line compute fails after a saved zone config
+
+Found by ANG-09, frozen and unfrozen alike. `POST /api/maps/<id>/sight-lines/compute/` after a
+`PUT .../zone-config/` returns 500 `KeyError: 0`: `compute_sight_lines`
+(`core/map_processing.py`) falls back to the saved config's `blocked_edges` dict (keyed `"r,c"`)
+and `_has_los` indexes it as a 2D grid. The tests' 4x4 fixture only checks neighbouring cells, so
+the line walk never runs. Reproduce with either sample map in `Screenshots_and_video_examples/`.
+Also remove the import-time `logging.basicConfig(level=logging.DEBUG)` in
+`matches/simulation/entrypoints.py`.
+
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
 Follow-ups to the LFstats player import (#256). The import turns real players' LFstats numbers
