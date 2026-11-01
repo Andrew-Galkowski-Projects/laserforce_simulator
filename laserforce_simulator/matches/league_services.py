@@ -30,7 +30,7 @@ from django.utils import timezone
 from teams.constants import PLAYER_NAMES, TEAM_NAMES
 from teams.models import Player, Team
 from teams.player_generator import LEAGUE_SPREAD_DELTAS, compute_tier_means
-from teams.views import _generate_free_agents, _generate_teams
+from teams.services import _generate_free_agents, _generate_teams
 
 from . import development, finance, owner_mood
 from .development import STAT_FIELDS

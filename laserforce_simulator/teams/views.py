@@ -25,6 +25,7 @@ from .roster_importer import RosterImportError
 # existing `from teams.views import _generate_teams, _apply_roster, ...`
 # importers (league / tournament views, tests) keep working.
 from .services import (  # noqa: F401 - re-exports
+    PLAYER_SORT_KEYS,
     _HX01_DISPLAY_STAT_KEYS,
     _HX01_TO_BENCHMARK_STAT,
     _HX01B_STAT_ROW_SPEC,
@@ -299,35 +300,11 @@ def _coerce_display(raw: str | None, default: str = "mean") -> str:
     return default
 
 
-# LG-00c — sortable Players tab. The frozen 22-entry ORM whitelist
-# (URL key → ORM target) plus the `preferred_roles` Python-side
-# sentinel (handled in a separate branch of `player_list`) gives 23
-# total accepted sort keys. See `.claude/worktrees/lg-00c-seam-contract.md`.
-_SORT_KEYS: dict[str, str] = {
-    "name": "name",
-    "team": "team__name",
-    "overall_rating": "overall_rating_db",
-    "player_awareness": "player_awareness",
-    "game_awareness": "game_awareness",
-    "resource_awareness": "resource_awareness",
-    "decision_making": "decision_making",
-    "positioning": "positioning",
-    "stamina": "stamina",
-    "speed": "speed",
-    "flexibility": "flexibility",
-    "adaptability": "adaptability",
-    "communication": "communication",
-    "teamwork": "teamwork",
-    "offensive_synergy": "Offensive_synergy",
-    "defensive_synergy": "defensive_synergy",
-    "midfield_synergy": "midfield_synergy",
-    "resupply_synergy": "resupply_synergy",
-    "resupply_efficiency": "resupply_efficiency",
-    "accuracy": "accuracy",
-    "survival": "survival",
-    "special_usage": "special_usage",
-    "potential": "potential",
-}
+# LG-00c — sortable Players tab. The ORM whitelist lives in
+# ``teams.services.PLAYER_SORT_KEYS`` (ANG-08); the `preferred_roles`
+# Python-side sentinel (handled in a separate branch of `player_list`)
+# gives 23 total accepted sort keys.
+_SORT_KEYS = PLAYER_SORT_KEYS
 
 # LG-00c — 23-entry column display spec (single source of truth for
 # both `<th>` headers and per-row `<td>` cells). The 23rd entry is the

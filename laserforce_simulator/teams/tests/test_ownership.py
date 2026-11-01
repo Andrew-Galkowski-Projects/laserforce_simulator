@@ -35,7 +35,7 @@ from core.models import (
     SightLineConfig,
 )
 from teams.models import Player, Team, get_free_agents_team
-from teams.views import _generate_teams
+from teams.services import _generate_teams
 
 User = get_user_model()
 

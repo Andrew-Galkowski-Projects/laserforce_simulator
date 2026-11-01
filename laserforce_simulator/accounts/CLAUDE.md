@@ -221,7 +221,7 @@ used 0003 invite into one redemption plus `use_count = 1` before dropping `used_
 
 Staff create invites in Django admin (`/admin/accounts/invite/`). The add page asks for `email`,
 `note`, `max_uses` and `expires_at`; after saving, a success message shows the absolute sign-up
-link (`/accounts/register/?invite=<code>`). The changelist shows *Uses* (`3 / 10`), *Status*
+link (`/register?invite=<code>`, the SPA route, ANG-08). The changelist shows *Uses* (`3 / 10`), *Status*
 (Active / Used up / Expired) and a *Sign-up link* column while the invite is redeemable; the
 change page lists its redemptions in a read-only inline. Tests: `accounts/tests/test_invites.py`.
 

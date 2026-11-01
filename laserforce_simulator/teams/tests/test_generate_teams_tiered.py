@@ -25,7 +25,7 @@ from django.test import TestCase
 
 from teams.models import Player, Team
 from teams.player_generator import compute_tier_means
-from teams.views import _generate_teams
+from teams.services import _generate_teams
 
 SEED = 42
 

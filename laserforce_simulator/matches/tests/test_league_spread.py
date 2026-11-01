@@ -1,7 +1,7 @@
 """CRE-02 — the transient **League spread** selector on the Advanced create form.
 
 The seam contract is locked at ``.claude/worktrees/cre-02-seam-contract.md``
-(§5 for the form field, §6 for the create writer + ``_template_to_form_data``,
+(§5 for the form field, §6 for the create writer + ``template_to_form_data``,
 §7 for the template block, §8 for the test boundary).
 
 THE VIEW-LAYER FLAKINESS RULE (contract §8.3, MANDATORY). The single create
@@ -24,7 +24,7 @@ from django.urls import reverse
 
 from matches.forms import CreateLeagueForm
 from matches.league_templates import LEAGUE_TEMPLATES
-from matches.league_views import _template_to_form_data
+from matches.league_services import template_to_form_data
 from matches.models import League, Season
 from teams.models import Team
 from teams.player_generator import LEAGUE_SPREAD_DELTAS
@@ -271,12 +271,12 @@ class TestCre02AdvancedCreateWithSpread(TestCase):
 
 
 class TestCre02TemplateFormDataIsAlwaysEven(TestCase):
-    """CRE-02 — ``_template_to_form_data`` hard-codes ``league_spread="even"``."""
+    """CRE-02 — ``template_to_form_data`` hard-codes ``league_spread="even"``."""
 
     def test_every_template_form_data_carries_even(self) -> None:
         for template in LEAGUE_TEMPLATES:
             with self.subTest(template=template.key):
-                data = _template_to_form_data(
+                data = template_to_form_data(
                     template, league_name="X", difficulty="medium"
                 )
                 self.assertEqual(data["league_spread"], "even")
@@ -284,7 +284,7 @@ class TestCre02TemplateFormDataIsAlwaysEven(TestCase):
     def test_league_spread_key_is_present_on_every_template(self) -> None:
         for template in LEAGUE_TEMPLATES:
             with self.subTest(template=template.key):
-                data = _template_to_form_data(
+                data = template_to_form_data(
                     template, league_name="X", difficulty="medium"
                 )
                 self.assertIn("league_spread", data)
@@ -293,7 +293,7 @@ class TestCre02TemplateFormDataIsAlwaysEven(TestCase):
         for template in LEAGUE_TEMPLATES:
             with self.subTest(template=template.key):
                 form = CreateLeagueForm(
-                    data=_template_to_form_data(
+                    data=template_to_form_data(
                         template, league_name="X", difficulty="medium"
                     )
                 )
@@ -304,7 +304,7 @@ class TestCre02TemplateFormDataIsAlwaysEven(TestCase):
         """§6.1 — the signature does NOT gain a parameter."""
         import inspect
 
-        params = inspect.signature(_template_to_form_data).parameters
+        params = inspect.signature(template_to_form_data).parameters
         self.assertEqual(list(params), ["template", "league_name", "difficulty"])
 
     def test_chooser_post_still_creates_league_and_draft_season(self) -> None:

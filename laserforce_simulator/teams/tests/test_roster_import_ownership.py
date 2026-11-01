@@ -203,15 +203,6 @@ class TestLeakRegressionService(_LeakScenario):
         with self.assertRaises(TypeError):
             _apply_roster(parsed)  # type: ignore[call-arg]
 
-    def test_views_re_export_is_the_service_function(self) -> None:
-        import teams.services as services
-        import teams.views as views
-
-        self.assertIs(views._apply_roster, services._apply_roster)
-        self.assertIs(
-            views._check_db_slot_collisions, services._check_db_slot_collisions
-        )
-
 
 class TestLeakRegressionTournamentImport(_LeakScenario):
     def test_tournament_participant_import_never_touches_foreign_team(self) -> None:

@@ -2283,7 +2283,7 @@ class TestFin02CoachingEffectByTeamHelper(TestCase):
     finance-OFF League, and ``0.0`` for free-agent-pool players (no team rows)."""
 
     def test_finance_off_returns_empty_mapping(self) -> None:
-        from matches.league_views import _coaching_effect_by_team
+        from matches.league_services import _coaching_effect_by_team
 
         league = League.objects.create(
             name="Fin02OffL", mode="league", state="active", finance_enabled=False
@@ -2298,7 +2298,7 @@ class TestFin02CoachingEffectByTeamHelper(TestCase):
         self.assertEqual(_coaching_effect_by_team(league, prev), {})
 
     def test_games_weighted_smoothing_of_coaching_level(self) -> None:
-        from matches.league_views import _coaching_effect_by_team
+        from matches.league_services import _coaching_effect_by_team
 
         league, prev, teams = _fin02_finance_league("Fin02SmoothL")
         team = teams[0]
@@ -2446,7 +2446,7 @@ class TestFin03ScoutingBudgetByTeamHelper(TestCase):
     current-level fallback for a Team with no finance rows / zero games."""
 
     def test_finance_off_returns_empty_mapping(self) -> None:
-        from matches.league_views import _scouting_budget_by_team
+        from matches.league_services import _scouting_budget_by_team
 
         league = League.objects.create(
             name="Fin03OffL", mode="league", state="active", finance_enabled=False
@@ -2461,7 +2461,7 @@ class TestFin03ScoutingBudgetByTeamHelper(TestCase):
         self.assertEqual(_scouting_budget_by_team(league, prev), {})
 
     def test_games_weighted_smoothing_of_scouting_level(self) -> None:
-        from matches.league_views import _scouting_budget_by_team
+        from matches.league_services import _scouting_budget_by_team
 
         league, prev, teams = _fin02_finance_league("Fin03SmoothL")
         team = teams[0]
@@ -2488,7 +2488,7 @@ class TestFin03ScoutingBudgetByTeamHelper(TestCase):
         )
 
     def test_current_level_fallback_when_no_rows(self) -> None:
-        from matches.league_views import _scouting_budget_by_team
+        from matches.league_services import _scouting_budget_by_team
 
         league, prev, teams = _fin02_finance_league("Fin03FallbackL")
         team = teams[0]
@@ -2505,7 +2505,7 @@ class TestFin03ScoutingBudgetByTeamHelper(TestCase):
         )
 
     def test_zero_games_falls_back_to_current_level(self) -> None:
-        from matches.league_views import _scouting_budget_by_team
+        from matches.league_services import _scouting_budget_by_team
 
         league, prev, teams = _fin02_finance_league("Fin03ZeroGamesL")
         team = teams[0]
@@ -2532,7 +2532,7 @@ class TestFin03ScoutingBudgetByTeamOffByteIdentical(TestCase):
     LG-05."""
 
     def test_off_helper_is_empty_so_default_band_path_taken(self) -> None:
-        from matches.league_views import _scouting_budget_by_team
+        from matches.league_services import _scouting_budget_by_team
 
         league = League.objects.create(
             name="Fin03OffByte", mode="league", state="active", finance_enabled=False
@@ -2603,7 +2603,7 @@ class TestFin03NextSeasonThreadsBandViaHelper(TestCase):
         lo_team.budget_scouting = 34
         lo_team.save(update_fields=["budget_scouting"])
 
-        from matches.league_views import _scouting_budget_by_team
+        from matches.league_services import _scouting_budget_by_team
 
         band_map = _scouting_budget_by_team(league, prev)
         hi_band = band_map[hi_team.id]

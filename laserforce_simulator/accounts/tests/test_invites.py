@@ -209,7 +209,7 @@ class TestInviteAdmin(TestCase):
         self.client.force_login(admin)
         body = self.client.get(reverse("admin:accounts_invite_changelist")).content
         self.assertIn(
-            f"http://testserver/accounts/register/?invite={invite.code}",
+            f"http://testserver/register?invite={invite.code}",
             body.decode(),
         )
 
@@ -287,5 +287,5 @@ class TestInviteAdmin(TestCase):
         )
         invite = Invite.objects.get(email="friend@example.com")
         self.assertContains(
-            response, f"http://testserver/accounts/register/?invite={invite.code}"
+            response, f"http://testserver/register?invite={invite.code}"
         )

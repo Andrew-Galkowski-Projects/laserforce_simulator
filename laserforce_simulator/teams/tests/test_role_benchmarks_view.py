@@ -385,7 +385,7 @@ class TestPlayerCareerStatsExtended(TestCase):
         compute_career_stat_for_role on the same dicts.
         """
         from teams.role_benchmarks import compute_career_stat_for_role
-        from teams.views import _round_dict_from_state
+        from teams.services import _round_dict_from_state
 
         team, player = _make_player("HX01b D", "HX01b D Player")
         _make_round_state(

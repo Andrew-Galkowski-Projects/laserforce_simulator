@@ -18,7 +18,7 @@ from django.urls import reverse
 
 from matches.forms import CreateLeagueForm
 from matches.league_templates import LEAGUE_TEMPLATES, LEAGUE_TEMPLATES_BY_KEY
-from matches.league_views import _template_to_form_data
+from matches.league_services import template_to_form_data
 from matches.models import League, Season
 from teams.models import Team
 
@@ -83,7 +83,7 @@ class TestCre01TemplateTableIsValid(TestCase):
         for template in LEAGUE_TEMPLATES:
             with self.subTest(template=template.key):
                 form = CreateLeagueForm(
-                    data=_template_to_form_data(
+                    data=template_to_form_data(
                         template, league_name="X", difficulty="medium"
                     )
                 )
@@ -93,7 +93,7 @@ class TestCre01TemplateTableIsValid(TestCase):
         for template in LEAGUE_TEMPLATES:
             with self.subTest(template=template.key):
                 form = CreateLeagueForm(
-                    data=_template_to_form_data(
+                    data=template_to_form_data(
                         template, league_name="X", difficulty="medium"
                     )
                 )
@@ -110,7 +110,7 @@ class TestCre01TemplateTableIsValid(TestCase):
         for template in LEAGUE_TEMPLATES:
             with self.subTest(template=template.key):
                 form = CreateLeagueForm(
-                    data=_template_to_form_data(
+                    data=template_to_form_data(
                         template, league_name="X", difficulty="medium"
                     )
                 )

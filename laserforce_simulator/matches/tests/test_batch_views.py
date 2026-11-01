@@ -678,12 +678,12 @@ class TestSimulateBatchAPIStatusUnknownJobId:
 
 
 # ---------------------------------------------------------------------------
-# Pure-unit truth table — _celery_state_to_job_status (§5)
+# Pure-unit truth table — celery_state_to_job_status (§5)
 # ---------------------------------------------------------------------------
 
 
 class TestCeleryStateMappingHelper:
-    """§6.4 / §5 — exhaustive truth table of ``_celery_state_to_job_status``.
+    """§6.4 / §5 — exhaustive truth table of ``celery_state_to_job_status``.
     Pure-unit, no DB. Pins the locked mapping at the view boundary.
     """
 
@@ -702,11 +702,11 @@ class TestCeleryStateMappingHelper:
 
     @pytest.mark.parametrize("celery_state,expected", _TABLE)
     def test_truth_table(self, celery_state: str, expected: str) -> None:
-        from matches.views import _celery_state_to_job_status
+        from matches.job_status import celery_state_to_job_status
 
-        actual = _celery_state_to_job_status(celery_state)
+        actual = celery_state_to_job_status(celery_state)
         assert actual == expected, (
-            f"_celery_state_to_job_status({celery_state!r}) returned "
+            f"celery_state_to_job_status({celery_state!r}) returned "
             f"{actual!r}; expected {expected!r} (§5 truth table)"
         )
 

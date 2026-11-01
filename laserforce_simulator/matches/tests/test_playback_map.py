@@ -23,7 +23,7 @@ from core.models import (
 from matches.models import GameEvent, GameRound, PlayerRoundState
 from matches.tests.conftest import make_team_with_slots
 from conftest import get_shared_manager
-from matches.views import _build_playback_map
+from matches.playback import build_playback_map
 
 
 def _make_arena_map(name: str = "PbArena") -> tuple[ArenaMap, int]:
@@ -103,7 +103,7 @@ def _move(gr, actor, ts, start, end, route=None):
 class TestBuildPlaybackMap(TestCase):
     def test_returns_none_without_map(self) -> None:
         gr, _r, _b = _round(None, None, prefix="PbNoMap")
-        self.assertIsNone(_build_playback_map(gr))
+        self.assertIsNone(build_playback_map(gr))
 
     def test_reconstructs_corridor_faithful_routes(self) -> None:
         arena_map, zone_size = _make_arena_map("PbRoutes")
@@ -121,7 +121,7 @@ class TestBuildPlaybackMap(TestCase):
         _move(gr, commander, 4, (0, 0), (0, 2))
         _move(gr, commander, 10, (0, 2), (2, 2))
 
-        payload = _build_playback_map(gr)
+        payload = build_playback_map(gr)
         self.assertIsNotNone(payload)
         self.assertEqual(payload["zone_size"], zone_size)
 
@@ -173,7 +173,7 @@ class TestPlaybackMapOrder(TestCase):
         _move(gr, commander, 6, (0, 1), (1, 1), route=[[1, 1]])
         _move(gr, commander, 2, (0, 0), (0, 0), route=[[0, 0]])
 
-        payload = _build_playback_map(gr)
+        payload = build_playback_map(gr)
 
         state_ids = list(
             PlayerRoundState.objects.filter(game_round=gr)
@@ -201,7 +201,7 @@ class TestPlaybackMapOrder(TestCase):
             cell_col=0,
         )
         with CaptureQueriesContext(connection) as ctx:
-            _build_playback_map(gr)
+            build_playback_map(gr)
         sqls = [q["sql"] for q in ctx.captured_queries]
         states_sql = next(s for s in sqls if "playerroundstate" in s.lower())
         events_sql = next(s for s in sqls if "gameevent" in s.lower())
@@ -232,7 +232,7 @@ class TestStoredRoutePreferred(TestCase):
         winding = [[1, 0], [1, 1], [0, 1], [0, 2], [0, 3]]
         _move(gr, commander, 4, (0, 0), (0, 3), route=winding)
 
-        payload = _build_playback_map(gr)
+        payload = build_playback_map(gr)
         p = {pl["id"]: pl for pl in payload["players"]}[commander.id]
         self.assertEqual(p["moves"], [[4, winding]])
 

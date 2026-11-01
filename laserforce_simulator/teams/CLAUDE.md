@@ -114,7 +114,8 @@ The LG-00 / LG-00b private helpers **moved here** (`_pop_unique_name`, `_team_na
 `_ROSTER_TEMPLATE_ROWS`) and are **re-exported from `teams/views.py`**, so
 `from teams.views import _generate_teams, _apply_roster, ...` (League / Tournament views, tests) still
 works. To monkey-patch a dependency such as `draw_stats`, patch `teams.services`, not `teams.views`.
-`_SORT_KEYS` / `_coerce_*` stay in `teams/views.py`.
+The Player sort whitelist is `teams.services.PLAYER_SORT_KEYS` (ANG-08; `teams/views.py` keeps a
+`_SORT_KEYS` alias until D1). `_coerce_*` stay in `teams/views.py`.
 
 Analytics reads, filters + ordering, the ANG-01b builders, the roster-import ownership fix and the
 serializers: `docs/agents/teams/api.md`.
@@ -145,7 +146,7 @@ serializers: `docs/agents/teams/api.md`.
 - `test_serializers.py` — PlayerSerializer, PlayerInlineSerializer, TeamSerializer, TeamListSerializer
 - `test_apis.py` — HTTP-level tests for `/api/teams/` and `/api/players/` (reads through the ANG-01a envelope: `body["data"]`, `body["meta"]["count"]`)
 - `test_api_writes.py` — ANG-01a writes: team create / PATCH / slots PUT / add player, generate (both modes), roster import (multipart, `row:<n>:<field>` errors, rollback, 415 on JSON), template CSV byte-equality, player PATCH / DELETE 204, every locked 405, cross-Account 404 on every write, manager stamping
-- `test_api_filters.py` — ANG-01a `TeamFilterSet` / `PlayerFilterSet` (free-agent default exclusion, `include_free_agents`, typed-filter 400s) and player ordering over the 23 `_SORT_KEYS`
+- `test_api_filters.py` — ANG-01a `TeamFilterSet` / `PlayerFilterSet` (free-agent default exclusion, `include_free_agents`, typed-filter 400s) and player ordering over the 23 `PLAYER_SORT_KEYS`
 - `test_services.py` — ANG-01a `teams/services.py` (`GenerationResult` / `RosterImportResult` fields, stamping, rollback, `resolve_import_teams` scope, `player_form_initial`, `annotate_overall_rating`, `build_roster_template_csv`)
 - `test_roster_import_ownership.py` — ANG-01a leak regression across HTML, API and service: importing a CSV that names another Account's Team creates a new stamped Team and never echoes the foreign player's name
 - `test_forms.py` — `PlayerForm` stat field completeness (all 19 fields present, defaults to 50) and save behavior

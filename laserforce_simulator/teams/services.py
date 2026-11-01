@@ -103,6 +103,38 @@ def annotate_overall_rating(qs: QuerySet[Player]) -> QuerySet[Player]:
     )
 
 
+# LG-00c — the Player sort whitelist (URL key -> ORM target), 22 ORM entries.
+# ``overall_rating`` sorts the ``annotate_overall_rating`` annotation. The
+# ``preferred_roles`` sort is Python-side and handled by each caller. Moved
+# here from ``teams.views._SORT_KEYS`` (ANG-08): the API and League screens
+# import it across apps.
+PLAYER_SORT_KEYS: dict[str, str] = {
+    "name": "name",
+    "team": "team__name",
+    "overall_rating": "overall_rating_db",
+    "player_awareness": "player_awareness",
+    "game_awareness": "game_awareness",
+    "resource_awareness": "resource_awareness",
+    "decision_making": "decision_making",
+    "positioning": "positioning",
+    "stamina": "stamina",
+    "speed": "speed",
+    "flexibility": "flexibility",
+    "adaptability": "adaptability",
+    "communication": "communication",
+    "teamwork": "teamwork",
+    "offensive_synergy": "Offensive_synergy",
+    "defensive_synergy": "defensive_synergy",
+    "midfield_synergy": "midfield_synergy",
+    "resupply_synergy": "resupply_synergy",
+    "resupply_efficiency": "resupply_efficiency",
+    "accuracy": "accuracy",
+    "survival": "survival",
+    "special_usage": "special_usage",
+    "potential": "potential",
+}
+
+
 # Two example rows demonstrating: (a) team grouping (both rows on
 # "Red Phoenix"), (b) comma-split preferred_roles cell ("scout,medic"),
 # and (c) a quoted CSV cell containing a comma. ``csv.writer`` auto-

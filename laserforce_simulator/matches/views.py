@@ -21,7 +21,12 @@ from accounts.permissions import (
 )
 from teams.models import Team, Player
 from . import round_comparison
-from .job_status import celery_state_to_job_status
+from .job_status import (
+    build_batch_status_response,
+    build_save_status_response,
+    celery_state_to_job_status,
+    int_or_none,
+)
 from .playback import build_playback_map as _build_playback_map
 from .models import (
     Match,
@@ -61,85 +66,6 @@ from .tasks import save_games_task, simulate_batch_task
 # service layer); the old private name stays importable from here.
 _celery_state_to_job_status = celery_state_to_job_status
 
-
-def int_or_none(raw: str | None) -> int | None:
-    """Coerce a request GET param to int; return None on missing/invalid."""
-    if raw is None or raw == "":
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def build_batch_status_response(
-    async_result: AsyncResult,
-    *,
-    team_red_id: int | None,
-    team_blue_id: int | None,
-    arena_map_id: int | None,
-) -> dict:
-    """Build the polling JSON dict for a batch job from an AsyncResult."""
-    state = async_result.state
-    status = _celery_state_to_job_status(state)
-
-    completed = 0
-    total = 0
-    partial: dict | None = None
-    error: str | None = None
-
-    if state == "PROGRESS":
-        info = async_result.info or {}
-        if isinstance(info, dict):
-            completed = int(info.get("completed", 0) or 0)
-            total = int(info.get("total", 0) or 0)
-            partial = info.get("aggregate")
-    elif state == "SUCCESS":
-        result = async_result.result or {}
-        if isinstance(result, dict):
-            n_val = int(result.get("n", 0) or 0)
-            completed = n_val
-            total = n_val
-            partial = result
-    elif state in ("FAILURE", "REVOKED"):
-        info = async_result.info
-        if info is not None:
-            error = str(info)
-
-    return {
-        "status": status,
-        "completed": completed,
-        "total": total,
-        "partial": partial,
-        "error": error,
-        "team_red_id": team_red_id,
-        "team_blue_id": team_blue_id,
-        "arena_map_id": arena_map_id,
-    }
-
-
-def build_save_status_response(async_result: AsyncResult) -> dict:
-    """Build the polling JSON dict for a save job from an AsyncResult."""
-    state = async_result.state
-    status = _celery_state_to_job_status(state)
-
-    round_ids: list[int] = []
-    error: str | None = None
-
-    if state == "SUCCESS":
-        result = async_result.result or {}
-        if isinstance(result, dict):
-            round_ids = list(result.get("round_ids", []) or [])
-    elif state in ("FAILURE", "REVOKED"):
-        info = async_result.info
-        if info is not None:
-            error = str(info)
-
-    return {"status": status, "error": error, "round_ids": round_ids}
-
-
-# ANG-01b — renamed public; the old private name stays as an alias.
-_build_save_status_response = build_save_status_response
 
 # ANG-01b — the RV-01 helpers moved to `matches.services`; re-exported under
 # their historical names so existing `from matches.views import ...` keeps working.

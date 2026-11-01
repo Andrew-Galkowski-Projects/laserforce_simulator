@@ -73,7 +73,7 @@ from matches.team_history_logic import (
 from matches.team_stats_logic import TeamStatRow, aggregate_team_stats, sort_team_stats
 from matches.tournament_services.detail import build_rounds
 from teams.models import Player, Team
-from teams.views import _SORT_KEYS as RATING_SORT_KEYS
+from teams.services import PLAYER_SORT_KEYS as RATING_SORT_KEYS
 
 CAREER: Literal["career"] = "career"
 
@@ -532,7 +532,7 @@ def _order_rated_players(
 
     ``preferred_roles`` sorts in Python (a JSON list); ``potential`` is
     nullable and sorts nulls last in BOTH directions; every other key is an
-    ORM sort through ``teams.views._SORT_KEYS``. ``name`` breaks ties.
+    ORM sort through ``teams.services.PLAYER_SORT_KEYS``. ``name`` breaks ties.
     """
     if sort == "preferred_roles":
         rows = list(qs)

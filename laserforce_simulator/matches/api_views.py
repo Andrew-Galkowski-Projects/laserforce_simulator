@@ -24,6 +24,11 @@ from matches.api_forms import CompareRoundsParamsForm
 from matches.api_refs import round_ref
 from matches.filters import GameEventFilterSet, GameRoundFilterSet, MatchFilterSet
 from matches.forms import MatchSetupForm, SaveBatchGamesForm, SingleRoundSetupForm
+from matches.job_status import (
+    build_batch_status_response,
+    build_save_status_response,
+    int_or_none,
+)
 from matches.models import GameRound, Match, PlayerRoundState
 from matches.playback import round_playback
 from matches.serializers import (
@@ -48,11 +53,6 @@ from matches.services import (
 from matches.sim_helpers.pdf_report import build_round_report
 from matches.simulation import BatchSimulator
 from matches.tasks import save_games_task, simulate_batch_task
-from matches.views import (
-    build_batch_status_response,
-    build_save_status_response,
-    int_or_none,
-)
 
 
 class SimulateBatchRequestSerializer(serializers.Serializer):

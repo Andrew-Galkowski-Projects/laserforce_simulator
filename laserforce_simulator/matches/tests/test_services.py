@@ -585,34 +585,3 @@ class TestRoundAnalyticsBuilders(_ServicesTestCase):
         self.assertEqual(
             round_report_filename(game_round), f"round-{game_round.pk}-red-vs-blue.pdf"
         )
-
-
-# ---------------------------------------------------------------------------
-# Re-exports kept for existing importers (contract §2 / §4)
-# ---------------------------------------------------------------------------
-
-
-class TestViewsReExports(TestCase):
-    def test_moved_helpers_reexported_from_views(self) -> None:
-        from matches import services, views
-
-        self.assertIs(views._shared_team_ids, services.shared_team_ids)
-        self.assertIs(views._comparison_row, services._comparison_row)
-        self.assertIs(views._cumulative_team_points, services._cumulative_team_points)
-        self.assertIs(views._player_row, services._player_row)
-
-    def test_round_row_builders_live_in_services(self) -> None:
-        """RV-05 (#286): the two playback row builders the series port
-        consumes moved to ``services`` (which must not import ``views``);
-        ``views`` keeps re-exporting them for its existing importers."""
-        from matches import services, views
-
-        self.assertIs(views._round_players_data, services._round_players_data)
-        self.assertIs(views.round_playback_payload, services.round_playback_payload)
-
-    def test_build_save_status_response_alias(self) -> None:
-        from matches import views
-
-        self.assertIs(
-            views._build_save_status_response, views.build_save_status_response
-        )

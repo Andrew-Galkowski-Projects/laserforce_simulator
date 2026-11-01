@@ -23,7 +23,7 @@ from django.urls import reverse
 
 from conftest import get_shared_manager
 from matches.forms import CreateLeagueForm
-from matches.league_views import _create_league_and_season
+from matches.league_services import create_league_and_season
 from matches.models import (
     GameRound,
     League,
@@ -306,22 +306,22 @@ class TestLeagueCreateStoresVisibility(TestCase):
         form = CreateLeagueForm(VALID_LEAGUE_PAYLOAD)
         self.assertTrue(form.is_valid(), form.errors)
         self.assertFalse(form.fields["visibility"].required)
-        season = _create_league_and_season(form)
+        season = create_league_and_season(form)
         self.assertEqual(season.league.visibility, "closed")
 
     def test_explicit_open_is_persisted(self) -> None:
         form = bound_league_form(visibility="open", league_name="Open Author")
-        season = _create_league_and_season(form)
+        season = create_league_and_season(form)
         self.assertEqual(season.league.visibility, "open")
 
     def test_blank_visibility_is_coerced_to_closed(self) -> None:
         form = bound_league_form(visibility="", league_name="Blank Author")
-        season = _create_league_and_season(form)
+        season = create_league_and_season(form)
         self.assertEqual(season.league.visibility, "closed")
 
 
 # ---------------------------------------------------------------------------
-# Stamping sites #3, #4 — _create_league_and_season (§6.1, §6.4)
+# Stamping sites #3, #4 — create_league_and_season (§6.1, §6.4)
 # ---------------------------------------------------------------------------
 
 
@@ -332,7 +332,7 @@ class TestCreateLeagueAndSeasonManagerKwarg(TestCase):
         user = User.objects.create_user(
             email="league-author@example.com", password="Str0ng-Passphrase-9"
         )
-        season = _create_league_and_season(
+        season = create_league_and_season(
             bound_league_form(league_name="Stamped League"), manager=user
         )
         self.assertEqual(season.league.manager_id, user.pk)
@@ -342,7 +342,7 @@ class TestCreateLeagueAndSeasonManagerKwarg(TestCase):
         user = User.objects.create_user(
             email="league-author2@example.com", password="Str0ng-Passphrase-9"
         )
-        season = _create_league_and_season(
+        season = create_league_and_season(
             bound_league_form(league_name="Stamped Teams"), manager=user
         )
         teams = list(season.teams.all())
@@ -356,7 +356,7 @@ class TestCreateLeagueAndSeasonManagerKwarg(TestCase):
         user = User.objects.create_user(
             email="league-author3@example.com", password="Str0ng-Passphrase-9"
         )
-        season = _create_league_and_season(
+        season = create_league_and_season(
             bound_league_form(league_name="Stamped Pool"), manager=user
         )
         pool = season.league.free_agent_pool
@@ -364,7 +364,7 @@ class TestCreateLeagueAndSeasonManagerKwarg(TestCase):
         self.assertEqual(pool.manager_id, user.pk)
 
     def test_omitting_the_kwarg_leaves_everything_unmanaged(self) -> None:
-        season = _create_league_and_season(
+        season = create_league_and_season(
             bound_league_form(league_name="Unmanaged League")
         )
         self.assertIsNone(season.league.manager_id)
@@ -373,7 +373,7 @@ class TestCreateLeagueAndSeasonManagerKwarg(TestCase):
                 self.assertIsNone(team.manager_id)
 
     def test_the_season_itself_is_not_a_root(self) -> None:
-        season = _create_league_and_season(
+        season = create_league_and_season(
             bound_league_form(league_name="Derived Season")
         )
         self.assertNotIn("manager", {f.name for f in Season._meta.get_fields()})

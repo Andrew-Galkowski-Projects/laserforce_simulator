@@ -14,7 +14,7 @@ from datetime import date
 from django.test import TestCase
 from django.urls import reverse
 
-from matches.league_views import _validate_conference_partition
+from matches.league_services import _validate_conference_partition
 from matches.models import Conference, League, Season
 from matches.tests.conftest import make_team_with_slots
 

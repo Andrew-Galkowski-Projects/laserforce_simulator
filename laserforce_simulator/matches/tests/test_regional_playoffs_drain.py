@@ -417,7 +417,7 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
         )
 
     def test_playoff_cursor_keys_report_the_phase_active(self) -> None:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
 
         active, tournament_id, completed, _following, _final = _playoff_cursor_keys(
             self.season
@@ -428,7 +428,7 @@ class TestRegionalUiEntryPointsReachTheBrackets(TestCase):
         self.assertEqual(tournament_id, self.tournaments[0].id)
 
     def test_cursor_reports_completed_only_when_every_bracket_drains(self) -> None:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
         from matches.tournament_engine import play_next_bracket_round
 
         # Drain ONE Conference's bracket fully; the other stays untouched.
@@ -469,7 +469,7 @@ class TestZeroConferenceUiEntryPointsUnchanged(TestCase):
         self.assertEqual(_resolved_node_count(self.phase.tournament) - before, 1)
 
     def test_cursor_keys_still_point_at_the_single_embedded_bracket(self) -> None:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
 
         active, tournament_id, _completed, _following, _final = _playoff_cursor_keys(
             self.season

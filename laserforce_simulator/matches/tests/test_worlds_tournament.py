@@ -1303,7 +1303,7 @@ class TestFollowingTournamentIsFinal(TestCase):
     """
 
     def _final_flag(self, season: Season) -> bool:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
 
         (
             _active,
@@ -1315,7 +1315,7 @@ class TestFollowingTournamentIsFinal(TestCase):
         return following_tournament_is_final
 
     def _has_following(self, season: Season) -> bool:
-        from matches.league_views import _playoff_cursor_keys
+        from matches.league_services import _playoff_cursor_keys
 
         return _playoff_cursor_keys(season)[3]
 

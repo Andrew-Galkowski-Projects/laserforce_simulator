@@ -7,7 +7,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase
 from PIL import Image as PILImage
 
-from .views import _get_image_local_path, _seed_defaults
+from .services import _get_image_local_path, _seed_defaults
 
 
 class GetImageLocalPathTests(TestCase):
@@ -585,7 +585,7 @@ class RestoreDefaultImagesTests(TestCase):
         from django.test import override_settings
 
         from .models import ArenaMap
-        from .views import _DEFAULT_MAPS
+        from .services import _DEFAULT_MAPS
 
         name, filename = _DEFAULT_MAPS[0]
         media_root = Path(tempfile.mkdtemp())

@@ -693,7 +693,7 @@ class TestM1EventLogWindowing:
 #   `round_b` from the GET query string.
 #
 #   Helpers in matches/views.py:
-#     - _shared_team_ids(round_a, round_b) -> list[int]
+#     - shared_team_ids(round_a, round_b) -> list[int]
 #     - _player_stat_deltas(round_a, round_b, team_ids) -> list[dict]
 #     - _cumulative_team_points(game_round, team_id) -> list[list]
 #
@@ -1000,10 +1000,10 @@ class TestRv01CompareRounds:
         ), "compare mode must emit the per-player delta json_script block"
 
     # ------------------------------------------------------------------ #
-    # 6. _shared_team_ids is Side-agnostic.                              #
+    # 6. shared_team_ids is Side-agnostic.                              #
     # ------------------------------------------------------------------ #
     def test_shared_team_ids_is_side_agnostic(self):
-        from matches.views import _shared_team_ids
+        from matches.services import shared_team_ids
 
         team_x, _ = make_team_with_slots("Rv01ShareX")
         team_y, _ = make_team_with_slots("Rv01ShareY")
@@ -1013,14 +1013,14 @@ class TestRv01CompareRounds:
         round_a = _make_round(team_x, team_y)
         round_b = _make_round(team_z, team_x)
 
-        shared = _shared_team_ids(round_a, round_b)
+        shared = shared_team_ids(round_a, round_b)
         assert shared == [team_x.id], (
             "X is shared across both rounds even though it played different "
             f"Sides; got {shared!r}"
         )
 
     def test_shared_team_ids_distinct_teams_empty(self):
-        from matches.views import _shared_team_ids
+        from matches.services import shared_team_ids
 
         red_a, _ = make_team_with_slots("Rv01DistRA")
         blue_a, _ = make_team_with_slots("Rv01DistBA")
@@ -1030,14 +1030,14 @@ class TestRv01CompareRounds:
         round_a = _make_round(red_a, blue_a)
         round_b = _make_round(red_b, blue_b)
 
-        assert _shared_team_ids(round_a, round_b) == []
+        assert shared_team_ids(round_a, round_b) == []
 
     # ------------------------------------------------------------------ #
     # 7. _player_stat_deltas row shape + delta == b - a.                 #
     # ------------------------------------------------------------------ #
     def test_player_stat_deltas_row_shape_for_player_in_both_rounds(self):
         from matches.round_comparison import player_stat_deltas
-        from matches.views import _comparison_row
+        from matches.services import _comparison_row
 
         team_x, players = make_team_with_slots("Rv01DeltaX")
         blue_a, _ = make_team_with_slots("Rv01DeltaBA")
@@ -1125,7 +1125,7 @@ class TestRv01CompareRounds:
 
     def test_player_stat_deltas_player_in_only_one_round(self):
         from matches.round_comparison import player_stat_deltas
-        from matches.views import _comparison_row
+        from matches.services import _comparison_row
 
         team_x, players = make_team_with_slots("Rv01OneSide")
         blue_a, _ = make_team_with_slots("Rv01OneSideBA")
@@ -1186,7 +1186,7 @@ class TestRv01CompareRounds:
     # 8. _cumulative_team_points — monotonic running sum, null coalesce. #
     # ------------------------------------------------------------------ #
     def test_cumulative_team_points_running_sum_with_null_coalesce(self):
-        from matches.views import _cumulative_team_points
+        from matches.services import _cumulative_team_points
 
         red, players = make_team_with_slots("Rv01Cum")
         blue, _ = make_team_with_slots("Rv01CumBlue")
@@ -1248,7 +1248,7 @@ class TestRv01CompareRounds:
         )
 
     def test_cumulative_team_points_empty_round_returns_empty(self):
-        from matches.views import _cumulative_team_points
+        from matches.services import _cumulative_team_points
 
         red, _ = make_team_with_slots("Rv01CumEmpty")
         blue, _ = make_team_with_slots("Rv01CumEmptyBlue")
@@ -3966,7 +3966,7 @@ class TestPlayerRowEliminationSemantic:
 
     def test_survived_full_round_sentinel_carries_false(self):
         """``was_eliminated_at = 1801`` (SURVIVED_SENTINEL) ⇒ is_eliminated=False."""
-        from matches.views import _player_row
+        from matches.services import _player_row
 
         ps = self._state_with_eliminated_at(1801)
         row = _player_row(ps)
@@ -3975,7 +3975,7 @@ class TestPlayerRowEliminationSemantic:
 
     def test_eliminated_in_first_half_carries_true(self):
         """``was_eliminated_at = 478`` ⇒ is_eliminated=True with MM:SS string."""
-        from matches.views import _player_row
+        from matches.services import _player_row
 
         ps = self._state_with_eliminated_at(478)
         row = _player_row(ps)
@@ -3987,7 +3987,7 @@ class TestPlayerRowEliminationSemantic:
         tick. ``was_eliminated_at = 1277`` is the broken-case fixture (Round 80
         Vipers Heavy).
         """
-        from matches.views import _player_row
+        from matches.services import _player_row
 
         ps = self._state_with_eliminated_at(1277)
         row = _player_row(ps)
@@ -3997,7 +3997,7 @@ class TestPlayerRowEliminationSemantic:
         """Pre-fix boundary: ``val == 920`` was wrongly treated as survived
         because 920 > 900. Round 80 had a Vipers Scout-A at tick 920.
         """
-        from matches.views import _player_row
+        from matches.services import _player_row
 
         ps = self._state_with_eliminated_at(920)
         row = _player_row(ps)
@@ -4007,7 +4007,7 @@ class TestPlayerRowEliminationSemantic:
         """``was_eliminated_at = 1800`` is the last legal elimination tick of
         a 1800-tick round — must still be treated as eliminated.
         """
-        from matches.views import _player_row
+        from matches.services import _player_row
 
         ps = self._state_with_eliminated_at(1800)
         row = _player_row(ps)
@@ -4017,7 +4017,7 @@ class TestPlayerRowEliminationSemantic:
         """``was_eliminated_at = 0`` is the legacy "never set" sentinel — must
         be treated as not-eliminated to avoid false-positives on old rounds.
         """
-        from matches.views import _player_row
+        from matches.services import _player_row
 
         ps = self._state_with_eliminated_at(0)
         row = _player_row(ps)
@@ -4033,8 +4033,8 @@ class TestPlayerRowEliminationSemantic:
 #
 # Four NEW classes appended below (existing classes above are NOT modified):
 #
-#   - TestLg01iCursorDispatch — ``_resolve_live_cursor`` RR / rr_bye / None
-#     (no current_team) / playoff / eliminated, and ``_alive_playoff_node``.
+#   - TestLg01iCursorDispatch — ``resolve_live_cursor`` RR / rr_bye / None
+#     (no current_team) / playoff / eliminated, and ``alive_playoff_node``.
 #   - TestLg01iLivePreviewView — ``play_week_live_preview`` GET 200 (valid RR /
 #     playoff cursor), 400 dashboard re-render (non-active / no live entry),
 #     405 (POST); the session pin written with the drawn seed(s) + cursor
@@ -4053,8 +4053,8 @@ class TestPlayerRowEliminationSemantic:
 # ``simulate_scheduled_round`` (which auto-builds the tournament phase), the
 # ``test_season_playoff*`` fixture pattern.
 #
-# These assertions WILL fail until the Code agent lands ``_resolve_live_cursor``
-# / ``_alive_playoff_node`` / the three ``play_week_live_*`` views / the
+# These assertions WILL fail until the Code agent lands ``resolve_live_cursor``
+# / ``alive_playoff_node`` / the three ``play_week_live_*`` views / the
 # ``play_week_live`` URL routes / the session-pin lifecycle; that is the
 # expected TDD red state for the parallel build.
 # ===========================================================================
@@ -4197,13 +4197,13 @@ def _lg01i_eliminated_team(tournament, teams):
 
 
 class TestLg01iCursorDispatch(_Lg01iTestCase):
-    """``_resolve_live_cursor(season)`` + ``_alive_playoff_node(tournament,
+    """``resolve_live_cursor(season)`` + ``alive_playoff_node(tournament,
     team)`` — the cursor-resolution helpers (§5 / §5a)."""
 
     def _resolve(self, season):
-        from matches.league_views import _resolve_live_cursor
+        from matches.league_play_services import resolve_live_cursor
 
-        return _resolve_live_cursor(season)
+        return resolve_live_cursor(season)
 
     def test_rr_cursor_when_current_team_in_next_matchday(self):
         season, _teams = _lg01i_rr_season("CurRR", n=2, manager_idx=0)
@@ -4263,26 +4263,26 @@ class TestLg01iCursorDispatch(_Lg01iTestCase):
         self.assertIsNone(self._resolve(season))
 
     def test_alive_playoff_node_returns_node_for_participant(self):
-        from matches.league_views import _alive_playoff_node
+        from matches.league_play_services import alive_playoff_node
 
         season, teams, tp = _lg01i_built_playoff_season("AlivePlayNode", n=4)
         tp.refresh_from_db()
         alive_team, node = _lg01i_alive_team(tp.tournament, teams)
-        resolved = _alive_playoff_node(tp.tournament, alive_team)
+        resolved = alive_playoff_node(tp.tournament, alive_team)
         self.assertIsNotNone(resolved)
         self.assertIn(alive_team.id, (resolved.team_a_id, resolved.team_b_id))
         # Pinned to a Series that has not started (game-1 cursor).
         self.assertEqual(resolved.series_matches.count(), 0)
 
     def test_alive_playoff_node_returns_none_for_eliminated(self):
-        from matches.league_views import _alive_playoff_node
+        from matches.league_play_services import alive_playoff_node
 
         season, teams, tp = _lg01i_built_playoff_season("AliveElimNode", n=4)
         tp.refresh_from_db()
         elim = _lg01i_eliminated_team(tp.tournament, teams)
         if elim is None:
             self.skipTest("no eliminated team in this (non-deterministic) bracket")
-        self.assertIsNone(_alive_playoff_node(tp.tournament, elim))
+        self.assertIsNone(alive_playoff_node(tp.tournament, elim))
 
 
 class TestLg01iPlayWeekLive(_Lg01iTestCase):

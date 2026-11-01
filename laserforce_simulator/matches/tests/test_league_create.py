@@ -20,7 +20,7 @@ from django.test import TestCase
 from django.urls import reverse
 
 from matches.forms import CreateLeagueForm
-from matches.league_views import _rank_teams_by_strength
+from matches.league_services import _rank_teams_by_strength
 from matches.models import League, Season
 from teams.models import Player, Team
 
@@ -1710,7 +1710,7 @@ class TestFin03SeedBudgetsByStrengthHelper(TestCase):
             p.save()
 
     def test_consts_exist_with_locked_values(self) -> None:
-        from matches.league_views import (
+        from matches.league_services import (
             SEED_BUDGET_MAX,
             SEED_BUDGET_MIN,
             SEED_BUDGET_SINGLE,
@@ -1721,7 +1721,7 @@ class TestFin03SeedBudgetsByStrengthHelper(TestCase):
         self.assertEqual(SEED_BUDGET_SINGLE, 55)
 
     def test_strongest_gets_max_weakest_gets_min(self) -> None:
-        from matches.league_views import _seed_team_budgets_by_strength
+        from matches.league_services import _seed_team_budgets_by_strength
 
         strong, _ = _fin03_team("Fin03Strong")
         weak, _ = _fin03_team("Fin03Weak")
@@ -1737,7 +1737,7 @@ class TestFin03SeedBudgetsByStrengthHelper(TestCase):
         self.assertEqual(weak.budget_scouting, 20)
 
     def test_all_three_budget_fields_equal_per_team(self) -> None:
-        from matches.league_views import _seed_team_budgets_by_strength
+        from matches.league_services import _seed_team_budgets_by_strength
 
         a, _ = _fin03_team("Fin03TripA")
         b, _ = _fin03_team("Fin03TripB")
@@ -1754,7 +1754,7 @@ class TestFin03SeedBudgetsByStrengthHelper(TestCase):
             self.assertEqual(team.budget_scouting, team.budget_facilities)
 
     def test_single_team_gets_seed_budget_single(self) -> None:
-        from matches.league_views import _seed_team_budgets_by_strength
+        from matches.league_services import _seed_team_budgets_by_strength
 
         solo, _ = _fin03_team("Fin03Solo")
         self._pin_roster_overall(solo, 60)
@@ -1767,7 +1767,7 @@ class TestFin03SeedBudgetsByStrengthHelper(TestCase):
         self.assertEqual(solo.budget_facilities, 55)
 
     def test_rank_linear_spread_strongest_above_weakest(self) -> None:
-        from matches.league_views import _seed_team_budgets_by_strength
+        from matches.league_services import _seed_team_budgets_by_strength
 
         strong, _ = _fin03_team("Fin03SpreadStrong")
         mid, _ = _fin03_team("Fin03SpreadMid")
