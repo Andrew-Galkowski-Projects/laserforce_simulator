@@ -34,8 +34,13 @@ def spa_index(request: HttpRequest) -> HttpResponse:
 def app_redirect(
     request: HttpRequest, path: str | None = None
 ) -> HttpResponsePermanentRedirect:
-    """ADR-0046 links: ``/app/<path>`` moves to ``/<path>``, query string kept."""
+    """ADR-0046 links: ``/app/<path>`` moves to ``/<path>``, query string kept.
+
+    Leading slashes and backslashes are dropped, so ``/app//evil.com`` stays on
+    this site instead of becoming the protocol-relative ``//evil.com``.
+    """
+    local_path = (path or "").lstrip("/\\")
     query = request.META.get("QUERY_STRING", "")
     return HttpResponsePermanentRedirect(
-        f"/{path or ''}" + (f"?{query}" if query else "")
+        f"/{local_path}" + (f"?{query}" if query else "")
     )

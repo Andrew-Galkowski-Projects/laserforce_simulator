@@ -101,6 +101,19 @@ class AppRedirectTests(SpaBundleMixin, TestCase):
                 self.assertEqual(response.status_code, 301)
                 self.assertEqual(response["Location"], "/")
 
+    def test_app_redirect_never_leaves_the_site(self) -> None:
+        # /app//evil.com must not become a protocol-relative //evil.com.
+        for path, location in (
+            ("/app//evil.com", "/evil.com"),
+            ("/app//evil.com/x", "/evil.com/x"),
+            ("/app/\\evil.com", "/evil.com"),
+            ("/app/\\/evil.com", "/evil.com"),
+        ):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 301)
+                self.assertEqual(response["Location"], location)
+
     def test_app_prefix_needs_a_boundary(self) -> None:
         # /apple is an SPA path, not an /app link.
         response = self.client.get("/apple")

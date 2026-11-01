@@ -29,7 +29,7 @@ frontend -------------------------------------------------^
   SPA, ADR-0049) and smoke-tests it on Postgres (`curl` on `:8000/admin/login/` until ready), then,
   in the same step while that container is up, runs `bash scripts/smoke_spa.sh` (ANG-10). It
   asserts response bodies and headers on `:8000`: the SPA at `/` with `<base href="/">` and
-  `no-cache`, the deep-link fallback, the main bundle `immutable` and gzip, a font under `/fonts/`
+  `no-cache`, the deep-link fallback, the main bundle `immutable`, gzip and brotli, a font under `/fonts/`
   `immutable`, `/api/` reaching Django (a 401 envelope) and an unknown `/api/` path a 404 that is
   not the SPA, the `/app/<path>` 301, Admin's `/static/` stylesheet, and CSRF / `X-Forwarded-Proto`
   against `/admin/login/`. Run it locally against the image: `docker run -d -p 8000:8000 -e

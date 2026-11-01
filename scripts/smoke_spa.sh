@@ -57,6 +57,8 @@ check "the main bundle is 200 (got $code)" [ "$code" = "200" ]
 check "the main bundle is immutable" has '^cache-control:.*immutable' "$TMP/js.h"
 curl -s -D "$TMP/gz.h" -o /dev/null -H 'Accept-Encoding: gzip' "$BASE/${main_js:-missing.js}"
 check "the main bundle is served gzip" has '^content-encoding: gzip' "$TMP/gz.h"
+curl -s -D "$TMP/br.h" -o /dev/null -H 'Accept-Encoding: br' "$BASE/${main_js:-missing.js}"
+check "the main bundle is served brotli" has '^content-encoding: br' "$TMP/br.h"
 
 # 4. The fonts live under /fonts/, not Django's /media/ (outputPath.media).
 styles_css="$(grep -o 'styles-[A-Za-z0-9_-]*\.css' "$TMP/root.html" | head -1)"

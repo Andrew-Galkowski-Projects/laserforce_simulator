@@ -241,9 +241,11 @@ The `/code-review` Standards reviewer reads `CODING_STANDARDS.md`.
 
 ## Architecture
 
-Django 5.2 app that simulates competitive laser tag (Laserforce) matches. Django is API + Admin
-only: it serves `/api/`, `/admin/` and `/media/` and renders no pages of its own. The Angular SPA
-(`frontend/`) is the UI, served by nginx at `/` ([ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md)).
+Django 5.2 app that simulates competitive laser tag (Laserforce) matches. Django owns `/api/`,
+`/admin/`, `/static/` and `/media/` and renders no pages of its own. The Angular SPA (`frontend/`)
+is the UI at `/`: Django serves its built bundle from `SPA_ROOT` in every deploy, with no nginx
+([ADR-0049](docs/adr/0049-django-serves-the-spa-in-every-deploy.md); the URL split is
+[ADR-0047](docs/adr/0047-spa-at-root-django-api-and-admin-only.md)).
 Four Django apps: `accounts`, `teams`, `matches`, and `core`.
 
 ### Data Model Hierarchy
