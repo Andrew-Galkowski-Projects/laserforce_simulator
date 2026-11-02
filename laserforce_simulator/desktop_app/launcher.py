@@ -88,6 +88,13 @@ def prepare_environment(data: Path, spa: Path) -> None:
     os.environ["SECRET_KEY"] = key_file.read_text()
     os.environ["DATABASE_URL"] = "sqlite:///" + (data / "db.sqlite3").as_posix()
     os.environ["DJANGO_SETTINGS_MODULE"] = "desktop_app.settings"
+    # DESK-04: only a frozen build has a record of itself; unfrozen is dev.
+    if FROZEN:
+        os.environ["LF_DESKTOP_BUILD_INFO"] = str(
+            Path(sys._MEIPASS) / "build_info.json"  # type: ignore[attr-defined]
+        )
+    else:
+        os.environ.pop("LF_DESKTOP_BUILD_INFO", None)
 
 
 def migrate_or_reset(data: Path, migrate: Callable[[], None]) -> str | None:

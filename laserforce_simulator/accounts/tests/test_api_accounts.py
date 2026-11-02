@@ -9,6 +9,9 @@ Account whose rows must be invisible.
 
 from __future__ import annotations
 
+import json
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from django.contrib.auth import get_user_model
@@ -46,7 +49,8 @@ class MeTests(_Base):
         response = self.api.get(ME_URL)
         self.assertEqual(response.status_code, 200)
         data = response.json()["data"]
-        # DESK-01 added `desktop` / `desktop_notice` (Hosted: false / null).
+        # DESK-01 added `desktop` / `desktop_notice` (Hosted: false / null),
+        # DESK-04 `desktop_version` (Hosted: null).
         self.assertEqual(
             set(data),
             {
@@ -57,6 +61,7 @@ class MeTests(_Base):
                 "self_insert",
                 "desktop",
                 "desktop_notice",
+                "desktop_version",
             },
         )
         self.assertEqual(data["id"], self.user.pk)
@@ -83,6 +88,32 @@ class MeTests(_Base):
         self.assertEqual(
             data["desktop_notice"], "Your saved data could not be upgraded."
         )
+
+    def test_hosted_me_has_no_desktop_version(self) -> None:
+        self.assertIsNone(self.api.get(ME_URL).json()["data"]["desktop_version"])
+
+    def test_desktop_me_labels_the_build(self) -> None:
+        sha = "abc1234def5678abc1234def5678abc1234def56"
+        cases = [
+            ({"version": "0.1.0", "channel": "release", "sha": sha}, "v0.1.0"),
+            ({"version": None, "channel": "latest", "sha": sha}, "latest abc1234"),
+            ({"version": None, "channel": "dev", "sha": sha}, "dev abc1234"),
+            ({"version": None, "channel": "dev", "sha": None}, "dev"),
+        ]
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "build_info.json"
+            for info, label in cases:
+                path.write_text(json.dumps({**info, "built": "2026-11-02"}))
+                with (
+                    self.subTest(label=label),
+                    override_settings(DESKTOP_APP=True, DESKTOP_BUILD_INFO=path),
+                ):
+                    data = self.api.get(ME_URL).json()["data"]
+                    self.assertEqual(data["desktop_version"], label)
+
+    @override_settings(DESKTOP_APP=True, DESKTOP_BUILD_INFO=None)
+    def test_desktop_me_without_a_build_record_is_dev(self) -> None:
+        self.assertEqual(self.api.get(ME_URL).json()["data"]["desktop_version"], "dev")
 
     def test_hosted_me_never_shows_a_notice(self) -> None:
         set_notice("stray")

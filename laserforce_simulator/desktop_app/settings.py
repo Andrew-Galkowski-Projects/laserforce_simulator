@@ -30,6 +30,17 @@ SERVE_MEDIA = True
 SPA_ROOT = Path(os.environ["LF_DESKTOP_SPA"])
 WHITENOISE_ROOT = SPA_ROOT
 
+# DESK-04: the bundled build_info.json, set by the launcher when frozen; unset
+# (an unfrozen run) means no record, so a dev build with no Update check.
+DESKTOP_BUILD_INFO = (
+    Path(os.environ["LF_DESKTOP_BUILD_INFO"])
+    if os.environ.get("LF_DESKTOP_BUILD_INFO")
+    else None
+)
+# The Update check (desktop_app.update_check): GitHub's API, once per launch.
+DESKTOP_UPDATE_TIMEOUT = 5
+DESKTOP_RELEASES_REPO = "Andrew-Galkowski-Projects/laserforce_simulator"
+
 # In-process jobs: the launcher's Celery worker thread consumes the memory
 # broker; results live in the in-process cache backend.
 CELERY_TASK_ALWAYS_EAGER = False
