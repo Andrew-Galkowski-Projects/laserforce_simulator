@@ -43,6 +43,22 @@ class RunIdsTests(TestCase):
         self.assertEqual(watch_pr_ci.run_ids(checks), [])
 
 
+class RunLinesTests(TestCase):
+    """DESK-02 retro: ``gh run list --limit 1`` returned the PR evidence run, not
+    CI, so the summary names each run for ``ci_timings.py`` and ``--after-run``."""
+
+    def test_one_line_per_run_named_by_its_workflow(self) -> None:
+        checks = [
+            {**_check("test", "pass", "111"), "workflow": "CI"},
+            {**_check("screenshots", "pass", "222"), "workflow": "PR evidence"},
+            {**_check("frontend", "pass", "111"), "workflow": "CI"},
+        ]
+        self.assertEqual(
+            watch_pr_ci.run_lines(checks),
+            ["run: CI 111", "run: PR evidence 222"],
+        )
+
+
 class VerdictTests(TestCase):
     def test_no_checks_yet_is_pending(self) -> None:
         self.assertEqual(watch_pr_ci.verdict([], {}), "pending")
