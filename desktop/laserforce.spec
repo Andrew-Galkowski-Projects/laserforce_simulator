@@ -36,8 +36,9 @@ for package in (
     "waitress",
     # DESK-03: no "webview" here. pyinstaller-hooks-contrib's hooks for
     # webview, clr_loader and pythonnet bundle the App window (pywebview over
-    # WebView2, with its .NET DLLs). Add "webview" to this list only if CI's
-    # frozen `smoke.py --window` self-test fails on an import.
+    # WebView2, with its .NET DLLs) on their own: the frozen
+    # `smoke.py --window` self-test passed in CI run 41486664667 and in a
+    # local python.org 3.12 build.
 ):
     hidden += collect_submodules(package, filter=lambda name: ".tests" not in name)
 

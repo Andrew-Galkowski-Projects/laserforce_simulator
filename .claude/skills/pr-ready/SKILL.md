@@ -39,7 +39,9 @@ python scripts/run_suite.py
 ```
 
 It runs `pytest laserforce_simulator` and prints only the failures and the
-count line (the progress dots cost thousands of tokens).
+count line (the progress dots cost thousands of tokens). Run it in the
+foreground: a background run can be stopped for low memory while the session
+waits.
 
 Report the exact pass/fail counts (e.g. `877 passed, 0 failed`), not a vague
 "tests pass". If anything fails, surface the failing test names and stop —
