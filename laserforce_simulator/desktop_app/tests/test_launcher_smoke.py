@@ -354,6 +354,15 @@ def test_the_summary_shows_the_app_window_row_when_window_s_is_given() -> None:
 START_FAILED = "LF_WINDOW_FAIL WindowStartFailed: the App window did not load in 20 s"
 
 
+def test_the_retried_line_names_the_launchers_start_failure() -> None:
+    # smoke.py stays stdlib-only (the frozen smoke's Python has no Django), so
+    # it spells the line out; the launcher prints f"LF_WINDOW_FAIL {type}: ..."
+    # (launcher._open_shell). Renaming the exception must turn this red.
+    from desktop_app.shell import WindowStartFailed
+
+    assert smoke.WINDOW_START_FAILED == f"LF_WINDOW_FAIL {WindowStartFailed.__name__}"
+
+
 def test_the_cli_retries_the_window_once_after_a_failed_webview2_start(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -151,7 +151,9 @@ class FakeWindow:
         self.scripts: list[str] = []
         self.destroyed = False
         # pywebview's ``Event`` has the same ``wait`` / ``set`` / ``is_set``.
-        self.events = SimpleNamespace(loaded=threading.Event())
+        self.events = SimpleNamespace(
+            loaded=threading.Event(), closed=threading.Event()
+        )
 
     def evaluate_js(self, script: str) -> str:
         self.scripts.append(script)
@@ -312,6 +314,24 @@ def test_a_window_that_never_loads_raises_at_the_timeout_and_closes(
     assert str(failure.value) == "the App window did not load within 0.2 s"
     assert window.destroyed
     assert window.scripts == []  # no self-test on a window that never loaded
+
+
+def test_closing_the_window_before_it_loads_ends_the_watch_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # pywebview runs the start function on a non-daemon thread
+    # (webview/__init__.py), so a watch that outlives the window keeps the
+    # process, and its instance lock, alive until the start timeout.
+    monkeypatch.setattr(shell, "WINDOW_START_TIMEOUT_S", 5.0)
+    window = FakeWindow(["Sandbox"])
+    _fake_webview(monkeypatch, window, start_as="hang")
+    threading.Timer(0.1, window.events.closed.set).start()
+    started = time.monotonic()
+
+    shell.run_window("http://127.0.0.1:1234/login")
+
+    assert time.monotonic() - started < 2
+    assert not window.destroyed  # the player closed it; nothing to close
 
 
 def test_an_unrelated_pywebview_error_is_not_a_failed_start(

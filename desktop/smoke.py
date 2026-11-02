@@ -336,6 +336,14 @@ def _steps(
     return Timings(float(ready_s), round(cold_start_s, 2))
 
 
+def _timeout_output(expired: subprocess.TimeoutExpired) -> str:
+    """What a timed-out ``_run_once`` printed, as text."""
+    output = expired.output or ""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", "replace")
+    return output
+
+
 def _env(home: Path) -> dict[str, str]:
     return {**os.environ, "LF_DESKTOP_HOME": str(home), "PYTHONUNBUFFERED": "1"}
 
@@ -351,13 +359,10 @@ def run_window_selftest(command: list[str], home: Path) -> float:
     try:
         result = _run_once(command, _env(home), WINDOW_TIMEOUT_S)
     except subprocess.TimeoutExpired as expired:
-        output = expired.output or ""
-        if isinstance(output, bytes):
-            output = output.decode("utf-8", "replace")
         raise SmokeFailure(
             "window",
             f"no LF_WINDOW_OK within {WINDOW_TIMEOUT_S} s"
-            f"\n--- launcher output ---\n{output}",
+            f"\n--- launcher output ---\n{_timeout_output(expired)}",
         )
     output = result.stdout
     ready = [line for line in output.splitlines() if line.startswith("LF_WINDOW_OK ")]
@@ -387,13 +392,10 @@ def run_window_failure_selftest(command: list[str], home: Path) -> float:
     try:
         result = _run_once(command, env, WINDOW_FAILURE_TIMEOUT_S)
     except subprocess.TimeoutExpired as expired:
-        output = expired.output or ""
-        if isinstance(output, bytes):
-            output = output.decode("utf-8", "replace")
         raise SmokeFailure(
             "window_failure",
             f"no {WINDOW_START_FAILED} within {WINDOW_FAILURE_TIMEOUT_S} s"
-            f"\n--- launcher output ---\n{output}",
+            f"\n--- launcher output ---\n{_timeout_output(expired)}",
         )
     output = result.stdout
     failed = any(line.startswith(WINDOW_START_FAILED) for line in output.splitlines())
@@ -413,13 +415,17 @@ def _window_with_retry(command: list[str]) -> tuple[float, bool]:
     failure, or a second one, stands. Returns the seconds and whether it
     retried.
     """
+
+    def selftest() -> float:
+        return _in_fresh_folder(lambda home: run_window_selftest(command, home))
+
     try:
-        return _in_fresh_folder(lambda home: run_window_selftest(command, home)), False
+        return selftest(), False
     except SmokeFailure as failure:
         if WINDOW_START_FAILED not in failure.detail:
             raise
         print("smoke: window failed to start; retrying once", flush=True)
-    return _in_fresh_folder(lambda home: run_window_selftest(command, home)), True
+    return selftest(), True
 
 
 def summary_markdown(

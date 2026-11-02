@@ -40,11 +40,12 @@ class WindowStartFailed(RuntimeError):
     """The App window could not start; the message says why."""
 
 
-class _InitFailureWatch(logging.Handler):
-    """Notes pywebview's WebView2 initialisation ERROR.
+class _StartWatch(logging.Handler):
+    """Why the App window failed to start, if it did.
 
-    It runs on the GUI thread, so it only records: the start watch closes the
-    window.
+    As a handler on the ``pywebview`` logger it notes WebView2's initialisation
+    ERROR; ``_watch_start`` notes the timeout. The handler runs on the GUI
+    thread, so it only records: the start watch closes the window.
     """
 
     def __init__(self) -> None:
@@ -52,11 +53,16 @@ class _InitFailureWatch(logging.Handler):
         self.failed = threading.Event()
         self.reason = ""
 
+    def fail(self, reason: str) -> None:
+        """Record the first failure only."""
+        if not self.failed.is_set():
+            self.reason = reason
+            self.failed.set()
+
     def emit(self, record: logging.LogRecord) -> None:
         message = record.getMessage()
-        if message.startswith(INIT_FAILED_PREFIX) and not self.failed.is_set():
-            self.reason = message.splitlines()[0]
-            self.failed.set()
+        if message.startswith(INIT_FAILED_PREFIX):
+            self.fail(message.splitlines()[0])
 
 
 def choose_shell(
@@ -110,33 +116,35 @@ def run_window(url: str, *, selftest: bool = False) -> None:
 
     webview.settings["ALLOW_DOWNLOADS"] = True
     window = webview.create_window(WINDOW_TITLE, url, width=1280, height=800)
-    watch = _InitFailureWatch()
-    failure: list[str] = []
+    watch = _StartWatch()
     pywebview_logger = logging.getLogger("pywebview")
     pywebview_logger.addHandler(watch)
     try:
-        webview.start(_watch_start, (window, watch, failure, selftest))
+        webview.start(_watch_start, (window, watch, selftest))
     finally:
         pywebview_logger.removeHandler(watch)
-    if failure:
-        raise WindowStartFailed(failure[0])
+    if watch.failed.is_set():
+        raise WindowStartFailed(watch.reason)
 
 
-def _watch_start(
-    window: Any, watch: _InitFailureWatch, failure: list[str], selftest: bool
-) -> None:
-    """Wait for the first load; on a failed start record why and close."""
+def _watch_start(window: Any, watch: _StartWatch, selftest: bool) -> None:
+    """Wait for the first load; on a failed start close the window.
+
+    It runs on pywebview's non-daemon thread, so it also ends when the person
+    closes the window first: otherwise the process would outlive the window.
+    """
     deadline = time.monotonic() + WINDOW_START_TIMEOUT_S
     while not window.events.loaded.wait(_START_POLL_S):
+        if window.events.closed.is_set():
+            return
         if watch.failed.is_set():
-            failure.append(watch.reason)
             break
         if time.monotonic() >= deadline:
-            failure.append(
+            watch.fail(
                 f"the App window did not load within {WINDOW_START_TIMEOUT_S:g} s"
             )
             break
-    if failure:
+    if watch.failed.is_set():
         window.destroy()
     elif selftest:
         _selftest(window)
