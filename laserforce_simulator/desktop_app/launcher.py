@@ -25,6 +25,7 @@ requests; the smoke test waits for it.
 from __future__ import annotations
 
 import gc
+import logging
 import os
 import secrets
 import shutil
@@ -42,6 +43,8 @@ from desktop_app.shell import WINDOW_TITLE, choose_shell, run_window, window_ava
 
 if TYPE_CHECKING:
     from accounts.models import User
+
+logger = logging.getLogger(__name__)
 
 LOCAL_EMAIL = "local@desktop.invalid"
 FROZEN = getattr(sys, "frozen", False)
@@ -229,12 +232,20 @@ def _open_shell(server: Any, url: str, argv: list[str]) -> None:
     """Serve, and show the shell ``choose_shell`` picks; returns when it closes.
 
     The App window must own the main thread, so waitress runs on a daemon
-    thread then and the process ends when the window closes.
+    thread then and the process ends when the window closes. A window that
+    raises falls back to the browser, served by that same thread.
     """
     shell = choose_shell(argv, window_available)
     if shell == "window":
-        threading.Thread(target=server.run, name="waitress", daemon=True).start()
-        run_window(url, selftest="--selftest-window" in argv)
+        serving = threading.Thread(target=server.run, name="waitress", daemon=True)
+        serving.start()
+        try:
+            run_window(url, selftest="--selftest-window" in argv)
+            return
+        except Exception:  # noqa: BLE001 - any window failure falls back
+            logger.exception("The App window failed; opening the browser.")
+        webbrowser.open(url)
+        serving.join()
         return
     if shell == "browser":
         threading.Timer(0.2, webbrowser.open, args=(url,)).start()

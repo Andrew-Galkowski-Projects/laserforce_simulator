@@ -492,6 +492,27 @@ def test_selftest_window_reaches_the_window(
     assert windows == [("http://127.0.0.1:1/x", True, True)]
 
 
+def test_a_window_that_raises_falls_back_to_the_browser_and_keeps_serving(
+    monkeypatch: pytest.MonkeyPatch,
+    opened: list[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Grill decision 2: WebView2 failing at start-up (not only missing) still
+    # leaves the person a working app in the default browser.
+    def run_window(url: str, *, selftest: bool = False) -> None:
+        raise OSError("WebView2 failed to start")
+
+    monkeypatch.setattr(launcher, "run_window", run_window)
+    monkeypatch.setattr(launcher, "window_available", lambda: True)
+    server = FakeServer()
+
+    launcher._open_shell(server, "http://127.0.0.1:1/x", ["main.py"])
+
+    assert opened == ["http://127.0.0.1:1/x"]
+    assert server.ran.is_set()
+    assert "WebView2 failed to start" in caplog.text
+
+
 def test_the_browser_shell_opens_the_browser_and_serves_on_the_main_thread(
     windows: list[tuple[str, bool, bool]], opened: list[str]
 ) -> None:
