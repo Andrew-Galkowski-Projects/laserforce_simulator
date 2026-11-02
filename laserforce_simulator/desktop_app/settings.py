@@ -1,6 +1,7 @@
 """DESK-01 (ADR-0048): the Desktop App's settings, on top of the Hosted ones.
 
-The launcher sets ``LF_DESKTOP_HOME``, ``LF_DESKTOP_SPA``, ``SECRET_KEY`` and
+The launcher sets ``LF_DESKTOP_HOME``, ``LF_DESKTOP_SPA``, ``LF_DESKTOP_MAPS``
+(DESK-04), ``SECRET_KEY`` and
 ``DATABASE_URL`` (SQLite in the data folder) in the environment before Django
 loads, so the base settings read the last two as usual.
 """
@@ -37,6 +38,9 @@ DESKTOP_BUILD_INFO = (
     if os.environ.get("LF_DESKTOP_BUILD_INFO")
     else None
 )
+# The two default Arena maps' images, set by the launcher: the bundle's
+# default_maps when frozen, the repo folder unfrozen.
+DEFAULT_MAPS_DIR = Path(os.environ["LF_DESKTOP_MAPS"])
 # The Update check (desktop_app.update_check): GitHub's API, once per launch.
 DESKTOP_UPDATE_TIMEOUT = 5
 DESKTOP_RELEASES_REPO = "Andrew-Galkowski-Projects/laserforce_simulator"

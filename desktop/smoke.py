@@ -37,6 +37,8 @@ MAP_IMAGE = (
     / "Screenshots_and_video_examples"
     / "San_Marcos_Laser_Tag_Map.jpg"
 )
+# DESK-04: the two default Arena maps the build ships (core.services._DEFAULT_MAPS).
+DEFAULT_MAP_NAMES = ["San Marcos Laser Tag", "Syracuse Laser Tag"]
 READY_TIMEOUT_S = 90
 JOB_TIMEOUT_S = 120
 INSTANCE_TIMEOUT_S = 30
@@ -281,6 +283,22 @@ def _steps(
         got = (me["email"], me["desktop"], me["desktop_notice"])
         if got != wanted:
             raise AssertionError(f"me is {got}, wanted {wanted}")
+        # DESK-04: the build's label (`dev` for a PR or unfrozen build).
+        if not me["desktop_version"]:
+            raise AssertionError(f"desktop_version is {me['desktop_version']!r}")
+
+    with _step("update", output):
+        # DESK-04: a dev build makes no Update check, so there is never an update.
+        update = _api(f"{base}/api/accounts/desktop-update/", 200, headers=auth)
+        if update is not None:
+            raise AssertionError(f"desktop-update is {update!r}, wanted None")
+
+    # Before the `map` step: the defaults are seeded only while no map exists.
+    with _step("default_maps", output):
+        maps = _api(f"{base}/api/maps/", 200, headers=auth)
+        names = sorted(row["name"] for row in maps)
+        if names != DEFAULT_MAP_NAMES:
+            raise AssertionError(f"maps are {names}, wanted {DEFAULT_MAP_NAMES}")
 
     with _step("teams", output):
         generated = _api(

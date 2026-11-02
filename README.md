@@ -142,9 +142,14 @@ Redis, and publishes them at `https://<name>.<tailnet>.ts.net` through Tailscale
 
 ### Option D — the Desktop App (Windows)
 
-**Download:** the [Latest desktop build](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip),
-rebuilt by CI on every merge to `main`. Unzip it and run `LaserforceSimulator\LaserforceSimulator.exe`.
-It is unsigned, so Windows SmartScreen warns: choose **More info**, then **Run anyway**. To build
+**Download:** the [current Release](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/releases/latest)
+([zip](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/releases/latest/download/LaserforceSimulator-windows-x64.zip)).
+Its page covers install, the data folder, upgrade and uninstall. Unzip it and run
+`LaserforceSimulator\LaserforceSimulator.exe`. It is unsigned, so Windows SmartScreen warns: choose
+**More info**, then **Run anyway**. Testers can take the
+[Latest desktop build](https://github.com/Andrew-Galkowski-Projects/laserforce_simulator/releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip)
+(`desktop-latest`) instead, rebuilt by CI on every merge to `main`. Each build shows its version in
+the Help menu and, once per launch, asks GitHub for a newer build of its own kind. To build
 it yourself on a python.org Python 3.12 (not conda), install
 `laserforce_simulator/requirements-desktop.txt` plus `pyinstaller`, run `npm --prefix frontend ci`,
 then `powershell -NoProfile -File desktop/build.ps1 -Python <python.exe> -Out <dir>`.

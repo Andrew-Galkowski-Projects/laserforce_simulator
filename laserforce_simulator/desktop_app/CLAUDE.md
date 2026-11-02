@@ -17,13 +17,15 @@ it `/` is a 404 but the API works.
 
 | Module | What |
 |---|---|
-| `launcher.py` | `main()`: `quiet_std_streams()` (a `None` `sys.stdout` / `sys.stderr` → `os.devnull`) → `data_dir()`, `logs/` made → `acquire_instance_lock(data)` into `_instance_lock` (on `None`: headless prints `LF_ALREADY_RUNNING`, else `focus_window(WINDOW_TITLE)` or the box `Laserforce Simulator is already running.`; exit 0) → inside one `try`: `prepare_environment(data, spa)` (writes `secret_key` once; sets `LF_DESKTOP_HOME`, `LF_DESKTOP_SPA`, `SECRET_KEY`, `DATABASE_URL` = SQLite in the data folder, `DJANGO_SETTINGS_MODULE=desktop_app.settings`, overwriting inherited values) → `django.setup()` → `migrate_or_reset(data, migrate)` → `set_notice(...)` → `local_account()` → `start_job_worker()` → waitress on `127.0.0.1`, port 0 (read back as `effective_port`) → prints `LF_READY <seconds> <launch url>` → `choose_shell(sys.argv, window_available)`: `window` runs waitress on a daemon thread and `run_window(url, selftest=...)` on the main thread (`main` returns when it closes; if it raises, the error is logged and the browser opens on the same waitress thread, or under `--selftest-window` it prints `LF_WINDOW_FAIL <type>: <message>` and returns), `browser` opens the browser then `server.run()`, `none` only `server.run()`. Any exception in the `try`: `report_startup_failure(data, headless=...)` (appends a timestamp line + traceback to `logs/desktop.log`; headless prints it to stderr, else the box `Laserforce Simulator could not start. Details: <log path>`), exit 1. Flags: `--no-browser` (headless, wins), `--browser`, `--selftest-window`. |
+| `launcher.py` | `main()`: `quiet_std_streams()` (a `None` `sys.stdout` / `sys.stderr` → `os.devnull`) → `data_dir()`, `logs/` made → `acquire_instance_lock(data)` into `_instance_lock` (on `None`: headless prints `LF_ALREADY_RUNNING`, else `focus_window(WINDOW_TITLE)` or the box `Laserforce Simulator is already running.`; exit 0) → inside one `try`: `prepare_environment(data, spa)` (writes `secret_key` once; sets `LF_DESKTOP_HOME`, `LF_DESKTOP_SPA`, DESK-04's `LF_DESKTOP_MAPS` (frozen `<_MEIPASS>/default_maps`, else the repo's `Screenshots_and_video_examples`) and `LF_DESKTOP_BUILD_INFO` (frozen `<_MEIPASS>/build_info.json`, else removed), `SECRET_KEY`, `DATABASE_URL` = SQLite in the data folder, `DJANGO_SETTINGS_MODULE=desktop_app.settings`, overwriting inherited values) → `django.setup()` → `migrate_or_reset(data, migrate)` → `set_notice(...)` → `local_account()` → `start_job_worker()` → waitress on `127.0.0.1`, port 0 (read back as `effective_port`) → prints `LF_READY <seconds> <launch url>` → `choose_shell(sys.argv, window_available)`: `window` runs waitress on a daemon thread and `run_window(url, selftest=...)` on the main thread (`main` returns when it closes; if it raises, the error is logged and the browser opens on the same waitress thread, or under `--selftest-window` it prints `LF_WINDOW_FAIL <type>: <message>` and returns), `browser` opens the browser then `server.run()`, `none` only `server.run()`. Any exception in the `try`: `report_startup_failure(data, headless=...)` (appends a timestamp line + traceback to `logs/desktop.log`; headless prints it to stderr, else the box `Laserforce Simulator could not start. Details: <log path>`), exit 1. Flags: `--no-browser` (headless, wins), `--browser`, `--selftest-window`. |
 | `shell.py` | DESK-03, the **App window** (GLOSSARY). `WINDOW_TITLE = "Laserforce Simulator"`. `choose_shell(argv, window_ok) -> "window" \| "browser" \| "none"` (`--no-browser` → `none`, `--browser` → `browser`, else `window` iff `window_ok()`; `window_ok` is asked only then, and raising → `browser`, logged). `window_available()`: `webview` and `webview.platforms.winforms` import **and** `is_chromium`. `run_window(url, *, selftest=False)`: `ALLOW_DOWNLOADS = True`, `create_window(WINDOW_TITLE, url, width=1280, height=800)`, blocks in `webview.start`. BUG-WV-01: while it runs, a `_StartWatch` handler sits on the `pywebview` logger, and `_watch_start` (the `start` function) waits for `window.events.loaded`. A `pywebview` ERROR starting `INIT_FAILED_PREFIX` (`WebView2 initialization failed`), or no load within `WINDOW_START_TIMEOUT_S` (20 s), closes the window and makes `run_window` raise `WindowStartFailed(reason)`, so the launcher falls back to the browser. The watch returns at once if the person closes the window first. The self-test (only after a load) polls `document.body.innerText` every `SELFTEST_POLL_S` (0.5 s) for `SELFTEST_LIMIT_S` (60 s) for `LANDING_TEXT` (`Sandbox`), prints `LF_WINDOW_OK <s>` (from `PROCESS_START`, this module's import) or `LF_WINDOW_FAIL <first 200 chars>`, and always destroys the window. `webview` is imported inside the functions only. |
 | `instance.py` | DESK-03. `acquire_instance_lock(data) -> IO[bytes] \| None`: `<data>/instance.lock` (`a+b`), non-blocking exclusive lock (`msvcrt.locking(..., LK_NBLCK, 1)` on Windows, `fcntl.flock(LOCK_EX \| LOCK_NB)` elsewhere); `None`, with the file closed, when another process holds it. `focus_window(title) -> bool` (`FindWindowW` → `ShowWindow(SW_RESTORE)` → `SetForegroundWindow`; `False` off Windows). `message_box(text)` (`MessageBoxW` titled `WINDOW_TITLE`; stderr off Windows). |
 | `launch_code.py` | `mint_launch_code(user) -> str`, `spend_launch_code(code) -> int \| None` (in-process dict under a lock; single use, no expiry), and `DesktopLoginView` at `api/accounts/desktop-login/?code=` (`api_desktop_login`). |
 | `notice.py` | `set_notice(text)` / `current_notice()`: the reset notice for the life of the process, read by `accounts/me/` as `desktop_notice`. The only module the Hosted deploy imports. |
-| `settings.py` | Star-imports the Hosted settings, then: `DESKTOP_APP = True`, `DEBUG = False`, localhost `ALLOWED_HOSTS`, empty CORS / CSRF origins, `REFRESH_COOKIE_SECURE = False`, `ROOT_URLCONF = "desktop_app.urls"`, `MEDIA_ROOT` in the data folder + `SERVE_MEDIA`, `SPA_ROOT` / `WHITENOISE_ROOT` from `LF_DESKTOP_SPA`, Celery on `memory://` / `cache+memory://` (not eager), a rotating file log at `<home>/logs/desktop.log`. |
-| `urls.py` | The launch-code route, then the Hosted `urlpatterns`. Nothing else. |
+| `settings.py` | Star-imports the Hosted settings, then: `DESKTOP_APP = True`, `DEBUG = False`, localhost `ALLOWED_HOSTS`, empty CORS / CSRF origins, `REFRESH_COOKIE_SECURE = False`, `ROOT_URLCONF = "desktop_app.urls"`, `MEDIA_ROOT` in the data folder + `SERVE_MEDIA`, `SPA_ROOT` / `WHITENOISE_ROOT` from `LF_DESKTOP_SPA`, Celery on `memory://` / `cache+memory://` (not eager), a rotating file log at `<home>/logs/desktop.log`. DESK-04: `DESKTOP_BUILD_INFO` from `LF_DESKTOP_BUILD_INFO` (unset: `None`), `DEFAULT_MAPS_DIR` from `LF_DESKTOP_MAPS`, `DESKTOP_UPDATE_TIMEOUT = 5`, `DESKTOP_RELEASES_REPO`. |
+| `build_info.py` | DESK-04, the **build record**. `RELEASE_TAG` (`^v(\d+)\.(\d+)\.(\d+)$`, the one plain-tag rule; `desktop/write_build_info.py` re-exports it). `load_build_info() -> BuildInfo` reads `settings.DESKTOP_BUILD_INFO`; a missing path or file is the dev record, a malformed file raises. `BuildInfo.label`: `v0.1.0`, `latest abc1234`, `dev abc1234` or `dev`. `accounts/me/` shows it as `desktop_version` (`None` on Hosted). Stdlib-only at module level. |
+| `update_check.py` | DESK-04, the **Update check**. `fetch_json(url, timeout)` (the only function tests replace), `check_for_update(info)`: `release` asks `releases/latest` (a newer `RELEASE_TAG` tag), `latest` asks `git/ref/tags/desktop-latest` (a different sha), `dev` asks nothing. Any failure is `None` plus one warning in the desktop log. `cached_update()` runs it once per process under a lock (`reset_update_cache()` for tests). `DesktopUpdateView` at `api/accounts/desktop-update/` (`api_desktop_update`): `{"data": {version, url} \| null}`. |
+| `urls.py` | The launch-code route and the update route, then the Hosted `urlpatterns`. Nothing else. |
 
 ## Rules that are easy to break
 
@@ -82,7 +84,10 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   `laserforce_simulator/requirements-desktop.txt` (DESK-03: the runtime file plus pywebview) plus
   `pyinstaller`, and `npm --prefix frontend ci` already run. It sets `PYTHONPATH` / `DJANGO_SETTINGS_MODULE` / `SECRET_KEY` (PyInstaller collects
   in a subprocess that ignores the spec's `pathex`), builds the SPA, runs PyInstaller and writes
-  `<Out>/LaserforceSimulator-windows-x64.zip`.
+  `<Out>/LaserforceSimulator-windows-x64.zip`. DESK-04: first it runs `desktop/write_build_info.py
+  <Out>/build_info.json` and names that file in `LF_BUILD_INFO` for the spec. The record comes from
+  CI's `GITHUB_REF` / `GITHUB_SHA`: a plain `vX.Y.Z` tag is `release`, `main` is `latest`, anything
+  else (a PR, an `-rc` tag, a local build) is `dev`, which makes no Update check.
 - **Local build:** the owner's machine has python.org 3.12 at
   `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`. Make a scratchpad venv from it, install
   `requirements-desktop.txt` plus `pyinstaller==6.22.3` (CI's pin), run `build.ps1 -Python <venv
@@ -96,14 +101,21 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   pipe, and `quiet_std_streams()` covers a double-click). pywebview / pythonnet come in through
   pyinstaller-hooks-contrib's `webview`, `clr_loader` and `pythonnet` hooks; `webview` joins the
   `collect_submodules` list only if the frozen self-test fails on an import (the spec comment says
-  which).
+  which). DESK-04: it bundles the two `_DEFAULT_MAPS` images (only those, named in the spec) at
+  `default_maps`, and `LF_BUILD_INFO`'s file at the root as `build_info.json`; without
+  `LF_BUILD_INFO` it stops with a `KeyError` (PyInstaller run without `build.ps1`).
+  `test_build_spec.py` runs the spec with stand-ins for PyInstaller and checks both.
 - **`desktop/smoke.py`** (stdlib only) holds `run_smoke(command, home, *, check_spa=True) ->
   Timings`. `Timings` is a `NamedTuple` of `launcher_ready_s` and `cold_start_s`. The in-suite test
   runs `main([<python>, desktop/main.py, --summary <file>], check_spa=...)` and passes `check_spa`
   only when `frontend/dist` is built (CI's Python jobs never build it); the CLI as CI runs it always
   checks. It
   raises `SmokeFailure(step, detail)` at the first failed step (`ready`, `spa`, `launch_code`,
-  `refresh`, `me`, `teams`, `batch`, `report`, `map`, `instance`). DESK-03's last step,
+  `refresh`, `me`, `update`, `default_maps`, `teams`, `batch`, `report`, `map`, `instance`).
+  DESK-04: `me` also needs a non-null `desktop_version`; `update` expects
+  `GET /api/accounts/desktop-update/` to be `null` (a PR or unfrozen build is `dev`, so no call);
+  `default_maps` expects `GET /api/maps/` to list exactly the two default maps, and runs before
+  `map` because the defaults are seeded only while no map exists. DESK-03's last step,
   **`instance`** (`_second_launch`), runs the same command with the same env (same data folder)
   while the first still runs: exit 0 and `LF_ALREADY_RUNNING` within `INSTANCE_TIMEOUT_S` (30 s),
   then `GET /` still answers (the `spa` step's rules). In the suite it takes the real lock (`fcntl`
@@ -124,6 +136,11 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   `continue-on-error`. The suite never runs `--window` on the real launcher (it would open a
   window, or the browser where pywebview is missing). A new bundled feature worth guarding gets a
   step here, so both the frozen and the unfrozen smoke run it.
+- **Releases (DESK-04):** a plain `vX.Y.Z` tag publishes a numbered **Release** (the public
+  download at `releases/latest`); any other `v*` tag (`v0.2.0-rc1`) a pre-release. Both use
+  `desktop/RELEASE_NOTES.md` (the download page: install, SmartScreen, data folder, upgrade,
+  uninstall) plus GitHub's generated changelog. Edit that file in a PR; it has no placeholders. The
+  tag rule in `ci.yml` and `RELEASE_TAG` are twins: change both together. See `docs/agents/ci.md`.
 - **Requirements:** `requirements-runtime.txt` is what the app imports at runtime in either
   deploy (the Dockerfile installs only it). DESK-03: `requirements-desktop.txt` is `-r` of it plus
   the exact `pywebview==6.2.1` pin (the Desktop build's file); `requirements.txt` is `-r
@@ -145,5 +162,9 @@ BUG-WV-01's retry and `window_failure` against fake commands), `test_requirement
 package in `sys.modules` for `window_available` / `run_window`, whose `start` loads, hangs or logs
 the init ERROR: CI's Python jobs run on Linux),
 `test_instance.py` (the lock against a real second process and a crashed holder; `fcntl` on Linux,
-`msvcrt` on Windows), and `test_launcher.py`'s `main()` tests (second launch, startup failure, a
+`msvcrt` on Windows). DESK-04: `test_build_info.py` (`build_info(env, today)` per `GITHUB_REF`, the
+CLI, the labels, the shared `RELEASE_TAG`), `test_update_check.py` (the endpoint with a fake
+`fetch_json` per channel and failure, the cache, Hosted 404, 401), `test_build_spec.py` (the
+spec's default maps and build record). The default maps through `GET /api/maps/` are in
+`core/test_map_services.py` (`TestDefaultMapsDir`). And `test_launcher.py`'s `main()` tests (second launch, startup failure, a
 real failure through `desktop/main.py`, and the shell dispatch through `_open_shell`).

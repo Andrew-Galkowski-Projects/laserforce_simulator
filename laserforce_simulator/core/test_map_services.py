@@ -999,3 +999,60 @@ class TestEnsureDefaultMaps(TempMediaMixin, TestCase):
         with patch("django.core.files.storage.default_storage", new=MagicMock()):
             services.ensure_default_maps()
         self.assertEqual(ArenaMap.objects.count(), 0)
+
+
+class TestDefaultMapsDir(TempMediaMixin, TestCase):
+    """DESK-04 -- ``GET /api/maps/`` seeds and restores the default maps from
+    ``settings.DEFAULT_MAPS_DIR`` (the Desktop App's bundled ``default_maps``)."""
+
+    SIZE = (37, 23)  # not either repo image's size: proves the source folder
+
+    def setUp(self) -> None:
+        import tempfile
+        from pathlib import Path
+
+        from rest_framework.test import APIClient
+
+        super().setUp()
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.maps_dir = Path(folder.name)
+        self.api = APIClient()
+        self.api.force_login(get_shared_manager())
+
+    def _write_both_images(self) -> None:
+        from PIL import Image as PILImage
+
+        for _name, filename in services._DEFAULT_MAPS:
+            PILImage.new("RGB", self.SIZE, "white").save(self.maps_dir / filename)
+
+    def _list(self) -> list[dict]:
+        with self.settings(DEFAULT_MAPS_DIR=self.maps_dir):
+            response = self.api.get("/api/maps/")
+        self.assertEqual(response.status_code, 200, response.content)
+        return response.json()["data"]
+
+    def test_both_images_in_the_folder_are_listed(self) -> None:
+        self._write_both_images()
+        rows = self._list()
+        self.assertEqual(
+            {row["name"] for row in rows},
+            {"Syracuse Laser Tag", "San Marcos Laser Tag"},
+        )
+        self.assertEqual(
+            {(row["img_width"], row["img_height"]) for row in rows}, {self.SIZE}
+        )
+
+    def test_an_empty_folder_lists_none(self) -> None:
+        self.assertEqual(self._list(), [])
+
+    def test_a_deleted_image_is_restored_from_the_folder_on_the_next_list(
+        self,
+    ) -> None:
+        self._write_both_images()
+        self._list()
+        filename = services._DEFAULT_MAPS[0][1]
+        (self.media_root / "maps" / filename).unlink()
+        self._list()
+        restored = self.media_root / "maps" / filename
+        self.assertEqual(restored.read_bytes(), (self.maps_dir / filename).read_bytes())

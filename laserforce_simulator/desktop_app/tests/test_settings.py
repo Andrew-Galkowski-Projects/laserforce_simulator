@@ -18,6 +18,7 @@ import pytest
 def desktop_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
     monkeypatch.setenv("LF_DESKTOP_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("LF_DESKTOP_SPA", str(tmp_path / "spa"))
+    monkeypatch.setenv("LF_DESKTOP_MAPS", str(tmp_path / "maps"))
     monkeypatch.delenv("LF_DESKTOP_BUILD_INFO", raising=False)
     return _fresh_desktop_settings(monkeypatch)
 
@@ -86,3 +87,24 @@ def test_hosted_has_no_build_info() -> None:
     from django.conf import settings
 
     assert settings.DESKTOP_BUILD_INFO is None
+
+
+REPO_MAPS = Path(__file__).resolve().parents[3] / "Screenshots_and_video_examples"
+
+
+def test_hosted_seeds_the_default_maps_from_the_repo_folder() -> None:
+    from django.conf import settings
+
+    assert settings.DEFAULT_MAPS_DIR == REPO_MAPS
+
+
+def test_the_default_maps_folder_comes_from_the_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # DESK-04: the launcher sets LF_DESKTOP_MAPS (the bundle's default_maps).
+    monkeypatch.setenv("LF_DESKTOP_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LF_DESKTOP_SPA", str(tmp_path / "spa"))
+    monkeypatch.setenv("LF_DESKTOP_MAPS", str(tmp_path / "default_maps"))
+    assert _fresh_desktop_settings(monkeypatch).DEFAULT_MAPS_DIR == (
+        tmp_path / "default_maps"
+    )

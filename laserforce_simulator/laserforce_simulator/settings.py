@@ -268,6 +268,9 @@ DESKTOP_APP = False
 # DESK-04: the Desktop build's build_info.json (desktop_app.build_info); the
 # Hosted deploy has none, so accounts/me/'s desktop_version stays null.
 DESKTOP_BUILD_INFO = None
+# DESK-04: where core.services seeds the two default Arena maps from. The
+# Desktop App points it at the bundle's default_maps (LF_DESKTOP_MAPS).
+DEFAULT_MAPS_DIR = BASE_DIR.parent / "Screenshots_and_video_examples"
 
 # --- API-03: Celery + Redis (ADR-0013) ---
 # Auto-detect pytest: pytest-django loads Django settings during plugin

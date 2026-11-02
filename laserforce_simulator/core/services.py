@@ -99,7 +99,7 @@ def _seed_defaults() -> None:
     if not isinstance(default_storage, FileSystemStorage):
         return
 
-    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
+    screenshots_dir = Path(settings.DEFAULT_MAPS_DIR)
     maps_dir = settings.MEDIA_ROOT / "maps"
     maps_dir.mkdir(parents=True, exist_ok=True)
 
@@ -131,7 +131,7 @@ def _restore_default_images() -> None:
     if not isinstance(default_storage, FileSystemStorage):
         return
 
-    screenshots_dir = settings.BASE_DIR.parent / "Screenshots_and_video_examples"
+    screenshots_dir = Path(settings.DEFAULT_MAPS_DIR)
     maps_dir = settings.MEDIA_ROOT / "maps"
     for _name, filename in _DEFAULT_MAPS:
         src = screenshots_dir / filename

@@ -378,7 +378,19 @@ jobs:
 
       - name: Publish a numbered Release
         if: startsWith(github.ref, 'refs/tags/v')
-        run: gh release create "$GITHUB_REF_NAME" "$ZIP" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+        # DESK-04: a plain vX.Y.Z tag is a Release (the public download,
+        # releases/latest); any other v* tag (v0.2.0-rc1) is a pre-release.
+        # The notes are the committed download page plus GitHub's changelog.
+        # Twin rule: RELEASE_TAG in laserforce_simulator/desktop_app/build_info.py,
+        # which gives the build its channel; change both together.
+        run: |
+          kind=()
+          if ! [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            kind=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" "$ZIP" --verify-tag "${kind[@]}" \
+            --title "$GITHUB_REF_NAME" \
+            --notes-file desktop/RELEASE_NOTES.md --generate-notes
 
   docker:
     runs-on: ubuntu-latest

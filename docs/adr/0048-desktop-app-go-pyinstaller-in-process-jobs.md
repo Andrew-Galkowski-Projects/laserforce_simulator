@@ -152,6 +152,7 @@ default Arena maps are bundled (image-only, as on Hosted).
   file, which the stock `.gitignore` entry `*.spec` hides.
 - **No default maps in the Desktop App.** `ensure_default_maps` seeds from
   `Screenshots_and_video_examples/`, which is not bundled. A follow-up decides whether to ship them.
+  (DESK-04 bundles the two images: see the amendment above.)
 - **App bugs found, not Desktop-specific:** sight-line compute after a saved zone config raises
   `KeyError: 0` (`core/map_processing.py` `compute_sight_lines` falls back to the `blocked_edges`
   dict, and `_has_los` indexes it as a grid); `matches/simulation/entrypoints.py` calls
