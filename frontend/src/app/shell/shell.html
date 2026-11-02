@@ -50,6 +50,12 @@
   }
 </mat-menu>
 <mat-menu #help="matMenu">
+  @if (desktop()) {
+    <!-- DESK-04: which Desktop build this is, to quote in a bug report. -->
+    <button mat-menu-item type="button" class="shell__version" disabled>
+      {{ title }} {{ user()?.desktop_version }}
+    </button>
+  }
   @for (label of helpMenu; track label) {
     <button mat-menu-item type="button" class="shell__soon-item" disabled>
       <app-soon-badge [label]="label" />
@@ -119,6 +125,13 @@
         <div class="shell__notice" role="status">
           <span class="shell__notice-text">{{ text }}</span>
           <button mat-button type="button" (click)="dismissNotice()">Dismiss</button>
+        </div>
+      }
+      @if (update(); as newer) {
+        <div class="shell__notice" role="status">
+          <span class="shell__notice-text">{{ title }} {{ newer.version }} is available.</span>
+          <a mat-button [href]="newer.url" target="_blank" rel="noopener">Download</a>
+          <button mat-button type="button" (click)="dismissUpdate()">Dismiss</button>
         </div>
       }
       <router-outlet />

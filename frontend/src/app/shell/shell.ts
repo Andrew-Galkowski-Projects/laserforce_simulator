@@ -1,13 +1,15 @@
 import { BreakpointObserver } from '@angular/cdk/layout';
 import { Component, computed, inject, signal } from '@angular/core';
 import { toSignal } from '@angular/core/rxjs-interop';
-import { MatButton, MatIconButton } from '@angular/material/button';
+import { MatAnchor, MatButton, MatIconButton } from '@angular/material/button';
 import { MatListItem, MatNavList } from '@angular/material/list';
 import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { MatSidenav, MatSidenavContainer, MatSidenavContent } from '@angular/material/sidenav';
 import { MatToolbar } from '@angular/material/toolbar';
 import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { map } from 'rxjs';
+import { DesktopUpdate } from '../api/desktop.models';
+import { DesktopService } from '../api/desktop.service';
 import { APP_TITLE } from '../app-title';
 import { AuthService } from '../auth/auth.service';
 import { PlayMenu } from '../leagues/play/play-menu';
@@ -23,6 +25,7 @@ const WIDE = '(min-width: 768px)';
 /** ADR-0043 layout B: the signed-in frame (header + sidebar) around every page but `/login`. */
 @Component({
   imports: [
+    MatAnchor,
     MatButton,
     MatIconButton,
     MatListItem,
@@ -47,6 +50,7 @@ const WIDE = '(min-width: 768px)';
 export class Shell {
   private readonly auth = inject(AuthService);
   private readonly notify = injectNotify();
+  private readonly desktopApi = inject(DesktopService);
 
   protected readonly title = APP_TITLE;
   protected readonly toolsMenu = TOOLS_MENU;
@@ -78,8 +82,30 @@ export class Shell {
     this.noticeDismissed() ? null : (this.user()?.desktop_notice ?? null),
   );
 
+  private readonly newerBuild = signal<DesktopUpdate | null>(null);
+  private readonly updateDismissed = signal(false);
+  /**
+   * DESK-04: the Update notice, a newer build of this Desktop build's channel, asked for once per
+   * Shell; dismissed on its own, apart from the reset notice, until a reload.
+   */
+  protected readonly update = computed(() => (this.updateDismissed() ? null : this.newerBuild()));
+
+  constructor() {
+    if (this.desktop()) {
+      // A failed check shows nothing: the notice only ever adds, never errors (DESK-04).
+      this.desktopApi.update().subscribe({
+        next: (update) => this.newerBuild.set(update),
+        error: () => undefined,
+      });
+    }
+  }
+
   protected dismissNotice(): void {
     this.noticeDismissed.set(true);
+  }
+
+  protected dismissUpdate(): void {
+    this.updateDismissed.set(true);
   }
 
   protected unlinkSelfInsert(): void {

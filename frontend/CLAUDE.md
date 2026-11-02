@@ -106,7 +106,10 @@ src/
                           toolbar colours via mat.toolbar-overrides. DESK-01: when `desktop` is
                           set, the menu drops Change password / Sign out, the Account button
                           hides while no Self-insert is linked, and `desktop_notice` shows as a
-                          dismissible alert above the page
+                          dismissible alert above the page. DESK-04: the Help menu's first item
+                          is the disabled `APP_TITLE desktop_version` line, and the Shell asks
+                          `DesktopService.update()` once; a newer build shows the Update notice
+                          (Download + its own Dismiss) under the reset notice; Hosted never asks
     login/                sign-in form; returnUrl honoured only when it is an in-app path;
                           LoginNavigationState / REGISTERED_STATE ("Account created" notice)
     register/             invite-only sign-up (ANG-06 item 7): invite from ?invite=, register
@@ -283,7 +286,8 @@ src/
                           seasons.models.ts, ANG-06-18; league-stats: LeagueStatsService, one method per stats
                           screen, ANG-06-15; league-team: LeagueTeamService and league-players:
                           LeaguePlayersService, ANG-06-16; league-finances:
-                          LeagueFinancesService, INJURY_POLICY_LABELS, ANG-06-17); testing/ holds
+                          LeagueFinancesService, INJURY_POLICY_LABELS, ANG-06-17; desktop:
+                          DesktopService.update(), DESK-04); testing/ holds
                           shared spec fixtures
                           (player-fixtures; auth-fixtures: USER + signIn() for route specs)
     shared/testing/       spec helpers: poll-timers.ts (POLL_TIMERS), spaced-text.ts (spacedText)

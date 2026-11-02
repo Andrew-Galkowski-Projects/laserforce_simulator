@@ -21,6 +21,7 @@ const USER: User = {
   self_insert: null,
   desktop: false,
   desktop_notice: null,
+  desktop_version: null,
 };
 
 describe('AuthService', () => {
