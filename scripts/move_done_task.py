@@ -203,11 +203,9 @@ def move_done_task(
         start, level, title = _find_task(plan_lines, task_id)
         end = _section_end(plan_lines, start, level)
         section = _done_section(plan_lines[start:end], note_lines)
+        # As written: lowercasing it broke proper nouns ("desktop App", DESK-02).
         short_title = re.sub(r" \([^()]*\)$", "", title)
-        pointer = (
-            f"{task_id} ({short_title[:1].lower()}{short_title[1:]}) is **[DONE]**; "
-            "see `PLAN-completed.md`."
-        )
+        pointer = f"{task_id} ({short_title}) is **[DONE]**; see `PLAN-completed.md`."
     phase = _phase_heading(plan_lines, start)
     new_plan, warnings = _drop_from_summary(
         [*plan_lines[:start], pointer, *plan_lines[end:]], task_id

@@ -162,7 +162,10 @@ exists (a model field, a service method) before publishing: ANG-06a's spec said
 `currentUser().player` where the field is `self_insert`. For every HTTP assertion
 the spec makes (a status, a body text, a header), `curl` the real endpoint once:
 ANG-07's spec expected `/` to show `base.html`'s title, and anonymous `/`
-redirects to the sign-in page. For every user-facing message the spec quotes,
+redirects to the sign-in page. Probe the way each CI job that runs the test will:
+list the setup the probe needed (an SPA build, a seed, a service) and check every
+such job has it (DESK-02 probed with the SPA built; CI's Python jobs never build it,
+and the smoke went red there). For every user-facing message the spec quotes,
 find the line that produces it: ANG-06 item 7 promised "Something went wrong"
 where `ApiClient` says "Could not reach the server.". For every field the
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
@@ -578,7 +581,8 @@ A migration that drops or rewrites data is a one-way door. Say so plainly.
 Then wait for the PR's CI in the background with
 `<main checkout>/.venv/Scripts/python.exe scripts/watch_pr_ci.py <n>`: one plain command that
 waits until every check and workflow run has settled, then prints each check,
-the mergeable state and `result: pass|fail` (exit 0 / 1; 2 = timeout).
+a `run: <workflow> <id>` line per run (pass that id to `ci_timings.py` and the next
+`--after-run`), the mergeable state and `result: pass|fail` (exit 0 / 1; 2 = timeout).
 Every job must have **started**: a timeout, a
 run with no jobs, or one GitHub reports as "a workflow file issue", is a
 broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
@@ -598,7 +602,7 @@ Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work
 is in `main` under a new hash (other PRs that merged meanwhile show up in an
-unscoped diff). Then wait for the `main` run (`gh run list --branch main --limit 1`, then
+unscoped diff). Then wait for the `main` run (`gh run list --branch main --workflow CI --limit 1`, then
 `gh run watch <id>`), run `gh release view desktop-latest --json tagName,url,assets`, confirm
 `git ls-remote origin refs/tags/desktop-latest` is `origin/main`'s commit, and give the owner the
 download link (`.../releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip`). A red

@@ -125,16 +125,23 @@ Spec: #342
         result = _move()
         self.assertIn(
             "Intro.\n\n"
-            "TEST-01 (keep media writes out) is **[DONE]**; see `PLAN-completed.md`.\n\n"
+            "TEST-01 (Keep media writes out) is **[DONE]**; see `PLAN-completed.md`.\n\n"
             "### TOOL-01 · Script the move\n",
             result.plan,
         )
         self.assertNotIn("**Prio: Low.** Body.", result.plan)
 
+    def test_pointer_keeps_the_title_as_written(self) -> None:
+        # DESK-02: "Desktop App build in CI" came out "desktop App build in CI".
+        plan = _PLAN.replace("Keep media writes out", "Desktop App build in CI")
+        self.assertIn(
+            "TEST-01 (Desktop App build in CI) is **[DONE]**;", _move(plan=plan).plan
+        )
+
     def test_pointer_drops_a_trailing_parenthetical_from_the_title(self) -> None:
         plan = _PLAN.replace("Keep media writes out", "Missile spent twice (bug)")
         self.assertIn(
-            "TEST-01 (missile spent twice) is **[DONE]**;", _move(plan=plan).plan
+            "TEST-01 (Missile spent twice) is **[DONE]**;", _move(plan=plan).plan
         )
 
     def test_open_status_marker_is_replaced_by_done(self) -> None:
@@ -148,7 +155,7 @@ Spec: #342
                     "### TEST-01 · [DONE] Keep media writes out\n", result.completed
                 )
                 self.assertIn(
-                    "TEST-01 (keep media writes out) is **[DONE]**;", result.plan
+                    "TEST-01 (Keep media writes out) is **[DONE]**;", result.plan
                 )
 
     def test_long_note_is_wrapped_at_100_columns(self) -> None:
@@ -187,7 +194,7 @@ Spec: #342
         # PERF-02's hand move dropped the --- before the next ## heading.
         result = _move(task_id="TOOL-01")
         self.assertIn(
-            "TOOL-01 (script the move) is **[DONE]**; see `PLAN-completed.md`.\n\n"
+            "TOOL-01 (Script the move) is **[DONE]**; see `PLAN-completed.md`.\n\n"
             "---\n\n## Sequencing Summary\n",
             result.plan,
         )
@@ -201,7 +208,7 @@ Spec: #342
         )
         result = _move(plan=plan, task_id="ANG-06a")
         self.assertIn(
-            "ANG-06a (first) is **[DONE]**; see `PLAN-completed.md`.\n\n"
+            "ANG-06a (First) is **[DONE]**; see `PLAN-completed.md`.\n\n"
             "#### ANG-06b · Second\n\nB.\n",
             result.plan,
         )
@@ -381,7 +388,7 @@ class MainTests(TestCase):
         self.assertEqual(plan.count(b"\n"), plan.count(b"\r\n"))
         self.assertNotIn(b"\r\n", completed)
         self.assertIn("**[DONE] Shipped (2026-10-24).** It works.", completed.decode())
-        self.assertIn(b"TEST-01 (keep media writes out) is **[DONE]**", plan)
+        self.assertIn(b"TEST-01 (Keep media writes out) is **[DONE]**", plan)
         self.assertTrue(printed.isascii())
         self.assertIn("TEST-01", printed)
 

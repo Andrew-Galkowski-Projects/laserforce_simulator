@@ -16,6 +16,10 @@ Infer the repo from `git remote -v`; `gh` does this automatically when run insid
 
 Installed `gh` is 2.92, which predates `--parent` / `--add-sub-issue` (2.94+): use the `gh api .../sub_issues` fallback below.
 
+Run a `gh api` path that holds `{owner}/{repo}` through the Bash tool, quoted. PowerShell parses
+`{owner}` as a script block, and the call fails with "The command parameter was already
+specified" (DESK-02).
+
 **Publish a spec's tickets** with `python scripts/publish_tickets.py <spec> <tickets.json>`: it creates each issue (`ready-for-agent`), makes it a sub-issue and adds its blocked-by edges, and a re-run skips what already exists. The JSON format is in its header.
 
 ## PLAN.md and GitHub Issues
