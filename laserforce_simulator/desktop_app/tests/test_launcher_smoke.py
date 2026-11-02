@@ -78,6 +78,31 @@ def test_the_launcher_passes_every_smoke_step(
     assert "| Cold start to the SPA |" in text
 
 
+@pytest.mark.parametrize(
+    "reply",
+    [
+        None,
+        # A `latest` build on main: desktop-latest still points at the previous
+        # merge until this run publishes, so the check finds it (BUG: the step
+        # wanted None and turned main's desktop job red after DESK-04).
+        {"version": "latest 7ba8ffa", "url": "https://github.com/x/releases/tag/t"},
+    ],
+    ids=["no-update", "an-update"],
+)
+def test_the_update_step_accepts_either_answer_the_check_gives(reply: Any) -> None:
+    smoke.check_update_reply(reply)
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [{}, {"version": "v0.2.0"}, {"version": 2, "url": "u"}, [], "v0.2.0"],
+    ids=["empty", "no-url", "version-not-str", "list", "str"],
+)
+def test_the_update_step_rejects_any_other_shape(reply: Any) -> None:
+    with pytest.raises(AssertionError):
+        smoke.check_update_reply(reply)
+
+
 def test_a_process_that_exits_before_ready_fails_the_ready_step(
     tmp_path: Path,
 ) -> None:

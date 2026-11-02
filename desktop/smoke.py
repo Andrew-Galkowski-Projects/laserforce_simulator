@@ -125,6 +125,25 @@ def _api(
     return json.loads(response.body)["data"]
 
 
+def check_update_reply(update: Any) -> None:
+    """The Update check's answer: ``None`` or ``{version: str, url: str}``.
+
+    Either is right on any channel: a ``latest`` build on ``main`` finds the
+    ``desktop-latest`` it is about to replace, and a ``dev`` build asks nothing.
+    Only the shape is checked, so GitHub's state never fails a build.
+    """
+    if update is None:
+        return
+    if not (
+        isinstance(update, dict)
+        and set(update) == {"version", "url"}
+        and all(isinstance(value, str) for value in update.values())
+    ):
+        raise AssertionError(
+            f"desktop-update is {update!r}, wanted None or {{version, url}}"
+        )
+
+
 class _Output:
     """The launcher's output, drained on a thread so its pipe never fills."""
 
@@ -288,10 +307,8 @@ def _steps(
             raise AssertionError(f"desktop_version is {me['desktop_version']!r}")
 
     with _step("update", output):
-        # DESK-04: a dev build makes no Update check, so there is never an update.
         update = _api(f"{base}/api/accounts/desktop-update/", 200, headers=auth)
-        if update is not None:
-            raise AssertionError(f"desktop-update is {update!r}, wanted None")
+        check_update_reply(update)
 
     # Before the `map` step: the defaults are seeded only while no map exists.
     with _step("default_maps", output):
