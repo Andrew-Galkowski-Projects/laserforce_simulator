@@ -5,7 +5,10 @@ Reads a JSON list of tickets, in dependency order (blockers first):
     [{"key": "A", "title": "X-1a: Foundation", "body_file": "x1_tA.md"},
      {"key": "B", "title": "X-1b: Screen", "body_file": "x1_tB.md", "blocked_by": ["A"]}]
 
-``body_file`` is relative to the JSON file. Each ticket becomes an issue
+``body_file`` is relative to the JSON file. A body names another ticket as
+``{{KEY}}`` (``Blocked by {{A}}``), even one listed later: once every issue
+exists, each such body is rewritten with the real ``#<number>``, and a key no
+ticket has fails before anything is created. Each ticket becomes an issue
 labelled ``ready-for-agent``, a sub-issue of the spec, with one blocked-by edge
 per blocker. Re-running is safe: an open issue with the same title is reused,
 and a link or an edge that already exists is skipped, so a run that died half
@@ -20,7 +23,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
+import tempfile
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,8 +54,22 @@ def load_tickets(raw: list[dict], base: Path) -> list[Ticket]:
     ]
 
 
-def validate(tickets: list[Ticket]) -> None:
-    """Raise unless keys are unique and every blocker comes earlier in the list."""
+_REF = re.compile(r"\{\{(\w+)\}\}")
+
+
+def refs(body: str) -> set[str]:
+    """The ticket keys a body names as ``{{KEY}}``."""
+    return set(_REF.findall(body))
+
+
+def fill_refs(body: str, numbers: dict[str, int]) -> str:
+    """``body`` with each ``{{KEY}}`` replaced by that ticket's ``#<number>``."""
+    return _REF.sub(lambda match: f"#{numbers[match.group(1)]}", body)
+
+
+def validate(tickets: list[Ticket], bodies: dict[str, str] | None = None) -> None:
+    """Raise unless keys are unique, every blocker comes earlier in the list, and
+    every ``{{KEY}}`` in ``bodies`` (key -> body text) names a listed ticket."""
     seen: set[str] = set()
     for ticket in tickets:
         if ticket.key in seen:
@@ -61,6 +80,9 @@ def validate(tickets: list[Ticket]) -> None:
                     f"{ticket.key} is blocked by {blocker}, which is not listed before it"
                 )
         seen.add(ticket.key)
+    for key, body in (bodies or {}).items():
+        for ref in sorted(refs(body) - seen):
+            raise ValueError(f"{key} names {{{{{ref}}}}}, which is not a listed key")
 
 
 def plan(
@@ -123,7 +145,8 @@ def main() -> int:
     tickets = load_tickets(
         json.loads(args.tickets.read_text(encoding="utf-8")), args.tickets.parent
     )
-    validate(tickets)
+    bodies = {t.key: Path(t.body_file).read_text(encoding="utf-8") for t in tickets}
+    validate(tickets, bodies)
     repo = _repo()
 
     titles = {t.title for t in tickets}
@@ -186,6 +209,20 @@ def main() -> int:
                 f"issue_id={_db_id(repo, blocker)}",
             )
             print(f"blocked #{numbers[key]} by #{blocker}")
+    # Every issue exists now, so each {{KEY}} can become its #number. Editing
+    # an already-filled body again is harmless, which keeps a re-run safe.
+    for ticket in tickets:
+        if not refs(bodies[ticket.key]):
+            continue
+        with tempfile.NamedTemporaryFile(
+            "w", suffix=".md", encoding="utf-8", delete=False
+        ) as filled:
+            filled.write(fill_refs(bodies[ticket.key], numbers))
+        try:
+            _gh("issue", "edit", str(numbers[ticket.key]), "--body-file", filled.name)
+        finally:
+            Path(filled.name).unlink()
+        print(f"filled  #{numbers[ticket.key]} refs")
     print(" ".join(f"{t.key}=#{numbers[t.key]}" for t in tickets))
     return 0
 

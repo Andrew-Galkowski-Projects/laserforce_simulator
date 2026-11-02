@@ -110,3 +110,30 @@ class LoadTests(TestCase):
         self.assertEqual(tickets[0].blocked_by, ())
         self.assertEqual(tickets[1].blocked_by, ("A",))
         self.assertEqual(Path(tickets[1].body_file), Path("C:/scratch/b.md"))
+
+
+class FillRefsTests(TestCase):
+    # Retro DESK-04: a body names another ticket as {{KEY}} before its issue
+    # exists; the publisher swaps in the real #number once every issue does.
+    def test_each_key_becomes_its_issue_number(self) -> None:
+        body = "Blocked by {{A}}; the docs are {{B}}'s, and {{A}} again."
+        self.assertEqual(
+            publish_tickets.fill_refs(body, {"A": 504, "B": 506}),
+            "Blocked by #504; the docs are #506's, and #504 again.",
+        )
+
+    def test_a_body_without_keys_is_unchanged(self) -> None:
+        self.assertEqual(
+            publish_tickets.fill_refs("Plain {x}.", {"A": 1}), "Plain {x}."
+        )
+
+    def test_refs_lists_the_keys_a_body_names(self) -> None:
+        self.assertEqual(publish_tickets.refs("{{A}} and {{C}} and {{A}}"), {"A", "C"})
+
+    def test_validate_rejects_a_body_naming_an_unknown_key(self) -> None:
+        tickets = _tickets()
+        with self.assertRaisesRegex(ValueError, "B names {{Z}}"):
+            publish_tickets.validate(tickets, bodies={"A": "", "B": "see {{Z}}"})
+
+    def test_validate_accepts_a_body_naming_a_later_ticket(self) -> None:
+        publish_tickets.validate(_tickets(), bodies={"A": "then {{B}}", "B": "{{A}}"})
