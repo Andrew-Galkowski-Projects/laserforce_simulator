@@ -7,6 +7,7 @@ from typing import Any
 from django.conf import settings
 from rest_framework import serializers
 
+from desktop_app.build_info import load_build_info
 from desktop_app.notice import current_notice
 from teams.serializers import PlayerSerializer
 
@@ -15,7 +16,8 @@ from .self_insert import get_self_insert
 
 
 class MeSerializer(serializers.ModelSerializer):
-    """``{id, email, date_joined, is_staff, self_insert, desktop, desktop_notice}``.
+    """``{id, email, date_joined, is_staff, self_insert, desktop, desktop_notice,
+    desktop_version}``.
 
     ``self_insert`` is the resolved link (``get_self_insert``) as full
     ``PlayerSerializer`` output, or ``None``; the raw column is never
@@ -23,12 +25,15 @@ class MeSerializer(serializers.ModelSerializer):
 
     DESK-01: ``desktop`` is ``settings.DESKTOP_APP`` (the SPA hides the Account
     screens when it is set) and ``desktop_notice`` the launcher's reset notice,
-    always ``None`` on the Hosted deploy.
+    always ``None`` on the Hosted deploy. DESK-04: ``desktop_version`` is the
+    build's label (``BuildInfo.label``: ``v0.1.0``, ``latest abc1234``,
+    ``dev``), ``None`` on the Hosted deploy.
     """
 
     self_insert = serializers.SerializerMethodField()
     desktop = serializers.SerializerMethodField()
     desktop_notice = serializers.SerializerMethodField()
+    desktop_version = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -40,6 +45,7 @@ class MeSerializer(serializers.ModelSerializer):
             "self_insert",
             "desktop",
             "desktop_notice",
+            "desktop_version",
         ]
         read_only_fields = fields
 
@@ -52,3 +58,6 @@ class MeSerializer(serializers.ModelSerializer):
 
     def get_desktop_notice(self, user: User) -> str | None:
         return current_notice() if settings.DESKTOP_APP else None
+
+    def get_desktop_version(self, user: User) -> str | None:
+        return load_build_info().label if settings.DESKTOP_APP else None
