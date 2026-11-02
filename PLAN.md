@@ -164,7 +164,7 @@ a single-instance lock. pywebview worked unfrozen in the ANG-09 spike.
    lazily. `test_requirements.py` updated.
 9. **Testing:** unit tests with fakes (shell choice, fallback, lock, error box); a
    `--selftest-window` flag prints `LF_WINDOW_OK <seconds>` once the signed-in SPA shows, then
-   closes; CI's `desktop` job runs it on the frozen exe after the smoke.
+   closes; CI's `desktop` job runs it on the Desktop build after the smoke.
 10. **Out of scope:** tray icon, app/exe icon, native menu (DESK-04 or later), auto-update,
     signing, macOS / Linux, the sight-line bug (BUG-SL-01), remembering window size / position.
 

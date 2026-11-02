@@ -233,17 +233,23 @@ def _open_shell(server: Any, url: str, argv: list[str]) -> None:
 
     The App window must own the main thread, so waitress runs on a daemon
     thread then and the process ends when the window closes. A window that
-    raises falls back to the browser, served by that same thread.
+    raises falls back to the browser, served by that same thread; under
+    ``--selftest-window`` it prints ``LF_WINDOW_FAIL`` and returns instead, so
+    the smoke fails at once rather than at its timeout.
     """
     shell = choose_shell(argv, window_available)
     if shell == "window":
+        selftest = "--selftest-window" in argv
         serving = threading.Thread(target=server.run, name="waitress", daemon=True)
         serving.start()
         try:
-            run_window(url, selftest="--selftest-window" in argv)
+            run_window(url, selftest=selftest)
             return
-        except Exception:  # noqa: BLE001 - any window failure falls back
+        except Exception as exc:  # noqa: BLE001 - any window failure falls back
             logger.exception("The App window failed; opening the browser.")
+            if selftest:
+                print(f"LF_WINDOW_FAIL {type(exc).__name__}: {exc}", flush=True)
+                return
         webbrowser.open(url)
         serving.join()
         return

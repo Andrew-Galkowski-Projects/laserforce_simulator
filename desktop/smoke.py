@@ -199,6 +199,22 @@ def _check_spa(response: _Response) -> None:
         raise AssertionError(f"GET / is not the SPA: {response.body[:300]!r}")
 
 
+def _run_once(
+    command: list[str], env: dict[str, str], timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run ``command`` to its exit, stdout and stderr together as text."""
+    return subprocess.run(
+        command,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+    )
+
+
 def _second_launch(
     command: list[str], env: dict[str, str], base: str, check_spa: bool
 ) -> None:
@@ -207,16 +223,7 @@ def _second_launch(
     It must exit 0 with ``LF_ALREADY_RUNNING`` within ``INSTANCE_TIMEOUT_S``,
     and the first launch's ``GET /`` must still answer.
     """
-    second = subprocess.run(
-        command,
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=INSTANCE_TIMEOUT_S,
-    )
+    second = _run_once(command, env, INSTANCE_TIMEOUT_S)
     if second.returncode != 0 or "LF_ALREADY_RUNNING" not in second.stdout:
         raise AssertionError(
             f"second launch: exit code {second.returncode}, wanted 0 and "
@@ -338,16 +345,7 @@ def run_window_selftest(command: list[str], home: Path) -> float:
     """
     print("smoke: window", flush=True)
     try:
-        result = subprocess.run(
-            command,
-            env=_env(home),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=WINDOW_TIMEOUT_S,
-        )
+        result = _run_once(command, _env(home), WINDOW_TIMEOUT_S)
     except subprocess.TimeoutExpired as expired:
         output = expired.output or ""
         if isinstance(output, bytes):

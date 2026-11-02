@@ -513,6 +513,27 @@ def test_a_window_that_raises_falls_back_to_the_browser_and_keeps_serving(
     assert "WebView2 failed to start" in caplog.text
 
 
+def test_a_selftest_window_that_raises_fails_at_once_with_no_browser(
+    monkeypatch: pytest.MonkeyPatch,
+    opened: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The self-test must fail CI straight away, not open a browser and block
+    # until the smoke's 90 s timeout.
+    def run_window(url: str, *, selftest: bool = False) -> None:
+        raise OSError("WebView2 failed to start")
+
+    monkeypatch.setattr(launcher, "run_window", run_window)
+    monkeypatch.setattr(launcher, "window_available", lambda: True)
+
+    launcher._open_shell(
+        FakeServer(), "http://127.0.0.1:1/x", ["main.py", "--selftest-window"]
+    )
+
+    assert opened == []
+    assert "LF_WINDOW_FAIL OSError: WebView2 failed to start" in capsys.readouterr().out
+
+
 def test_the_browser_shell_opens_the_browser_and_serves_on_the_main_thread(
     windows: list[tuple[str, bool, bool]], opened: list[str]
 ) -> None:
