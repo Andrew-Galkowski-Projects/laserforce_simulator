@@ -20,6 +20,19 @@ from core.services import _DEFAULT_MAPS
 
 REPO = Path(__file__).resolve().parents[3]
 SPEC = REPO / "desktop" / "laserforce.spec"
+SMOKE = REPO / "desktop" / "smoke.py"
+
+
+def test_the_smoke_expects_the_seeded_default_maps() -> None:
+    # smoke.py is stdlib-only and cannot import _DEFAULT_MAPS, so its copy of
+    # the names (as GET /api/maps/ sorts them) is held in step here.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("desk04_smoke", SMOKE)
+    assert spec is not None and spec.loader is not None
+    smoke = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(smoke)
+    assert smoke.DEFAULT_MAP_NAMES == sorted(name for name, _file in _DEFAULT_MAPS)
 
 
 def _run_spec(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:

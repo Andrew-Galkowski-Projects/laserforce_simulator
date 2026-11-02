@@ -58,7 +58,7 @@ def _newer_release(info: BuildInfo, repo: str, timeout: float) -> DesktopUpdate 
     match = RELEASE_TAG.match(tag)
     if not match or info.version is None:
         return None
-    if tuple(int(part) for part in match.groups()) <= _semver(info.version):
+    if _semver(".".join(match.groups())) <= _semver(info.version):
         return None
     return {"version": tag, "url": release["html_url"]}
 

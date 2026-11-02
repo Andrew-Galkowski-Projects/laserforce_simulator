@@ -11,6 +11,7 @@ from __future__ import annotations
 import http.server
 import json
 import logging
+import socket
 import threading
 import urllib.error
 from collections.abc import Iterator
@@ -307,3 +308,17 @@ def test_fetch_json_sends_githubs_headers_and_parses_the_body() -> None:
     assert request["path"] == "/repos/x/releases/latest"
     assert request["Accept"] == "application/vnd.github+json"
     assert request["User-Agent"] == "LaserforceSimulator"
+
+
+@pytest.mark.django_db
+def test_an_unreachable_github_is_no_update(
+    desktop: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real failure behind the fake's raises: the real fetch_json against a
+    # closed port, so the endpoint still answers null.
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setattr(update_check, "GITHUB_API", f"http://127.0.0.1:{port}/repos")
+    _build(desktop, "release", "0.1.0")
+    assert _get_update() is None

@@ -141,3 +141,26 @@ def test_no_build_info_is_a_dev_build(
     info = load_build_info()
     assert info == BuildInfo(version=None, channel="dev", sha=None, built=None)
     assert info.label == "dev"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "{not json",
+        "[]",
+        '{"version": null, "channel": "release", "sha": null, "built": null}',
+    ],
+    ids=["not-json", "not-an-object", "release-without-version"],
+)
+def test_an_unusable_build_info_is_a_dev_build_with_a_warning(
+    settings: object, tmp_path: Path, caplog: pytest.LogCaptureFixture, text: str
+) -> None:
+    # Review fix: a bad record must never break accounts/me/ (and so sign-in).
+    from desktop_app.build_info import DEV_BUILD, load_build_info
+
+    record = tmp_path / "build_info.json"
+    record.write_text(text, encoding="utf-8")
+    settings.DESKTOP_BUILD_INFO = str(record)  # type: ignore[attr-defined]
+    with caplog.at_level("WARNING", logger="desktop_app.build_info"):
+        assert load_build_info() == DEV_BUILD
+    assert len(caplog.records) == 1

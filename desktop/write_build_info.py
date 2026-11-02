@@ -13,6 +13,7 @@ tag, a local build) is ``dev``.
 from __future__ import annotations
 
 import json
+import os
 import sys
 from collections.abc import Mapping
 from datetime import date, datetime, timezone
@@ -48,8 +49,6 @@ def build_info(env: Mapping[str, str], today: date) -> dict[str, str | None]:
 
 
 def main(argv: list[str]) -> None:
-    import os
-
     out = Path(argv[1])
     today = datetime.now(timezone.utc).date()
     out.write_text(json.dumps(build_info(os.environ, today)), encoding="utf-8")
