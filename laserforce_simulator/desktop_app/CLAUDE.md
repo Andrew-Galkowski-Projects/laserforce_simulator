@@ -113,7 +113,9 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   raises `SmokeFailure(step, detail)` at the first failed step (`ready`, `spa`, `launch_code`,
   `refresh`, `me`, `update`, `default_maps`, `teams`, `batch`, `report`, `map`, `instance`).
   DESK-04: `me` also needs a non-null `desktop_version`; `update` expects
-  `GET /api/accounts/desktop-update/` to be `null` (a PR or unfrozen build is `dev`, so no call);
+  `GET /api/accounts/desktop-update/` to be `null` or `{version, url}` (`check_update_reply`, shape
+  only: a `latest` build on `main` finds the `desktop-latest` it is about to replace, and requiring
+  `null` turned `main`'s desktop job red after DESK-04);
   `default_maps` expects `GET /api/maps/` to list exactly the two default maps, and runs before
   `map` because the defaults are seeded only while no map exists. DESK-03's last step,
   **`instance`** (`_second_launch`), runs the same command with the same env (same data folder)
