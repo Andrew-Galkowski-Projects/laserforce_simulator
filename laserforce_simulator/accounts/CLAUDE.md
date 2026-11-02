@@ -253,11 +253,14 @@ Four plain `APIView`s under `/api/accounts/`, routed as explicit `path()`s in
 `laserforce_simulator/api_urls.py` and following
 [ADR-0039](../../docs/adr/0039-rest-api-envelope-and-form-bound-writes.md) (envelope, Form-bound
 writes, errors always raised). The output shape is **`MeSerializer`** (`accounts/serializers.py`):
-`{id, email, date_joined, is_staff, self_insert, desktop, desktop_notice}`, where `self_insert` is
+`{id, email, date_joined, is_staff, self_insert, desktop, desktop_notice, desktop_version}`, where `self_insert` is
 `PlayerSerializer` output of `get_self_insert(user)` or `null` — the raw column is never
 serialized, so a drifted link reads `null`. **DESK-01:** `desktop` is `settings.DESKTOP_APP`
 (`false` Hosted; the SPA hides Sign out and Change password when it is set) and `desktop_notice`
-the Desktop App's reset notice (`desktop_app.notice`), always `null` Hosted.
+the Desktop App's reset notice (`desktop_app.notice`), always `null` Hosted. **DESK-04:**
+`desktop_version` is the Desktop build's label (`v0.1.0`, `latest abc1234`, `dev`; from
+`desktop_app.build_info`), always `null` Hosted. The Desktop-only `GET
+/api/accounts/desktop-update/` (the Update notice) is documented in `desktop_app/CLAUDE.md`.
 
 | Method | Path | URL name | Behaviour |
 |---|---|---|---|
