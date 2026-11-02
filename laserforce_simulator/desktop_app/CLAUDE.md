@@ -18,7 +18,7 @@ it `/` is a 404 but the API works.
 | Module | What |
 |---|---|
 | `launcher.py` | `main()`: `quiet_std_streams()` (a `None` `sys.stdout` / `sys.stderr` → `os.devnull`) → `data_dir()`, `logs/` made → `acquire_instance_lock(data)` into `_instance_lock` (on `None`: headless prints `LF_ALREADY_RUNNING`, else `focus_window(WINDOW_TITLE)` or the box `Laserforce Simulator is already running.`; exit 0) → inside one `try`: `prepare_environment(data, spa)` (writes `secret_key` once; sets `LF_DESKTOP_HOME`, `LF_DESKTOP_SPA`, `SECRET_KEY`, `DATABASE_URL` = SQLite in the data folder, `DJANGO_SETTINGS_MODULE=desktop_app.settings`, overwriting inherited values) → `django.setup()` → `migrate_or_reset(data, migrate)` → `set_notice(...)` → `local_account()` → `start_job_worker()` → waitress on `127.0.0.1`, port 0 (read back as `effective_port`) → prints `LF_READY <seconds> <launch url>` → `choose_shell(sys.argv, window_available)`: `window` runs waitress on a daemon thread and `run_window(url, selftest=...)` on the main thread (`main` returns when it closes; if it raises, the error is logged and the browser opens on the same waitress thread, or under `--selftest-window` it prints `LF_WINDOW_FAIL <type>: <message>` and returns), `browser` opens the browser then `server.run()`, `none` only `server.run()`. Any exception in the `try`: `report_startup_failure(data, headless=...)` (appends a timestamp line + traceback to `logs/desktop.log`; headless prints it to stderr, else the box `Laserforce Simulator could not start. Details: <log path>`), exit 1. Flags: `--no-browser` (headless, wins), `--browser`, `--selftest-window`. |
-| `shell.py` | DESK-03, the **App window** (GLOSSARY). `WINDOW_TITLE = "Laserforce Simulator"`. `choose_shell(argv, window_ok) -> "window" \| "browser" \| "none"` (`--no-browser` → `none`, `--browser` → `browser`, else `window` iff `window_ok()`; `window_ok` is asked only then, and raising → `browser`, logged). `window_available()`: `webview` and `webview.platforms.winforms` import **and** `is_chromium`. `run_window(url, *, selftest=False)`: `ALLOW_DOWNLOADS = True`, `create_window(WINDOW_TITLE, url, width=1280, height=800)`, blocks in `webview.start`. The self-test polls `document.body.innerText` every `SELFTEST_POLL_S` (0.5 s) for `SELFTEST_LIMIT_S` (60 s) for `LANDING_TEXT` (`Sandbox`), prints `LF_WINDOW_OK <s>` (from `PROCESS_START`, this module's import) or `LF_WINDOW_FAIL <first 200 chars>`, and always destroys the window. `webview` is imported inside the functions only. |
+| `shell.py` | DESK-03, the **App window** (GLOSSARY). `WINDOW_TITLE = "Laserforce Simulator"`. `choose_shell(argv, window_ok) -> "window" \| "browser" \| "none"` (`--no-browser` → `none`, `--browser` → `browser`, else `window` iff `window_ok()`; `window_ok` is asked only then, and raising → `browser`, logged). `window_available()`: `webview` and `webview.platforms.winforms` import **and** `is_chromium`. `run_window(url, *, selftest=False)`: `ALLOW_DOWNLOADS = True`, `create_window(WINDOW_TITLE, url, width=1280, height=800)`, blocks in `webview.start`. BUG-WV-01: while it runs, a `_StartWatch` handler sits on the `pywebview` logger, and `_watch_start` (the `start` function) waits for `window.events.loaded`. A `pywebview` ERROR starting `INIT_FAILED_PREFIX` (`WebView2 initialization failed`), or no load within `WINDOW_START_TIMEOUT_S` (20 s), closes the window and makes `run_window` raise `WindowStartFailed(reason)`, so the launcher falls back to the browser. The watch returns at once if the person closes the window first. The self-test (only after a load) polls `document.body.innerText` every `SELFTEST_POLL_S` (0.5 s) for `SELFTEST_LIMIT_S` (60 s) for `LANDING_TEXT` (`Sandbox`), prints `LF_WINDOW_OK <s>` (from `PROCESS_START`, this module's import) or `LF_WINDOW_FAIL <first 200 chars>`, and always destroys the window. `webview` is imported inside the functions only. |
 | `instance.py` | DESK-03. `acquire_instance_lock(data) -> IO[bytes] \| None`: `<data>/instance.lock` (`a+b`), non-blocking exclusive lock (`msvcrt.locking(..., LK_NBLCK, 1)` on Windows, `fcntl.flock(LOCK_EX \| LOCK_NB)` elsewhere); `None`, with the file closed, when another process holds it. `focus_window(title) -> bool` (`FindWindowW` → `ShowWindow(SW_RESTORE)` → `SetForegroundWindow`; `False` off Windows). `message_box(text)` (`MessageBoxW` titled `WINDOW_TITLE`; stderr off Windows). |
 | `launch_code.py` | `mint_launch_code(user) -> str`, `spend_launch_code(code) -> int \| None` (in-process dict under a lock; single use, no expiry), and `DesktopLoginView` at `api/accounts/desktop-login/?code=` (`api_desktop_login`). |
 | `notice.py` | `set_notice(text)` / `current_notice()`: the reset notice for the life of the process, read by `accounts/me/` as `desktop_notice`. The only module the Hosted deploy imports. |
@@ -50,6 +50,12 @@ it `/` is a 404 but the API works.
 - **No WebView2 means MSHTML, silently.** pywebview falls back to Internet Explorer, which cannot run
   the SPA, without raising. `window_available()` therefore checks
   `webview.platforms.winforms.is_chromium`, not just the import; `False` opens the browser.
+- **WebView2 failing to start does not raise either** (BUG-WV-01). pywebview logs one ERROR at once
+  (`edgechromium.on_webview_ready`), or hangs with no `loaded` until the window is destroyed (CI's
+  `E_ABORT`). `run_window`'s start watch catches both. `test_shell.py` pins the log wording against
+  the installed pywebview: an upgrade that rewords it turns CI red. The watch runs on pywebview's
+  **non-daemon** thread, so it must end when the window closes, or the process (and its instance
+  lock) outlives the window.
 - **`--no-browser` never shows UI**: no App window, browser or message box. A second launch prints
   `LF_ALREADY_RUNNING`, a startup failure prints its traceback to stderr. The smoke test and CI
   depend on it (a box would hang a headless runner).
@@ -106,7 +112,14 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   passing smoke, `run_window_selftest(<exe> <args> --selftest-window, <fresh temp folder>) ->
   float` returns the `LF_WINDOW_OK` seconds and raises `SmokeFailure("window", ...)` on
   `LF_WINDOW_FAIL`, a non-zero exit or `WINDOW_TIMEOUT_S` (90 s); the summary then gains `| App
-  window ready | <s> s |` (`summary_markdown(..., window_s=None)`). CI's `desktop` job passes
+  window ready | <s> s |` (`summary_markdown(..., window_s=None)`). BUG-WV-01: a self-test that
+  fails with `WINDOW_START_FAILED` (`LF_WINDOW_FAIL WindowStartFailed`, pinned to the exception's
+  name by a test) is run **once** more on a fresh folder (`_window_with_retry`; the row then says
+  `(after 1 retry)`), since CI's runner sometimes hangs starting WebView2; any other failure, or a
+  second one, stays red. Then **`window_failure`** (`run_window_failure_selftest(command, home) ->
+  float`) runs the self-test with `WEBVIEW2_USER_DATA_FOLDER` under a regular file, so WebView2
+  cannot start for any user, admin included. It expects exit 0 and `LF_WINDOW_FAIL WindowStartFailed`
+  within `WINDOW_FAILURE_TIMEOUT_S` (40 s), and adds `| App window failure fallback | <s> s |`. CI's `desktop` job passes
   `--window` on `windows-latest` (the real WebView2 window); never skip it or mark it
   `continue-on-error`. The suite never runs `--window` on the real launcher (it would open a
   window, or the browser where pywebview is missing). A new bundled feature worth guarding gets a
@@ -126,10 +139,11 @@ regression, environment, secret key, Local Account), `test_settings.py` (the des
 module imported fresh), `test_launcher_smoke.py` (loads `desktop/smoke.py` and runs its CLI on
 `desktop/main.py` against a temp data folder, one launch of about 8 s plus the `instance` step's
 second launch; plus the early-exit `SmokeFailure`, the CLI's exit 1, the summary table, DESK-03's
-`_second_launch` against a stand-in local server, and `run_window_selftest` / `--window` against
-fake commands), `test_requirements.py` (the dev → desktop
+`_second_launch` against a stand-in local server, and `run_window_selftest` / `--window` /
+BUG-WV-01's retry and `window_failure` against fake commands), `test_requirements.py` (the dev → desktop
 → runtime chain, the pywebview pin). DESK-03: `test_shell.py` (`choose_shell`, and a fake `webview`
-package in `sys.modules` for `window_available` / `run_window`: CI's Python jobs run on Linux),
+package in `sys.modules` for `window_available` / `run_window`, whose `start` loads, hangs or logs
+the init ERROR: CI's Python jobs run on Linux),
 `test_instance.py` (the lock against a real second process and a crashed holder; `fcntl` on Linux,
 `msvcrt` on Windows), and `test_launcher.py`'s `main()` tests (second launch, startup failure, a
 real failure through `desktop/main.py`, and the shell dispatch through `_open_shell`).

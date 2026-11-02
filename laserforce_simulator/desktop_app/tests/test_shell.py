@@ -6,11 +6,15 @@ fake ``webview`` package in ``sys.modules`` stands in for it.
 
 from __future__ import annotations
 
+import importlib.util
 import logging
 import re
 import sys
+import threading
+import time
 from collections.abc import Callable
-from types import ModuleType
+from pathlib import Path
+from types import ModuleType, SimpleNamespace
 from typing import Any
 
 import pytest
@@ -146,6 +150,10 @@ class FakeWindow:
         self.texts = texts
         self.scripts: list[str] = []
         self.destroyed = False
+        # pywebview's ``Event`` has the same ``wait`` / ``set`` / ``is_set``.
+        self.events = SimpleNamespace(
+            loaded=threading.Event(), closed=threading.Event()
+        )
 
     def evaluate_js(self, script: str) -> str:
         self.scripts.append(script)
@@ -159,11 +167,18 @@ class FakeWindow:
 
 
 class FakeWebview(ModuleType):
-    """The slice of pywebview's module API that ``run_window`` uses."""
+    """The slice of pywebview's module API that ``run_window`` uses.
 
-    def __init__(self, window: FakeWindow) -> None:
+    ``start`` is how WebView2 comes up: ``"load"`` sets ``loaded`` (a healthy
+    window), ``"hang"`` does nothing (BUG-WV-01's CI case), and any other string
+    is logged on the ``pywebview`` logger, as ``edgechromium.on_webview_ready``
+    logs an immediate failure. Then it runs ``func`` the way pywebview does.
+    """
+
+    def __init__(self, window: FakeWindow, start_as: str = "load") -> None:
         super().__init__("webview")
         self.window = window
+        self.start_as = start_as
         self.settings: dict[str, Any] = {"ALLOW_DOWNLOADS": False}
         self.events: list[tuple[str, Any]] = []
 
@@ -173,6 +188,10 @@ class FakeWebview(ModuleType):
 
     def start(self, func: Callable[..., None] | None = None, args: Any = None) -> None:
         self.events.append(("start", dict(self.settings)))
+        if self.start_as == "load":
+            self.window.events.loaded.set()
+        elif self.start_as != "hang":
+            logging.getLogger("pywebview").error(self.start_as)
         if func is not None:
             func(*(args if isinstance(args, (tuple, list)) else (args,)))
 
@@ -183,8 +202,10 @@ def fast_selftest(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(shell, "SELFTEST_LIMIT_S", 0.05)
 
 
-def _fake_webview(monkeypatch: pytest.MonkeyPatch, window: FakeWindow) -> FakeWebview:
-    webview = FakeWebview(window)
+def _fake_webview(
+    monkeypatch: pytest.MonkeyPatch, window: FakeWindow, start_as: str = "load"
+) -> FakeWebview:
+    webview = FakeWebview(window, start_as)
     monkeypatch.setitem(sys.modules, "webview", webview)
     return webview
 
@@ -248,3 +269,119 @@ def test_the_selftest_reports_fail_with_the_page_text_on_timeout(
     assert capsys.readouterr().out == "LF_WINDOW_FAIL " + "x" * 200 + "\n"
     assert len(window.scripts) > 1
     assert window.destroyed
+
+
+# BUG-WV-01: pywebview never raises when WebView2 fails to start. It either
+# logs one ERROR at once (E_UNEXPECTED) or hangs with nothing logged and no
+# ``loaded`` (E_ABORT, the CI case) until the window is destroyed.
+
+INIT_ERROR = (
+    "WebView2 initialization failed with exception:\n"
+    "  (0x8000FFFF): Catastrophic failure (E_UNEXPECTED)"
+)
+
+
+def test_an_immediate_init_failure_raises_at_once_and_closes_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shell, "WINDOW_START_TIMEOUT_S", 5.0)
+    window = FakeWindow(["Sandbox"])
+    _fake_webview(monkeypatch, window, start_as=INIT_ERROR)
+    started = time.monotonic()
+
+    with pytest.raises(shell.WindowStartFailed) as failure:
+        shell.run_window("http://127.0.0.1:1234/login")
+
+    assert time.monotonic() - started < 2
+    assert str(failure.value) == "WebView2 initialization failed with exception:"
+    assert window.destroyed
+
+
+def test_a_window_that_never_loads_raises_at_the_timeout_and_closes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shell, "WINDOW_START_TIMEOUT_S", 0.2)
+    window = FakeWindow(["Sandbox"])
+    _fake_webview(monkeypatch, window, start_as="hang")
+    # A load long after the timeout, so a watch with no timeout fails this
+    # test instead of hanging it.
+    late_load = threading.Timer(2.0, window.events.loaded.set)
+    late_load.start()
+
+    with pytest.raises(shell.WindowStartFailed) as failure:
+        shell.run_window("http://127.0.0.1:1234/login", selftest=True)
+
+    assert str(failure.value) == "the App window did not load within 0.2 s"
+    assert window.destroyed
+    assert window.scripts == []  # no self-test on a window that never loaded
+
+
+def test_closing_the_window_before_it_loads_ends_the_watch_at_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # pywebview runs the start function on a non-daemon thread
+    # (webview/__init__.py), so a watch that outlives the window keeps the
+    # process, and its instance lock, alive until the start timeout.
+    monkeypatch.setattr(shell, "WINDOW_START_TIMEOUT_S", 5.0)
+    window = FakeWindow(["Sandbox"])
+    _fake_webview(monkeypatch, window, start_as="hang")
+    threading.Timer(0.1, window.events.closed.set).start()
+    started = time.monotonic()
+
+    shell.run_window("http://127.0.0.1:1234/login")
+
+    assert time.monotonic() - started < 2
+    assert not window.destroyed  # the player closed it; nothing to close
+
+
+def test_an_unrelated_pywebview_error_is_not_a_failed_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shell, "WINDOW_START_TIMEOUT_S", 5.0)
+    window = FakeWindow(["Sandbox"])
+    webview = _fake_webview(monkeypatch, window, start_as="hang")
+
+    def start(func: Callable[..., None] | None = None, args: Any = None) -> None:
+        # The stray ERROR comes first and the load a little later, so the
+        # start watch polls while the ERROR is on record.
+        logging.getLogger("pywebview").error("Failed to delete user data folder")
+        threading.Timer(0.3, window.events.loaded.set).start()
+        FakeWebview.start(webview, func, args)
+
+    monkeypatch.setattr(webview, "start", start)
+
+    shell.run_window("http://127.0.0.1:1234/login")
+
+    assert not window.destroyed
+
+
+def test_the_pywebview_handler_is_removed_after_the_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(shell, "WINDOW_START_TIMEOUT_S", 0.2)
+    before = list(logging.getLogger("pywebview").handlers)
+    _fake_webview(monkeypatch, FakeWindow(["Sandbox"]))
+    shell.run_window("http://127.0.0.1:1234/login")
+    assert logging.getLogger("pywebview").handlers == before
+
+    _fake_webview(monkeypatch, FakeWindow(["Sandbox"]), start_as=INIT_ERROR)
+    with pytest.raises(shell.WindowStartFailed):
+        shell.run_window("http://127.0.0.1:1234/login")
+    assert logging.getLogger("pywebview").handlers == before
+
+
+def test_installed_pywebview_still_logs_the_init_failure_we_detect() -> None:
+    # A pywebview upgrade that rewords this log would silently disable the
+    # browser fallback. pywebview is installed in CI's Linux jobs too
+    # (requirements.txt -> requirements-desktop.txt); read the source rather
+    # than import the Windows backend.
+    spec = importlib.util.find_spec("webview")
+    assert spec is not None and spec.submodule_search_locations
+    source = (
+        Path(next(iter(spec.submodule_search_locations)))
+        / "platforms"
+        / "edgechromium.py"
+    ).read_text(encoding="utf-8")
+
+    assert f"'{shell.INIT_FAILED_PREFIX} with exception:" in source
+    assert "logging.getLogger('pywebview')" in source

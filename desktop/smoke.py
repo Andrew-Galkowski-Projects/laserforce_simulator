@@ -41,6 +41,10 @@ READY_TIMEOUT_S = 90
 JOB_TIMEOUT_S = 120
 INSTANCE_TIMEOUT_S = 30
 WINDOW_TIMEOUT_S = 90
+# BUG-WV-01: the launcher gives WebView2 20 s to load before it falls back.
+WINDOW_FAILURE_TIMEOUT_S = 40
+# The self-test line of a WebView2 start failure: the one --window retries.
+WINDOW_START_FAILED = "LF_WINDOW_FAIL WindowStartFailed"
 
 
 class SmokeFailure(Exception):
@@ -332,6 +336,14 @@ def _steps(
     return Timings(float(ready_s), round(cold_start_s, 2))
 
 
+def _timeout_output(expired: subprocess.TimeoutExpired) -> str:
+    """What a timed-out ``_run_once`` printed, as text."""
+    output = expired.output or ""
+    if isinstance(output, bytes):
+        output = output.decode("utf-8", "replace")
+    return output
+
+
 def _env(home: Path) -> dict[str, str]:
     return {**os.environ, "LF_DESKTOP_HOME": str(home), "PYTHONUNBUFFERED": "1"}
 
@@ -347,13 +359,10 @@ def run_window_selftest(command: list[str], home: Path) -> float:
     try:
         result = _run_once(command, _env(home), WINDOW_TIMEOUT_S)
     except subprocess.TimeoutExpired as expired:
-        output = expired.output or ""
-        if isinstance(output, bytes):
-            output = output.decode("utf-8", "replace")
         raise SmokeFailure(
             "window",
             f"no LF_WINDOW_OK within {WINDOW_TIMEOUT_S} s"
-            f"\n--- launcher output ---\n{output}",
+            f"\n--- launcher output ---\n{_timeout_output(expired)}",
         )
     output = result.stdout
     ready = [line for line in output.splitlines() if line.startswith("LF_WINDOW_OK ")]
@@ -366,17 +375,73 @@ def run_window_selftest(command: list[str], home: Path) -> float:
     return float(ready[0].split()[1])
 
 
+def run_window_failure_selftest(command: list[str], home: Path) -> float:
+    """Run ``command`` (``<exe> --selftest-window``) with WebView2 unable to start.
+
+    ``WEBVIEW2_USER_DATA_FOLDER`` goes under a regular file, which no user
+    can create: WebView2 hangs as on CI's runner (BUG-WV-01), and the launcher
+    must report ``LF_WINDOW_FAIL WindowStartFailed`` and exit 0. Returns the
+    seconds that took; raises ``SmokeFailure("window_failure", ...)``
+    otherwise, or after ``WINDOW_FAILURE_TIMEOUT_S``.
+    """
+    print("smoke: window_failure", flush=True)
+    blocker = home / "blocker"
+    blocker.write_text("not a folder", encoding="utf-8")
+    env = {**_env(home), "WEBVIEW2_USER_DATA_FOLDER": str(blocker / "data")}
+    started = time.perf_counter()
+    try:
+        result = _run_once(command, env, WINDOW_FAILURE_TIMEOUT_S)
+    except subprocess.TimeoutExpired as expired:
+        raise SmokeFailure(
+            "window_failure",
+            f"no {WINDOW_START_FAILED} within {WINDOW_FAILURE_TIMEOUT_S} s"
+            f"\n--- launcher output ---\n{_timeout_output(expired)}",
+        )
+    output = result.stdout
+    failed = any(line.startswith(WINDOW_START_FAILED) for line in output.splitlines())
+    if result.returncode != 0 or not failed:
+        raise SmokeFailure(
+            "window_failure",
+            f"exit code {result.returncode}, wanted 0 and {WINDOW_START_FAILED}"
+            f"\n--- launcher output ---\n{output}",
+        )
+    return time.perf_counter() - started
+
+
+def _window_with_retry(command: list[str]) -> tuple[float, bool]:
+    """The App window self-test, run again once after a WebView2 start failure.
+
+    CI's runner sometimes hangs starting WebView2 (BUG-WV-01); any other
+    failure, or a second one, stands. Returns the seconds and whether it
+    retried.
+    """
+
+    def selftest() -> float:
+        return _in_fresh_folder(lambda home: run_window_selftest(command, home))
+
+    try:
+        return selftest(), False
+    except SmokeFailure as failure:
+        if WINDOW_START_FAILED not in failure.detail:
+            raise
+        print("smoke: window failed to start; retrying once", flush=True)
+    return selftest(), True
+
+
 def summary_markdown(
     timings: Timings,
     *,
     folder_mb: float,
     zip_mb: float,
     window_s: float | None = None,
+    window_retried: bool = False,
+    window_failure_s: float | None = None,
 ) -> str:
     """The job summary table: the build's sizes and the smoke's times.
 
-    ``window_s`` is the App window self-test's figure; its row shows only when
-    ``--window`` ran.
+    ``window_s`` is the App window self-test's figure (``window_retried`` when
+    it took a second run) and ``window_failure_s`` the ``window_failure``
+    step's; their rows show only when ``--window`` ran.
     """
     rows = [
         "### Desktop build",
@@ -389,7 +454,10 @@ def summary_markdown(
         f"| Cold start to the SPA | {timings.cold_start_s:.2f} s |",
     ]
     if window_s is not None:
-        rows.append(f"| App window ready | {window_s:.2f} s |")
+        retried = " (after 1 retry)" if window_retried else ""
+        rows.append(f"| App window ready | {window_s:.2f} s{retried} |")
+    if window_failure_s is not None:
+        rows.append(f"| App window failure fallback | {window_failure_s:.2f} s |")
     return "\n".join([*rows, ""])
 
 
@@ -428,6 +496,8 @@ def main(argv: list[str] | None = None, *, check_spa: bool = True) -> int:
     args = parser.parse_args(argv)
     launcher = [str(args.exe), *args.args]
     window_s: float | None = None
+    window_retried = False
+    window_failure_s: float | None = None
     try:
         timings = _in_fresh_folder(
             lambda home: run_smoke(
@@ -435,19 +505,27 @@ def main(argv: list[str] | None = None, *, check_spa: bool = True) -> int:
             )
         )
         if args.window:
-            window_s = _in_fresh_folder(
-                lambda home: run_window_selftest([*launcher, "--selftest-window"], home)
+            selftest = [*launcher, "--selftest-window"]
+            window_s, window_retried = _window_with_retry(selftest)
+            window_failure_s = _in_fresh_folder(
+                lambda home: run_window_failure_selftest(selftest, home)
             )
     except SmokeFailure as failure:
         print(f"smoke: FAILED at {failure.step}\n{failure.detail}", flush=True)
         return 1
-    print(f"smoke: passed {timings} window_s={window_s}", flush=True)
+    print(
+        f"smoke: passed {timings} window_s={window_s} retried={window_retried}"
+        f" window_failure_s={window_failure_s}",
+        flush=True,
+    )
     if args.summary:
         text = summary_markdown(
             timings,
             folder_mb=_megabytes(args.exe.parent),
             zip_mb=_megabytes(args.zip) if args.zip else 0.0,
             window_s=window_s,
+            window_retried=window_retried,
+            window_failure_s=window_failure_s,
         )
         with args.summary.open("a", encoding="utf-8") as summary:
             summary.write(text)
