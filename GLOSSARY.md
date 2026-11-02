@@ -452,8 +452,16 @@ A downloadable build of the app that runs on one person's machine, for one **Acc
 _Avoid_: "standalone", "offline", "exe" (say Desktop App); "standalone" already means a **Single Round** in older docs.
 
 **Desktop build**:
-The zipped one-folder PyInstaller output of the **Desktop App** (`LaserforceSimulator-windows-x64.zip`), built and smoke-tested by CI on every PR and push. The **Latest desktop build** is the one on the rolling `desktop-latest` GitHub pre-release, replaced on every push to `main` whose CI passed; a `v*` tag publishes a numbered Release instead (DESK-02).
+The zipped one-folder PyInstaller output of the **Desktop App** (`LaserforceSimulator-windows-x64.zip`), built and smoke-tested by CI on every PR and push. The **Latest desktop build** is the one on the rolling `desktop-latest` GitHub pre-release, replaced on every push to `main` whose CI passed; a `v*` tag publishes a numbered Release instead (DESK-02). Each Desktop build carries a record of which build it is: its version (on a **Release**), its channel (release, latest, or dev for a local build), its commit and its build date (DESK-04).
 _Avoid_: "the exe", "installer" (it is a zip, not an installer), "nightly" (it is per merge, not per night).
+
+**Release**:
+A numbered **Desktop build** (`v0.1.0`), published from a plain `vX.Y.Z` tag; the public download. Any other tag publishes as a pre-release and is not a Release.
+_Avoid_: "stable", "version build"; "release" for the rolling **Latest desktop build**.
+
+**Update notice**:
+The banner the **Desktop App** shows when a newer build of its own channel exists — a newer **Release** for a Release, a newer **Latest desktop build** for a Latest one. It links to the download; it updates nothing itself.
+_Avoid_: "update" alone, "auto-update" (there is no updater).
 
 **Launch code**:
 A single-use secret the **Desktop App** mints each time it starts and opens the **App window** (or the browser) with; spending it signs that page in as the **Local Account**. There is no password sign-in in the Desktop App.
