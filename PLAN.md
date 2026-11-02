@@ -151,6 +151,23 @@ the line walk never runs. Reproduce with either sample map in `Screenshots_and_v
 Also remove the import-time `logging.basicConfig(level=logging.DEBUG)` in
 `matches/simulation/entrypoints.py`.
 
+### BUG-WV-01 · [NOT STARTED] App window shows nothing when WebView2 fails to initialise
+
+Found by the DESK-03 retro PR's CI (run 41497545360, `desktop` job, 2026-11-02). The frozen
+`smoke.py --window` self-test failed with `LF_WINDOW_FAIL` after its 60 s poll. pywebview logged
+`WebView2 initialization failed with exception: (0x80004004): Operation aborted (E_ABORT)` from
+`CoreWebView2Environment.CreateCoreWebView2ControllerAsync`. The PR changed only a comment, and the
+same check passed on PR #497, `main`'s merge run and a local build, so the runner's WebView2 fails
+to start some of the time.
+
+The bug: pywebview's `on_webview_ready` (`webview/platforms/edgechromium.py:267`) only **logs** a
+failed initialisation and does not raise. So `window_available()` is true (the runtime is
+installed), `run_window` never raises, and DESK-03's browser fallback (grill decision 2) never runs.
+A player whose WebView2 fails this way gets an empty App window. The self-test catches it only at
+its timeout. Fix test-first: `run_window` treats a failed initialisation as a failure. Find
+pywebview's hook for it first (an event, or the `[pywebview]` logger). Then the launcher falls back
+to the browser, and `--selftest-window` prints `LF_WINDOW_FAIL` straight away.
+
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
 Follow-ups to the LFstats player import (#256). The import turns real players' LFstats numbers
