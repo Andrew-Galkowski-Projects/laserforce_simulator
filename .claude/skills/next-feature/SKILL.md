@@ -168,7 +168,10 @@ ANG-07's spec expected `/` to show `base.html`'s title, and anonymous `/`
 redirects to the sign-in page. Probe the way each CI job that runs the test will:
 list the setup the probe needed (an SPA build, a seed, a service) and check every
 such job has it (DESK-02 probed with the SPA built; CI's Python jobs never build it,
-and the smoke went red there). For every user-facing message the spec quotes,
+and the smoke went red there). Probe each ref it runs on too (a PR, `main`, a `v*`
+tag): a step that branches on `GITHUB_REF` names in Testing Decisions how each
+branch runs before merge (DESK-04's smoke passed as a PR's `dev` build, and the
+first `main` build, `latest`, went red). For every user-facing message the spec quotes,
 find the line that produces it: ANG-06 item 7 promised "Something went wrong"
 where `ApiClient` says "Could not reach the server.". For every field the
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
@@ -257,7 +260,9 @@ that does the same: ANG-06-13b's #405 said to fake `setTimeout`, and rxjs
 Create each ticket as a sub-issue of the spec with native blocked-by edges:
 write each body to a file, list the tickets in dependency order in a JSON file,
 and run `python scripts/publish_tickets.py <spec> <tickets.json>` (format in
-its header). A run that fails half way is finished by running it again.
+its header). A body names another ticket as `{{KEY}}` (its JSON key), and the
+script swaps in the real `#<number>` once every issue exists. A run that fails half
+way is finished by running it again.
 
 A **prototype** task (throwaway samples the owner picks from) adds two kinds of
 ticket. Prototype tickets target a `prototype/<task>` branch cut from the
@@ -533,6 +538,10 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    cannot see a native window): install `laserforce_simulator/requirements-desktop.txt`
    in a scratchpad venv, build the SPA, and run `python desktop/smoke.py <venv
    python> desktop/main.py --window`.
+   A Desktop-only SPA change (the `desktop` flag, its notices) runs the unfrozen
+   launcher, after the SPA build: `python desktop/main.py --no-browser` with
+   `LF_DESKTOP_HOME` set to a scratchpad folder prints `LF_READY <s> <launch url>`;
+   open that URL in the MCP tab, which signs it in (DESK-04).
    Clean up any other test data the pass created.
 
 ## Step 8: Review
