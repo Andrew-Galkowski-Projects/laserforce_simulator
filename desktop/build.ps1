@@ -30,6 +30,7 @@ Invoke-Native 'PyInstaller' {
 }
 
 $folder = Join-Path $Out 'dist\LaserforceSimulator'
+# The asset name: keep it equal to ZIP in .github/workflows/ci.yml.
 $zip = Join-Path $Out 'LaserforceSimulator-windows-x64.zip'
 if (Test-Path $zip) { Remove-Item $zip }
 # Windows' bsdtar writes a zip (-a picks the format from the name) far faster

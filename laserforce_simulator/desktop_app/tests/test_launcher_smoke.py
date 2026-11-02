@@ -40,12 +40,19 @@ smoke = _load_smoke()
 
 
 def test_the_launcher_passes_every_smoke_step(tmp_path: Path) -> None:
-    timings = smoke.run_smoke(
-        [sys.executable, str(ENTRY), "--no-browser"], tmp_path, check_spa=SPA_BUILT
+    # Through the CLI, as CI runs it, so its pass path (the summary) is covered
+    # too; one launch keeps the suite to one ~8 s smoke.
+    summary = tmp_path / "summary.md"
+
+    exit_code = smoke.main(
+        [sys.executable, str(ENTRY), "--summary", str(summary)], check_spa=SPA_BUILT
     )
 
-    assert set(timings) == {"launcher_ready_s", "cold_start_s"}
-    assert 0 < timings["launcher_ready_s"] <= timings["cold_start_s"]
+    assert exit_code == 0
+    text = summary.read_text(encoding="utf-8")
+    assert "| Zip | 0.0 MB |" in text  # no --zip given
+    assert "| Launcher ready |" in text
+    assert "| Cold start to the SPA |" in text
 
 
 def test_a_process_that_exits_before_ready_fails_the_ready_step(
@@ -68,7 +75,9 @@ def test_the_cli_exits_1_and_writes_no_summary_on_a_failure(tmp_path: Path) -> N
 
 def test_the_summary_lists_sizes_and_times() -> None:
     text = smoke.summary_markdown(
-        {"launcher_ready_s": 4.6, "cold_start_s": 4.71}, folder_mb=234.04, zip_mb=99.8
+        smoke.Timings(launcher_ready_s=4.6, cold_start_s=4.71),
+        folder_mb=234.04,
+        zip_mb=99.8,
     )
 
     assert "| Zip | 99.8 MB |" in text

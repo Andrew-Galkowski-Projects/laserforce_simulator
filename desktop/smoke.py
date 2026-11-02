@@ -1,8 +1,8 @@
 """DESK-02: the Desktop build smoke, run frozen in CI and unfrozen in the suite.
 
-    python desktop/smoke.py <exe> [--zip <zip>] [--summary <md file>]
+    python desktop/smoke.py <exe> [<args>...] [--zip <zip>] [--summary <md file>]
 
-runs ``<exe> --no-browser`` on a fresh data folder and walks it through the
+runs ``<exe> <args> --no-browser`` on a fresh data folder and walks it through the
 steps below. Exit 0 on a pass, 1 on the first failed step. On a pass,
 ``--summary`` (CI passes ``$GITHUB_STEP_SUMMARY``) gets the sizes and times.
 ``desktop_app/tests/test_launcher_smoke.py`` calls ``run_smoke`` on
@@ -26,7 +26,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 MAP_IMAGE = (
     Path(__file__).resolve().parent.parent
@@ -54,17 +54,27 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _opener = urllib.request.build_opener(_NoRedirect)
 
 
+class Timings(NamedTuple):
+    """What a passing smoke measured, in seconds from the process start."""
+
+    launcher_ready_s: float  # the launcher's own LF_READY figure
+    cold_start_s: float  # to the first GET / answered
+
+
+class _Response(NamedTuple):
+    status: int
+    headers: dict[str, str]
+    body: bytes
+
+
 def _request(
     url: str,
     *,
     method: str = "GET",
-    body: dict[str, Any] | None = None,
     data: bytes | None = None,
     content_type: str = "application/json",
     headers: dict[str, str] | None = None,
-) -> tuple[int, dict[str, str], bytes]:
-    if body is not None:
-        data = json.dumps(body).encode()
+) -> _Response:
     request = urllib.request.Request(url, data=data, method=method)
     request.add_header("Accept", "application/json")
     if data is not None:
@@ -73,14 +83,34 @@ def _request(
         request.add_header(name, value)
     try:
         with _opener.open(request, timeout=60) as response:
-            return response.status, dict(response.headers), response.read()
+            return _Response(response.status, dict(response.headers), response.read())
     except urllib.error.HTTPError as error:
-        return error.code, dict(error.headers), error.read()
+        return _Response(error.code, dict(error.headers), error.read())
 
 
-def _expect(status: int, wanted: int, body: bytes) -> None:
-    if status != wanted:
-        raise AssertionError(f"HTTP {status}, wanted {wanted}: {body[:300]!r}")
+def _expect(response: _Response, wanted: int) -> None:
+    if response.status != wanted:
+        raise AssertionError(
+            f"HTTP {response.status}, wanted {wanted}: {response.body[:300]!r}"
+        )
+
+
+def _api(
+    url: str,
+    wanted: int,
+    *,
+    body: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+) -> Any:
+    """A JSON call: POST ``body`` (GET without one), expect ``wanted``, return ``data``."""
+    response = _request(
+        url,
+        method="GET" if body is None else "POST",
+        data=None if body is None else json.dumps(body).encode(),
+        headers=headers,
+    )
+    _expect(response, wanted)
+    return json.loads(response.body)["data"]
 
 
 class _Output:
@@ -113,8 +143,6 @@ def _step(name: str, output: _Output) -> Iterator[None]:
     print(f"smoke: {name}", flush=True)
     try:
         yield
-    except SmokeFailure:
-        raise
     except Exception as error:  # every failure becomes the step's SmokeFailure
         raise SmokeFailure(name, f"{error!r}\n--- launcher output ---\n{output.text()}")
 
@@ -130,13 +158,11 @@ def _multipart(name: str, image: Path) -> tuple[bytes, str]:
     return head + image.read_bytes() + tail, f"multipart/form-data; boundary={boundary}"
 
 
-def run_smoke(
-    command: list[str], home: Path, *, check_spa: bool = True
-) -> dict[str, float]:
+def run_smoke(command: list[str], home: Path, *, check_spa: bool = True) -> Timings:
     """Launch ``command`` on data folder ``home`` and run every smoke step.
 
-    Returns ``launcher_ready_s`` (from ``LF_READY``) and ``cold_start_s``
-    (process start to the first ``GET /`` that served the SPA). Raises
+    Returns the launcher's ``LF_READY`` seconds and the cold start (process
+    start to the first ``GET /`` answered). Raises
     ``SmokeFailure`` at the first failed step; the process is always killed.
     ``check_spa=False`` only times ``GET /``: an unfrozen launcher has no SPA
     until ``ng build`` has run (CI's Python jobs never run it). The frozen
@@ -161,7 +187,7 @@ def run_smoke(
         process.wait(timeout=30)
 
 
-def _steps(output: _Output, started: float, check_spa: bool) -> dict[str, float]:
+def _steps(output: _Output, started: float, check_spa: bool) -> Timings:
     with _step("ready", output):
         output.ready.wait(READY_TIMEOUT_S)
         if not output.ready_line:
@@ -170,106 +196,88 @@ def _steps(output: _Output, started: float, check_spa: bool) -> dict[str, float]
     base = launch_url.split("/api/")[0]
 
     with _step("spa", output):
-        status, _, body = _request(f"{base}/")
+        spa = _request(f"{base}/")
         cold_start_s = time.perf_counter() - started
         if check_spa:
-            _expect(status, 200, body)
-            if b"<app-root" not in body:
-                raise AssertionError(f"GET / is not the SPA: {body[:300]!r}")
+            _expect(spa, 200)
+            if b"<app-root" not in spa.body:
+                raise AssertionError(f"GET / is not the SPA: {spa.body[:300]!r}")
 
     with _step("launch_code", output):
-        status, headers, body = _request(launch_url)
-        _expect(status, 302, body)
-        if headers.get("Location") != "/":
-            raise AssertionError(f"redirects to {headers.get('Location')!r}, not /")
-        refresh = SimpleCookie(headers["Set-Cookie"])["refresh_token"].value
-        status, _, body = _request(launch_url)
-        _expect(status, 403, body)
+        launch = _request(launch_url)
+        _expect(launch, 302)
+        if launch.headers.get("Location") != "/":
+            raise AssertionError(f"redirects to {launch.headers.get('Location')!r}")
+        refresh = SimpleCookie(launch.headers["Set-Cookie"])["refresh_token"].value
+        _expect(_request(launch_url), 403)
 
     with _step("refresh", output):
-        status, _, body = _request(
+        tokens = _request(
             f"{base}/api/token/refresh/",
             method="POST",
             headers={"Cookie": f"refresh_token={refresh}"},
         )
-        _expect(status, 200, body)
-        auth = {"Authorization": f"Bearer {json.loads(body)['data']['access']}"}
+        _expect(tokens, 200)
+        auth = {"Authorization": f"Bearer {json.loads(tokens.body)['data']['access']}"}
 
     with _step("me", output):
-        status, _, body = _request(f"{base}/api/accounts/me/", headers=auth)
-        _expect(status, 200, body)
-        me = json.loads(body)["data"]
+        me = _api(f"{base}/api/accounts/me/", 200, headers=auth)
         wanted = ("local@desktop.invalid", True, None)
         got = (me["email"], me["desktop"], me["desktop_notice"])
         if got != wanted:
             raise AssertionError(f"me is {got}, wanted {wanted}")
 
     with _step("teams", output):
-        status, _, body = _request(
+        generated = _api(
             f"{base}/api/teams/generate/",
-            method="POST",
+            201,
             body={"num_teams": "2", "players_per_team": "6", "mean": 50, "std_dev": 15},
             headers=auth,
         )
-        _expect(status, 201, body)
-        red, blue = (team["id"] for team in json.loads(body)["data"]["created_teams"])
+        red, blue = (team["id"] for team in generated["created_teams"])
+        teams = {"team_red": red, "team_blue": blue}
 
     with _step("batch", output):
-        status, _, body = _request(
+        job = _api(
             f"{base}/api/simulate-batch/",
-            method="POST",
-            body={"team_red": red, "team_blue": blue, "n": 1, "master_seed": 42},
+            200,
+            body={**teams, "n": 1, "master_seed": 42},
             headers=auth,
         )
-        _expect(status, 200, body)
-        job_id = json.loads(body)["data"]["job_id"]
         deadline = time.monotonic() + JOB_TIMEOUT_S
         job_status = "running"
         while job_status == "running" and time.monotonic() < deadline:
             time.sleep(0.5)
-            poll = _request(f"{base}/api/simulate-batch/{job_id}/", headers=auth)[2]
-            job_status = json.loads(poll)["data"]["status"]
+            job_status = _api(
+                f"{base}/api/simulate-batch/{job['job_id']}/", 200, headers=auth
+            )["status"]
         if job_status != "complete":
             raise AssertionError(f"batch job is {job_status!r} after polling")
 
     with _step("report", output):
-        status, _, body = _request(
-            f"{base}/api/rounds/",
-            method="POST",
-            body={"team_red": red, "team_blue": blue},
-            headers=auth,
-        )
-        _expect(status, 201, body)
-        round_id = json.loads(body)["data"]["id"]
-        status, _, body = _request(
-            f"{base}/api/rounds/{round_id}/report/", headers=auth
-        )
-        _expect(status, 200, body)
-        if not body.startswith(b"%PDF"):
-            raise AssertionError(f"the report is not a PDF: {body[:40]!r}")
+        game_round = _api(f"{base}/api/rounds/", 201, body=teams, headers=auth)
+        report = _request(f"{base}/api/rounds/{game_round['id']}/report/", headers=auth)
+        _expect(report, 200)
+        if not report.body.startswith(b"%PDF"):
+            raise AssertionError(f"the report is not a PDF: {report.body[:40]!r}")
 
     with _step("map", output):
         data, content_type = _multipart("Smoke Arena", MAP_IMAGE)
-        status, _, body = _request(
+        upload = _request(
             f"{base}/api/maps/",
             method="POST",
             data=data,
             content_type=content_type,
             headers=auth,
         )
-        _expect(status, 201, body)
-        map_id = json.loads(body)["data"]["id"]
-        status, _, body = _request(
-            f"{base}/api/maps/{map_id}/zones/?zone_size=50", headers=auth
-        )
-        _expect(status, 200, body)
+        _expect(upload, 201)
+        map_id = json.loads(upload.body)["data"]["id"]
+        _api(f"{base}/api/maps/{map_id}/zones/?zone_size=50", 200, headers=auth)
 
-    return {"launcher_ready_s": float(ready_s), "cold_start_s": round(cold_start_s, 2)}
+    return Timings(float(ready_s), round(cold_start_s, 2))
 
 
-def summary_markdown(
-    timings: dict[str, float], *, folder_mb: float, zip_mb: float
-) -> str:
+def summary_markdown(timings: Timings, *, folder_mb: float, zip_mb: float) -> str:
     """The job summary table: the build's sizes and the smoke's times."""
     return "\n".join(
         [
@@ -279,8 +287,8 @@ def summary_markdown(
             "|---|---|",
             f"| Zip | {zip_mb:.1f} MB |",
             f"| Unpacked | {folder_mb:.1f} MB |",
-            f"| Launcher ready | {timings['launcher_ready_s']:.2f} s |",
-            f"| Cold start to the SPA | {timings['cold_start_s']:.2f} s |",
+            f"| Launcher ready | {timings.launcher_ready_s:.2f} s |",
+            f"| Cold start to the SPA | {timings.cold_start_s:.2f} s |",
             "",
         ]
     )
@@ -291,18 +299,22 @@ def _megabytes(path: Path) -> float:
     return sum(p.stat().st_size for p in files) / (1024 * 1024)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, check_spa: bool = True) -> int:
+    """The CLI. ``check_spa`` is for the in-suite test of an unfrozen launcher,
+    which runs as ``<python> desktop/main.py`` (the extra ``args``)."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("exe", type=Path)
+    parser.add_argument("args", nargs="*", help="passed before --no-browser")
     parser.add_argument("--zip", type=Path)
     parser.add_argument("--summary", type=Path)
     args = parser.parse_args(argv)
+    command = [str(args.exe), *args.args, "--no-browser"]
     # Windows may still hold the killed process's SQLite files for a moment.
     with tempfile.TemporaryDirectory(
         prefix="lf-smoke-", ignore_cleanup_errors=True
     ) as home:
         try:
-            timings = run_smoke([str(args.exe), "--no-browser"], Path(home))
+            timings = run_smoke(command, Path(home), check_spa=check_spa)
         except SmokeFailure as failure:
             print(f"smoke: FAILED at {failure.step}\n{failure.detail}", flush=True)
             return 1

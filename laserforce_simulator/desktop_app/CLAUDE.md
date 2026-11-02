@@ -61,11 +61,13 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   list, or the frozen build fails at import. It bundles the SPA at `spa` (`spa_dir()`), and
   simplejwt's `token_blacklist` migration sources. It excludes the Hosted-only drivers.
 - **`desktop/smoke.py`** (stdlib only) holds `run_smoke(command, home, *, check_spa=True) ->
-  dict[str, float]`. The in-suite test passes `check_spa` only when `frontend/dist` is built (CI's
-  Python jobs never build it), while the frozen CLI always checks. It
+  Timings`. `Timings` is a `NamedTuple` of `launcher_ready_s` and `cold_start_s`. The in-suite test
+  runs `main([<python>, desktop/main.py, --summary <file>], check_spa=...)` and passes `check_spa`
+  only when `frontend/dist` is built (CI's Python jobs never build it); the CLI as CI runs it always
+  checks. It
   raises `SmokeFailure(step, detail)` at the first failed step (`ready`, `spa`, `launch_code`,
   `refresh`, `me`, `teams`, `batch`, `report`, `map`). Its CLI is `python desktop/smoke.py <exe>
-  [--zip <zip>] [--summary <md>]`, which exits 0/1. A new bundled feature worth guarding gets a step
+  [<args>...] [--zip <zip>] [--summary <md>]`, which exits 0/1. A new bundled feature worth guarding gets a step
   here, so both the frozen and the unfrozen smoke run it.
 - **Requirements:** `requirements-runtime.txt` is what the app imports at runtime in either
   deploy (the Dockerfile and the Desktop build install it); `requirements.txt` is `-r` of it plus
@@ -76,7 +78,7 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
 `desktop_app/tests/`: `test_launch_code.py` (spend rules and every hostile input against the
 desktop URLconf), `test_launcher.py` (`tmp_path` + a fake `migrate`: reset, re-raise, corrupt-file
 regression, environment, secret key, Local Account), `test_settings.py` (the desktop settings
-module imported fresh), `test_launcher_smoke.py` (loads `desktop/smoke.py` and runs `run_smoke` on
-`desktop/main.py --no-browser` against a temp data folder, about 8 s; plus the early-exit
+module imported fresh), `test_launcher_smoke.py` (loads `desktop/smoke.py` and runs its CLI on
+`desktop/main.py` against a temp data folder, one launch of about 8 s; plus the early-exit
 `SmokeFailure`, the CLI's exit 1 and the summary table), `test_requirements.py` (the runtime / dev
 split).

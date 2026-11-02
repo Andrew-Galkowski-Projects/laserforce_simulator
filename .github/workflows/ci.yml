@@ -7,6 +7,11 @@ on:
     tags: ['v*']
   pull_request:
 
+env:
+  # DESK-02: the Desktop build's asset name, which desktop/build.ps1 writes. The
+  # desktop-latest download link ends in it, so a rename breaks that link.
+  ZIP: LaserforceSimulator-windows-x64.zip
+
 jobs:
   lint:
     # PERF-02: lint and the migration checks run once, beside the test shards.
@@ -307,14 +312,14 @@ jobs:
       - name: Smoke-test the frozen build
         run: >-
           python desktop/smoke.py build-out/dist/LaserforceSimulator/LaserforceSimulator.exe
-          --zip build-out/LaserforceSimulator-windows-x64.zip
+          --zip "build-out/$ZIP"
           --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the Desktop build
         uses: actions/upload-artifact@v4
         with:
           name: desktop-build
-          path: build-out/LaserforceSimulator-windows-x64.zip
+          path: build-out/${{ env.ZIP }}
           compression-level: 0
           if-no-files-found: error
           retention-days: 7
@@ -336,7 +341,6 @@ jobs:
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       GH_TOKEN: ${{ github.token }}
-      ZIP: LaserforceSimulator-windows-x64.zip
     steps:
       - uses: actions/checkout@v4
 
