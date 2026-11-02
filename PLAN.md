@@ -151,61 +151,7 @@ the line walk never runs. Reproduce with either sample map in `Screenshots_and_v
 Also remove the import-time `logging.basicConfig(level=logging.DEBUG)` in
 `matches/simulation/entrypoints.py`.
 
-### BUG-WV-01 · [IN PROGRESS] App window shows nothing when WebView2 fails to initialise
-
-Spec: #499
-
-Found by the DESK-03 retro PR's CI (run 41497545360, `desktop` job, 2026-11-02). The frozen
-`smoke.py --window` self-test failed with `LF_WINDOW_FAIL` after its 60 s poll. pywebview logged
-`WebView2 initialization failed with exception: (0x80004004): Operation aborted (E_ABORT)` from
-`CoreWebView2Environment.CreateCoreWebView2ControllerAsync`. The PR changed only a comment, and the
-same check passed on PR #497, `main`'s merge run and a local build, so the runner's WebView2 fails
-to start some of the time.
-
-The bug: pywebview's `on_webview_ready` (`webview/platforms/edgechromium.py:267`) only **logs** a
-failed initialisation and does not raise. So `window_available()` is true (the runtime is
-installed), `run_window` never raises, and DESK-03's browser fallback (grill decision 2) never runs.
-A player whose WebView2 fails this way gets an empty App window. The self-test catches it only at
-its timeout. Fix test-first: `run_window` treats a failed initialisation as a failure. Find
-pywebview's hook for it first (an event, or the `[pywebview]` logger). Then the launcher falls back
-to the browser, and `--selftest-window` prints `LF_WINDOW_FAIL` straight away.
-
-**Reproduced (2026-11-02, pywebview 6.2.1):** `WEBVIEW2_USER_DATA_FOLDER` pointed at an unwritable
-folder fails on the same `CreateCoreWebView2ControllerAsync` path (`E_UNEXPECTED`). The
-`initialized` and `shown` events fire, `loaded` never does, the `pywebview` logger gets one ERROR
-`WebView2 initialization failed with exception: ...`, and `webview.start()` returns without raising.
-The launch code is still unspent then: the window never navigated.
-
-**Grill decisions (round 1, all accepted):**
-
-1. **Detect** with a handler on the `pywebview` logger while `run_window` runs: an ERROR starting
-   `WebView2 initialization failed` marks the window failed. No timeout on `loaded`.
-2. **Then** a helper thread (not the log handler, which runs on the GUI thread) destroys the empty
-   window, and `run_window` raises a new `WindowStartFailed` (in `shell.py`) with pywebview's
-   message. The launcher's existing `except` logs it and opens the browser, or under
-   `--selftest-window` prints `LF_WINDOW_FAIL WindowStartFailed: ...` at once.
-3. **Pin the wording:** a unit test reads the installed `webview/platforms/edgechromium.py` and
-   asserts it still logs that prefix (pywebview is installed in CI's Linux jobs too).
-4. **Real failure in CI:** a new `smoke.py` step `window_failure` runs the exe with
-   `--selftest-window` and an unwritable `WEBVIEW2_USER_DATA_FOLDER`, expecting
-   `LF_WINDOW_FAIL WindowStartFailed` within 30 s.
-5. **Flaky runner:** when the `--window` self-test fails with `WindowStartFailed`, the smoke retries
-   it once on a fresh folder and notes the retry in the summary; a second failure or any other
-   failure stays red.
-6. **Out of scope:** the runner's WebView2 root cause, a pywebview upgrade, other renderer failures.
-
-**Second probe, round 2 (accepted; replaces decisions 1 and 4):** a `WEBVIEW2_USER_DATA_FOLDER`
-under a regular file reproduces CI's exact `E_ABORT`, and shows it is a **hang**: nothing is logged
-and `loaded` never fires until the window is destroyed; only then does pywebview log the failure.
-CI's log has the same order (`LF_WINDOW_FAIL` first, then the error).
-
-1′. **Detect both shapes:** (a) the `pywebview` ERROR `WebView2 initialization failed` (an
-    immediate failure, e.g. `E_UNEXPECTED`), and (b) no `loaded` event within
-    `WINDOW_START_TIMEOUT_S = 20` s (the hang; a healthy window loads in ~0.9 s). Either one:
-    destroy, raise `WindowStartFailed`, fall back.
-4′. **Real failure in CI:** the `window_failure` step points `WEBVIEW2_USER_DATA_FOLDER` under a
-    regular file (works for an admin runner too) and expects `LF_WINDOW_FAIL WindowStartFailed`
-    within 40 s.
+BUG-WV-01 (App window shows nothing when WebView2 fails to initialise) is **[DONE]**; see `PLAN-completed.md`.
 
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
