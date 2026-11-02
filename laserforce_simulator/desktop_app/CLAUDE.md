@@ -77,6 +77,11 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
   `pyinstaller`, and `npm --prefix frontend ci` already run. It sets `PYTHONPATH` / `DJANGO_SETTINGS_MODULE` / `SECRET_KEY` (PyInstaller collects
   in a subprocess that ignores the spec's `pathex`), builds the SPA, runs PyInstaller and writes
   `<Out>/LaserforceSimulator-windows-x64.zip`.
+- **Local build:** the owner's machine has python.org 3.12 at
+  `%LOCALAPPDATA%\Programs\Python\Python312\python.exe`. Make a scratchpad venv from it, install
+  `requirements-desktop.txt` plus `pyinstaller==6.22.3` (CI's pin), run `build.ps1 -Python <venv
+  python> -Out <scratchpad dir>`, then `python desktop/smoke.py <Out>\dist\LaserforceSimulator\LaserforceSimulator.exe
+  --window` (DESK-03 retro: 118.2 MB zip, App window ready in 5.05 s).
 - **`desktop/laserforce.spec`** is tracked through a `!desktop/laserforce.spec` exception to
   `.gitignore`'s `*.spec`. A new Django app or a string-loaded package goes in its hidden-import
   list, or the frozen build fails at import. It bundles the SPA at `spa` (`spa_dir()`), and

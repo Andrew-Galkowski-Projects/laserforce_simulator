@@ -219,6 +219,11 @@ Before the spec moves a helper out of a module being deleted, grep its callers
 outside the deleted code; none means delete it, not move it (ANG-08 moved
 `_coerce_sort` / `_coerce_dir` with no caller, and review sent them back).
 
+Before publishing, map every numbered grill decision in `PLAN.md` to the spec
+section that carries it. A decision with no section is a missing Implementation
+Decision: DESK-03's spec named the no-WebView2 fallback but not decision 2's
+"pywebview raises" case, and the ticket shipped an exit-1 box there.
+
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
 
@@ -449,6 +454,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    failures and the count line) and, when `docker info` succeeds, on Postgres
    (`docker start lf-test-pg`, then `python scripts/run_suite.py --postgres`), plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
+   Run `run_suite.py` in the foreground (about 70 s on SQLite, 130 s on Postgres,
+   inside the 600 s limit): a background run can be stopped for low memory while
+   the session waits (DESK-03 lost one).
    When `frontend/` changed, run `test:ci` as CI's 4-vCPU runner does, through the
    PowerShell tool: `$env:CI='true'; cmd /c start '""' /b /wait /affinity F npm
    --prefix frontend run test:ci`. The spec-to-worker layout decides which specs
@@ -517,6 +525,10 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    which. A test-client script runs through `manage.py shell -c
    "exec(open(r'<path>').read())"` with `APIClient(SERVER_NAME="localhost")`:
    outside pytest the default host `testserver` is not in `ALLOWED_HOSTS`.
+   A Desktop App **App window** change checks the real window instead (the MCP
+   cannot see a native window): install `laserforce_simulator/requirements-desktop.txt`
+   in a scratchpad venv, build the SPA, and run `python desktop/smoke.py <venv
+   python> desktop/main.py --window`.
    Clean up any other test data the pass created.
 
 ## Step 8: Review
