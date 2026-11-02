@@ -1,0 +1,6 @@
+-r requirements-runtime.txt
+# DESK-03: the Desktop App's App window (pywebview over WebView2). The Desktop
+# build installs this file; the Hosted image installs only the runtime file.
+# On win32 pywebview also pulls pythonnet; on Linux (CI's Python jobs) it does
+# not, and desktop_app.shell.window_available() is False there.
+pywebview==6.2.1

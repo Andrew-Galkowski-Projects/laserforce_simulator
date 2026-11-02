@@ -1,5 +1,6 @@
--r requirements-runtime.txt
+-r requirements-desktop.txt
 # DESK-02: dev / test tooling on top of the runtime file (CI and local dev).
+# DESK-03: through requirements-desktop.txt, which adds pywebview.
 # ci.yml's coverage job reads the coverage pin from this file.
 attrs==25.3.0
 cffi==1.17.1

@@ -11,9 +11,11 @@ from pathlib import Path
 
 PROJECT = Path(__file__).resolve().parents[2]
 RUNTIME = PROJECT / "requirements-runtime.txt"
+DESKTOP = PROJECT / "requirements-desktop.txt"
 DEV = PROJECT / "requirements.txt"
 
 DEV_ONLY = re.compile(r"^(pytest(-[\w-]+)?|coverage|selenium|trio(-[\w-]+)?)\b", re.I)
+PYWEBVIEW = re.compile(r"^pywebview\b", re.I)
 
 
 def _lines(path: Path) -> list[str]:
@@ -21,7 +23,25 @@ def _lines(path: Path) -> list[str]:
 
 
 def test_requirements_txt_installs_the_runtime_file() -> None:
-    assert "-r requirements-runtime.txt" in _lines(DEV)
+    # DESK-03: dev -> desktop -> runtime, so dev and CI get pywebview too.
+    assert "-r requirements-desktop.txt" in _lines(DEV)
+    assert "-r requirements-runtime.txt" not in _lines(DEV)
+    assert "-r requirements-runtime.txt" in _lines(DESKTOP)
+
+
+def test_the_desktop_file_pins_pywebview_exactly() -> None:
+    assert [line for line in _lines(DESKTOP) if PYWEBVIEW.match(line)] == [
+        "pywebview==6.2.1"
+    ]
+
+
+def test_the_runtime_file_names_no_pywebview() -> None:
+    # The Hosted image installs only the runtime file.
+    assert [line for line in _lines(RUNTIME) if PYWEBVIEW.match(line)] == []
+
+
+def test_the_desktop_file_names_no_test_tooling() -> None:
+    assert [line for line in _lines(DESKTOP) if DEV_ONLY.match(line)] == []
 
 
 def test_the_runtime_file_names_no_test_tooling() -> None:
