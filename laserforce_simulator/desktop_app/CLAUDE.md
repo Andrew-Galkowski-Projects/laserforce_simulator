@@ -3,7 +3,8 @@
 The **Desktop App** (GLOSSARY.md; [ADR-0048](../../docs/adr/0048-desktop-app-go-pyinstaller-in-process-jobs.md)),
 added by **DESK-01** (spec #486). A plain package, **not** an `INSTALLED_APP`: no models, no
 migrations. It is named `desktop_app` so it never collides with the repo-root `desktop/` folder,
-which holds the entry point `desktop/main.py` (and, from DESK-02, the PyInstaller build files).
+which holds the entry point `desktop/main.py` and the DESK-02 build files (`laserforce.spec`,
+`build.ps1`, `smoke.py`; see **Build** below).
 
 Run it unfrozen with the main checkout's `.venv` Python: `python desktop/main.py [--no-browser]`.
 `LF_DESKTOP_HOME` overrides the data folder (default `%LOCALAPPDATA%\LaserforceSimulator`). The SPA
@@ -43,11 +44,41 @@ it `/` is a 404 but the API works.
   `/account/password` home, the Shell hides the Account button while no Self-insert is linked, and
   `desktop_notice` shows as a dismissible alert (`frontend/CLAUDE.md`).
 
+## Build (DESK-02)
+
+The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-latest` and published by
+`desktop-publish` (`docs/agents/ci.md`): the rolling `desktop-latest` pre-release on every push to
+`main`, a numbered Release on a `v*` tag.
+
+- **`desktop/build.ps1 -Python <exe> -Out <dir>`** is the one build entry, CI and local. It needs
+  a **python.org** CPython (conda bundles the wrong DLLs: ADR-0048) with
+  `laserforce_simulator/requirements-runtime.txt` plus `pyinstaller`, and `npm --prefix frontend ci`
+  already run. It sets `PYTHONPATH` / `DJANGO_SETTINGS_MODULE` / `SECRET_KEY` (PyInstaller collects
+  in a subprocess that ignores the spec's `pathex`), builds the SPA, runs PyInstaller and writes
+  `<Out>/LaserforceSimulator-windows-x64.zip`.
+- **`desktop/laserforce.spec`** is tracked through a `!desktop/laserforce.spec` exception to
+  `.gitignore`'s `*.spec`. A new Django app or a string-loaded package goes in its hidden-import
+  list, or the frozen build fails at import. It bundles the SPA at `spa` (`spa_dir()`), and
+  simplejwt's `token_blacklist` migration sources. It excludes the Hosted-only drivers.
+- **`desktop/smoke.py`** (stdlib only) holds `run_smoke(command, home, *, check_spa=True) ->
+  Timings`. `Timings` is a `NamedTuple` of `launcher_ready_s` and `cold_start_s`. The in-suite test
+  runs `main([<python>, desktop/main.py, --summary <file>], check_spa=...)` and passes `check_spa`
+  only when `frontend/dist` is built (CI's Python jobs never build it); the CLI as CI runs it always
+  checks. It
+  raises `SmokeFailure(step, detail)` at the first failed step (`ready`, `spa`, `launch_code`,
+  `refresh`, `me`, `teams`, `batch`, `report`, `map`). Its CLI is `python desktop/smoke.py <exe>
+  [<args>...] [--zip <zip>] [--summary <md>]`, which exits 0/1. A new bundled feature worth guarding gets a step
+  here, so both the frozen and the unfrozen smoke run it.
+- **Requirements:** `requirements-runtime.txt` is what the app imports at runtime in either
+  deploy (the Dockerfile and the Desktop build install it); `requirements.txt` is `-r` of it plus
+  the dev / test pins. A new runtime dependency goes in the runtime file.
+
 ## Tests
 
 `desktop_app/tests/`: `test_launch_code.py` (spend rules and every hostile input against the
 desktop URLconf), `test_launcher.py` (`tmp_path` + a fake `migrate`: reset, re-raise, corrupt-file
 regression, environment, secret key, Local Account), `test_settings.py` (the desktop settings
-module imported fresh), `test_launcher_smoke.py` (runs `desktop/main.py --no-browser` as a
-subprocess on a temp data folder: Launch code once, refresh, `me`, a 1-round batch job to
-`complete`; about 5 s).
+module imported fresh), `test_launcher_smoke.py` (loads `desktop/smoke.py` and runs its CLI on
+`desktop/main.py` against a temp data folder, one launch of about 8 s; plus the early-exit
+`SmokeFailure`, the CLI's exit 1 and the summary table), `test_requirements.py` (the runtime / dev
+split).

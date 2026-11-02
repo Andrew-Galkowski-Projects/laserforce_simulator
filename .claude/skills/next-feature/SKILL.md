@@ -598,7 +598,12 @@ Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work
 is in `main` under a new hash (other PRs that merged meanwhile show up in an
-unscoped diff). Then, for every implementer and fix-pass worktree, stop its servers with
+unscoped diff). Then wait for the `main` run (`gh run list --branch main --limit 1`, then
+`gh run watch <id>`), run `gh release view desktop-latest --json tagName,url,assets`, confirm
+`git ls-remote origin refs/tags/desktop-latest` is `origin/main`'s commit, and give the owner the
+download link (`.../releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip`). A red
+or skipped `desktop-publish` means the Latest desktop build is still the previous merge's: say so
+(DESK-02). Then, for every implementer and fix-pass worktree, stop its servers with
 `scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
 tool), `git worktree remove -f -f <path>` (a finished agent's lock outlives it,
 and one `--force` refuses a locked worktree), and `git branch -D` its branch

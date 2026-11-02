@@ -130,19 +130,7 @@ ANG-10 (serve the SPA from Django in every deploy) is **[DONE]**; see `PLAN-comp
 
 DESK-01 (desktop App code in `main`, with tests) is **[DONE]**; see `PLAN-completed.md`.
 
-### DESK-02 · [NOT STARTED] Desktop App build in CI
-
-Blocked by DESK-01. A Windows runner on python.org CPython 3.12 (not conda: ADR-0048), a
-runtime / dev split of `requirements.txt`, the PyInstaller build, and a launch-and-measure smoke
-(`desktop/measure.py` on the spike branch).
-
-**A new build for every finished change set (owner, 2026-11-01).** The job runs on every push to
-`main` (so every merged PR) and publishes the zip to one rolling `desktop-latest` GitHub
-pre-release, replacing the previous asset; the download link never changes. Pushing a version
-tag (`v0.1.0`, ...) publishes a numbered Release instead. A failed build or smoke fails the run
-but publishes nothing, so `desktop-latest` always holds the last good build. Also add a line to
-`/next-feature` Step 9: after the merge, confirm the run published `desktop-latest` and give the
-owner its link.
+DESK-02 (Desktop App build in CI) is **[DONE]**; see `PLAN-completed.md`.
 
 ### DESK-03 · [NOT STARTED] Desktop App native window
 

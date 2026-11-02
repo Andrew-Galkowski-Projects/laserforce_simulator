@@ -1,15 +1,18 @@
 # CI: the Python jobs (PERF-02)
 
-`.github/workflows/ci.yml` runs the Python side as four jobs:
+`.github/workflows/ci.yml` runs the Python side as four jobs, plus the Desktop build (DESK-02):
 
 ```
 lint ---------------------------------+
 test (shard 1) --+                    |
-test (shard 2) --+--> coverage -------+--> test-result --> docker
-test (shard 3) --+                    |
-test (shard 4) --+                    |
-frontend -------------------------------------------------^
+test (shard 2) --+--> coverage -------+--> test-result --+--> docker
+test (shard 3) --+                    |                  |
+test (shard 4) --+                    |                  +--> desktop-publish (push to main / v* tag)
+frontend ----------------------------------------------------^   ^
+desktop (windows-latest) ----------------------------------------+
 ```
+
+It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `v*` tag push.
 
 - **`lint`**: ruff, black, the encoding and SQLite JSON-lookup scans, actionlint,
   `makemigrations --check`, and `migrate` against the job's Postgres. It runs once,
@@ -36,6 +39,22 @@ frontend -------------------------------------------------^
   SECRET_KEY=x -e DATABASE_URL=sqlite:////tmp/smoke.db <image>`, then `bash scripts/smoke_spa.sh`
   (`BASE=` for another port). On `main` the job then deploys to Fly.io, but only when a
   `FLY_API_TOKEN` secret is set; none is, so those steps skip.
+- **`desktop`** (DESK-02, ADR-0048): `windows-latest` with setup-python's python.org CPython 3.12
+  (never conda: it bundles the wrong `_ssl` / `pyexpat` DLLs). It installs
+  `requirements-runtime.txt` plus the pinned `pyinstaller`, runs `desktop/build.ps1` (SPA build,
+  PyInstaller one-folder from `desktop/laserforce.spec`, zip), then `python desktop/smoke.py <exe>`
+  against the frozen exe. The steps are the same `run_smoke` that `desktop_app/tests/test_launcher_smoke.py`
+  runs unfrozen, and the job summary gets the sizes and the cold start. It keeps the zip as the
+  `desktop-build` artifact for 7 days (download it from a PR's run to try the build). It needs nothing,
+  so it runs beside the shards.
+- **`desktop-publish`** (DESK-02): needs `test-result`, `frontend` and `desktop`, and runs only on a
+  push to `main` or a `v*` tag (`contents: write`, job-level `concurrency: desktop-latest`, queued).
+  On `main` it force-moves the `desktop-latest` tag to the commit and `gh release upload --clobber`s
+  `LaserforceSimulator-windows-x64.zip` onto the rolling pre-release (created on the first run, never
+  deleted, so `.../releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip` never 404s).
+  If `main` has already moved on, it skips with a notice, and the newer run publishes. On a `v*` tag it creates a numbered
+  Release with generated notes. A red job above means nothing is published, so `desktop-latest` keeps
+  the last good build.
 
 ## The durations file
 

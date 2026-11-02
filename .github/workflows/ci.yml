@@ -3,7 +3,14 @@ name: CI
 on:
   push:
     branches: [main, master, Nuke_bug, event_readability_updates]
+    # DESK-02: a version tag publishes a numbered Desktop build Release.
+    tags: ['v*']
   pull_request:
+
+env:
+  # DESK-02: the Desktop build's asset name, which desktop/build.ps1 writes. The
+  # desktop-latest download link ends in it, so a rename breaks that link.
+  ZIP: LaserforceSimulator-windows-x64.zip
 
 jobs:
   lint:
@@ -38,7 +45,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: laserforce_simulator/requirements.txt
+          cache-dependency-path: |
+            laserforce_simulator/requirements.txt
+            laserforce_simulator/requirements-runtime.txt
 
       - name: Lint (ruff, black, encoding, SQLite JSON lookups, actionlint)
         # Narrow guardrail configured in pyproject.toml: ruff F401/F811 (dead
@@ -116,7 +125,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: laserforce_simulator/requirements.txt
+          cache-dependency-path: |
+            laserforce_simulator/requirements.txt
+            laserforce_simulator/requirements-runtime.txt
 
       - name: Install dependencies
         run: |
@@ -255,6 +266,110 @@ jobs:
 
       - name: Production build
         run: npm run build
+
+  desktop:
+    # DESK-02: build the Desktop build on a python.org CPython (not conda:
+    # ADR-0048), smoke-test the frozen exe with the same steps the suite runs
+    # unfrozen (desktop/smoke.py), and keep the zip. Every PR and push; only
+    # desktop-publish publishes it.
+    runs-on: windows-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    defaults:
+      run:
+        # bash stops at the first failed command; a multi-line pwsh step
+        # reports only the last command's exit code.
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: laserforce_simulator/requirements-runtime.txt
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: frontend/.nvmrc
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install build dependencies
+        # The runtime file only (no test tooling in the build) plus an exact
+        # PyInstaller, so a new release cannot change the build unasked.
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r laserforce_simulator/requirements-runtime.txt pyinstaller==6.22.3
+          npm --prefix frontend ci
+
+      - name: Build
+        shell: pwsh
+        run: ./desktop/build.ps1 -Python python -Out build-out
+
+      - name: Smoke-test the frozen build
+        run: >-
+          python desktop/smoke.py build-out/dist/LaserforceSimulator/LaserforceSimulator.exe
+          --zip "build-out/$ZIP"
+          --summary "$GITHUB_STEP_SUMMARY"
+
+      - name: Keep the Desktop build
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-build
+          path: build-out/${{ env.ZIP }}
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+  desktop-publish:
+    # DESK-02: a push to main whose CI passed replaces the asset on the rolling
+    # desktop-latest pre-release (the release is never deleted, so its
+    # download link never changes); a v* tag publishes a numbered Release. A
+    # failed job above publishes nothing.
+    needs: [test-result, frontend, desktop]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    # Queued, not cancelled: two merges publish in order.
+    concurrency:
+      group: desktop-latest
+      cancel-in-progress: false
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the Desktop build
+        uses: actions/download-artifact@v4
+        with:
+          name: desktop-build
+
+      - name: Publish the Latest desktop build
+        if: github.ref == 'refs/heads/main'
+        # A tag pushed with GITHUB_TOKEN starts no workflow run, and
+        # desktop-latest does not match v* anyway.
+        run: |
+          head="$(git ls-remote origin refs/heads/main | cut -f1)"
+          if [ "$head" != "$GITHUB_SHA" ]; then
+            echo "::notice::main has moved on to $head; that run publishes desktop-latest."
+            exit 0
+          fi
+          if ! gh release view desktop-latest > /dev/null 2>&1; then
+            gh release create desktop-latest --prerelease --target "$GITHUB_SHA" \
+              --title "Latest desktop build" --notes "First build."
+          fi
+          git push --force origin "$GITHUB_SHA:refs/tags/desktop-latest"
+          gh release upload desktop-latest "$ZIP" --clobber
+          gh release edit desktop-latest --notes "Built from $GITHUB_SHA on $(date -u +%Y-%m-%d) by run $GITHUB_RUN_ID. Unsigned: Windows SmartScreen warns; choose More info, then Run anyway."
+
+      - name: Publish a numbered Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: gh release create "$GITHUB_REF_NAME" "$ZIP" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
 
   docker:
     runs-on: ubuntu-latest

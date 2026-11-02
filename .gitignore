@@ -8,6 +8,8 @@ __pycache__/
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# DESK-02: the Desktop build's spec is hand-written source (ADR-0048).
+!desktop/laserforce.spec
 
 # Django stuff: local DB, media, static files (optional)
 # ignore database file in project root (keep this explicit)

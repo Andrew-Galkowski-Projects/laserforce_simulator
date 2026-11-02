@@ -1,0 +1,30 @@
+# DESK-02: what the app imports at runtime, in either deploy. The Docker image
+# and the Desktop build install this file; requirements.txt adds the dev / test
+# tooling on top. The Desktop build's PyInstaller spec excludes the Hosted-only
+# packages (psycopg2, boto3, storages, redis, gunicorn).
+asgiref==3.9.2
+djangorestframework>=3.15
+djangorestframework-simplejwt>=5.3
+psycopg2-binary>=2.9
+opencv-python-headless>=4.0.0
+Pillow>=10.0.0
+reportlab>=4.0
+matplotlib>=3.8
+certifi==2025.4.26
+boto3>=1.34
+celery[redis]>=5.3
+dj-database-url>=2.0.0
+Django==5.2.6
+django-cors-headers>=4.4
+django-filter>=25.1
+django-storages[s3]>=1.14
+gunicorn>=20.1.0
+waitress>=3.0
+whitenoise[brotli]>=6.0.0
+idna==3.10
+packaging==25.0
+python-decouple>=3.8
+sqlparse==0.5.3
+typing_extensions==4.13.2
+tzdata==2025.2
+urllib3==2.4.0

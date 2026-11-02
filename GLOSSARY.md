@@ -451,6 +451,10 @@ _Avoid_: calling an Account an **Owner** (the **Owner** is the fictional boss wh
 A downloadable build of the app that runs on one person's machine, for one **Account**, with no hosted server — the single-player modes only. The opposite of the **Hosted** deploy.
 _Avoid_: "standalone", "offline", "exe" (say Desktop App); "standalone" already means a **Single Round** in older docs.
 
+**Desktop build**:
+The zipped one-folder PyInstaller output of the **Desktop App** (`LaserforceSimulator-windows-x64.zip`), built and smoke-tested by CI on every PR and push. The **Latest desktop build** is the one on the rolling `desktop-latest` GitHub pre-release, replaced on every push to `main` whose CI passed; a `v*` tag publishes a numbered Release instead (DESK-02).
+_Avoid_: "the exe", "installer" (it is a zip, not an installer), "nightly" (it is per merge, not per night).
+
 **Launch code**:
 A single-use secret the **Desktop App** mints each time it starts and opens the browser with; spending it signs the browser in as the **Local Account**. There is no password sign-in in the Desktop App.
 _Avoid_: "token" (the JWT access and refresh tokens are different things), "magic link".
