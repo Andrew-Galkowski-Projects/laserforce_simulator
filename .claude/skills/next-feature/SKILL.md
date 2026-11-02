@@ -93,7 +93,10 @@ worded so "yes" accepts it. `AskUserQuestion` takes at most four questions, so
 a bigger round goes as numbered text in chat and the owner answers there.
 Facts come from subagents reading the code; decisions come from the owner.
 When the task is a bug or a red check, reproduce it before round 1: the
-probe's result is a settled fact in that round, not a question. A performance
+probe's result is a settled fact in that round, not a question. Match the
+probe to the report, the same error and the same order of output, before
+round 1: a nearby failure is a different bug (BUG-WV-01's first probe failed
+at once with `E_UNEXPECTED`; CI's `E_ABORT` was a hang, and round 1 was re-asked). A performance
 task gets the same probe: time the suspected cost locally, with and without it,
 scaled to the target's core count (CI runners have 4 vCPUs; pin a run to 4 cores,
 children included, through the PowerShell tool with `cmd /c start '""' /b /wait
@@ -486,7 +489,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    prints which tests caught each one. A `SURVIVED` line is a test to write;
    a `BROKEN` line (the run failed with no test named: it does not compile)
    is a mutation to rewrite; `BASELINE FAILED` (exit 2, nothing mutated) means a test is red on the
-   unchanged code: fix it first.
+   unchanged code: fix it first. `AMBIGUOUS` / `NOT FOUND`: the old text matches more than once /
+   never, and nothing ran; make it unique.
    Frontend code takes `--run -- npm --prefix frontend exec -- ng test
    --watch=false --include=<spec>` in place of the pytest args.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees
@@ -615,7 +619,8 @@ Then stop again: the owner reviews and says when to merge. PRs are
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work
 is in `main` under a new hash (other PRs that merged meanwhile show up in an
 unscoped diff). Then wait for the `main` run (`gh run list --branch main --workflow CI --limit 1`, then
-`gh run watch <id>`), run `gh release view desktop-latest --json tagName,url,assets`, confirm
+`gh run watch <id>`; start it after leaving the worktree, since a background command keeps its
+working directory and Windows then refuses to delete the folder: BUG-WV-01), run `gh release view desktop-latest --json tagName,url,assets`, confirm
 `git ls-remote origin refs/tags/desktop-latest` is `origin/main`'s commit, and give the owner the
 download link (`.../releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip`). A red
 or skipped `desktop-publish` means the Latest desktop build is still the previous merge's: say so
