@@ -456,8 +456,12 @@ The zipped one-folder PyInstaller output of the **Desktop App** (`LaserforceSimu
 _Avoid_: "the exe", "installer" (it is a zip, not an installer), "nightly" (it is per merge, not per night).
 
 **Launch code**:
-A single-use secret the **Desktop App** mints each time it starts and opens the browser with; spending it signs the browser in as the **Local Account**. There is no password sign-in in the Desktop App.
+A single-use secret the **Desktop App** mints each time it starts and opens the **App window** (or the browser) with; spending it signs that page in as the **Local Account**. There is no password sign-in in the Desktop App.
 _Avoid_: "token" (the JWT access and refresh tokens are different things), "magic link".
+
+**App window**:
+The **Desktop App**'s own native window (pywebview over WebView2), where the SPA runs by default; closing it quits the Desktop App. When it cannot start, the Desktop App opens the default browser instead (DESK-03).
+_Avoid_: "webview" (the library, not the thing a person sees), "popup".
 
 **Local Account**:
 The one **Account** a **Desktop App** has, created on first launch; it has no usable password and every row the Desktop App makes belongs to it.
