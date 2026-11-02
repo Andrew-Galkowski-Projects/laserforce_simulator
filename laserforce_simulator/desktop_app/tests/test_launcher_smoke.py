@@ -19,6 +19,11 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[3]
 ENTRY = REPO / "desktop" / "main.py"
+# CI's Python jobs never build the SPA, so unfrozen `/` is a 404 there; the
+# frozen smoke in CI's `desktop` job always checks it (DESK-02).
+SPA_BUILT = (
+    REPO / "frontend" / "dist" / "frontend" / "browser" / "index.html"
+).exists()
 
 
 def _load_smoke() -> ModuleType:
@@ -35,7 +40,9 @@ smoke = _load_smoke()
 
 
 def test_the_launcher_passes_every_smoke_step(tmp_path: Path) -> None:
-    timings = smoke.run_smoke([sys.executable, str(ENTRY), "--no-browser"], tmp_path)
+    timings = smoke.run_smoke(
+        [sys.executable, str(ENTRY), "--no-browser"], tmp_path, check_spa=SPA_BUILT
+    )
 
     assert set(timings) == {"launcher_ready_s", "cold_start_s"}
     assert 0 < timings["launcher_ready_s"] <= timings["cold_start_s"]

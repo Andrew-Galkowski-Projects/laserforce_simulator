@@ -130,12 +130,17 @@ def _multipart(name: str, image: Path) -> tuple[bytes, str]:
     return head + image.read_bytes() + tail, f"multipart/form-data; boundary={boundary}"
 
 
-def run_smoke(command: list[str], home: Path) -> dict[str, float]:
+def run_smoke(
+    command: list[str], home: Path, *, check_spa: bool = True
+) -> dict[str, float]:
     """Launch ``command`` on data folder ``home`` and run every smoke step.
 
     Returns ``launcher_ready_s`` (from ``LF_READY``) and ``cold_start_s``
     (process start to the first ``GET /`` that served the SPA). Raises
     ``SmokeFailure`` at the first failed step; the process is always killed.
+    ``check_spa=False`` only times ``GET /``: an unfrozen launcher has no SPA
+    until ``ng build`` has run (CI's Python jobs never run it). The frozen
+    build always bundles one, so the CLI always checks it.
     """
     env = {**os.environ, "LF_DESKTOP_HOME": str(home), "PYTHONUNBUFFERED": "1"}
     started = time.perf_counter()
@@ -150,13 +155,13 @@ def run_smoke(command: list[str], home: Path) -> dict[str, float]:
     )
     output = _Output(process)
     try:
-        return _steps(output, started)
+        return _steps(output, started, check_spa)
     finally:
         process.kill()
         process.wait(timeout=30)
 
 
-def _steps(output: _Output, started: float) -> dict[str, float]:
+def _steps(output: _Output, started: float, check_spa: bool) -> dict[str, float]:
     with _step("ready", output):
         output.ready.wait(READY_TIMEOUT_S)
         if not output.ready_line:
@@ -166,10 +171,11 @@ def _steps(output: _Output, started: float) -> dict[str, float]:
 
     with _step("spa", output):
         status, _, body = _request(f"{base}/")
-        _expect(status, 200, body)
-        if b"<app-root" not in body:
-            raise AssertionError(f"GET / is not the SPA: {body[:300]!r}")
         cold_start_s = time.perf_counter() - started
+        if check_spa:
+            _expect(status, 200, body)
+            if b"<app-root" not in body:
+                raise AssertionError(f"GET / is not the SPA: {body[:300]!r}")
 
     with _step("launch_code", output):
         status, headers, body = _request(launch_url)
