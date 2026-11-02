@@ -198,6 +198,35 @@ def _passing_smoke(command: list[str], home: Path, *, check_spa: bool = True) ->
     return smoke.Timings(launcher_ready_s=4.6, cold_start_s=4.71)
 
 
+def _window_body(tmp_path: Path, outcomes: list[str]) -> str:
+    """A fake launcher body for ``--window``, as the real one behaves (BUG-WV-01).
+
+    With ``WEBVIEW2_USER_DATA_FOLDER`` under a regular file (the
+    ``window_failure`` step) it fails to start; anything else exits 3. Without
+    it, the Nth self-test run prints ``outcomes[N]`` (the last one repeats) and
+    counts itself in ``runs.txt``.
+    """
+    runs = tmp_path / "runs.txt"
+    return (
+        "from pathlib import Path\n"
+        "data = os.environ.get('WEBVIEW2_USER_DATA_FOLDER')\n"
+        "if data:\n"
+        "    if not Path(data).parent.is_file(): sys.exit(3)\n"
+        "    print('LF_WINDOW_FAIL WindowStartFailed: the App window did not load"
+        " within 20 s')\n"
+        "    sys.exit(0)\n"
+        f"runs = Path({str(runs)!r})\n"
+        "n = int(runs.read_text()) if runs.exists() else 0\n"
+        "runs.write_text(str(n + 1))\n"
+        f"outcomes = {outcomes!r}\n"
+        "print(outcomes[min(n, len(outcomes) - 1)])\n"
+    )
+
+
+def _runs(tmp_path: Path) -> int:
+    return int((tmp_path / "runs.txt").read_text())
+
+
 def test_the_cli_window_flag_runs_the_selftest_on_a_fresh_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -209,7 +238,7 @@ def test_the_cli_window_flag_runs_the_selftest_on_a_fresh_folder(
         return _passing_smoke(command, home)
 
     monkeypatch.setattr(smoke, "run_smoke", passing_smoke)
-    script = _fake_launcher(tmp_path, "print('LF_WINDOW_OK 2.5')\n")
+    script = _fake_launcher(tmp_path, _window_body(tmp_path, ["LF_WINDOW_OK 2.5"]))
     summary = tmp_path / "summary.md"
 
     exit_code = smoke.main(
@@ -217,10 +246,14 @@ def test_the_cli_window_flag_runs_the_selftest_on_a_fresh_folder(
     )
 
     assert exit_code == 0
-    assert "| App window ready | 2.50 s |" in summary.read_text(encoding="utf-8")
+    text = summary.read_text(encoding="utf-8")
+    assert "| App window ready | 2.50 s |" in text
+    # BUG-WV-01: --window then runs the window_failure step (the last launch).
+    assert "| App window failure fallback |" in text
     args, home = (tmp_path / "argv.txt").read_text().split("|")
     assert args == "--selftest-window"
     assert Path(home) != smoke_homes[0]  # a fresh data folder, not the smoke's
+    assert _runs(tmp_path) == 1
 
 
 def test_the_cli_exits_1_when_the_window_selftest_fails(
@@ -314,3 +347,115 @@ def test_the_summary_shows_the_app_window_row_when_window_s_is_given() -> None:
     )
 
     assert "| App window ready | 6.23 s |" in text
+
+
+# BUG-WV-01: the window_failure step, and one retry of a failed WebView2 start.
+
+START_FAILED = "LF_WINDOW_FAIL WindowStartFailed: the App window did not load in 20 s"
+
+
+def test_the_cli_retries_the_window_once_after_a_failed_webview2_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "run_smoke", _passing_smoke)
+    body = _window_body(tmp_path, [START_FAILED, "LF_WINDOW_OK 3.0"])
+    script = _fake_launcher(tmp_path, body)
+    summary = tmp_path / "summary.md"
+
+    exit_code = smoke.main(
+        [sys.executable, str(script), "--window", "--summary", str(summary)]
+    )
+
+    assert exit_code == 0
+    assert _runs(tmp_path) == 2
+    text = summary.read_text(encoding="utf-8")
+    assert "| App window ready | 3.00 s (after 1 retry) |" in text
+
+
+def test_the_cli_does_not_retry_any_other_window_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "run_smoke", _passing_smoke)
+    body = _window_body(tmp_path, ["LF_WINDOW_FAIL Loading...", "LF_WINDOW_OK 3.0"])
+    script = _fake_launcher(tmp_path, body)
+
+    assert smoke.main([sys.executable, str(script), "--window"]) == 1
+    assert _runs(tmp_path) == 1
+
+
+def test_the_cli_fails_when_the_retry_fails_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "run_smoke", _passing_smoke)
+    script = _fake_launcher(tmp_path, _window_body(tmp_path, [START_FAILED]))
+
+    assert smoke.main([sys.executable, str(script), "--window"]) == 1
+    assert _runs(tmp_path) == 2
+
+
+def test_the_window_failure_step_passes_on_a_failed_start(tmp_path: Path) -> None:
+    # The fake checks the env as the real step relies on it: the WebView2 data
+    # folder sits under a regular file, which no user (admin or not) can create.
+    command = [
+        sys.executable,
+        "-c",
+        "import os, sys; from pathlib import Path;"
+        " data = Path(os.environ['WEBVIEW2_USER_DATA_FOLDER']);"
+        " sys.exit(3) if not data.parent.is_file() else None;"
+        f" print({START_FAILED!r})",
+    ]
+
+    seconds = smoke.run_window_failure_selftest(command, tmp_path)
+
+    assert 0 <= seconds < smoke.WINDOW_FAILURE_TIMEOUT_S
+
+
+def test_the_window_failure_step_fails_when_the_window_starts(tmp_path: Path) -> None:
+    command = [sys.executable, "-c", "print('LF_WINDOW_OK 1.5')"]
+
+    with pytest.raises(smoke.SmokeFailure) as caught:
+        smoke.run_window_failure_selftest(command, tmp_path)
+
+    assert caught.value.step == "window_failure"
+    assert "LF_WINDOW_OK 1.5" in caught.value.detail
+
+
+def test_the_window_failure_step_fails_on_a_non_zero_exit(tmp_path: Path) -> None:
+    command = [
+        sys.executable,
+        "-c",
+        f"import sys; print({START_FAILED!r}, flush=True); sys.exit(3)",
+    ]
+
+    with pytest.raises(smoke.SmokeFailure) as caught:
+        smoke.run_window_failure_selftest(command, tmp_path)
+
+    assert caught.value.step == "window_failure"
+    assert "exit code 3" in caught.value.detail
+
+
+def test_the_window_failure_step_fails_on_a_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(smoke, "WINDOW_FAILURE_TIMEOUT_S", 1)
+    command = [sys.executable, "-c", "import time; time.sleep(30)"]
+
+    with pytest.raises(smoke.SmokeFailure) as caught:
+        smoke.run_window_failure_selftest(command, tmp_path)
+
+    assert caught.value.step == "window_failure"
+    assert "within 1 s" in caught.value.detail
+
+
+def test_the_summary_shows_the_retry_and_the_failure_fallback_rows() -> None:
+    text = smoke.summary_markdown(
+        smoke.Timings(launcher_ready_s=4.6, cold_start_s=4.71),
+        folder_mb=234.04,
+        zip_mb=99.8,
+        window_s=5.05,
+        window_retried=True,
+        window_failure_s=21.3,
+    )
+
+    assert "| App window ready | 5.05 s (after 1 retry) |" in text
+    assert "| App window failure fallback | 21.30 s |" in text
