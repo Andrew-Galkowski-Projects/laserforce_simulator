@@ -130,64 +130,7 @@ ANG-10 (serve the SPA from Django in every deploy) is **[DONE]**; see `PLAN-comp
 
 DESK-01 (desktop App code in `main`, with tests) is **[DONE]**; see `PLAN-completed.md`.
 
-### DESK-02 · [IN PROGRESS] Desktop App build in CI
-
-Spec: #490
-
-Blocked by DESK-01. A Windows runner on python.org CPython 3.12 (not conda: ADR-0048), a
-runtime / dev split of `requirements.txt`, the PyInstaller build, and a launch-and-measure smoke
-(`desktop/measure.py` on the spike branch).
-
-**A new build for every finished change set (owner, 2026-11-01).** The job runs on every push to
-`main` (so every merged PR) and publishes the zip to one rolling `desktop-latest` GitHub
-pre-release, replacing the previous asset; the download link never changes. Pushing a version
-tag (`v0.1.0`, ...) publishes a numbered Release instead. A failed build or smoke fails the run
-but publishes nothing, so `desktop-latest` always holds the last good build. Also add a line to
-`/next-feature` Step 9: after the merge, confirm the run published `desktop-latest` and give the
-owner its link.
-
-**Grill decisions (owner, 2026-11-01, round 1, all accepted as recommended).** Touches no model,
-migration, engine, RNG or endpoint (no determinism test).
-
-1. **In `ci.yml`**, plus a `tags: ['v*']` push trigger. The publish job `needs: [test-result,
-   frontend, desktop]`, so a build is published only when the full suite passed too.
-2. **Every PR builds and smokes** on `windows-latest` and keeps the zip as a 7-day workflow
-   artifact. Only a push to `main` or a `v*` tag publishes.
-3. **`desktop/build.ps1`** (from the spike: npm build, PyInstaller, zip) is the one build entry,
-   CI and local, taking `-Python <exe> -Out <dir>`. `desktop/laserforce.spec` from the spike, with
-   `desktop_app` in the hidden imports, the conda DLL swap removed and the entry `desktop/main.py`;
-   `.gitignore` gets `!desktop/laserforce.spec`.
-4. **Requirements split:** `laserforce_simulator/requirements-runtime.txt` holds what the app
-   imports at runtime (both deploys); `requirements.txt` becomes `-r requirements-runtime.txt`
-   plus the dev / test pins, so CI and local installs are unchanged. The desktop job installs the
-   runtime file plus an exact `pyinstaller==<x.y.z>`; the spec's `excludes` drop the Hosted-only
-   packages (psycopg2, boto3, storages, redis, gunicorn). `test_pdf_charts`'s pin check reads the
-   runtime file.
-5. **The Dockerfile installs `requirements-runtime.txt`** (no pytest / selenium in the image); the
-   Docker smoke job covers it.
-6. **One smoke, frozen and unfrozen:** `desktop/smoke.py`, stdlib only,
-   `run_smoke(command: list[str], home: Path) -> dict[str, object]`. `test_launcher_smoke.py`
-   calls it with the unfrozen command; CI runs `python desktop/smoke.py <exe>` on the build.
-7. **Smoke steps:** DESK-01's (Launch code once then 403, refresh, `me`, a 1-round batch job to
-   `complete`) plus the bundling checks: `GET /` returns the SPA `index.html`, the Round report
-   PDF starts `%PDF`, a map upload plus `zones/` is 200 (OpenCV). No sight-line compute
-   (BUG-SL-01), no League loop.
-8. **Measurements to the job summary** (zip MB, unpacked MB, cold-start seconds), no threshold.
-9. **Asset name** `LaserforceSimulator-windows-x64.zip`, the same for `desktop-latest` and tags.
-10. **Rolling publish:** `permissions: contents: write`; move the `desktop-latest` tag to the
-    commit, `gh release upload --clobber`, notes set to the SHA and date. The release is kept, not
-    recreated, so the link never 404s. Job-level `concurrency: desktop-latest` (queued, not
-    cancelled), and publishing is skipped when `github.sha` is no longer `main`'s head.
-11. **A `v*` tag** publishes a normal (not pre-release) Release with `--generate-notes`. This task
-    cuts no version; the first numbered Release is DESK-04's.
-12. **Release paths are proved after merge:** the PR proves build, smoke and artifact; the first
-    merge proves `desktop-latest` (the Step 9 line); the tag path first runs at DESK-04.
-13. **No version in the app** (DESK-04).
-14. **`/next-feature` Step 9 line:** after the merge, wait for the `main` run, `gh release view
-    desktop-latest --json tagName,url,assets`, confirm the tag's commit is `origin/main`, give the
-    owner the download link.
-15. **Out of scope:** signing, macOS / Linux, pywebview (DESK-03), default maps, a version or
-    update check, any size or cold-start gate, exact pins for every runtime dependency.
+DESK-02 (Desktop App build in CI) is **[DONE]**; see `PLAN-completed.md`.
 
 ### DESK-03 · [NOT STARTED] Desktop App native window
 
