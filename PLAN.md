@@ -136,13 +136,11 @@ DESK-03 (Desktop App native window) is **[DONE]**; see `PLAN-completed.md`.
 
 DESK-04 (Desktop App distribution) is **[DONE]**; see `PLAN-completed.md`.
 
-### DESK-05 · [NOT STARTED] Sign the Desktop build with Azure Trusted Signing
+DESK-05 (sign the Desktop build) is **[DEFERRED]**; see *Deferred Items*.
 
-Split from DESK-04 (decision 2). Sign the `.exe` in CI with Azure Trusted Signing so SmartScreen
-reputation builds on the publisher, not on each zip. Needs the owner's Azure subscription and
-identity validation first; check prices and eligibility then (ADR-0048 Distribution).
+### BUG-SL-01 · [IN PROGRESS] Sight-line compute fails after a saved zone config
 
-### BUG-SL-01 · [NOT STARTED] Sight-line compute fails after a saved zone config
+Spec: #510
 
 Found by ANG-09, frozen and unfrozen alike. `POST /api/maps/<id>/sight-lines/compute/` after a
 `PUT .../zone-config/` returns 500 `KeyError: 0`: `compute_sight_lines`
@@ -151,6 +149,31 @@ and `_has_los` indexes it as a 2D grid. The tests' 4x4 fixture only checks neigh
 the line walk never runs. Reproduce with either sample map in `Screenshots_and_video_examples/`.
 Also remove the import-time `logging.basicConfig(level=logging.DEBUG)` in
 `matches/simulation/entrypoints.py`.
+
+**Grill (owner, 2026-11-02).** Probe: both sample maps at zone size 40 raise `KeyError: 0` in
+`_has_los` when compute runs on the saved shape `{"zones", "blocked_edges"}`; `detect_zones`'s own
+output computes fine. The saved `blocked_edges` is the flat `"r,c,e"` / `"r,c,s"` dict, non-empty
+only when the zone-config PUT omits `zones` (auto-detect). The SPA editor and `seed_browser_check`
+always send `zones`, so they store `{}` and never crash. No ownership, migration or simulation
+change: nothing in `matches/` calls `_has_los`; the engine reads the stored `SightLineConfig`.
+
+1. One private helper in `core/map_processing.py` turns any zone dict into the 2D grid
+   (`blocked_edges_grid` when present, else built from the flat dict, sized from `zones`); both
+   `compute_sight_lines` and `compute_single_cell_visibility` call it. Stored format and existing
+   rows unchanged.
+2. The single-cell endpoint (`GET .../sight-lines/cell/`) has the same bug: fixed and tested too.
+3. Out of scope: an editor save (`zones` sent) stores `blocked_edges: {}`, so its sight lines ignore
+   the image's sub-cell wall edges. Logged in *Deferred Items*.
+4. Tests: a pure regression in `matches/tests/test_map.py` (flat dict, far-apart cells so the line
+   walk runs, a blocked edge on the line, both functions, the adjacent path), and an API one in
+   `core/test_maps_api_writes.py` (PUT zone-config without `zones` on a fixture big enough to yield
+   blocked edges, then compute is 200), with a larger image builder in `core/map_test_fixtures.py`.
+5. Delete `logging.basicConfig(level=logging.DEBUG)` from `entrypoints.py`; a test pins that
+   importing it leaves the root logger's level alone.
+6. DESK-05 deferred (owner: not paying for Azure Trusted Signing for now).
+7. One ticket, implemented by the orchestrator.
+8. Out of scope: `_has_los` ignores the blocked edge next to the target (logged in *Deferred
+   Items*). The regression tests put the target two or more edges past the blocked one.
 
 BUG-WV-01 (App window shows nothing when WebView2 fails to initialise) is **[DONE]**; see `PLAN-completed.md`.
 
@@ -329,6 +352,20 @@ The following were explicitly scoped out and should not be implemented until re-
 - **Per-stat-per-role weight tuning** (STAT-02 follow-up) — granular multipliers per stat per role;
   deferred until baseline simulation data exists to inform the values
 - **Google/OAuth social login** (UX-01) — deferred from Phase 6; email/password only for now
+- **DESK-05 · Sign the Desktop build with Azure Trusted Signing** (deferred by the owner,
+  2026-11-02: not paying for Azure Trusted Signing for now). Split from DESK-04 (decision 2). Sign
+  the `.exe` in CI with Azure Trusted Signing so SmartScreen reputation builds on the publisher, not
+  on each zip. Needs the owner's Azure subscription and identity validation first; check prices and
+  eligibility then (ADR-0048 Distribution)
+- **Editor saves drop blocked edges** (BUG-SL-01 grill, 2026-11-02) — a zone-config PUT that sends
+  `zones` (every SPA editor save) stores `blocked_edges: {}`, so sight lines computed afterwards
+  ignore the image's sub-cell wall edges, while an auto-detected save keeps them. Keeping the
+  detected edges on an edited save would change sight lines on every edited map
+- **Last blocked edge before the target is ignored** (BUG-SL-01 grill, 2026-11-02) — `_has_los`
+  returns `True` on reaching the target cell before checking the edge it just crossed, so a blocked
+  edge next to the target never blocks: on a 5x3 floor with `1,1,e` blocked, (1,0) sees (1,2) but
+  not (1,3). Fixing it changes sight lines, Rankings and Heavy strong spots on every map with
+  non-empty blocked edges; pair it with *Editor saves drop blocked edges* above
 - **Map upload size limit** (ANG-10, 2026-11-01) — nginx capped request bodies at 20 MB; with
   Django serving every deploy directly, gunicorn and Django set no cap on file uploads. A size check
   in the map upload form is the fix
