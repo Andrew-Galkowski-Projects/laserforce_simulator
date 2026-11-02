@@ -26,7 +26,7 @@ A Django API with an Angular front end that simulates competitive [Laserforce](h
 - **Manager firing (owner mood)** — In a single-player career League, the team owner evaluates you once per completed season on a ZenGM-style cumulative owner-mood model — *wins* (regular-season record vs a .500 baseline) plus *playoffs* (missed / advanced / champion of the season's tournament), each capped so you can't coast on one factor. After a two-season grace period, an overall mood at or below the firing threshold gets you fired; the owner-evaluation screen shows the verdict, a hot-seat warning if you're trending toward the axe, and the per-factor breakdown, and is browsable for past seasons. A fired manager picks a fresh team from the five worst-performing clubs (your old team excluded) on a New Team screen, starting a new tenure and grace period. With team finances enabled, the *money* factor (season profit) joins the mood model, and an optional per-League "fire on luxury tax" rule — set at League creation — fires you outright (independent of mood, but still after the grace period) any season your team pays the luxury tax; the owner-evaluation screen names which trigger fired you.
 - **User accounts & ownership** — Email + password sign-in; registration is invite-only (staff create invites in Django admin, single-use by default or shared with a use cap and an expiry; the admin shows the sign-up link to send). Every Team, League, Tournament, sandbox Match and standalone Round belongs to the account that created it, and the whole site sits behind a login. Rows created before you had an account (or by a management command) are *unmanaged* and stay open to any signed-in account until claimed
 - **Self-insert** — Link your account to one Player on a team you manage ("This is me" on the player's page) and that Player gets a **My player** shortcut in the account menu. It is purely a vanity link: the Player is not moved, copied or added to any team, and simulations are unaffected
-- **Desktop App** — a download (or `python desktop/main.py` from source) runs the whole app on one machine for one account: SQLite and uploads in `%LOCALAPPDATA%\LaserforceSimulator`, background jobs on an in-process worker, and the browser opens already signed in through a single-use launch link (no password, no Sign out). If an upgrade cannot migrate the saved data, it is moved to a `.bak` file and the app says so. CI publishes a downloadable Windows build of every merge to `main` (DESK-02; see Option D)
+- **Desktop App** — a download (or `python desktop/main.py` from source) runs the whole app on one machine for one account: SQLite and uploads in `%LOCALAPPDATA%\LaserforceSimulator`, background jobs on an in-process worker, and its own App window (WebView2; the default browser when WebView2 is missing) opens already signed in through a single-use launch link (no password, no Sign out). There is no console window; closing the App window quits, and a second launch brings the running window to the front (DESK-03). If an upgrade cannot migrate the saved data, it is moved to a `.bak` file and the app says so. CI publishes a downloadable Windows build of every merge to `main` (DESK-02; see Option D)
 - **Team history** — Win/loss records across all matches
 - **REST API** — JSON endpoints at `/api/` for teams and players (read + write: create / edit teams, set roster slots, add / edit / delete players, generate players, import a roster CSV), match / round creation and analytics, read-only events, leagues and seasons (create a league from a template or the advanced form, delete a career league, start the next season or pick a new team after being fired, edit conferences, and read dashboards, history, standings, schedules, awards and owner evaluations, play a season), every League screen (player stats and ratings, free agents, leaders, the League player page, team roster / history / stats, power rankings, game log, statistical feats, playoffs, team and league finances — with finance edits for your current team — and your per-League watch list, which is saved to your account), sandbox tournaments (create in any of the five formats with preset teams or a player-pool draw, read the whole bracket and standings, set seeds, import participants, manage the player pool and the draw, lock, play the next match or play the whole tournament as a polled background job — league-embedded tournaments are read-only here), the full map editor (upload / delete maps, zones, sight lines, strong spots, spawns, heatmap — maps are shared by every account), and your account (who you are signed in as, register a new account, change your password, link or unlink your Self-insert), plus JWT sign-in, refresh and sign-out at `/api/token/`. Every response uses one envelope — `{"data": ..., "meta": {...}}` on success, `{"errors": [{"code", "message", "field"}], "meta": {}}` on failure — lists are paginated (20 per page, `?page_size=` up to 100) and filterable / sortable via query params. You only ever see your own account's rows (another account's row is a `404`)
 
@@ -35,7 +35,7 @@ A Django API with an Angular front end that simulates competitive [Laserforce](h
 - Python 3.12 / Django 5.2
 - SQLite (default); PostgreSQL in production via `dj-database-url`
 - `python-decouple` for environment variable configuration (`.env` for local, env vars in production)
-- `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`); `waitress` serves the Desktop App on Windows
+- `gunicorn` as the production WSGI server (start with `gunicorn laserforce_simulator.wsgi:application --bind 0.0.0.0:8000`); `waitress` serves the Desktop App on Windows, and `pywebview` (WebView2) draws its App window
 - `whitenoise` for production static file serving directly from Django, including the built Angular SPA at `/` (`SPA_ROOT`; every deep link falls back to `index.html`), so one image serves the SPA, `/api/` and `/admin/` in every deploy (ADR-0049)
 - `django-storages` + `boto3` for Cloudflare R2 media storage in production (set `R2_*` env vars to activate; falls back to local disk when unset)
 - `djangorestframework` + `django-filter` for the JSON API at `/api/`
@@ -146,7 +146,7 @@ Redis, and publishes them at `https://<name>.<tailnet>.ts.net` through Tailscale
 rebuilt by CI on every merge to `main`. Unzip it and run `LaserforceSimulator\LaserforceSimulator.exe`.
 It is unsigned, so Windows SmartScreen warns: choose **More info**, then **Run anyway**. To build
 it yourself on a python.org Python 3.12 (not conda), install
-`laserforce_simulator/requirements-runtime.txt` plus `pyinstaller`, run `npm --prefix frontend ci`,
+`laserforce_simulator/requirements-desktop.txt` plus `pyinstaller`, run `npm --prefix frontend ci`,
 then `powershell -NoProfile -File desktop/build.ps1 -Python <python.exe> -Out <dir>`.
 
 **From source:**
@@ -160,9 +160,11 @@ npm --prefix frontend run build
 ```
 
 It migrates its own SQLite database in `%LOCALAPPDATA%\LaserforceSimulator` (override with
-`LF_DESKTOP_HOME`), starts on a free `127.0.0.1` port and opens your browser signed in. Close the
-console window to quit; restart the app to sign in again. `--no-browser` prints the launch link
-instead. See [`laserforce_simulator/desktop_app/CLAUDE.md`](laserforce_simulator/desktop_app/CLAUDE.md).
+`LF_DESKTOP_HOME`), starts on a free `127.0.0.1` port and opens its App window signed in (pywebview
+over WebView2, from `requirements-desktop.txt`). Close the window to quit; restart the app to sign
+in again. Only one copy runs per data folder: launching again brings the window to the front.
+`--browser` opens your default browser instead (also the fallback without WebView2), and
+`--no-browser` prints the launch link and shows no UI. See [`laserforce_simulator/desktop_app/CLAUDE.md`](laserforce_simulator/desktop_app/CLAUDE.md).
 
 ### Frontend (Angular)
 

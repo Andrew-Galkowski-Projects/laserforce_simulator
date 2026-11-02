@@ -7,14 +7,23 @@ migration.
 
 from __future__ import annotations
 
+import io
+import os
 import re
 import sqlite3
+import subprocess
+import sys
+import threading
+from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from accounts.models import User
-from desktop_app import launcher
+from desktop_app import instance, launcher
+
+ENTRY = Path(__file__).resolve().parents[3] / "desktop" / "main.py"
 
 ENV_KEYS = (
     "LF_DESKTOP_HOME",
@@ -169,6 +178,384 @@ def test_prepare_environment_keeps_the_secret_key_across_launches(
     first = os.environ["SECRET_KEY"]
     launcher.prepare_environment(tmp_path, tmp_path)
     assert os.environ["SECRET_KEY"] == first
+
+
+def test_quiet_std_streams_replaces_missing_streams_with_devnull(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # PyInstaller --noconsole with no pipe (a double-click): both are None,
+    # and Django's OutputWrapper or Celery would raise on .write.
+    import os
+
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    launcher.quiet_std_streams()
+
+    for stream in (sys.stdout, sys.stderr):
+        assert stream is not None
+        assert stream.name == os.devnull
+        stream.write("ignored")  # does not raise
+    sys.stdout.close()
+    sys.stderr.close()
+
+
+def test_quiet_std_streams_keeps_streams_that_are_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    out, err = io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+
+    launcher.quiet_std_streams()
+
+    assert sys.stdout is out
+    assert sys.stderr is err
+
+
+def _raise_and_report(data: Path, *, headless: bool) -> None:
+    try:
+        raise RuntimeError("no such table: accounts_user")
+    except RuntimeError:
+        launcher.report_startup_failure(data, headless=headless)
+
+
+@pytest.fixture
+def boxes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every ``message_box`` text the launcher shows."""
+    shown: list[str] = []
+    monkeypatch.setattr(launcher, "message_box", shown.append)
+    return shown
+
+
+def test_a_startup_failure_is_appended_to_the_log_and_shown_in_a_box(
+    tmp_path: Path, boxes: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    log = tmp_path / "logs" / "desktop.log"
+    log.parent.mkdir()
+    log.write_text("earlier line\n", encoding="utf-8")
+
+    _raise_and_report(tmp_path, headless=False)
+
+    text = log.read_text(encoding="utf-8")
+    assert text.startswith("earlier line\n")
+    assert re.search(r"\d{4}-\d\d-\d\d \d\d:\d\d:\d\d", text)
+    assert "Traceback (most recent call last)" in text
+    assert "RuntimeError: no such table: accounts_user" in text
+    assert boxes == [f"Laserforce Simulator could not start. Details: {log}"]
+    assert capsys.readouterr().err == ""
+
+
+def test_a_headless_startup_failure_prints_the_traceback_and_shows_no_box(
+    tmp_path: Path, boxes: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    _raise_and_report(tmp_path, headless=True)
+
+    assert boxes == []
+    err = capsys.readouterr().err
+    assert "RuntimeError: no such table: accounts_user" in err
+    log = tmp_path / "logs" / "desktop.log"
+    assert "RuntimeError: no such table: accounts_user" in log.read_text(
+        encoding="utf-8"
+    )
+
+
+@pytest.fixture
+def home(
+    env: pytest.MonkeyPatch, tmp_path: Path, boxes: list[str]
+) -> Iterator[FakeMigrate]:
+    """``main()`` on ``tmp_path`` with no Django setup and a counting ``migrate``.
+
+    Yields the fake ``migrate``; closes any lock ``main()`` kept.
+    """
+    env.setenv("LF_DESKTOP_HOME", str(tmp_path))
+    env.setattr("django.setup", lambda: None)
+    migrate = FakeMigrate()
+    env.setattr(launcher, "_migrate", migrate)
+    env.setattr(launcher, "_instance_lock", None)
+    yield migrate
+    if launcher._instance_lock is not None:
+        launcher._instance_lock.close()
+
+
+def _main_exit_code(argv: list[str], monkeypatch: pytest.MonkeyPatch) -> object:
+    monkeypatch.setattr(sys, "argv", ["main.py", *argv])
+    with pytest.raises(SystemExit) as caught:
+        launcher.main()
+    return caught.value.code
+
+
+@pytest.fixture
+def held_lock(tmp_path: Path) -> Iterator[None]:
+    lock = instance.acquire_instance_lock(tmp_path)
+    assert lock is not None
+    yield
+    lock.close()
+
+
+@pytest.fixture
+def focused(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Titles ``main()`` tried to focus; the fake finds a window."""
+    titles: list[str] = []
+
+    def focus(title: str) -> bool:
+        titles.append(title)
+        return True
+
+    monkeypatch.setattr(launcher, "focus_window", focus)
+    return titles
+
+
+def test_a_headless_second_launch_prints_already_running_and_exits_0(
+    home: FakeMigrate,
+    held_lock: None,
+    focused: list[str],
+    boxes: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    assert _main_exit_code(["--no-browser"], monkeypatch) == 0
+
+    assert "LF_ALREADY_RUNNING" in capsys.readouterr().out
+    assert home.calls == 0
+    assert focused == []
+    assert boxes == []
+
+
+def test_a_second_launch_focuses_the_running_window_and_shows_no_box(
+    home: FakeMigrate,
+    held_lock: None,
+    focused: list[str],
+    boxes: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert _main_exit_code([], monkeypatch) == 0
+
+    assert focused == ["Laserforce Simulator"]
+    assert boxes == []
+    assert home.calls == 0
+
+
+def test_a_second_launch_with_no_window_to_focus_shows_a_box(
+    home: FakeMigrate,
+    held_lock: None,
+    boxes: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(launcher, "focus_window", lambda title: False)
+
+    assert _main_exit_code(["--browser"], monkeypatch) == 0
+
+    assert boxes == ["Laserforce Simulator is already running."]
+    assert home.calls == 0
+
+
+def test_main_quiets_missing_std_streams_first(
+    home: FakeMigrate,
+    held_lock: None,
+    focused: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "stdout", None)
+    monkeypatch.setattr(sys, "stderr", None)
+
+    assert _main_exit_code([], monkeypatch) == 0
+
+    assert sys.stdout is not None and sys.stdout.name == os.devnull
+    assert sys.stderr is not None and sys.stderr.name == os.devnull
+    sys.stdout.close()
+    sys.stderr.close()
+
+
+def test_main_exits_1_when_migrate_fails_on_an_empty_folder(
+    home: FakeMigrate,
+    tmp_path: Path,
+    boxes: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home.errors.append(RuntimeError("broken build"))
+
+    assert _main_exit_code([], monkeypatch) == 1
+
+    assert home.calls == 1
+    log = tmp_path / "logs" / "desktop.log"
+    assert "RuntimeError: broken build" in log.read_text(encoding="utf-8")
+    assert boxes == [f"Laserforce Simulator could not start. Details: {log}"]
+
+
+def test_main_holds_the_instance_lock_while_it_runs(
+    home: FakeMigrate, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Checked at migrate time: the lock is taken before migrate, and kept in
+    # the module global (a dropped handle would release it).
+    seen = []
+
+    def migrate() -> None:
+        seen.append(instance.acquire_instance_lock(tmp_path))
+        raise RuntimeError("stop here")
+
+    monkeypatch.setattr(launcher, "_migrate", migrate)
+
+    assert _main_exit_code(["--no-browser"], monkeypatch) == 1
+
+    assert seen == [None]
+    assert launcher._instance_lock is not None
+
+
+def test_a_real_startup_failure_exits_1_with_the_traceback(tmp_path: Path) -> None:
+    # Not a fake: the data folder's secret_key is a directory, so reading it
+    # fails inside the startup ``try``, before Django is set up.
+    (tmp_path / "secret_key").mkdir()
+
+    result = subprocess.run(
+        [sys.executable, str(ENTRY), "--no-browser"],
+        env={**os.environ, "LF_DESKTOP_HOME": str(tmp_path)},
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+
+    assert result.returncode == 1, result.stderr
+    assert "Traceback (most recent call last)" in result.stderr
+    assert "secret_key" in result.stderr
+    log = (tmp_path / "logs" / "desktop.log").read_text(encoding="utf-8")
+    assert "secret_key" in log
+    assert "LF_READY" not in result.stdout
+
+
+class FakeServer:
+    """A waitress server whose ``run`` records the thread it ran on."""
+
+    def __init__(self) -> None:
+        self.ran = threading.Event()
+        self.thread: threading.Thread | None = None
+
+    def run(self) -> None:
+        self.thread = threading.current_thread()
+        self.ran.set()
+
+
+@pytest.fixture
+def windows(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, bool, bool]]:
+    """``run_window`` calls: (url, selftest, on the main thread)."""
+    calls: list[tuple[str, bool, bool]] = []
+
+    def run_window(url: str, *, selftest: bool = False) -> None:
+        calls.append(
+            (url, selftest, threading.current_thread() is threading.main_thread())
+        )
+
+    monkeypatch.setattr(launcher, "run_window", run_window)
+    monkeypatch.setattr(launcher, "window_available", lambda: True)
+    return calls
+
+
+@pytest.fixture
+def opened(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """URLs the browser opened; the 0.2 s timer fires at once."""
+    urls: list[str] = []
+
+    class Timer:
+        def __init__(self, delay: float, func: Callable[..., Any], args: Any) -> None:
+            self.call = (func, args)
+
+        def start(self) -> None:
+            func, args = self.call
+            func(*args)
+
+    monkeypatch.setattr(launcher.threading, "Timer", Timer)
+    monkeypatch.setattr(launcher.webbrowser, "open", urls.append)
+    return urls
+
+
+def test_the_window_shell_serves_on_a_daemon_thread_and_opens_the_window(
+    windows: list[tuple[str, bool, bool]], opened: list[str]
+) -> None:
+    server = FakeServer()
+
+    launcher._open_shell(server, "http://127.0.0.1:1/x", ["main.py"])
+
+    assert server.ran.wait(5)
+    assert server.thread is not None
+    assert server.thread is not threading.main_thread()
+    assert server.thread.daemon
+    assert windows == [("http://127.0.0.1:1/x", False, True)]
+    assert opened == []
+
+
+def test_selftest_window_reaches_the_window(
+    windows: list[tuple[str, bool, bool]], opened: list[str]
+) -> None:
+    launcher._open_shell(
+        FakeServer(), "http://127.0.0.1:1/x", ["main.py", "--selftest-window"]
+    )
+    assert windows == [("http://127.0.0.1:1/x", True, True)]
+
+
+def test_a_window_that_raises_falls_back_to_the_browser_and_keeps_serving(
+    monkeypatch: pytest.MonkeyPatch,
+    opened: list[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Grill decision 2: WebView2 failing at start-up (not only missing) still
+    # leaves the person a working app in the default browser.
+    def run_window(url: str, *, selftest: bool = False) -> None:
+        raise OSError("WebView2 failed to start")
+
+    monkeypatch.setattr(launcher, "run_window", run_window)
+    monkeypatch.setattr(launcher, "window_available", lambda: True)
+    server = FakeServer()
+
+    launcher._open_shell(server, "http://127.0.0.1:1/x", ["main.py"])
+
+    assert opened == ["http://127.0.0.1:1/x"]
+    assert server.ran.is_set()
+    assert "WebView2 failed to start" in caplog.text
+
+
+def test_a_selftest_window_that_raises_fails_at_once_with_no_browser(
+    monkeypatch: pytest.MonkeyPatch,
+    opened: list[str],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The self-test must fail CI straight away, not open a browser and block
+    # until the smoke's 90 s timeout.
+    def run_window(url: str, *, selftest: bool = False) -> None:
+        raise OSError("WebView2 failed to start")
+
+    monkeypatch.setattr(launcher, "run_window", run_window)
+    monkeypatch.setattr(launcher, "window_available", lambda: True)
+
+    launcher._open_shell(
+        FakeServer(), "http://127.0.0.1:1/x", ["main.py", "--selftest-window"]
+    )
+
+    assert opened == []
+    assert "LF_WINDOW_FAIL OSError: WebView2 failed to start" in capsys.readouterr().out
+
+
+def test_the_browser_shell_opens_the_browser_and_serves_on_the_main_thread(
+    windows: list[tuple[str, bool, bool]], opened: list[str]
+) -> None:
+    server = FakeServer()
+
+    launcher._open_shell(server, "http://127.0.0.1:1/x", ["main.py", "--browser"])
+
+    assert opened == ["http://127.0.0.1:1/x"]
+    assert server.thread is threading.main_thread()
+    assert windows == []
+
+
+def test_no_browser_only_serves(
+    windows: list[tuple[str, bool, bool]], opened: list[str]
+) -> None:
+    server = FakeServer()
+
+    launcher._open_shell(server, "http://127.0.0.1:1/x", ["main.py", "--no-browser"])
+
+    assert server.thread is threading.main_thread()
+    assert opened == []
+    assert windows == []
 
 
 @pytest.mark.django_db

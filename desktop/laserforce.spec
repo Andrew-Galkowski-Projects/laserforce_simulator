@@ -34,6 +34,10 @@ for package in (
     "celery",
     "kombu.transport",
     "waitress",
+    # DESK-03: no "webview" here. pyinstaller-hooks-contrib's hooks for
+    # webview, clr_loader and pythonnet bundle the App window (pywebview over
+    # WebView2, with its .NET DLLs). Add "webview" to this list only if CI's
+    # frozen `smoke.py --window` self-test fails on an import.
 ):
     hidden += collect_submodules(package, filter=lambda name: ".tests" not in name)
 
@@ -74,6 +78,9 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="LaserforceSimulator",
-    console=True,
+    # DESK-03: no console window; the App window is the UI. A piped child's
+    # print still reaches the pipe (LF_READY for the smoke), and with no pipe
+    # launcher.quiet_std_streams() swaps the None streams for os.devnull.
+    console=False,
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="LaserforceSimulator")

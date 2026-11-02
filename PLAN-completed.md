@@ -8009,6 +8009,60 @@ migration, engine, RNG or endpoint (no determinism test).
 15. **Out of scope:** signing, macOS / Linux, pywebview (DESK-03), default maps, a version or
     update check, any size or cold-start gate, exact pins for every runtime dependency.
 
+### DESK-03 · [DONE] Desktop App native window
+
+Spec: #494
+
+**[DONE] Shipped (2026-11-02).** The Desktop App opens its own App window (pywebview 6.2.1 over
+WebView2) with no console: desktop_app/shell.py picks the window, the browser (--browser, or the
+fallback when WebView2 is missing, since pywebview silently drops to MSHTML, or when the window
+raises) or no UI (--no-browser). desktop_app/instance.py holds a per-data-folder file lock (msvcrt /
+fcntl) taken before migrate; a second launch brings the running window to the front or says it is
+already running. A startup failure is appended to logs/desktop.log and shown in a message box.
+requirements-desktop.txt adds pywebview without touching the Hosted image. The smoke gained an
+instance step and --window, the real App window self-test CI runs on the Desktop build. Found: a
+--noconsole exe still prints to a pipe, but double-clicked its sys.stdout / sys.stderr are None, so
+quiet_std_streams swaps in devnull first. Spec #494, tickets #495 / #496.
+
+Blocked by DESK-01. pywebview (WebView2) frozen in the build, a tray icon or no-console build, and
+a single-instance lock. pywebview worked unfrozen in the ANG-09 spike.
+
+**Grill decisions (2026-11-01, round 1, all accepted):**
+
+1. **Shell:** a pywebview window is the default (`Laserforce Simulator`, 1280x800, resizable).
+   `--no-browser` keeps its meaning (no shell, print the URL; the smoke uses it).
+2. **Fallback:** if the window cannot start (no WebView2 runtime, pywebview raises), log it and
+   open the default browser as today. `--browser` forces the browser.
+3. **No console, no tray:** `console=False`; closing the window quits (server and job worker end
+   with the process). Tray icon out of scope.
+4. **`LF_READY`** still reaches a stdout pipe in the windowed build. Probed 2026-11-01 (PyInstaller
+   6.22.3, `--noconsole`): a piped child prints `LF_READY` fine; launched with no pipe (double-click)
+   `sys.stdout` / `sys.stderr` are `None`, and `print` / `logging` are silent no-ops. So no
+   `--ready-file`; the launcher points a `None` stdout / stderr at `os.devnull` first, so code that
+   calls `.write` directly (Django's `OutputWrapper`, Celery) cannot crash.
+5. **Single-instance lock** per data folder: exclusive `msvcrt.locking` on `<data>/instance.lock`
+   (released by the OS on a crash). A second launch finds the running window by title, brings it
+   to the front (Win32 via ctypes) and exits 0. No new endpoint.
+6. **Startup failure:** the traceback goes to `logs/desktop.log`, then a native message box
+   "Laserforce Simulator could not start. Details: <log path>".
+7. **Downloads and links:** pywebview `ALLOW_DOWNLOADS` on (exports use `shared/save-blob.ts`);
+   links off `127.0.0.1` open in the default browser.
+8. **Dependency:** `pywebview` in a new `requirements-desktop.txt` (`-r requirements-runtime.txt`);
+   `build.ps1` and the dev requirements install it, the Hosted image does not. `webview` is imported
+   lazily. `test_requirements.py` updated.
+9. **Testing:** unit tests with fakes (shell choice, fallback, lock, error box); a
+   `--selftest-window` flag prints `LF_WINDOW_OK <seconds>` once the signed-in SPA shows, then
+   closes; CI's `desktop` job runs it on the Desktop build after the smoke.
+10. **Out of scope:** tray icon, app/exe icon, native menu (DESK-04 or later), auto-update,
+    signing, macOS / Linux, the sight-line bug (BUG-SL-01), remembering window size / position.
+
+**Round 2 (accepted):**
+
+11. A second launch with no **App window** to focus (the first fell back to the browser, or runs
+    `--no-browser`) shows a message box "Laserforce Simulator is already running." and exits 0.
+12. The window opens at 1280x800, centred, every launch; size and position are not remembered.
+13. No new ADR: this is ADR-0048 follow-up 3. `desktop_app/CLAUDE.md` takes the new rules.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

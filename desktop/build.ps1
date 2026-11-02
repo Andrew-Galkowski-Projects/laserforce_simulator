@@ -1,7 +1,8 @@
 # DESK-02: build the Desktop build (one folder) and zip it. CI and local builds both run this.
 #   powershell -NoProfile -File desktop/build.ps1 -Python <python.exe> -Out <dir>
 # <python.exe> is a python.org CPython (not conda: ADR-0048) with
-# laserforce_simulator/requirements-runtime.txt and PyInstaller installed, and
+# laserforce_simulator/requirements-desktop.txt (the runtime file plus
+# pywebview, DESK-03) and PyInstaller installed, and
 # `npm --prefix frontend ci` already run. Writes
 # <Out>/dist/LaserforceSimulator/LaserforceSimulator.exe and
 # <Out>/LaserforceSimulator-windows-x64.zip.

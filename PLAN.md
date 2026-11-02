@@ -132,10 +132,7 @@ DESK-01 (desktop App code in `main`, with tests) is **[DONE]**; see `PLAN-comple
 
 DESK-02 (Desktop App build in CI) is **[DONE]**; see `PLAN-completed.md`.
 
-### DESK-03 · [NOT STARTED] Desktop App native window
-
-Blocked by DESK-01. pywebview (WebView2) frozen in the build, a tray icon or no-console build, and
-a single-instance lock. pywebview worked unfrozen in the ANG-09 spike.
+DESK-03 (Desktop App native window) is **[DONE]**; see `PLAN-completed.md`.
 
 ### DESK-04 · [NOT STARTED] Desktop App distribution
 
