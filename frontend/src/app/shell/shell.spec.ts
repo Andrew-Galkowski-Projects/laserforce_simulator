@@ -3,6 +3,7 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { Router, provideRouter } from '@angular/router';
 import { RouterTestingHarness } from '@angular/router/testing';
+import { config } from 'rxjs';
 import { environment } from '../../environments/environment';
 import { DESKTOP_USER, SELF_INSERT, USER, signIn } from '../api/testing/auth-fixtures';
 import { User } from '../auth/user';
@@ -210,9 +211,118 @@ describe('App shell (layout B)', () => {
       'Your saved data could not be upgraded (RuntimeError). It was moved to ' +
       'db.sqlite3.20261101-120000.bak and a fresh database was started.';
     const notice = (): HTMLElement | null => shell().querySelector('.shell__notice');
+    const UPDATE_URL = `${BASE}/accounts/desktop-update/`;
+    const RELEASE_URL = 'https://github.com/o/r/releases/tag/v0.2.0';
+    const updateNotice = (): HTMLElement | undefined =>
+      [...shell().querySelectorAll<HTMLElement>('.shell__notice')].find((el) =>
+        el.textContent?.includes('is available.'),
+      );
+
+    /** Answers the Shell's one `accounts/desktop-update/` GET with `update`. */
+    async function answerUpdate(update: { version: string; url: string } | null): Promise<void> {
+      http.expectOne(UPDATE_URL).flush({ data: update, meta: {} });
+      await harness.fixture.whenStable();
+    }
+
+    it('shows the Update notice with a Download link when a newer build exists', async () => {
+      await open('/teams', 1280, DESKTOP_USER);
+      await answerUpdate({ version: 'v0.2.0', url: RELEASE_URL });
+      const banner = updateNotice();
+      expect(banner?.getAttribute('role')).toBe('status');
+      expect(banner?.querySelector('.shell__notice-text')?.textContent?.trim()).toBe(
+        'Laserforce Simulator v0.2.0 is available.',
+      );
+      const link = [...(banner?.querySelectorAll('a') ?? [])].find(
+        (a) => a.textContent?.trim() === 'Download',
+      );
+      expect(link?.getAttribute('href')).toBe(RELEASE_URL);
+      expect(link?.getAttribute('target')).toBe('_blank');
+      expect(link?.getAttribute('rel')).toBe('noopener');
+    });
+
+    it('shows no Update notice when there is no newer build', async () => {
+      await open('/teams', 1280, DESKTOP_USER);
+      await answerUpdate(null);
+      expect(updateNotice()).toBeUndefined();
+      expect(notice()).toBeNull();
+    });
+
+    it('shows nothing, no banner and no error, when the update check fails', async () => {
+      const unhandled = vi.fn();
+      config.onUnhandledError = unhandled;
+      try {
+        await open('/teams', 1280, DESKTOP_USER);
+        http
+          .expectOne(UPDATE_URL)
+          .flush(null, { status: 500, statusText: 'Internal Server Error' });
+        await harness.fixture.whenStable();
+        // rxjs reports an unhandled error on a later macrotask.
+        await new Promise((resolve) => setTimeout(resolve));
+      } finally {
+        config.onUnhandledError = null;
+      }
+      expect(unhandled).not.toHaveBeenCalled();
+      expect(notice()).toBeNull();
+      expect(document.body.textContent).not.toContain('Something went wrong');
+      expect(document.body.textContent).not.toContain('500');
+    });
+
+    it('puts the version first in the Help menu, disabled, above the Soon items', async () => {
+      await open('/teams', 1280, DESKTOP_USER);
+      await answerUpdate(null);
+      button('Help')?.click();
+      await harness.fixture.whenStable();
+      const [first, ...rest] = menuItems();
+      expect(first.textContent?.trim()).toBe('Laserforce Simulator dev');
+      expect(first.tagName).toBe('BUTTON');
+      expect(first.hasAttribute('disabled')).toBe(true);
+      expect(rest.map((item) => item.textContent?.replace(/\s*Soon$/, '').trim())).toEqual([
+        'Overview',
+        'Changes',
+        'Custom Rosters',
+        'Debugging',
+        'LOL GM Forums',
+        'Zen GM Forums',
+      ]);
+    });
+
+    it('asks for an update once per Shell, not again on the next page', async () => {
+      await open('/teams', 1280, DESKTOP_USER);
+      await answerUpdate({ version: 'v0.2.0', url: RELEASE_URL });
+      await harness.navigateByUrl('/players');
+      releasePlayersLoads();
+      http.expectNone(UPDATE_URL);
+      expect(updateNotice()).toBeDefined();
+    });
+
+    it('hides the Update notice on Dismiss and keeps the reset notice', async () => {
+      await open('/teams', 1280, { ...DESKTOP_USER, desktop_notice: NOTICE });
+      await answerUpdate({ version: 'v0.2.0', url: RELEASE_URL });
+      // Both show, the Update notice under the reset notice.
+      const banners = [...shell().querySelectorAll<HTMLElement>('.shell__notice')];
+      expect(banners.map((el) => el === updateNotice())).toEqual([false, true]);
+      expect(banners[0].textContent).toContain(NOTICE);
+      const dismiss = [...(updateNotice()?.querySelectorAll('button') ?? [])].find(
+        (b) => b.textContent?.trim() === 'Dismiss',
+      );
+      dismiss?.click();
+      await harness.fixture.whenStable();
+      expect(updateNotice()).toBeUndefined();
+      expect(notice()?.textContent).toContain(NOTICE);
+    });
+
+    it('keeps the Update notice when the reset notice is dismissed', async () => {
+      await open('/teams', 1280, { ...DESKTOP_USER, desktop_notice: NOTICE });
+      await answerUpdate({ version: 'v0.2.0', url: RELEASE_URL });
+      button('Dismiss')?.click();
+      await harness.fixture.whenStable();
+      expect(shell().textContent).not.toContain(NOTICE);
+      expect(updateNotice()).toBeDefined();
+    });
 
     it('offers only the Self-insert items, never Change password or Sign out', async () => {
       await open('/teams', 1280, DESKTOP_LINKED);
+      await answerUpdate(null);
       await openAccountMenu();
       expect(menuItems().map((item) => item.textContent?.trim())).toEqual([
         'My player',
@@ -222,6 +332,7 @@ describe('App shell (layout B)', () => {
 
     it('shows no Account button while no Self-insert is linked (its menu would be empty)', async () => {
       await open('/teams', 1280, DESKTOP_USER);
+      await answerUpdate(null);
       expect(button('Account')).toBeUndefined();
       expect(header()?.textContent).not.toContain('local@desktop.invalid');
     });
@@ -229,12 +340,14 @@ describe('App shell (layout B)', () => {
     it('sends /account/password to the landing page', async () => {
       await open('/account/password', 1280, DESKTOP_USER);
       releaseLeaguesLoads();
+      await answerUpdate(null);
       expect(routerUrl()).toBe('/');
       expect(shell().textContent).not.toContain('Change password');
     });
 
     it('shows the reset notice above the page until it is dismissed', async () => {
       await open('/teams', 1280, { ...DESKTOP_USER, desktop_notice: NOTICE });
+      await answerUpdate(null);
       expect(notice()?.getAttribute('role')).toBe('status');
       expect(notice()?.textContent).toContain(NOTICE);
       button('Dismiss')?.click();
@@ -244,8 +357,16 @@ describe('App shell (layout B)', () => {
 
     it('shows no notice when there is none', async () => {
       await open('/teams', 1280, DESKTOP_USER);
+      await answerUpdate(null);
       expect(notice()).toBeNull();
     });
+  });
+
+  // DESK-04: Hosted has no update route, so the Shell never asks.
+  it('never asks a Hosted deploy for a Desktop update', async () => {
+    await open('/teams');
+    http.expectNone(`${BASE}/accounts/desktop-update/`);
+    expect(shell().querySelector('.shell__notice')).toBeNull();
   });
 
   it('keeps /account/password for a Hosted Account', async () => {
