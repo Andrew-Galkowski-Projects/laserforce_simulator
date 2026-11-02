@@ -1,35 +1,16 @@
-asgiref==3.9.2
-djangorestframework>=3.15
-djangorestframework-simplejwt>=5.3
-psycopg2-binary>=2.9
-opencv-python-headless>=4.0.0
-Pillow>=10.0.0
-reportlab>=4.0
-matplotlib>=3.8
+-r requirements-runtime.txt
+# DESK-02: dev / test tooling on top of the runtime file (CI and local dev).
+# ci.yml's coverage job reads the coverage pin from this file.
 attrs==25.3.0
-certifi==2025.4.26
 cffi==1.17.1
 colorama==0.4.6
 coverage==7.11.0
-boto3>=1.34
-celery[redis]>=5.3
-dj-database-url>=2.0.0
-Django==5.2.6
-django-cors-headers>=4.4
-django-filter>=25.1
-django-storages[s3]>=1.14
-gunicorn>=20.1.0
-waitress>=3.0
-whitenoise[brotli]>=6.0.0
 h11==0.16.0
-idna==3.10
 iniconfig==2.3.0
 outcome==1.3.0.post0
-packaging==25.0
 pluggy==1.6.0
 pycparser==2.22
 Pygments==2.19.2
-python-decouple>=3.8
 PySocks==1.7.1
 pytest==8.4.2
 pytest-cov==7.0.0
@@ -41,11 +22,7 @@ execnet==2.1.2
 selenium==4.33.0
 sniffio==1.3.1
 sortedcontainers==2.4.0
-sqlparse==0.5.3
 trio==0.30.0
 trio-websocket==0.12.2
-typing_extensions==4.13.2
-tzdata==2025.2
-urllib3==2.4.0
 websocket-client==1.8.0
 wsproto==1.2.0

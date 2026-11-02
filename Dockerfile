@@ -14,8 +14,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libglib2.0-0 \
     libgomp1 \
     && rm -rf /var/lib/apt/lists/*
-COPY laserforce_simulator/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# DESK-02: the runtime file only (no pytest / selenium in the image).
+COPY laserforce_simulator/requirements-runtime.txt ./requirements-runtime.txt
+RUN pip install --no-cache-dir -r requirements-runtime.txt
 
 # Stage 3 — lean runtime image
 FROM python:3.12-slim

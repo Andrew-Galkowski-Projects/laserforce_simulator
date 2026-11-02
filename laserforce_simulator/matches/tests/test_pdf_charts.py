@@ -33,8 +33,9 @@ PAGE_TITLES = [
 
 PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 
-#: The requirements file the Dockerfile installs from (the Django project dir).
-REQUIREMENTS = Path(__file__).resolve().parents[2] / "requirements.txt"
+#: The requirements file the Dockerfile installs from (the Django project dir):
+#: the runtime file since DESK-02.
+REQUIREMENTS = Path(__file__).resolve().parents[2] / "requirements-runtime.txt"
 
 
 def _png_pixel_size(png: bytes) -> tuple[int, int]:
