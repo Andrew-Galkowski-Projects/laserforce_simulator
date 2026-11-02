@@ -1,9 +1,13 @@
 """DESK-02: the Desktop build smoke, run frozen in CI and unfrozen in the suite.
 
-    python desktop/smoke.py <exe> [<args>...] [--zip <zip>] [--summary <md file>]
+    python desktop/smoke.py <exe> [<args>...] [--window] [--zip <zip>]
+        [--summary <md file>]
 
 runs ``<exe> <args> --no-browser`` on a fresh data folder and walks it through the
-steps below. Exit 0 on a pass, 1 on the first failed step. On a pass,
+steps below; the last one (DESK-03) launches it again on the same folder and
+expects ``LF_ALREADY_RUNNING``. ``--window`` then runs ``<exe> <args>
+--selftest-window`` on another fresh folder: the real App window must report
+``LF_WINDOW_OK``. Exit 0 on a pass, 1 on the first failed step. On a pass,
 ``--summary`` (CI passes ``$GITHUB_STEP_SUMMARY``) gets the sizes and times.
 ``desktop_app/tests/test_launcher_smoke.py`` calls ``run_smoke`` on
 ``desktop/main.py``. Stdlib only: the frozen smoke's Python has no Django.
@@ -22,11 +26,11 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from http.cookies import SimpleCookie
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, TypeVar
 
 MAP_IMAGE = (
     Path(__file__).resolve().parent.parent
@@ -35,6 +39,8 @@ MAP_IMAGE = (
 )
 READY_TIMEOUT_S = 90
 JOB_TIMEOUT_S = 120
+INSTANCE_TIMEOUT_S = 30
+WINDOW_TIMEOUT_S = 90
 
 
 class SmokeFailure(Exception):
@@ -168,7 +174,7 @@ def run_smoke(command: list[str], home: Path, *, check_spa: bool = True) -> Timi
     until ``ng build`` has run (CI's Python jobs never run it). The frozen
     build always bundles one, so the CLI always checks it.
     """
-    env = {**os.environ, "LF_DESKTOP_HOME": str(home), "PYTHONUNBUFFERED": "1"}
+    env = _env(home)
     started = time.perf_counter()
     process = subprocess.Popen(
         command,
@@ -181,13 +187,53 @@ def run_smoke(command: list[str], home: Path, *, check_spa: bool = True) -> Timi
     )
     output = _Output(process)
     try:
-        return _steps(output, started, check_spa)
+        return _steps(output, started, check_spa, command, env)
     finally:
         process.kill()
         process.wait(timeout=30)
 
 
-def _steps(output: _Output, started: float, check_spa: bool) -> Timings:
+def _check_spa(response: _Response) -> None:
+    _expect(response, 200)
+    if b"<app-root" not in response.body:
+        raise AssertionError(f"GET / is not the SPA: {response.body[:300]!r}")
+
+
+def _second_launch(
+    command: list[str], env: dict[str, str], base: str, check_spa: bool
+) -> None:
+    """Launch ``command`` again on the same data folder while the first runs.
+
+    It must exit 0 with ``LF_ALREADY_RUNNING`` within ``INSTANCE_TIMEOUT_S``,
+    and the first launch's ``GET /`` must still answer.
+    """
+    second = subprocess.run(
+        command,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=INSTANCE_TIMEOUT_S,
+    )
+    if second.returncode != 0 or "LF_ALREADY_RUNNING" not in second.stdout:
+        raise AssertionError(
+            f"second launch: exit code {second.returncode}, wanted 0 and "
+            f"LF_ALREADY_RUNNING:\n{second.stdout[-2000:]}"
+        )
+    spa = _request(f"{base}/")
+    if check_spa:
+        _check_spa(spa)
+
+
+def _steps(
+    output: _Output,
+    started: float,
+    check_spa: bool,
+    command: list[str],
+    env: dict[str, str],
+) -> Timings:
     with _step("ready", output):
         output.ready.wait(READY_TIMEOUT_S)
         if not output.ready_line:
@@ -199,9 +245,7 @@ def _steps(output: _Output, started: float, check_spa: bool) -> Timings:
         spa = _request(f"{base}/")
         cold_start_s = time.perf_counter() - started
         if check_spa:
-            _expect(spa, 200)
-            if b"<app-root" not in spa.body:
-                raise AssertionError(f"GET / is not the SPA: {spa.body[:300]!r}")
+            _check_spa(spa)
 
     with _step("launch_code", output):
         launch = _request(launch_url)
@@ -274,24 +318,81 @@ def _steps(output: _Output, started: float, check_spa: bool) -> Timings:
         map_id = json.loads(upload.body)["data"]["id"]
         _api(f"{base}/api/maps/{map_id}/zones/?zone_size=50", 200, headers=auth)
 
+    # Last: the instance lock (DESK-03). Same command, same data folder.
+    with _step("instance", output):
+        _second_launch(command, env, base, check_spa)
+
     return Timings(float(ready_s), round(cold_start_s, 2))
 
 
-def summary_markdown(timings: Timings, *, folder_mb: float, zip_mb: float) -> str:
-    """The job summary table: the build's sizes and the smoke's times."""
-    return "\n".join(
-        [
-            "### Desktop build",
-            "",
-            "| | |",
-            "|---|---|",
-            f"| Zip | {zip_mb:.1f} MB |",
-            f"| Unpacked | {folder_mb:.1f} MB |",
-            f"| Launcher ready | {timings.launcher_ready_s:.2f} s |",
-            f"| Cold start to the SPA | {timings.cold_start_s:.2f} s |",
-            "",
-        ]
-    )
+def _env(home: Path) -> dict[str, str]:
+    return {**os.environ, "LF_DESKTOP_HOME": str(home), "PYTHONUNBUFFERED": "1"}
+
+
+def run_window_selftest(command: list[str], home: Path) -> float:
+    """Run ``command`` (``<exe> --selftest-window``) on data folder ``home``.
+
+    Returns the seconds from its ``LF_WINDOW_OK <s>`` line. Raises
+    ``SmokeFailure("window", <output>)`` on ``LF_WINDOW_FAIL``, a non-zero exit
+    or no exit within ``WINDOW_TIMEOUT_S``.
+    """
+    print("smoke: window", flush=True)
+    try:
+        result = subprocess.run(
+            command,
+            env=_env(home),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=WINDOW_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as expired:
+        output = expired.output or ""
+        if isinstance(output, bytes):
+            output = output.decode("utf-8", "replace")
+        raise SmokeFailure(
+            "window",
+            f"no LF_WINDOW_OK within {WINDOW_TIMEOUT_S} s"
+            f"\n--- launcher output ---\n{output}",
+        )
+    output = result.stdout
+    ready = [line for line in output.splitlines() if line.startswith("LF_WINDOW_OK ")]
+    if result.returncode != 0 or not ready:
+        raise SmokeFailure(
+            "window",
+            f"exit code {result.returncode}, wanted 0 and LF_WINDOW_OK"
+            f"\n--- launcher output ---\n{output}",
+        )
+    return float(ready[0].split()[1])
+
+
+def summary_markdown(
+    timings: Timings,
+    *,
+    folder_mb: float,
+    zip_mb: float,
+    window_s: float | None = None,
+) -> str:
+    """The job summary table: the build's sizes and the smoke's times.
+
+    ``window_s`` is the App window self-test's figure; its row shows only when
+    ``--window`` ran.
+    """
+    rows = [
+        "### Desktop build",
+        "",
+        "| | |",
+        "|---|---|",
+        f"| Zip | {zip_mb:.1f} MB |",
+        f"| Unpacked | {folder_mb:.1f} MB |",
+        f"| Launcher ready | {timings.launcher_ready_s:.2f} s |",
+        f"| Cold start to the SPA | {timings.cold_start_s:.2f} s |",
+    ]
+    if window_s is not None:
+        rows.append(f"| App window ready | {window_s:.2f} s |")
+    return "\n".join([*rows, ""])
 
 
 def _megabytes(path: Path) -> float:
@@ -299,31 +400,56 @@ def _megabytes(path: Path) -> float:
     return sum(p.stat().st_size for p in files) / (1024 * 1024)
 
 
+_T = TypeVar("_T")
+
+
+def _in_fresh_folder(run: Callable[[Path], _T]) -> _T:
+    """``run`` on a new temp data folder, removed afterwards."""
+    # Windows may still hold the killed process's SQLite files for a moment.
+    with tempfile.TemporaryDirectory(
+        prefix="lf-smoke-", ignore_cleanup_errors=True
+    ) as home:
+        return run(Path(home))
+
+
 def main(argv: list[str] | None = None, *, check_spa: bool = True) -> int:
     """The CLI. ``check_spa`` is for the in-suite test of an unfrozen launcher,
     which runs as ``<python> desktop/main.py`` (the extra ``args``)."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("exe", type=Path)
-    parser.add_argument("args", nargs="*", help="passed before --no-browser")
+    parser.add_argument(
+        "args", nargs="*", help="passed before --no-browser (and --selftest-window)"
+    )
     parser.add_argument("--zip", type=Path)
     parser.add_argument("--summary", type=Path)
+    parser.add_argument(
+        "--window",
+        action="store_true",
+        help="after a pass, run <exe> <args> --selftest-window on a fresh folder",
+    )
     args = parser.parse_args(argv)
-    command = [str(args.exe), *args.args, "--no-browser"]
-    # Windows may still hold the killed process's SQLite files for a moment.
-    with tempfile.TemporaryDirectory(
-        prefix="lf-smoke-", ignore_cleanup_errors=True
-    ) as home:
-        try:
-            timings = run_smoke(command, Path(home), check_spa=check_spa)
-        except SmokeFailure as failure:
-            print(f"smoke: FAILED at {failure.step}\n{failure.detail}", flush=True)
-            return 1
-    print(f"smoke: passed {timings}", flush=True)
+    launcher = [str(args.exe), *args.args]
+    window_s: float | None = None
+    try:
+        timings = _in_fresh_folder(
+            lambda home: run_smoke(
+                [*launcher, "--no-browser"], home, check_spa=check_spa
+            )
+        )
+        if args.window:
+            window_s = _in_fresh_folder(
+                lambda home: run_window_selftest([*launcher, "--selftest-window"], home)
+            )
+    except SmokeFailure as failure:
+        print(f"smoke: FAILED at {failure.step}\n{failure.detail}", flush=True)
+        return 1
+    print(f"smoke: passed {timings} window_s={window_s}", flush=True)
     if args.summary:
         text = summary_markdown(
             timings,
             folder_mb=_megabytes(args.exe.parent),
             zip_mb=_megabytes(args.zip) if args.zip else 0.0,
+            window_s=window_s,
         )
         with args.summary.open("a", encoding="utf-8") as summary:
             summary.write(text)

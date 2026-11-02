@@ -47,6 +47,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             laserforce_simulator/requirements.txt
+            laserforce_simulator/requirements-desktop.txt
             laserforce_simulator/requirements-runtime.txt
 
       - name: Lint (ruff, black, encoding, SQLite JSON lookups, actionlint)
@@ -127,6 +128,7 @@ jobs:
           cache: pip
           cache-dependency-path: |
             laserforce_simulator/requirements.txt
+            laserforce_simulator/requirements-desktop.txt
             laserforce_simulator/requirements-runtime.txt
 
       - name: Install dependencies
@@ -288,7 +290,9 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
-          cache-dependency-path: laserforce_simulator/requirements-runtime.txt
+          cache-dependency-path: |
+            laserforce_simulator/requirements-desktop.txt
+            laserforce_simulator/requirements-runtime.txt
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -298,11 +302,12 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install build dependencies
-        # The runtime file only (no test tooling in the build) plus an exact
-        # PyInstaller, so a new release cannot change the build unasked.
+        # The desktop file (the runtime file plus pywebview, DESK-03; no test
+        # tooling in the build) plus an exact PyInstaller, so a new release
+        # cannot change the build unasked.
         run: |
           python -m pip install --upgrade pip
-          pip install -r laserforce_simulator/requirements-runtime.txt pyinstaller==6.22.3
+          pip install -r laserforce_simulator/requirements-desktop.txt pyinstaller==6.22.3
           npm --prefix frontend ci
 
       - name: Build
@@ -310,8 +315,12 @@ jobs:
         run: ./desktop/build.ps1 -Python python -Out build-out
 
       - name: Smoke-test the frozen build
+        # DESK-03: --window then opens the real App window (WebView2) with
+        # --selftest-window on a fresh data folder. Never skipped: a runner
+        # that cannot show a window fails here.
         run: >-
           python desktop/smoke.py build-out/dist/LaserforceSimulator/LaserforceSimulator.exe
+          --window
           --zip "build-out/$ZIP"
           --summary "$GITHUB_STEP_SUMMARY"
 

@@ -73,23 +73,39 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
 
 - **`desktop/build.ps1 -Python <exe> -Out <dir>`** is the one build entry, CI and local. It needs
   a **python.org** CPython (conda bundles the wrong DLLs: ADR-0048) with
-  `laserforce_simulator/requirements-runtime.txt` plus `pyinstaller`, and `npm --prefix frontend ci`
-  already run. It sets `PYTHONPATH` / `DJANGO_SETTINGS_MODULE` / `SECRET_KEY` (PyInstaller collects
+  `laserforce_simulator/requirements-desktop.txt` (DESK-03: the runtime file plus pywebview) plus
+  `pyinstaller`, and `npm --prefix frontend ci` already run. It sets `PYTHONPATH` / `DJANGO_SETTINGS_MODULE` / `SECRET_KEY` (PyInstaller collects
   in a subprocess that ignores the spec's `pathex`), builds the SPA, runs PyInstaller and writes
   `<Out>/LaserforceSimulator-windows-x64.zip`.
 - **`desktop/laserforce.spec`** is tracked through a `!desktop/laserforce.spec` exception to
   `.gitignore`'s `*.spec`. A new Django app or a string-loaded package goes in its hidden-import
   list, or the frozen build fails at import. It bundles the SPA at `spa` (`spa_dir()`), and
-  simplejwt's `token_blacklist` migration sources. It excludes the Hosted-only drivers.
+  simplejwt's `token_blacklist` migration sources. It excludes the Hosted-only drivers. DESK-03:
+  the `EXE` has **`console=False`** (no console window; a piped child's `print` still reaches the
+  pipe, and `quiet_std_streams()` covers a double-click). pywebview / pythonnet come in through
+  pyinstaller-hooks-contrib's `webview`, `clr_loader` and `pythonnet` hooks; `webview` joins the
+  `collect_submodules` list only if the frozen self-test fails on an import (the spec comment says
+  which).
 - **`desktop/smoke.py`** (stdlib only) holds `run_smoke(command, home, *, check_spa=True) ->
   Timings`. `Timings` is a `NamedTuple` of `launcher_ready_s` and `cold_start_s`. The in-suite test
   runs `main([<python>, desktop/main.py, --summary <file>], check_spa=...)` and passes `check_spa`
   only when `frontend/dist` is built (CI's Python jobs never build it); the CLI as CI runs it always
   checks. It
   raises `SmokeFailure(step, detail)` at the first failed step (`ready`, `spa`, `launch_code`,
-  `refresh`, `me`, `teams`, `batch`, `report`, `map`). Its CLI is `python desktop/smoke.py <exe>
-  [<args>...] [--zip <zip>] [--summary <md>]`, which exits 0/1. A new bundled feature worth guarding gets a step
-  here, so both the frozen and the unfrozen smoke run it.
+  `refresh`, `me`, `teams`, `batch`, `report`, `map`, `instance`). DESK-03's last step,
+  **`instance`** (`_second_launch`), runs the same command with the same env (same data folder)
+  while the first still runs: exit 0 and `LF_ALREADY_RUNNING` within `INSTANCE_TIMEOUT_S` (30 s),
+  then `GET /` still answers (the `spa` step's rules). In the suite it takes the real lock (`fcntl`
+  on Linux, `msvcrt` on Windows); in CI the frozen one. Its CLI is `python desktop/smoke.py <exe>
+  [<args>...] [--window] [--zip <zip>] [--summary <md>]`, which exits 0/1. **`--window`**: after a
+  passing smoke, `run_window_selftest(<exe> <args> --selftest-window, <fresh temp folder>) ->
+  float` returns the `LF_WINDOW_OK` seconds and raises `SmokeFailure("window", ...)` on
+  `LF_WINDOW_FAIL`, a non-zero exit or `WINDOW_TIMEOUT_S` (90 s); the summary then gains `| App
+  window ready | <s> s |` (`summary_markdown(..., window_s=None)`). CI's `desktop` job passes
+  `--window` on `windows-latest` (the real WebView2 window); never skip it or mark it
+  `continue-on-error`. The suite never runs `--window` on the real launcher (it would open a
+  window, or the browser where pywebview is missing). A new bundled feature worth guarding gets a
+  step here, so both the frozen and the unfrozen smoke run it.
 - **Requirements:** `requirements-runtime.txt` is what the app imports at runtime in either
   deploy (the Dockerfile installs only it). DESK-03: `requirements-desktop.txt` is `-r` of it plus
   the exact `pywebview==6.2.1` pin (the Desktop build's file); `requirements.txt` is `-r
@@ -103,8 +119,10 @@ The **Desktop build** (GLOSSARY) is made by CI's `desktop` job on `windows-lates
 desktop URLconf), `test_launcher.py` (`tmp_path` + a fake `migrate`: reset, re-raise, corrupt-file
 regression, environment, secret key, Local Account), `test_settings.py` (the desktop settings
 module imported fresh), `test_launcher_smoke.py` (loads `desktop/smoke.py` and runs its CLI on
-`desktop/main.py` against a temp data folder, one launch of about 8 s; plus the early-exit
-`SmokeFailure`, the CLI's exit 1 and the summary table), `test_requirements.py` (the dev → desktop
+`desktop/main.py` against a temp data folder, one launch of about 8 s plus the `instance` step's
+second launch; plus the early-exit `SmokeFailure`, the CLI's exit 1, the summary table, DESK-03's
+`_second_launch` against a stand-in local server, and `run_window_selftest` / `--window` against
+fake commands), `test_requirements.py` (the dev → desktop
 → runtime chain, the pywebview pin). DESK-03: `test_shell.py` (`choose_shell`, and a fake `webview`
 package in `sys.modules` for `window_available` / `run_window`: CI's Python jobs run on Linux),
 `test_instance.py` (the lock against a real second process and a crashed holder; `fcntl` on Linux,
