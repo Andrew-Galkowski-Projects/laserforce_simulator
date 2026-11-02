@@ -3,7 +3,7 @@
 # <python.exe> is a python.org CPython (not conda: ADR-0048) with
 # laserforce_simulator/requirements-desktop.txt (the runtime file plus
 # pywebview, DESK-03) and PyInstaller installed, and
-# `npm --prefix frontend ci` already run. Writes
+# `npm --prefix frontend ci` already run. Writes <Out>/build_info.json (DESK-04),
 # <Out>/dist/LaserforceSimulator/LaserforceSimulator.exe and
 # <Out>/LaserforceSimulator-windows-x64.zip.
 param(
@@ -23,6 +23,16 @@ $root = Split-Path -Parent $PSScriptRoot
 $env:PYTHONPATH = Join-Path $root 'laserforce_simulator'
 $env:DJANGO_SETTINGS_MODULE = 'laserforce_simulator.settings'
 $env:SECRET_KEY = 'build-only'
+
+New-Item -ItemType Directory -Force $Out | Out-Null
+$Out = (Resolve-Path $Out).Path
+# DESK-04: the build record (version, channel, commit, date from CI's
+# GITHUB_REF / GITHUB_SHA; a local build is dev). The spec bundles it.
+$env:LF_BUILD_INFO = Join-Path $Out 'build_info.json'
+Invoke-Native 'write_build_info' {
+    & $Python (Join-Path $PSScriptRoot 'write_build_info.py') $env:LF_BUILD_INFO
+}
+Get-Content $env:LF_BUILD_INFO
 
 Invoke-Native 'npm run build' { npm --prefix (Join-Path $root 'frontend') run build }
 Invoke-Native 'PyInstaller' {

@@ -2,6 +2,7 @@
 # Build with desktop/build.ps1, which sets the environment this file needs:
 #   PYTHONPATH=<repo>\laserforce_simulator
 #   DJANGO_SETTINGS_MODULE=laserforce_simulator.settings  SECRET_KEY=build-only
+#   LF_BUILD_INFO=<Out>\build_info.json (DESK-04, written just before)
 # collect_submodules imports each package in an isolated subprocess started
 # before this file runs: it sees neither pathex nor env set here, and
 # matches.simulation reads settings on import.
@@ -44,6 +45,17 @@ for package in (
 
 # desktop_app.launcher.spa_dir() reads the SPA from <_MEIPASS>\spa.
 datas = [(os.path.join(ROOT, "frontend", "dist", "frontend", "browser"), "spa")]
+# DESK-04: the two default Arena maps (core.services._DEFAULT_MAPS; only these
+# two, not the folder) at <_MEIPASS>\default_maps, which the launcher sets as
+# LF_DESKTOP_MAPS. test_build_spec.py keeps the names in step.
+for image in ("Syracuse_Laser_Tag_Map_cropped.png", "San_Marcos_Laser_Tag_Map.jpg"):
+    datas.append(
+        (os.path.join(ROOT, "Screenshots_and_video_examples", image), "default_maps")
+    )
+# DESK-04: the build record, written by desktop/write_build_info.py from
+# build.ps1, at <_MEIPASS>\build_info.json (LF_DESKTOP_BUILD_INFO). A KeyError
+# here means PyInstaller ran without build.ps1.
+datas.append((os.environ["LF_BUILD_INFO"], "."))
 for package in ("django", "rest_framework", "django_filters"):
     datas += collect_data_files(package)
 # simplejwt's token_blacklist migration 0010 resolves its own __file__ on

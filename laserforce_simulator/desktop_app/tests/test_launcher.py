@@ -31,6 +31,8 @@ ENV_KEYS = (
     "SECRET_KEY",
     "DATABASE_URL",
     "DJANGO_SETTINGS_MODULE",
+    "LF_DESKTOP_BUILD_INFO",
+    "LF_DESKTOP_MAPS",
 )
 
 
@@ -167,6 +169,55 @@ def test_prepare_environment_points_django_at_the_data_folder(
     )
     assert os.environ["SECRET_KEY"] == (tmp_path / "secret_key").read_text()
     assert len(os.environ["SECRET_KEY"]) >= 50
+
+
+def test_frozen_prepare_environment_points_at_the_bundled_build_info(
+    env: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+
+    env.setattr(launcher, "FROZEN", True)
+    env.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    launcher.prepare_environment(tmp_path, tmp_path)
+    assert os.environ["LF_DESKTOP_BUILD_INFO"] == str(
+        tmp_path / "bundle" / "build_info.json"
+    )
+
+
+def test_frozen_prepare_environment_points_at_the_bundled_default_maps(
+    env: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+
+    env.setattr(launcher, "FROZEN", True)
+    env.setattr(sys, "_MEIPASS", str(tmp_path / "bundle"), raising=False)
+    launcher.prepare_environment(tmp_path, tmp_path)
+    assert os.environ["LF_DESKTOP_MAPS"] == str(tmp_path / "bundle" / "default_maps")
+
+
+def test_unfrozen_prepare_environment_points_at_the_repo_default_maps(
+    env: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+
+    env.setattr(launcher, "FROZEN", False)
+    launcher.prepare_environment(tmp_path, tmp_path)
+    repo = Path(__file__).resolve().parents[3]
+    assert os.environ["LF_DESKTOP_MAPS"] == str(repo / "Screenshots_and_video_examples")
+    assert (
+        Path(os.environ["LF_DESKTOP_MAPS"]) / "San_Marcos_Laser_Tag_Map.jpg"
+    ).exists()
+
+
+def test_unfrozen_prepare_environment_leaves_build_info_unset(
+    env: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import os
+
+    # An inherited value must not survive: unfrozen is always a dev build.
+    env.setattr(launcher, "FROZEN", False)
+    launcher.prepare_environment(tmp_path, tmp_path)
+    assert "LF_DESKTOP_BUILD_INFO" not in os.environ
 
 
 def test_prepare_environment_keeps_the_secret_key_across_launches(

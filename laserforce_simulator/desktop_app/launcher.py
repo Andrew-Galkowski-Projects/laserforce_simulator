@@ -88,6 +88,16 @@ def prepare_environment(data: Path, spa: Path) -> None:
     os.environ["SECRET_KEY"] = key_file.read_text()
     os.environ["DATABASE_URL"] = "sqlite:///" + (data / "db.sqlite3").as_posix()
     os.environ["DJANGO_SETTINGS_MODULE"] = "desktop_app.settings"
+    # DESK-04: only a frozen build has a record of itself; unfrozen is dev.
+    # The two default Arena maps: bundled when frozen, else the repo folder.
+    if FROZEN:
+        bundle = Path(sys._MEIPASS)  # type: ignore[attr-defined]
+        os.environ["LF_DESKTOP_BUILD_INFO"] = str(bundle / "build_info.json")
+        os.environ["LF_DESKTOP_MAPS"] = str(bundle / "default_maps")
+    else:
+        os.environ.pop("LF_DESKTOP_BUILD_INFO", None)
+        repo = Path(__file__).resolve().parents[2]
+        os.environ["LF_DESKTOP_MAPS"] = str(repo / "Screenshots_and_video_examples")
 
 
 def migrate_or_reset(data: Path, migrate: Callable[[], None]) -> str | None:

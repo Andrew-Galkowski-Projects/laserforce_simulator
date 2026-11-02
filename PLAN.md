@@ -134,12 +134,13 @@ DESK-02 (Desktop App build in CI) is **[DONE]**; see `PLAN-completed.md`.
 
 DESK-03 (Desktop App native window) is **[DONE]**; see `PLAN-completed.md`.
 
-### DESK-04 · [NOT STARTED] Desktop App distribution
+DESK-04 (Desktop App distribution) is **[DONE]**; see `PLAN-completed.md`.
 
-Blocked by DESK-02. The download page, SmartScreen signing (unsigned plus a note first, then Azure
-Trusted Signing), a "new version available" check against GitHub Releases, and whether to bundle
-the default Arena maps (`ensure_default_maps` seeds from a folder the build does not ship).
-macOS / Linux builds are later (ADR-0048 Distribution).
+### DESK-05 · [NOT STARTED] Sign the Desktop build with Azure Trusted Signing
+
+Split from DESK-04 (decision 2). Sign the `.exe` in CI with Azure Trusted Signing so SmartScreen
+reputation builds on the publisher, not on each zip. Needs the owner's Azure subscription and
+identity validation first; check prices and eligibility then (ADR-0048 Distribution).
 
 ### BUG-SL-01 · [NOT STARTED] Sight-line compute fails after a saved zone config
 

@@ -34,6 +34,13 @@ mat-toolbar {
   opacity: 1;
 }
 
+// DESK-04: the Desktop build's version line is information, not an action: muted, but without
+// the 0.38 fade, which left it unreadable.
+.shell__version.mat-mdc-menu-item[disabled] {
+  opacity: 1;
+  color: var(--lf-text-muted);
+}
+
 .shell__spacer {
   flex: 1;
 }

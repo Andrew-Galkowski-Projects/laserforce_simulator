@@ -16,10 +16,19 @@ export const USER: User = {
   self_insert: null,
   desktop: false,
   desktop_notice: null,
+  desktop_version: null,
 };
 
-/** The Desktop App's Local Account (DESK-01): `desktop` hides the Account screens. */
-export const DESKTOP_USER: User = { ...USER, email: 'local@desktop.invalid', desktop: true };
+/**
+ * The Desktop App's Local Account (DESK-01): `desktop` hides the Account screens. A local build
+ * reports its version as `dev` (DESK-04).
+ */
+export const DESKTOP_USER: User = {
+  ...USER,
+  email: 'local@desktop.invalid',
+  desktop: true,
+  desktop_version: 'dev',
+};
 
 /** A Player on Team 3, to link as `USER`'s Self-insert. */
 export const SELF_INSERT: Player = {

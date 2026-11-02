@@ -18,10 +18,9 @@ import pytest
 def desktop_settings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> ModuleType:
     monkeypatch.setenv("LF_DESKTOP_HOME", str(tmp_path / "home"))
     monkeypatch.setenv("LF_DESKTOP_SPA", str(tmp_path / "spa"))
-    monkeypatch.delitem(sys.modules, "desktop_app.settings", raising=False)
-    module = importlib.import_module("desktop_app.settings")
-    monkeypatch.delitem(sys.modules, "desktop_app.settings")
-    return module
+    monkeypatch.setenv("LF_DESKTOP_MAPS", str(tmp_path / "maps"))
+    monkeypatch.delenv("LF_DESKTOP_BUILD_INFO", raising=False)
+    return _fresh_desktop_settings(monkeypatch)
 
 
 def test_jobs_run_on_the_in_process_worker_not_eagerly(
@@ -55,3 +54,57 @@ def test_data_and_the_spa_come_from_the_launchers_folders(
     assert desktop_settings.WHITENOISE_ROOT == tmp_path / "spa"
     handler = desktop_settings.LOGGING["handlers"]["file"]
     assert handler["filename"] == str(home / "logs" / "desktop.log")
+
+
+def _fresh_desktop_settings(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.delitem(sys.modules, "desktop_app.settings", raising=False)
+    module = importlib.import_module("desktop_app.settings")
+    monkeypatch.delitem(sys.modules, "desktop_app.settings")
+    return module
+
+
+def test_the_build_info_path_comes_from_the_launcher(
+    desktop_settings: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # DESK-04: unset (an unfrozen run) is no record, so a dev build.
+    assert desktop_settings.DESKTOP_BUILD_INFO is None
+    monkeypatch.setenv("LF_DESKTOP_BUILD_INFO", str(tmp_path / "build_info.json"))
+    reloaded = _fresh_desktop_settings(monkeypatch)
+    assert reloaded.DESKTOP_BUILD_INFO == tmp_path / "build_info.json"
+
+
+def test_the_update_check_asks_this_repo_with_a_short_timeout(
+    desktop_settings: ModuleType,
+) -> None:
+    assert desktop_settings.DESKTOP_UPDATE_TIMEOUT == 5
+    assert (
+        desktop_settings.DESKTOP_RELEASES_REPO
+        == "Andrew-Galkowski-Projects/laserforce_simulator"
+    )
+
+
+def test_hosted_has_no_build_info() -> None:
+    from django.conf import settings
+
+    assert settings.DESKTOP_BUILD_INFO is None
+
+
+REPO_MAPS = Path(__file__).resolve().parents[3] / "Screenshots_and_video_examples"
+
+
+def test_hosted_seeds_the_default_maps_from_the_repo_folder() -> None:
+    from django.conf import settings
+
+    assert settings.DEFAULT_MAPS_DIR == REPO_MAPS
+
+
+def test_the_default_maps_folder_comes_from_the_launcher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # DESK-04: the launcher sets LF_DESKTOP_MAPS (the bundle's default_maps).
+    monkeypatch.setenv("LF_DESKTOP_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("LF_DESKTOP_SPA", str(tmp_path / "spa"))
+    monkeypatch.setenv("LF_DESKTOP_MAPS", str(tmp_path / "default_maps"))
+    assert _fresh_desktop_settings(monkeypatch).DEFAULT_MAPS_DIR == (
+        tmp_path / "default_maps"
+    )

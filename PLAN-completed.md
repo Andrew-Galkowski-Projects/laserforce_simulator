@@ -8130,6 +8130,87 @@ CI's log has the same order (`LF_WINDOW_FAIL` first, then the error).
     regular file (works for an admin runner too) and expects `LF_WINDOW_FAIL WindowStartFailed`
     within 40 s.
 
+### DESK-04 · [DONE] Desktop App distribution
+
+Spec: #503
+
+**[DONE] Shipped (2026-11-02).** Spec #503, tickets #504-#506. Numbered Releases (plain vX.Y.Z tags)
+are the public download, with desktop/RELEASE_NOTES.md plus GitHub's changelog as the download page;
+other v* tags publish as pre-releases. build.ps1 writes build_info.json (version, channel
+release/latest/dev, sha, date) into the bundle; the Help menu shows the label (moved from the
+account menu, which the Desktop App hides with no Self-insert). GET /api/accounts/desktop-update/
+(Desktop only) runs the Update check lazily on first call, once per process, 5 s timeout, silent on
+failure; the Shell shows a dismissible Update notice. The two default Arena maps ship in the build
+behind DEFAULT_MAPS_DIR, image-only. Departures: RELEASE_TAG lives in desktop_app/build_info.py (the
+frozen app has no desktop/ folder); the spec gets the record's path through LF_BUILD_INFO; review
+made an unusable record fall back to dev with a warning so accounts/me/ never 500s. Zip 121.9 MB
+locally. The v0.1.0-rc1 dry run and v0.1.0 follow the merge.
+
+Blocked by DESK-02. The download page, SmartScreen signing (unsigned plus a note first, then Azure
+Trusted Signing), a "new version available" check against GitHub Releases, and whether to bundle
+the default Arena maps (`ensure_default_maps` seeds from a folder the build does not ship).
+macOS / Linux builds are later (ADR-0048 Distribution).
+
+**Grill decisions (2026-11-02, round 1):**
+
+1. **Scope:** in: a version stamped into the build, a "new version available" check, the default
+   maps bundled, a download page, the first numbered Release. Out: buying signing, macOS/Linux,
+   an auto-updater, an app/exe icon.
+2. **Signing:** stays unsigned with the "More info, then Run anyway" note. Azure Trusted Signing
+   is a new task, DESK-05 (needs the owner's Azure subscription and identity validation).
+3. **Public download** is the numbered Release (`v*`), linked as
+   `releases/latest/download/LaserforceSimulator-windows-x64.zip`. `desktop-latest` stays the
+   rolling tester build.
+4. **Versions** are semver from `v0.1.0`. The owner pushes the tag by hand after the DESK-04 PR
+   merges.
+5. **Build info:** `build.ps1` writes `build_info.json` into the bundle: `version` (the tag, e.g.
+   `0.1.0`, on a `v*` build; null on `main`), `channel` (`release` / `latest`; `dev` for a local
+   build with no CI env, which never checks), `sha`, `built`.
+6. **Update check compares per channel:** a `release` build compares semver against
+   `releases/latest`'s `tag_name`; a `latest` build compares its SHA with the commit the
+   `desktop-latest` tag points to. The notice links to that release's page.
+7. **When / failure:** once per launch, off the launch path (never delays startup), 5 s timeout,
+   silent on failure (logged to `desktop.log`). No opt-out setting.
+8. **Delivery:** separate from the reset notice: `accounts/me/` gains `desktop_update:
+   {version, url} | null` and `desktop_version`; the Shell shows a second dismissible banner.
+9. **Version display:** in the account menu, Desktop App only (`v0.1.0` / `latest abc1234`).
+10. **Default maps:** both images bundled through the spec's `datas`; the seed's source folder
+    moves behind a `DEFAULT_MAPS_DIR` setting (Hosted keeps today's folder, desktop points at the
+    bundle). Image-only, as on Hosted; a test pins both settings.
+11. **Not simulation-ready:** accepted; BUG-SL-01 is the next task.
+12. **Download page** = the numbered Release's notes from a committed template
+    (`desktop/RELEASE_NOTES.md`: what it is, download, SmartScreen steps, data folder, upgrade may
+    reset data, uninstall) plus `--generate-notes`; README Option D links `releases/latest`. No
+    GitHub Pages.
+
+**Round 2:**
+
+13. **Lazy endpoint replaces the background thread** (amends 7 and 8): `GET
+    /api/accounts/desktop-update/` runs the check on its first call (5 s timeout) and caches the
+    result for the process; the Shell calls it once after sign-in, Desktop App only. Response
+    `{version, url} | null`. The route does not exist on Hosted (404). `desktop_version` stays on
+    `accounts/me/`.
+14. **Only plain `vX.Y.Z` tags are Releases.** The check ignores any other tag; the `v*` job
+    publishes a non-matching tag (`v0.2.0-rc1`) as a prerelease, so `releases/latest` skips it.
+15. **Dismissal is per launch**, like the reset notice. No stored state.
+16. **ADR-0048 Distribution gets a dated amendment** (the version stamp, the update check as the
+    app's first outbound call, to api.github.com); no new ADR.
+17. **Glossary:** add **Release** and **Update notice**; **Desktop build** gains `build_info.json`.
+18. **Out:** a Windows version resource on the `.exe` (comes with the icon later).
+
+**Round 3 (seams):**
+
+19. **The version shows in the Help menu** (amends 9): the Desktop App's Account button hides
+    with no Self-insert, so the Help menu starts with a disabled "Laserforce Simulator v0.1.0"
+    line (or "… latest abc1234" / "… dev"). Hosted's Help menu is unchanged.
+20. **Seams:** (1) `GET /api/accounts/desktop-update/` and `desktop_version` on `accounts/me/`
+    through the API client, the GitHub call stubbed at one `fetch_json(url, timeout)`; (2) a pure
+    `build_info(env)` that `build.ps1` runs, owning the plain-`vX.Y.Z` rule; (3) `GET /api/maps/`
+    with `DEFAULT_MAPS_DIR` overridden, plus a settings test; (4) the Shell's Vitest spec; (5)
+    the `ci.yml` release step, proved by the tags after merge. The frozen smoke checks the bundle.
+21. **Dry run:** after the merge, on the owner's "go", push `v0.1.0-rc1` (expect a prerelease
+    with the template notes, `releases/latest` still empty), then `v0.1.0`.
+
 ## Phase 4 — Individual Performance & PDF Graphs (added 2026-05-22)
 
 ### RV-05 · [DONE] Round report PDF: chart/graph section (extends RV-03)

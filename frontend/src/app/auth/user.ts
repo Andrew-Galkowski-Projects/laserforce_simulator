@@ -13,6 +13,8 @@ export interface User {
   desktop: boolean;
   /** DESK-01: the Desktop App's notice after an upgrade reset the saved data; else null. */
   desktop_notice: string | null;
+  /** DESK-04: the Desktop App's build label (`v0.1.0`, `latest abc1234`, `dev`); null on Hosted. */
+  desktop_version: string | null;
 }
 
 /** `RegisterForm` fields: an invite code is required. */

@@ -128,6 +128,17 @@ Pillow 13 MB, the SPA 2 MB. OpenCV only serves map upload and zone detection.
   runner). macOS needs an Apple Developer membership to sign and notarise, or Gatekeeper blocks
   the app. Linux needs no signing (a tarball or AppImage). Both are feasible and both are later.
 
+**Amendment (2026-11-02, DESK-04).** The public download is the numbered **Release**, built from a
+plain `vX.Y.Z` tag (semver from `v0.1.0`; any other `v*` tag publishes as a pre-release);
+`desktop-latest` stays the rolling build for testers. Each build carries `build_info.json`
+(version, channel, commit, build date). The **Update notice** is the Desktop App's first outbound
+call: one unauthenticated GET to api.github.com per launch, made lazily when the SPA first asks,
+with a 5 s timeout and silent on failure. It sends nothing beyond the request. A Release compares
+semver with the latest Release; a Latest build compares its commit with the `desktop-latest` tag; a
+local build never checks. There is no opt-out and no updater: the notice links to the download.
+The download stays unsigned with the SmartScreen note; Azure Trusted Signing is DESK-05. The two
+default Arena maps are bundled (image-only, as on Hosted).
+
 ## Consequences
 
 - **Build on a python.org CPython, not conda.** The spike's build Python was conda-based, and
@@ -141,6 +152,7 @@ Pillow 13 MB, the SPA 2 MB. OpenCV only serves map upload and zone detection.
   file, which the stock `.gitignore` entry `*.spec` hides.
 - **No default maps in the Desktop App.** `ensure_default_maps` seeds from
   `Screenshots_and_video_examples/`, which is not bundled. A follow-up decides whether to ship them.
+  (DESK-04 bundles the two images: see the amendment above.)
 - **App bugs found, not Desktop-specific:** sight-line compute after a saved zone config raises
   `KeyError: 0` (`core/map_processing.py` `compute_sight_lines` falls back to the `blocked_edges`
   dict, and `_has_los` indexes it as a grid); `matches/simulation/entrypoints.py` calls

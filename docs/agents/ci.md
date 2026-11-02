@@ -41,8 +41,8 @@ It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `
   `FLY_API_TOKEN` secret is set; none is, so those steps skip.
 - **`desktop`** (DESK-02, ADR-0048): `windows-latest` with setup-python's python.org CPython 3.12
   (never conda: it bundles the wrong `_ssl` / `pyexpat` DLLs). It installs
-  `requirements-runtime.txt` plus the pinned `pyinstaller`, runs `desktop/build.ps1` (SPA build,
-  PyInstaller one-folder from `desktop/laserforce.spec`, zip), then `python desktop/smoke.py <exe>`
+  `requirements-desktop.txt` plus the pinned `pyinstaller`, runs `desktop/build.ps1` (the build
+  record, SPA build, PyInstaller one-folder from `desktop/laserforce.spec`, zip), then `python desktop/smoke.py <exe>`
   against the frozen exe. The steps are the same `run_smoke` that `desktop_app/tests/test_launcher_smoke.py`
   runs unfrozen, and the job summary gets the sizes and the cold start. It keeps the zip as the
   `desktop-build` artifact for 7 days (download it from a PR's run to try the build). It needs nothing,
@@ -52,9 +52,19 @@ It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `
   On `main` it force-moves the `desktop-latest` tag to the commit and `gh release upload --clobber`s
   `LaserforceSimulator-windows-x64.zip` onto the rolling pre-release (created on the first run, never
   deleted, so `.../releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip` never 404s).
-  If `main` has already moved on, it skips with a notice, and the newer run publishes. On a `v*` tag it creates a numbered
-  Release with generated notes. A red job above means nothing is published, so `desktop-latest` keeps
-  the last good build.
+  If `main` has already moved on, it skips with a notice, and the newer run publishes. On a `v*` tag
+  ("Publish a numbered Release", DESK-04) a plain `vX.Y.Z` tag creates a numbered **Release**, the
+  public download at `releases/latest`; any other `v*` tag (`v0.2.0-rc1`) creates the same with
+  `--prerelease`, so it never becomes `releases/latest`. The notes are `desktop/RELEASE_NOTES.md`
+  (`--notes-file`) with GitHub's changelog after them (`--generate-notes`). The tag rule is a twin of
+  `RELEASE_TAG` in `desktop_app/build_info.py`: change both together. A red job above means nothing
+  is published, so `desktop-latest` keeps the last good build.
+- **The build record (DESK-04):** `build.ps1` runs `desktop/write_build_info.py`, which reads
+  `GITHUB_REF` / `GITHUB_SHA`. So the zip from a `v1.2.3` tag run is channel `release`, from `main`
+  `latest`, and from a PR `dev`. A Release's zip is built by the tag's own run, never copied from
+  `main`. The Desktop App reads the record (`desktop_version` in the Help menu) and, unless it is
+  `dev`, asks GitHub once per launch for a newer build of its channel (the Update check,
+  `desktop_app/CLAUDE.md`).
 
 ## The durations file
 

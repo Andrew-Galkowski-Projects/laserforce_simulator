@@ -31,6 +31,7 @@ describe('appConfig', () => {
         self_insert: null,
         desktop: false,
         desktop_notice: null,
+        desktop_version: null,
       },
       meta: {},
     });
