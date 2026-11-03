@@ -25,10 +25,11 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+from types import ModuleType
 from typing import Any
 
 COMPETITION = "internationals_2026"
-# Keep every row with Training games left: the Test's 10-game rule is applied by
+# Keep every row with Training games left: the Test's 5-game thin-data rule is applied by
 # the Calibration harness, and compute.py weighs small positions by games.
 MIN_GAMES = 1
 # Row fields that are identity, not per-game means.
@@ -37,7 +38,7 @@ IDENTITY = ("rank", "ipl_id", "member_id", "callsign", "position", "games")
 Row = dict[str, Any]
 
 
-def _extract():
+def _extract() -> ModuleType:
     spec = importlib.util.spec_from_file_location(
         "lfstats_extract", Path(__file__).with_name("extract.py")
     )

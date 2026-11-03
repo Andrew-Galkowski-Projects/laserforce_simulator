@@ -9,7 +9,7 @@ import random
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from core.models import (
     ArenaMap,
@@ -249,7 +249,8 @@ def sim_metrics(player_state: Any, result: dict) -> dict[str, float]:
         "avg_accuracy": c.tags_made / shots if shots else 0.0,
         "avg_hit_diff": c.tags_made / max(c.times_tagged, 1),
         "avg_times_hit": float(c.times_tagged),
-        "avg_mvp": float(calculate_mvp(_MvpView(player_state, result))),
+        # calculate_mvp is duck-typed; _MvpView supplies the fields it reads.
+        "avg_mvp": float(calculate_mvp(cast(Any, _MvpView(player_state, result)))),
         # LFstats uptime: dead time (after elimination) is not in the denominator.
         "avg_uptime_pct": player_state.ticks_active / live_ticks if live_ticks else 0.0,
         "elimination_rate": (
@@ -343,28 +344,34 @@ def _ordered(roster: list[dict]) -> list[dict]:
     return sorted(roster, key=lambda e: POSITIONS.index(e["position"]))
 
 
+def _train_player(
+    train: dict, ipl_id: str, name: str, position: str, constants: ImportConstants
+) -> tuple[str, _PlayerData]:
+    """``(role, _PlayerData)`` from the player's Training row at ``position``."""
+    key = _key(ipl_id, position)
+    return (
+        position,
+        player_data(
+            ipl_id,
+            name,
+            train["rows"]["all"][key],
+            train["baselines"]["all"][position],
+            train["rows"]["loss"].get(key),
+            train["baselines"]["loss"][position],
+            position,
+            constants,
+        ),
+    )
+
+
 def _sim_roster(train: dict, roster: list[dict], constants: ImportConstants) -> list:
     """``(role, _PlayerData)`` pairs from each player's Training row at the position played."""
-    out = []
-    for entry in roster:
-        position = entry["position"]
-        key = _key(entry["ipl_id"], position)
-        out.append(
-            (
-                position,
-                player_data(
-                    entry["ipl_id"],
-                    entry["callsign"],
-                    train["rows"]["all"][key],
-                    train["baselines"]["all"][position],
-                    train["rows"]["loss"].get(key),
-                    train["baselines"]["loss"][position],
-                    position,
-                    constants,
-                ),
-            )
+    return [
+        _train_player(
+            train, entry["ipl_id"], entry["callsign"], entry["position"], constants
         )
-    return out
+        for entry in roster
+    ]
 
 
 def _ranks(values: list[float]) -> list[float]:
@@ -422,28 +429,40 @@ def _build_cells(
 
     ``sim_rounds`` maps each ``(ipl, position)`` to its simulated per-round
     metric dicts; ``weights`` gives each its weight in ``real_mean`` (the sum
-    is ``n_scorecards``); ``real_value(pk, metric)`` is the real average it is
+    is ``n_scorecards``); ``real_value(player_pos, metric)`` is the real average it is
     compared with. ``spearman`` ranks the players whose weight is at least
     ``min_ranked``. A position with no player has no cells.
     """
     cells: list[CellResult] = []
     for position in POSITIONS:
-        players = [pk for pk in weights if pk[1] == position]
+        players = [player_pos for player_pos in weights if player_pos[1] == position]
         if not players:
             continue
-        n = sum(weights[pk] for pk in players)
+        n = sum(weights[player_pos] for player_pos in players)
         for metric, kind, positions in METRICS:
             if position not in positions:
                 continue
-            real = {pk: real_value(pk, metric) for pk in players}
-            sim = {pk: [r[metric] for r in sim_rounds[pk]] for pk in players}
-            all_sim = [v for pk in players for v in sim[pk]]
+            real = {
+                player_pos: real_value(player_pos, metric) for player_pos in players
+            }
+            sim = {
+                player_pos: [r[metric] for r in sim_rounds[player_pos]]
+                for player_pos in players
+            }
+            all_sim = [v for player_pos in players for v in sim[player_pos]]
             sim_mean = sum(all_sim) / len(all_sim)
-            real_mean = sum(real[pk] * weights[pk] for pk in players) / n
-            ranked = [pk for pk in players if weights[pk] >= min_ranked]
+            real_mean = (
+                sum(real[player_pos] * weights[player_pos] for player_pos in players)
+                / n
+            )
+            ranked = [
+                player_pos
+                for player_pos in players
+                if weights[player_pos] >= min_ranked
+            ]
             spearman = _spearman(
-                [sum(sim[pk]) / len(sim[pk]) for pk in ranked],
-                [real[pk] for pk in ranked],
+                [sum(sim[player_pos]) / len(sim[player_pos]) for player_pos in ranked],
+                [real[player_pos] for player_pos in ranked],
             )
             cells.append(
                 CellResult(
@@ -535,9 +554,11 @@ def run_test(
         game_outputs = outputs[g * rounds : (g + 1) * rounds]
         for colour, side in COLOUR_SIDE.items():
             for i, entry in enumerate(_ordered(sides[colour]["roster"])):
-                pk = (entry["ipl_id"], entry["position"])
-                scorecards[pk] = scorecards.get(pk, 0) + 1
-                sim_rounds.setdefault(pk, []).extend(o[side][i] for o in game_outputs)
+                player_pos = (entry["ipl_id"], entry["position"])
+                scorecards[player_pos] = scorecards.get(player_pos, 0) + 1
+                sim_rounds.setdefault(player_pos, []).extend(
+                    o[side][i] for o in game_outputs
+                )
         sim_margin = (
             sum(o["red_score"] - o["blue_score"] for o in game_outputs) / rounds
         )
@@ -553,7 +574,7 @@ def run_test(
     cells = _build_cells(
         sim_rounds,
         scorecards,
-        lambda pk, metric: _real_average(test, pk, metric),
+        lambda player_pos, metric: _real_average(test, player_pos, metric),
         SPEARMAN_MIN_SCORECARDS,
     )
 
@@ -600,7 +621,8 @@ def objective(cells: list[CellResult]) -> float:
 # --- run_train --------------------------------------------------------------
 
 # A (player, position) plays in run_train only with at least this many
-# Training games there (the import's own MIN_GAMES threshold).
+# Training games at that position. It is the import's MIN_GAMES number, but the
+# import applies it to a player's total games across positions.
 MIN_TRAIN_GAMES = 26
 
 
@@ -693,38 +715,30 @@ def run_train(
         row = rows[key]
         position = row["position"]
         ipl_id = key.split("|", 1)[0]
-        me = (
-            position,
-            player_data(
-                ipl_id,
-                row.get("callsign", ipl_id),
-                row,
-                train["baselines"]["all"][position],
-                train["rows"]["loss"].get(key),
-                train["baselines"]["loss"][position],
-                position,
-                constants,
-            ),
+        player = _train_player(
+            train, ipl_id, row.get("callsign", ipl_id), position, constants
         )
-        red, index = _field_side(field, me)
+        red, index = _field_side(field, player)
         slots.append(((ipl_id, position), index))
         for _ in range(rounds):
             tasks.append((red, blue, movement_ctx, gen.getrandbits(63)))
     outputs = _run_rounds(tasks, workers)
 
     sim_rounds: dict[tuple[str, str], list[dict[str, float]]] = {}
-    for p, (pk, index) in enumerate(slots):
-        sim_rounds[pk] = [
+    for p, (player_pos, index) in enumerate(slots):
+        sim_rounds[player_pos] = [
             o["red"][index] for o in outputs[p * rounds : (p + 1) * rounds]
         ]
 
-    def real_value(pk: tuple[str, str], metric: str) -> float:
-        value = rows[_key(*pk)].get(metric)
+    def real_value(player_pos: tuple[str, str], metric: str) -> float:
+        value = rows[_key(*player_pos)].get(metric)
         if value is None:
-            raise ValueError(f"Training row {_key(*pk)} has no {metric}")
+            raise ValueError(f"Training row {_key(*player_pos)} has no {metric}")
         return float(value)
 
-    cells = _build_cells(sim_rounds, {pk: 1 for pk, _ in slots}, real_value, 1)
+    cells = _build_cells(
+        sim_rounds, {player_pos: 1 for player_pos, _ in slots}, real_value, 1
+    )
     return TrainReport(cells=cells, objective=objective(cells))
 
 
@@ -824,8 +838,8 @@ def search(
     return SearchResult(constants=best, objective=best_score, history=history)
 
 
-def _real_average(test: dict, pk: tuple[str, str], metric: str) -> float:
-    key = _key(*pk)
+def _real_average(test: dict, player_pos: tuple[str, str], metric: str) -> float:
+    key = _key(*player_pos)
     row = test["averages"].get(key)
     if row is None or row.get(metric) is None:
         raise ValueError(f"Test averages have no {metric} for {key}")

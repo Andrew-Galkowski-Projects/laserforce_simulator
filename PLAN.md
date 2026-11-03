@@ -279,6 +279,18 @@ After the pull (owner, 2026-11-02; revises 5):
     auto-detected walls, 2,001 floor cells of 3,200 (63%), against 47% at the editor's 50px default.
     Bases: red, blue (the arena's green base) and one neutral, at the image's base markers.
 
+During implementation (owner, 2026-11-03; revises 20; departures on #514):
+31. Decision 20 is revised: `data/lfstats_players.csv` and `lfstats_snapshot_2026-10-21.json`
+    stay as they are. A rebuild from the snapshot is byte-identical; a Training-file build would
+    drop 6 players (230 -> 224).
+32. The search runs over `accuracy_offset` and `preferred_role_boost` only (`--search-fields`),
+    3 rounds per player, 8 workers: the full five-constant grid at 14 workers was killed for low
+    memory.
+33. Map loading replaces a spawn cell cut off from the main floor with the nearest reachable one
+    (`reachable_spawn_pools`). On the 30px Syracuse map, 9 of red's 11 spawns were in pockets.
+34. `preferred_role_boost` ships at **1.0** app-wide (no preferred-role bonus in any game); it
+    was 1.2. The Test run used 10 rounds per game, not the default 20, to fit the session.
+
 ### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
 
 **Goal:** use the talk ([video](https://www.youtube.com/watch?v=SngT6ipJsYU); summary in

@@ -99,7 +99,7 @@ class _PlayerData:
     can call _make_players() without touching the Django ORM.
     """
 
-    def __init__(self, player_id: int, name: str, stats: dict) -> None:
+    def __init__(self, player_id: int | str, name: str, stats: dict) -> None:
         self.id = player_id
         self.name = name
         self._stats = stats

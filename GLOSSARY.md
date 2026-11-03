@@ -69,7 +69,7 @@ One of a player's 19 numeric attributes (0–100) that bias simulated decisions;
 The unweighted mean of a player's 19 **Stats**, shown for display only — never used directly by the simulator.
 
 **Preferred-role boost**:
-A flat ×1.2 (capped at 100) applied to a player's **Stats** during simulation when their game **Role** is one of their preferred roles; affects simulation only, never the stored stat or **Overall rating**.
+A flat multiplier (capped at 100) applied to a player's **Stats** during simulation when their game **Role** is one of their preferred roles; affects simulation only, never the stored stat or **Overall rating**. It is ×1.0 (no bonus) since the LFstats calibration; it was ×1.2.
 
 **Free Agents Team**:
 The reserved system **Team** named `"Free Agents"`, identified by magic name (no `is_system` field). Holds generated players who were not assigned to a regular Team via the **LG-00 generation** flow's `num_teams = 0` branch. Filtered from the Teams list via the new `Team.objects.regular()` manager method; visible via the Players tab (LG-00c). Has no slot FKs filled — `is_valid_roster` returns False, by design (the Free Agents Team is a player container, not a competitive roster). Auto-created on first use via `Team.objects.get_or_create(name="Free Agents")`.

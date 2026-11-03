@@ -111,5 +111,6 @@ def test_committed_syracuse_fixture_resolves_to_a_map_context() -> None:
 
     assert zone_size == 30
     assert arena_map.name == "Syracuse Laser Tag"
+    assert ctx is not None
     pools = ctx.get_team_spawn_pools()
     assert pools["red"] and pools["blue"]

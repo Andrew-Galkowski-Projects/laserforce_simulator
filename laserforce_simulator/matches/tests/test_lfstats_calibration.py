@@ -261,6 +261,7 @@ class TestLoadMapFixture:
     def test_fixture_carries_every_config(self, fixture_path: Path) -> None:
         data = _fixture_dict()
         ctx, _ = load_map_context(cal.load_map_fixture(fixture_path))
+        assert ctx is not None
         assert ctx.zone_data == data["zone_data"]["zones"]
         assert ctx.sight_data == {
             k: frozenset(v) for k, v in data["sight_data"].items()
@@ -276,6 +277,7 @@ class TestLoadMapFixture:
         path = tmp_path / "bare.json"
         path.write_text(json.dumps(data), encoding="utf-8")
         ctx, _ = load_map_context(cal.load_map_fixture(path))
+        assert ctx is not None
         assert ctx.strong_spots == []
         assert ctx.high_los_cells == []
 
@@ -322,11 +324,18 @@ _BOOST_1_2 = cal.ImportConstants(preferred_role_boost=1.2)
 
 
 class TestPlayerData:
-    def _stats(self, row: dict, constants: object = cal.DEFAULT_CONSTANTS) -> dict:
+    def _stats(
+        self, row: dict, constants: cal.ImportConstants = cal.DEFAULT_CONSTANTS
+    ) -> dict:
         pos = row["position"]
         return cal.stats_for([row], [], {pos: _row(pos)}, {pos: _row(pos)}, constants)
 
-    def _build(self, row: dict, role: str, constants: object = cal.DEFAULT_CONSTANTS):
+    def _build(
+        self,
+        row: dict,
+        role: str,
+        constants: cal.ImportConstants = cal.DEFAULT_CONSTANTS,
+    ):
         pos = row["position"]
         return cal.player_data(
             "#abc", "Ace", row, _row(pos), None, _row(pos), role, constants
@@ -567,6 +576,7 @@ def _three_game_set() -> tuple[dict, dict]:
 @pytest.fixture
 def movement_ctx(db: None, fixture_path: Path) -> MapContext:
     ctx, _ = load_map_context(cal.load_map_fixture(fixture_path))
+    assert ctx is not None
     return ctx
 
 
@@ -767,7 +777,7 @@ def _train(players: dict[str, dict]) -> dict:
 def _field_roster(
     train: dict,
     player: tuple[str, object] | None = None,
-    constants: object = DEFAULT_CONSTANTS,
+    constants: ImportConstants = DEFAULT_CONSTANTS,
 ) -> list:
     """A field-average side in LINEUP order, ``player`` in its Role's first slot."""
     out = []
@@ -933,13 +943,19 @@ class _StubTrain:
         self.calls: list[dict] = []
 
     def __call__(
-        self, train: dict, movement_ctx: object, **kwargs: object
+        self,
+        train: dict,
+        movement_ctx: object,
+        *,
+        constants: ImportConstants,
+        **kwargs: object,
     ) -> cal.TrainReport:
+        kwargs["constants"] = constants
         self.calls.append(dict(kwargs, train=train, movement_ctx=movement_ctx))
-        return cal.TrainReport(cells=[], objective=self.score(kwargs["constants"]))
+        return cal.TrainReport(cells=[], objective=self.score(constants))
 
 
-GRID = {
+GRID: dict[str, tuple[float, ...]] = {
     "accuracy_offset": (-20.0, -10.0, 0.0),
     "log_scale": (15.0, 25.0, 35.0),
 }

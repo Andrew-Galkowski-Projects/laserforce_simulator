@@ -183,7 +183,7 @@ def _main_floor(
 
 def reachable_spawn_pools(
     pools: dict[str, list[tuple[int, int]]],
-    spawn_cells: dict,
+    spawn_cells: dict[str, tuple[int, int]],
     adj: dict[tuple[int, int], list[tuple[int, int]]],
 ) -> dict[str, list[tuple[int, int]]]:
     """``pools`` with every cell off the main floor replaced (LFS-01).

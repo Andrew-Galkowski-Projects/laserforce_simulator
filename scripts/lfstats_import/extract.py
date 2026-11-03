@@ -78,8 +78,11 @@ def tool_results(path: str) -> Iterator[tuple[str, dict[str, Any], dict[str, Any
                         body = "".join(
                             x.get("text", "") for x in body if isinstance(x, dict)
                         )
+                    if body is None:
+                        continue
                     try:
-                        data = json.loads(saved_result(body) or body)
+                        saved = saved_result(body)
+                        data = json.loads(saved if saved is not None else body)
                     except (TypeError, ValueError):
                         continue
                     name, inp = uses[c["tool_use_id"]]

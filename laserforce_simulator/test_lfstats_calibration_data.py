@@ -164,8 +164,12 @@ class TestBuildTest(TestCase):
 
 class TestCollect(TestCase):
     def _call(self, tool_id: str, name: str, inp: dict, result: dict) -> list[dict]:
-        use = {"type": "tool_use", "id": tool_id, "name": f"mcp__x__{name}"}
-        use["input"] = inp
+        use: dict[str, object] = {
+            "type": "tool_use",
+            "id": tool_id,
+            "name": f"mcp__x__{name}",
+            "input": inp,
+        }
         res = {
             "type": "tool_result",
             "tool_use_id": tool_id,

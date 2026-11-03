@@ -42,7 +42,7 @@ pre-FIN-04. The roll/decrement/roster-resolution mechanics live in
 [`docs/agents/matches/career-and-finance.md`](../matches/career-and-finance.md) **FIN-04 health budget + injury/availability** and
 [ADR-0028](../../adr/0028-health-budget-injury-availability.md).
 
-`stat_for_simulation(stat_name, role)` returns `min(int(raw_value * 1.2), 100)` when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
+`stat_for_simulation(stat_name, role)` returns `min(int(raw_value * DEFAULT_CONSTANTS.preferred_role_boost), 100)` (from `teams/lfstats_formulas.py`; 1.0 since LFS-01, so no bonus, was 1.2) when `role in self.preferred_roles`, otherwise the raw stat value. Invalid `stat_name` values raise `AttributeError` naturally (no explicit guard). Used by `PlayerRoundState` forwarding properties and `BatchSimulator._make_players` to apply the preferred-role boost at simulation time without affecting stored values or `overall_rating`.
 
 `PlayerForm` exposes all 19 stat fields (default 50). Profile fields (age, started_playing_age, total_games, home_site, height) are also on the form; when adding a new player, `teams.services.player_form_initial()` pre-fills them via `_random_player_profile()` (the add-player API fills omitted fields from it).
 
