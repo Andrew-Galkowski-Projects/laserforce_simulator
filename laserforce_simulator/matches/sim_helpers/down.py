@@ -46,9 +46,11 @@ def record_down(player, tick: int, ctx: Optional[RoundContext]) -> None:
       6. RV-02 nuke_cancelled — if the player is a Commander, scan
          ``ctx.pending_nukes``; for each nuke whose ``player is`` this
          Commander and ``cancel_logged`` is False, emit one
-         ``nuke_cancelled`` event via ``ctx.events.nuke_cancelled`` and
-         set ``cancel_logged = True``. The nuke is LEFT in the queue
-         (MECH-05 — drain path is structurally unchanged).
+         ``nuke_cancelled`` event via ``ctx.events.nuke_cancelled``, set
+         ``cancel_logged = True`` and count it on
+         ``player.counters.own_specials_cancelled`` (LFS-01a). The nuke
+         is LEFT in the queue (MECH-05 — drain path is structurally
+         unchanged).
 
     The function does NOT mutate ``final_lives`` or ``shields``.
 
@@ -82,4 +84,5 @@ def record_down(player, tick: int, ctx: Optional[RoundContext]) -> None:
         for n in ctx.pending_nukes:
             if n.player is player and not n.cancel_logged:
                 n.cancel_logged = True
+                player.counters.own_specials_cancelled += 1
                 ctx.events.nuke_cancelled(player, tick)

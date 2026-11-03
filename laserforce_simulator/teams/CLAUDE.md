@@ -160,3 +160,4 @@ Paths below are relative to the repo root.
 - Career stats, `teams/career_stats.py`, 12-stat benchmark extension, Role benchmarks, percentile rank, benchmark cache + ownership scope (HX-01, HX-01b, HX-02, UXP-14) — `docs/agents/teams/career-and-benchmarks.md`
 - Bulk generation, `GenerateLeagueForm`, `teams/player_generator.py`, League spread / tier means, CSV roster import + template (LG-00, CRE-02, LG-00b), the Angular Generate Players / Import Roster screens (ANG-06 2b) — `docs/agents/teams/generation-and-import.md`
 - Sortable / paginated Players list, `PLAYER_SORT_KEYS` (LG-00c) — `docs/agents/teams/players-tab.md`
+- LFstats import formulas, `teams/lfstats_formulas.py` (pure: `ImportConstants`, `DEFAULT_CONSTANTS`, `stats_for`; `preferred_role_boost` feeds `stat_for_simulation`), the Calibration harness results (LFS-01) — `docs/lfstats-import.md`

@@ -99,7 +99,7 @@ class _PlayerData:
     can call _make_players() without touching the Django ORM.
     """
 
-    def __init__(self, player_id: int, name: str, stats: dict) -> None:
+    def __init__(self, player_id: int | str, name: str, stats: dict) -> None:
         self.id = player_id
         self.name = name
         self._stats = stats
@@ -1285,7 +1285,13 @@ class BatchSimulator:
                     # ever passing through record_down (no down/disarm site
                     # logged it) still gets exactly one nuke_cancelled record.
                     # Normally the down-tick emit already set cancel_logged.
+                    # LFS-01a: count it, as record_down does. In practice this
+                    # is the only site that sees a live round's cancels:
+                    # ``pending_nukes`` is rebound above every tick, so
+                    # ``ctx.pending_nukes`` (read by record_down) stays the
+                    # empty list the round started with.
                     n.cancel_logged = True
+                    n.player.counters.own_specials_cancelled += 1
                     ctx.events.nuke_cancelled(n.player, n.complete_time)
 
             # --- alive players this tick ---

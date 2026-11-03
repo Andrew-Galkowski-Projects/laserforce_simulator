@@ -12,6 +12,7 @@ from pathlib import Path
 from types import ModuleType
 from unittest import TestCase
 
+from laserforce_simulator.testing import run_project_python
 from teams.roster_importer import parse_roster_csv
 
 _DIR = Path(__file__).resolve().parent.parent / "scripts" / "lfstats_import"
@@ -115,6 +116,138 @@ class TestStatsFor(TestCase):
         )
         self.assertEqual(stats["game_awareness"], 0)
         self.assertEqual(stats["accuracy"], 100)
+
+
+class TestFormulasModule(TestCase):
+    """LFS-01b: the formulas live in ``teams.lfstats_formulas``; compute.py uses them."""
+
+    def test_compute_uses_the_formulas_module(self) -> None:
+        from teams import lfstats_formulas
+
+        for name in (
+            "clamp",
+            "log_part",
+            "pos_avg",
+            "mean",
+            "stats_for",
+            "preferred_roles",
+            "STAT_COLUMNS",
+            "SPECIAL",
+            "SUPPORT",
+            "COUNT_FLOOR",
+            "MVP_FLOOR",
+            "RATIO_FLOOR",
+            "SECOND_ROLE_SHARE",
+        ):
+            self.assertIs(getattr(compute, name), getattr(lfstats_formulas, name))
+
+    def test_default_constants_pin_the_calibrated_values(self) -> None:
+        # LFS-01g: the Training search's pick (docs/lfstats-import.md
+        # "Calibration results"). Only preferred_role_boost moved, from 1.2.
+        from teams.lfstats_formulas import DEFAULT_CONSTANTS, ImportConstants
+
+        self.assertEqual(
+            DEFAULT_CONSTANTS,
+            ImportConstants(
+                log_scale=25.0,
+                accuracy_offset=0.0,
+                accuracy_scale=100.0,
+                survival_times_hit_weight=0.5,
+                preferred_role_boost=1.0,
+            ),
+        )
+
+
+class TestNoDjangoImportsLeaked(TestCase):
+    """``teams.lfstats_formulas`` imports cleanly without pulling in Django."""
+
+    def test_no_django_imports_leaked(self) -> None:
+        script = (
+            "import teams.lfstats_formulas; "
+            "import sys; "
+            "print(','.join(m for m in sys.modules if m.startswith('django')))"
+        )
+        proc = run_project_python(script)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(
+            proc.stdout.strip(),
+            "",
+            f"django modules leaked into teams.lfstats_formulas: {proc.stdout!r}",
+        )
+
+
+class TestImportConstants(TestCase):
+    """Each ``ImportConstants`` field moves its stat as the spec says."""
+
+    def setUp(self) -> None:
+        self.baselines = {p: _baseline() for p in _POSITIONS}
+
+    def _stats(self, row: dict, **constants: float) -> dict[str, int]:
+        from teams.lfstats_formulas import ImportConstants
+
+        return compute.stats_for(
+            [row], [], self.baselines, self.baselines, ImportConstants(**constants)
+        )
+
+    def test_accuracy_offset_lowers_accuracy(self) -> None:
+        self.assertEqual(self._stats(_row("scout"))["accuracy"], 75)
+        self.assertEqual(
+            self._stats(_row("scout"), accuracy_offset=-20)["accuracy"], 55
+        )
+
+    def test_accuracy_scale_multiplies_raw_accuracy(self) -> None:
+        self.assertEqual(self._stats(_row("scout"), accuracy_scale=80)["accuracy"], 60)
+
+    def test_log_scale_doubles_a_ratio_stats_distance_from_50(self) -> None:
+        # MVP at 2**0.4 times the field: 50 + 25 * 0.4 = 60 by default.
+        row = _row("heavy", avg_mvp=15.0 * 2**0.4, avg_assists=5.0 * 2**-0.4)
+        default, doubled = self._stats(row), self._stats(row, log_scale=50.0)
+        self.assertEqual(
+            (default["game_awareness"], doubled["game_awareness"]), (60, 70)
+        )
+        self.assertEqual((default["communication"], doubled["communication"]), (40, 30))
+
+    def test_survival_times_hit_weight_1_ignores_elimination_rate(self) -> None:
+        row = _row("scout", elimination_rate=1.0)
+        self.assertEqual(self._stats(row)["survival"], 25)  # mean(50, 0)
+        self.assertEqual(
+            self._stats(row, survival_times_hit_weight=1.0)["survival"], 50
+        )
+
+    def test_one_position_row_gives_that_positions_stats(self) -> None:
+        scout = _row("scout", games=30, avg_mvp=30.0, avg_accuracy=0.9)
+        medic = _row("medic", games=10, avg_mvp=15.0, avg_accuracy=0.5)
+        both = compute.stats_for([scout, medic], [], self.baselines, self.baselines)
+        only_scout = compute.stats_for([scout], [], self.baselines, self.baselines)
+        only_medic = compute.stats_for([medic], [], self.baselines, self.baselines)
+        self.assertEqual(
+            (only_scout["game_awareness"], only_scout["accuracy"]), (75, 90)
+        )
+        self.assertEqual(
+            (only_medic["game_awareness"], only_medic["accuracy"]), (50, 50)
+        )
+        self.assertEqual((both["game_awareness"], both["accuracy"]), (69, 80))
+
+
+class TestMinGames(TestCase):
+    def test_player_needs_26_games_in_total(self) -> None:
+        self.assertEqual(compute.MIN_GAMES, 26)
+        baselines = {p: _baseline() for p in _POSITIONS}
+        rows: dict = {}
+        for ipl, split in (("#25", (15, 10)), ("#26", (16, 10))):
+            for role, games in zip(("scout", "medic"), split):
+                rows[f"{ipl}|{role}"] = {
+                    **_row(role, games=games),
+                    "ipl_id": ipl,
+                    "callsign": ipl,
+                }
+        data = {
+            "rows": {"all": rows, "loss": {}},
+            "baselines": {"all": baselines, "loss": baselines},
+            "alltime": {},
+            "homes": {},
+        }
+        self.assertEqual([p["ipl"] for p in compute.build_players(data)], ["#26"])
 
 
 class TestPreferredRoles(TestCase):

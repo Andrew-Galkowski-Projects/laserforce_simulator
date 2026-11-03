@@ -146,43 +146,10 @@ Follow-ups to the LFstats player import (#256). The import turns real players' L
 into the 19 Player stats. The formulas, the meaning of each stat and the sim oddities found
 along the way are in [`docs/lfstats-import.md`](docs/lfstats-import.md). The rebuild tools are
 `scripts/lfstats_import/` and the data is `data/lfstats_snapshot_2026-10-21.json`. Scheduled
-directly after the Phase 8 Angular work (owner, 2026-10-21); LFS-01 must still be sequenced with
-CAL-01. **Open question for both:** run LFS-02 first? Mechanics changes from LFS-02 would
-invalidate any LFS-01 tuning done before them.
+directly after the Phase 8 Angular work (owner, 2026-10-21). LFS-01 shipped first (2026-11-03);
+mechanics changes from LFS-02 or CAL-01 call for re-running its `lfstats_calibrate` harness.
 
-### LFS-01 · Tune the numbers so imported players reproduce their LFstats results
-
-**Goal:** a simulated imported player's per-position outputs land close to their real LFstats
-numbers: accuracy, hit diff, times hit, MVP, uptime, elimination rate, resupplies, nukes,
-missiles and rapid fire. Today the formulas are fixed guesses that were never checked against
-sim output.
-
-**Known gaps:**
-- **Hit chance saturates.** The sim's hit chance is `70 + accuracy - defender.survival`
-  (`sim_helpers/shot.py`, clamped 10-95). Imported accuracy is raw LFstats accuracy (median
-  77), so a median-vs-median shot hits about 94%, against about 75% in real games.
-- **Accuracy varies by position** (scout 66%, medic 90%), but `Player` holds one value.
-  Per-role stats need a model change.
-- **Placeholder stats:** resource_awareness, stamina, speed and flexibility are written as
-  50 for everyone.
-
-**Approach:**
-- Build a calibration harness, in the style of `score_averages`: run N seeded rounds with the
-  imported teams and print sim vs LFstats per position and metric.
-- Decide in the grill which side moves: the import formulas (`compute.py` and the doc,
-  together), the sim mechanics, or both.
-- Decide the target metrics and tolerances.
-
-**Depends on / interacts with:**
-- CAL-01 (Score Calibration re-baseline). Changing mechanics shifts the scores.
-- IMPORT-01 (`.tdf` parser). TDF event logs are the planned source for the deferred stats:
-  resource_awareness from elimination order and shot outages, stamina from late- vs
-  early-game tag rate.
-
-**Acceptance:**
-- The harness exists and its results are recorded.
-- Tolerances are documented.
-- `compute.py`, `docs/lfstats-import.md` and the CSV are updated together.
+LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 
 ### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
 
@@ -287,7 +254,7 @@ serving the SPA in every deploy (ANG-10, ADR-0049). Remaining,
 in order:
 
 ```
-LFS-01 / LFS-02  LFstats realism (Phase 3.5, order between them still open)   <- NOW
+LFS-02  LFstats realism (Phase 3.5)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.

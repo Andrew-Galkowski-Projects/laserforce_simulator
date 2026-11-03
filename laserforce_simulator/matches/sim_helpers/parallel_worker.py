@@ -54,6 +54,43 @@ def score_round_worker(args: tuple) -> list[dict]:
     ]
 
 
+def calibration_round_worker(args: tuple) -> dict:
+    """Run one Calibration harness round (LFS-01) and return its metrics.
+
+    ``args`` is ``(red_data, blue_data, movement_ctx, seed)``: two rosters of
+    ``(role, _PlayerData)`` pairs, the parent's picklable ``MapContext`` (or
+    ``None``) and an int seed. Seeds with ``random.seed(seed)``, so the serial
+    path (which calls this in-process) and a worker give the same round.
+
+    Returns ``{"red": [...], "blue": [...], "winner", "red_score",
+    "blue_score"}``: one ``lfstats_calibration.sim_metrics`` dict per player in
+    roster order, ``winner`` as ``"red"`` / ``"blue"`` / ``"tie"`` by points,
+    and each side's points.
+    """
+    from matches.lfstats_calibration import sim_metrics  # noqa: PLC0415
+    from matches.simulation import BatchSimulator  # noqa: PLC0415
+
+    red_data, blue_data, movement_ctx, seed = args
+    random.seed(seed)
+    result, red_players, blue_players = BatchSimulator()._simulate_round(
+        red_data, blue_data, movement_ctx=movement_ctx
+    )
+    red_score, blue_score = result["red_points"], result["blue_points"]
+    if red_score > blue_score:
+        winner = "red"
+    elif blue_score > red_score:
+        winner = "blue"
+    else:
+        winner = "tie"
+    return {
+        "red": [sim_metrics(p, result) for p in red_players],
+        "blue": [sim_metrics(p, result) for p in blue_players],
+        "winner": winner,
+        "red_score": red_score,
+        "blue_score": blue_score,
+    }
+
+
 def batch_round_worker(args: tuple) -> dict:
     """Run one simulation round for BatchSimulator.run() with workers > 1.
 

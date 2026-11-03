@@ -93,16 +93,39 @@ class PlayerStatForSimulationTest(TestCase):
             player_awareness=player_awareness,
         )
 
-    # 1. Preferred role → returns min(int(raw * 1.2), 100)
+    def _boost(self, value):
+        """Patch DEFAULT_CONSTANTS.preferred_role_boost to ``value``."""
+        from unittest import mock
+
+        from teams import lfstats_formulas
+
+        return mock.patch.object(
+            lfstats_formulas,
+            "DEFAULT_CONSTANTS",
+            lfstats_formulas.ImportConstants(preferred_role_boost=value),
+        )
+
+    # 1. LFS-01 calibration (Training search, docs/lfstats-import.md): the
+    # default boost is 1.0, so a preferred role plays at the raw value.
+    def test_calibrated_default_gives_no_preferred_role_bonus(self):
+        from teams import lfstats_formulas
+
+        self.assertEqual(lfstats_formulas.DEFAULT_CONSTANTS.preferred_role_boost, 1.0)
+        player = self._player("Calibrated", preferred_roles=["scout"], accuracy=73)
+        self.assertEqual(player.stat_for_simulation("accuracy", "scout"), 73)
+
+    # 1b. With a boost, a preferred role returns min(int(raw * boost), 100)
     def test_preferred_role_returns_boosted_value(self):
         player = self._player("Boosted", preferred_roles=["scout"], accuracy=50)
-        result = player.stat_for_simulation("accuracy", "scout")
+        with self._boost(1.2):
+            result = player.stat_for_simulation("accuracy", "scout")
         self.assertEqual(result, 60)  # int(50 * 1.2) = 60, min(60, 100) = 60
 
     # 2. Non-preferred role → returns raw value unchanged
     def test_non_preferred_role_returns_raw_value(self):
         player = self._player("Unboosted", preferred_roles=["scout"], accuracy=50)
-        result = player.stat_for_simulation("accuracy", "commander")
+        with self._boost(1.2):
+            result = player.stat_for_simulation("accuracy", "commander")
         self.assertEqual(result, 50)
 
     # 3. Multiple preferred roles — boost applies when current role is any of them
@@ -112,11 +135,12 @@ class PlayerStatForSimulationTest(TestCase):
             preferred_roles=["scout", "medic"],
             accuracy=50,
         )
-        # Both roles in the list should get the boost
-        self.assertEqual(player.stat_for_simulation("accuracy", "scout"), 60)
-        self.assertEqual(player.stat_for_simulation("accuracy", "medic"), 60)
-        # A role not in the list should not
-        self.assertEqual(player.stat_for_simulation("accuracy", "heavy"), 50)
+        with self._boost(1.2):
+            # Both roles in the list should get the boost
+            self.assertEqual(player.stat_for_simulation("accuracy", "scout"), 60)
+            self.assertEqual(player.stat_for_simulation("accuracy", "medic"), 60)
+            # A role not in the list should not
+            self.assertEqual(player.stat_for_simulation("accuracy", "heavy"), 50)
 
     # 4. No preferred roles (empty list) → returns raw value
     def test_empty_preferred_roles_returns_raw_value(self):
@@ -127,13 +151,15 @@ class PlayerStatForSimulationTest(TestCase):
     # 5. Stat already at 100 → capped at 100 (not 120)
     def test_stat_at_100_is_capped_at_100(self):
         player = self._player("Capped", preferred_roles=["commander"], accuracy=100)
-        result = player.stat_for_simulation("accuracy", "commander")
+        with self._boost(1.2):
+            result = player.stat_for_simulation("accuracy", "commander")
         self.assertEqual(result, 100)  # min(int(100 * 1.2), 100) = min(120, 100) = 100
 
     # 6. Stat at 84 → min(100, int(84*1.2)) = min(100, 100) = 100  (boundary test)
     def test_stat_at_84_hits_cap_exactly(self):
         player = self._player("Boundary", preferred_roles=["heavy"], accuracy=84)
-        result = player.stat_for_simulation("accuracy", "heavy")
+        with self._boost(1.2):
+            result = player.stat_for_simulation("accuracy", "heavy")
         # int(84 * 1.2) == 100, so the result should be 100
         self.assertEqual(result, 100)
 
@@ -146,8 +172,16 @@ class PlayerStatForSimulationTest(TestCase):
     # Extra: verify a different stat field works too (survival)
     def test_survival_stat_is_boosted_for_preferred_role(self):
         player = self._player("SurvivalBoost", preferred_roles=["ammo"], survival=75)
-        result = player.stat_for_simulation("survival", "ammo")
+        with self._boost(1.2):
+            result = player.stat_for_simulation("survival", "ammo")
         self.assertEqual(result, 90)  # int(75 * 1.2) = 90
+
+    # LFS-01b: the boost is DEFAULT_CONSTANTS.preferred_role_boost, read per call.
+    def test_boost_follows_default_constants(self):
+        player = self._player("Tuned", preferred_roles=["scout"], accuracy=50)
+        with self._boost(1.5):
+            self.assertEqual(player.stat_for_simulation("accuracy", "scout"), 75)
+            self.assertEqual(player.stat_for_simulation("accuracy", "heavy"), 50)
 
 
 class RosterValidationTests(TestCase):

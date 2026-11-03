@@ -8442,3 +8442,160 @@ option; the NAV-01 `Play ▾` topnav gains the setup/drain controls
 Calibration re-baseline, NON-deterministic by design** (fresh `random.Random()`
 outside the SIM-07/08 seed chain). `_rr_phase_complete`, `_is_finished`, and
 `next_season` carry-forward are UNCHANGED.
+
+---
+
+## Phase 3.5 — LFstats realism (added 2026-10-21)
+
+### LFS-01 · [DONE] Tune the numbers so imported players reproduce their LFstats results
+
+Spec: #514
+
+**[DONE] Shipped (2026-11-03).** Shipped the Calibration harness (matches/lfstats_calibration.py +
+the lfstats_calibrate command), the pure teams/lfstats_formulas.py with ImportConstants, the
+committed Training / Test files and the 30px Syracuse map fixture, and the cancelled-nuke counter.
+The narrowed search (accuracy_offset, preferred_role_boost) kept every import constant except
+preferred_role_boost, which now ships at 1.0 app-wide (was 1.2). The Test set passed 11 of 36 cells,
+with 61.7% winner agreement over 128 of 165 games; the 25 failing cells are findings for LFS-02 /
+CAL-01 (docs/lfstats-import.md, Calibration results). Departures from spec #514: lfstats_players.csv
+was not regenerated, the search used 3 rounds and the Test 10, and map loading now moves any spawn
+cell cut off from the main floor (reachable_spawn_pools). Follow-up refactors: #522.
+
+**Goal:** a simulated imported player's per-position outputs land close to their real LFstats
+numbers: accuracy, hit diff, times hit, MVP, uptime, elimination rate, resupplies, nukes,
+missiles and rapid fire. Today the formulas are fixed guesses that were never checked against
+sim output.
+
+**Known gaps:**
+- **Hit chance saturates.** The sim's hit chance is `70 + accuracy - defender.survival`
+  (`sim_helpers/shot.py`, clamped 10-95). Imported accuracy is raw LFstats accuracy (median
+  77), so a median-vs-median shot hits about 94%, against about 75% in real games.
+- **Accuracy varies by position** (scout 66%, medic 90%), but `Player` holds one value.
+  Per-role stats need a model change.
+- **Placeholder stats:** resource_awareness, stamina, speed and flexibility are written as
+  50 for everyone.
+
+**Approach:**
+- Build a calibration harness, in the style of `score_averages`: run N seeded rounds with the
+  imported teams and print sim vs LFstats per position and metric.
+- Decide in the grill which side moves: the import formulas (`compute.py` and the doc,
+  together), the sim mechanics, or both.
+- Decide the target metrics and tolerances.
+
+**Depends on / interacts with:**
+- CAL-01 (Score Calibration re-baseline). Changing mechanics shifts the scores.
+- IMPORT-01 (`.tdf` parser). TDF event logs are the planned source for the deferred stats:
+  resource_awareness from elimination order and shot outages, stamina from late- vs
+  early-game tag rate.
+
+**Acceptance:**
+- The harness exists and its results are recorded.
+- Tolerances are documented.
+- `compute.py`, `docs/lfstats-import.md` and the CSV are updated together.
+
+**Grill (2026-11-02):**
+1. LFS-01 runs now, before LFS-02 (owner).
+2. Train / test split (owner): the **training set** is every match in the last 2 years; the
+   **test set** is Internationals 2026 (hosted at Syracuse, `internationals_2026`, 2026-07-13 to
+   07-18, 165 SM5 games). Tuning reads the training set only; the test set checks whether the
+   tuned numbers reproduce real results.
+   Fact: Internationals 2026 falls inside the 2-year window (3,995 SM5 games, 2024-11-02 to
+   2026-11-02, social included).
+
+Round 1 (owner accepted every recommendation, 2026-11-02):
+3. Training excludes the 165 `internationals_2026` games.
+4. The Test set is scored at two levels: per-player, per-position stats against what each player
+   recorded in their Internationals games (gated); match winner and score margin (reported, not
+   gated).
+5. Each Test game is replayed with its real lineup and positions on the "Syracuse Laser Tag" map.
+   Each player uses stats built from their Training games at that position. A game is skipped when
+   any player has fewer than 10 Training games at their position, and coverage is reported.
+6. No `Player` model change: the harness builds a temporary Player per (player, position); the
+   app's CSV stays games-weighted. Per-role Player stats are a later task.
+7. Import side only: `compute.py` formulas and constants, the x1.2 preferred-role interaction, and
+   the accuracy mapping (the hit-chance saturation fix). Sim mechanics wait for LFS-02 / CAL-01.
+8. The sim gains `nukes_detonated` and `rapid_fires` counters on `PlayerRoundState` (migration).
+   They draw no RNG, and a test pins identical seeded output. The harness also reads accuracy,
+   resupplies, missiles and MVP.
+9. One MCP pull writes two committed files: `data/lfstats_train_<date>.json` (per-player,
+   per-position averages, Internationals excluded) and `data/lfstats_test_internationals_2026.json`
+   (per-game scorecards with rosters, positions, every metric and the team result). The harness
+   runs offline and seeded; `extract.py` learns the per-game call shape.
+10. Tuning is a seeded coordinate search over named import constants (accuracy offset/scale, log
+    scale, preferred-role boost, survival blend), scored on Training only. The Test set runs once
+    with the chosen constants, and its result is recorded.
+11. Metrics: accuracy, hit diff, times hit, MVP, uptime, elimination rate, resupplies, nukes,
+    missiles, rapid fire. Gate: per position and metric, the Test set's simulated mean is within
+    +/-15% of the real mean. Per-player Spearman is reported only.
+12. The harness is `manage.py lfstats_calibrate` (`--split train|test`, `--rounds`, `--seed`,
+    `--workers`), with a serial-vs-parallel determinism test. Results go in
+    `docs/lfstats-import.md` under "Calibration results".
+13. Out of scope: placeholder stats (resource_awareness, stamina, speed, flexibility: IMPORT-01),
+    the `_stress_fail` inversion and the stats the sim never reads, per-role Player stats, and
+    CAL-01's re-baseline.
+
+Round 2 (owner accepted every recommendation, 2026-11-02):
+14. Training simulation: each (player, position) Player plays in a field-average team (the other
+    five built from the position baselines) against a field-average team, and is compared with its
+    Training average. Training games are not replayed.
+15. 20 seeded rounds per Test game, and per (player, position) per search step (`--rounds`).
+16. Tolerance: counts pass within +/-15% or +/-0.5 per game, whichever is larger; fractions
+    (accuracy, uptime, elimination rate) within +/-15% or +/-0.05.
+17. LFS-01 is done when the harness exists and its results are recorded. The gate is a recorded
+    pass/fail table, not a CI test; every miss is listed as a finding for LFS-02 / CAL-01.
+18. The harness's Teams and Players live in one transaction that is rolled back; nothing persists
+    and no Account owns them.
+19. The Syracuse map's zone config, bases and sight lines are a committed fixture
+    (`data/maps/syracuse.json`) the harness loads inside its transaction.
+20. `data/lfstats_players.csv` is regenerated from the new Training snapshot (26+ games); the old
+    `lfstats_snapshot_2026-10-21.json` is deleted.
+21. The formulas and constants move to a pure module `teams/lfstats_formulas.py`, called by both
+    `compute.py` and `lfstats_calibrate`; `test_lfstats_import.py` keeps passing.
+
+Round 3 (owner accepted every recommendation, 2026-11-02):
+22. Fact: no DB has a configured Syracuse map (the stock row has only its image). The orchestrator
+    configures it in the SPA editor (auto-detected zones at the default zone size, bases placed from
+    the image, sight lines computed), the owner approves screenshots, and the config is exported to
+    `data/maps/syracuse.json`.
+23. A Test game whose lineup is not commander / heavy / 2 scouts / ammo / medic on both sides is
+    skipped and counted in the coverage report.
+24. Fire plays red, Ice plays blue.
+25. The search minimises mean squared relative error over every (position, metric) cell the
+    position records in LFstats, equally weighted, with the decision-16 floors.
+26. Seams: `teams/lfstats_formulas.py` (pure formulas + constants record),
+    `teams/lfstats_calibration.py` (Training / Test runners and the search), a thin
+    `lfstats_calibrate` command, and the two sim counters.
+
+Round 4 (owner accepted every recommendation, 2026-11-02; revises 8, 9 and 26):
+27. No new columns and no migration. Scout `specials_used` is already rapid fires
+    (`entrypoints.py:1871`). `own_specials_cancelled` is never written today, so `record_down`
+    increments it where it marks a pending nuke `cancel_logged`; nukes detonated =
+    commander `specials_used - own_specials_cancelled`. No RNG is drawn, so seeded games play out
+    identically (pinned); commander MVP changes where a nuke was cancelled (a bug fix, regression
+    test).
+28. `data/lfstats_test_internationals_2026.json` holds the games (slug, Fire / Ice rosters as
+    (player, position), team scores, winner; from `search_games` with rosters) and each (player,
+    position)'s Internationals averages (from `leaderboard`, `include_mercenary_games: true`).
+    Training averages = window totals minus Internationals totals (average x games), per (player,
+    position): LFstats can't exclude one competition from a query. No `game_detail` calls.
+
+After the pull (owner, 2026-11-02; revises 5):
+29. The Test set's thin-data rule is **5** Training games at the position played, not 10. At 10,
+    only 48 of 165 games were usable (14 player-positions blocked 116); at 5, 128 are.
+30. The Syracuse map replays at **30px** cells (owner approved the screenshots, 2026-11-02):
+    auto-detected walls, 2,001 floor cells of 3,200 (63%), against 47% at the editor's 50px default.
+    Bases: red, blue (the arena's green base) and one neutral, at the image's base markers.
+
+During implementation (owner, 2026-11-03; revises 20; departures on #514):
+31. Decision 20 is revised: `data/lfstats_players.csv` and `lfstats_snapshot_2026-10-21.json`
+    stay as they are. A rebuild from the snapshot is byte-identical; a Training-file build would
+    drop 6 players (230 -> 224).
+32. The search runs over `accuracy_offset` and `preferred_role_boost` only (`--search-fields`),
+    3 rounds per player, 8 workers: the full five-constant grid at 14 workers was killed for low
+    memory.
+33. Map loading replaces a spawn cell cut off from the main floor with the nearest reachable one
+    (`reachable_spawn_pools`). On the 30px Syracuse map, 9 of red's 11 spawns were in pockets.
+34. `preferred_role_boost` ships at **1.0** app-wide (no preferred-role bonus in any game); it
+    was 1.2. The Test run used 10 rounds per game, not the default 20, to fit the session.
+
+---

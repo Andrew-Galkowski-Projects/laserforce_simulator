@@ -5,6 +5,7 @@ from django.core.exceptions import ValidationError
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
+from teams import lfstats_formulas
 from teams.constants import LASERFORCE_SITES, PLAYER_NAMES  # noqa: F401
 
 
@@ -321,7 +322,8 @@ class Player(models.Model):
     def stat_for_simulation(self, stat_name: str, role: str) -> int:
         value = getattr(self, stat_name)
         if role in self.preferred_roles:
-            return min(int(value * 1.2), 100)
+            boost = lfstats_formulas.DEFAULT_CONSTANTS.preferred_role_boost
+            return min(int(value * boost), 100)
         return value
 
     @property

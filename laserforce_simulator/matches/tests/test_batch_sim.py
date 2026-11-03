@@ -217,6 +217,81 @@ class TestBatchSimulatorSeedReproducibility(_FastRoundsMixin):
             assert e1 == e2, f"Event {i} differs:\n  run1: {e1}\n  run2: {e2}"
 
 
+@pytest.mark.django_db
+class TestLfs01aCancelledNukesCounted:
+    """LFS-01a: a seeded full-length round counts each cancelled nuke on its
+    Commander's ``own_specials_cancelled``, and counting it changes nothing
+    else: the event log and every other counter match a run of the same seed
+    in which ``own_specials_cancelled`` can never be written.
+
+    Full-length on purpose: a nuke needs special points, which a 40-tick
+    round never accumulates. Seed 0 cancels one nuke (found by a probe).
+    """
+
+    SEED = 0
+
+    def setup_method(self):
+        red_team, _ = make_team_with_slots("NukeCntR")
+        blue_team, _ = make_team_with_slots("NukeCntB")
+        self.red_roster = list(red_team.active_roster)
+        self.blue_roster = list(blue_team.active_roster)
+
+    def _run(self):
+        import random
+
+        log: list = []
+        random.seed(self.SEED)
+        result, red, blue = BatchSimulator()._simulate_round(
+            self.red_roster, self.blue_roster, event_log=log
+        )
+        return result, red + blue, log
+
+    @staticmethod
+    def _cancel_events_by(log, player):
+        return [
+            e
+            for e in log
+            if e["event_type"] == "nuke_cancelled" and e["actor_id"] == player.player_id
+        ]
+
+    def test_each_cancelled_nuke_is_counted_on_its_commander(self):
+        _result, players, log = self._run()
+        cmdrs = [p for p in players if p.role == "commander"]
+        assert any(
+            self._cancel_events_by(log, c) for c in cmdrs
+        ), "seed must cancel a nuke for the test to mean anything"
+        for c in cmdrs:
+            assert c.counters.own_specials_cancelled == len(
+                self._cancel_events_by(log, c)
+            ), c.team_color
+
+    def test_counting_changes_no_event_and_no_other_counter(self):
+        from dataclasses import asdict
+
+        from matches.sim_helpers.player_counters import PlayerCounters
+
+        result_with, players_with, log_with = self._run()
+
+        def _drop_cancel_writes(self, name, value):
+            if name != "own_specials_cancelled":
+                object.__setattr__(self, name, value)
+
+        with patch.object(PlayerCounters, "__setattr__", _drop_cancel_writes):
+            result_without, players_without, log_without = self._run()
+            counters_without = [asdict(p.counters) for p in players_without]
+
+        assert len(log_with) > 0
+        assert log_with == log_without
+        assert result_with == result_without
+        assert sum(p.counters.own_specials_cancelled for p in players_with) > 0
+        assert all(c["own_specials_cancelled"] == 0 for c in counters_without)
+        for p, c_without in zip(players_with, counters_without):
+            c_with = asdict(p.counters)
+            c_with.pop("own_specials_cancelled")
+            c_without.pop("own_specials_cancelled")
+            assert c_with == c_without, p.tag_id
+
+
 # ---------------------------------------------------------------------------
 # Shot cooldown and tag-weight suppression
 # ---------------------------------------------------------------------------

@@ -1,0 +1,93 @@
+step pass 0 start objective 0.2405 kept
+step pass 1 accuracy_offset=-20 objective 0.2850
+step pass 1 accuracy_offset=-10 objective 0.2590
+step pass 1 preferred_role_boost=1 objective 0.2127 kept
+step pass 1 preferred_role_boost=1.1 objective 0.2142
+step pass 1 preferred_role_boost=1.2 objective 0.2405
+step pass 2 accuracy_offset=-20 objective 0.2523
+step pass 2 accuracy_offset=-10 objective 0.2303
+step pass 2 preferred_role_boost=1.1 objective 0.2142
+step pass 2 preferred_role_boost=1.2 objective 0.2405
+
+LFS-01 calibration: Search on the Training set (rounds 3, seed 42, workers 8)
+
+commander (n=106)
+Metric                        Sim       Real       Diff  Pass    Rho
+--------------------------------------------------------------------
+avg_accuracy                0.802      0.782     +0.020  PASS   0.62
+avg_hit_diff                1.580      0.920     +0.660  FAIL   0.18
+avg_times_hit              53.723     69.117    -15.394  FAIL   0.07
+avg_mvp                    16.088     17.349     -1.261  PASS   0.24
+avg_uptime_pct              0.496      0.499     -0.003  PASS   0.06
+elimination_rate            0.327      0.298     +0.029  PASS   0.14
+avg_nukes_detonated         0.774      3.046     -2.273  FAIL  -0.08
+avg_missiles_hit            0.943      2.369     -1.426  FAIL   0.11
+
+heavy (n=101)
+Metric                        Sim       Real       Diff  Pass    Rho
+--------------------------------------------------------------------
+avg_accuracy                0.786      0.845     -0.059  PASS   0.33
+avg_hit_diff                1.840      0.924     +0.917  FAIL   0.14
+avg_times_hit              47.482     57.775    -10.293  FAIL   0.17
+avg_mvp                    21.100     15.584     +5.516  FAIL   0.13
+avg_uptime_pct              0.486      0.540     -0.054  PASS   0.21
+elimination_rate            0.383      0.353     +0.029  PASS   0.26
+avg_missiles_hit            0.696      1.994     -1.297  FAIL   0.16
+
+scout (n=143)
+Metric                        Sim       Real       Diff  Pass    Rho
+--------------------------------------------------------------------
+avg_accuracy                0.717      0.696     +0.022  PASS   0.78
+avg_hit_diff                1.138      1.218     -0.080  PASS  -0.08
+avg_times_hit              37.557     38.326     -0.769  PASS   0.15
+avg_mvp                    13.477     14.568     -1.091  PASS   0.10
+avg_uptime_pct              0.384      0.490     -0.105  FAIL  -0.04
+elimination_rate            0.497      0.386     +0.110  FAIL  -0.01
+avg_rapid_fire              2.228      1.630     +0.599  FAIL   0.24
+
+ammo (n=98)
+Metric                        Sim       Real       Diff  Pass    Rho
+--------------------------------------------------------------------
+avg_accuracy                0.770      0.796     -0.026  PASS   0.47
+avg_hit_diff                0.901      1.098     -0.198  PASS  -0.05
+avg_times_hit              36.864     25.546    +11.318  FAIL   0.07
+avg_mvp                    18.141     15.312     +2.829  FAIL  -0.05
+avg_uptime_pct              0.281      0.611     -0.329  FAIL   0.07
+elimination_rate            0.881      0.375     +0.506  FAIL   0.02
+avg_resupplies_given       73.051     45.720    +27.331  FAIL   0.11
+
+medic (n=94)
+Metric                        Sim       Real       Diff  Pass    Rho
+--------------------------------------------------------------------
+avg_accuracy                0.811      0.902     -0.091  PASS  -0.00
+avg_hit_diff                0.427      1.278     -0.851  FAIL   0.10
+avg_times_hit              19.787     10.758     +9.029  FAIL  -0.26
+avg_mvp                    13.775     16.639     -2.864  FAIL   0.16
+avg_uptime_pct              0.407      0.765     -0.358  FAIL  -0.03
+elimination_rate            0.961      0.707     +0.254  FAIL  -0.08
+avg_resupplies_given       57.613     49.275     +8.338  FAIL  -0.15
+
+Cells passed: 14 / 36
+
+Constant                          Start     Chosen
+--------------------------------------------------
+log_scale                            25         25
+accuracy_offset                       0          0
+accuracy_scale                      100        100
+survival_times_hit_weight           0.5        0.5
+preferred_role_boost                1.2          1
+
+Objective: 0.2127
+
+Pass Constant                          Value  Objective Kept
+------------------------------------------------------------
+   0 (start)                               -     0.2405 yes
+   1 accuracy_offset                     -20     0.2850 
+   1 accuracy_offset                     -10     0.2590 
+   1 preferred_role_boost                  1     0.2127 yes
+   1 preferred_role_boost                1.1     0.2142 
+   1 preferred_role_boost                1.2     0.2405 
+   2 accuracy_offset                     -20     0.2523 
+   2 accuracy_offset                     -10     0.2303 
+   2 preferred_role_boost                1.1     0.2142 
+   2 preferred_role_boost                1.2     0.2405

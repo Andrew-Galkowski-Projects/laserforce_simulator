@@ -69,7 +69,7 @@ One of a player's 19 numeric attributes (0–100) that bias simulated decisions;
 The unweighted mean of a player's 19 **Stats**, shown for display only — never used directly by the simulator.
 
 **Preferred-role boost**:
-A flat ×1.2 (capped at 100) applied to a player's **Stats** during simulation when their game **Role** is one of their preferred roles; affects simulation only, never the stored stat or **Overall rating**.
+A flat multiplier (capped at 100) applied to a player's **Stats** during simulation when their game **Role** is one of their preferred roles; affects simulation only, never the stored stat or **Overall rating**. It is ×1.0 (no bonus) since the LFstats calibration; it was ×1.2.
 
 **Free Agents Team**:
 The reserved system **Team** named `"Free Agents"`, identified by magic name (no `is_system` field). Holds generated players who were not assigned to a regular Team via the **LG-00 generation** flow's `num_teams = 0` branch. Filtered from the Teams list via the new `Team.objects.regular()` manager method; visible via the Players tab (LG-00c). Has no slot FKs filled — `is_valid_roster` returns False, by design (the Free Agents Team is a player container, not a competitive roster). Auto-created on first use via `Team.objects.get_or_create(name="Free Agents")`.
@@ -444,6 +444,18 @@ _Avoid_: "match history" for the global Matches list (that lists every Match, no
 **Statistical feat**:
 A single (**Player**, **Round**) performance notable enough to list on the Statistical Feats screen — the reference product's "single-game feats" analogue (LG-06e). A (Player, Round) qualifies either by **crossing a per-game bar** for a tracked feat (a triple-**Nuke** game, a **Medic** shutout, a perfect-accuracy **Heavy** round, or a high single-game count of **Tags** / points / **MVP** / resupplies / **Missiles**) **or** by being a **Season-best** — the single highest MVP / points / Tags performance in scope, always listed even when it crosses no bar and tagged "season best". Each qualifying row shows that Round's box-score line (the same per-player stat set as the **Round scoreboard**) plus the opposing **Team**, the row's per-**Round** result (W/L/T — the single Round's higher-scoring side, *not* the **Match** outcome), and its **Season**, deep-linking to the **Round**. One row per qualifying (Player, Round); a single Round can carry several feat badges for the same player. A **comeback win** (a **Team** that won the **Match** after trailing in round 1) is a *team* event, not a per-player feat — it is surfaced in a separate "Team feats" section, not in the per-player feed.
 _Avoid_: the pre-LG-06e "category best" model (one row = the single best of each feat kind, superseded by this per-game feed); reading the per-**Round** **Result** as the **Match** outcome; listing a standalone **Round** (the feed is **Season**-scoped via the Round's `Match.season`).
+
+**Calibration harness**:
+The tool that simulates imported **Players** and compares what they do in the **Simulator** with what they really recorded in LFstats, per **Role** and per metric (LFS-01). It tunes the import's numbers on the **Training set** and checks them once on the **Test set**.
+_Avoid_: "Score Calibration" (CAL-01's re-baseline of the scores, a different task).
+
+**Training set**:
+The real LFstats games the **Calibration harness** tunes against: every SM5 game in the last two years, minus the **Test set**. Only per-player, per-**Role** averages are kept from it.
+_Avoid_: tuning against any game in the **Test set**.
+
+**Test set**:
+The real games held back to check whether the tuned numbers reproduce real results: Internationals 2026, hosted at Syracuse. Each game is replayed with its real lineup and Roles, and the outcome is compared game by game.
+_Avoid_: choosing or adjusting any number by looking at the Test set.
 
 ### Accounts and ownership
 
