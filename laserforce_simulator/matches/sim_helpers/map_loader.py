@@ -159,6 +159,61 @@ def resolve_map_data(arena_map) -> MapData:
     )
 
 
+def _main_floor(
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+) -> set[tuple[int, int]]:
+    """The largest 4-connected area of passable cells (empty when ``adj`` is)."""
+    best: set[tuple[int, int]] = set()
+    seen: set[tuple[int, int]] = set()
+    for start in adj:
+        if start in seen:
+            continue
+        area = {start}
+        stack = [start]
+        while stack:
+            for nxt in adj[stack.pop()]:
+                if nxt not in area:
+                    area.add(nxt)
+                    stack.append(nxt)
+        seen |= area
+        if len(area) > len(best):
+            best = area
+    return best
+
+
+def reachable_spawn_pools(
+    pools: dict[str, list[tuple[int, int]]],
+    spawn_cells: dict,
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+) -> dict[str, list[tuple[int, int]]]:
+    """``pools`` with every cell off the main floor replaced (LFS-01).
+
+    A spawn cell outside the largest connected floor area traps the player
+    who spawns there (Syracuse at 30px cut red's base corridor off). Each
+    such cell becomes the main-floor cell nearest the team's base (Manhattan,
+    then row, then column) that is not already in the pool, so the pool keeps
+    its size and order. A pool whose cells are all on the main floor comes
+    back unchanged; with no floor, or no base for the team, nothing changes.
+    """
+    floor = _main_floor(adj)
+    if not floor:
+        return pools
+    result: dict[str, list[tuple[int, int]]] = {}
+    for color, pool in pools.items():
+        base = spawn_cells.get(color)
+        if base is None or all(cell in floor for cell in pool):
+            result[color] = pool
+            continue
+        spares = iter(
+            sorted(
+                (c for c in floor if c not in pool),
+                key=lambda c: (abs(c[0] - base[0]) + abs(c[1] - base[1]), c),
+            )
+        )
+        result[color] = [cell if cell in floor else next(spares, cell) for cell in pool]
+    return result
+
+
 def build_movement_ctx(
     zone_data,
     spawn_cells,
@@ -236,8 +291,10 @@ def load_map_context(
         tuple(rc) for rc in md.cell_ranking[:top_n]
     ]
 
+    assert md.zone_data is not None  # resolve_map_data raises without a config
+    adj = build_movement_adjacency(md.zone_data)
     movement_ctx = MapContext(
-        adj=build_movement_adjacency(md.zone_data),
+        adj=adj,
         spawn_cells=md.spawn_cells,
         zone_data=md.zone_data,
         sight_data=md.sight_data,
@@ -246,7 +303,7 @@ def load_map_context(
         high_los_cells=high_los_cells,
         strong_spots=[tuple(rc) for rc in md.strong_spots],
         wall_meta=md.wall_meta,
-        team_spawn_pools=md.spawn_pools,
+        team_spawn_pools=reachable_spawn_pools(md.spawn_pools, md.spawn_cells, adj),
         elevation_grid=md.elevation_grid,
     )
 

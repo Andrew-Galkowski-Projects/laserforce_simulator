@@ -19,9 +19,11 @@ from matches.sim_helpers.map_loader import (
     build_movement_ctx,
     build_spawn_assignments,
     load_map_context,
+    reachable_spawn_pools,
     resolve_map_data,
     zone_from_cell,
 )
+from matches.sim_helpers.pathfinding import build_movement_adjacency
 
 # ---------------------------------------------------------------------------
 # load_map_context — primary public entry point
@@ -153,6 +155,97 @@ class TestLoadMapContextDB:
         )
         with pytest.raises(ValueError):
             load_map_context(arena_map)
+
+
+# ---------------------------------------------------------------------------
+# reachable_spawn_pools — LFS-01: no spawn in a pocket cut off from the floor
+# ---------------------------------------------------------------------------
+
+# (0, 0) is a one-cell pocket; every other floor cell is one connected area.
+_POCKET_GRID = [
+    [1, 0, 1, 1],
+    [0, 0, 1, 1],
+    [1, 1, 1, 1],
+]
+
+
+class TestReachableSpawnPools:
+    """A spawn cell outside the main floor becomes the nearest main-floor
+    cell to that team's base not already in the pool; the pool keeps its
+    size and order. (LFS-01: Syracuse at 30px cut red's base corridor off,
+    and four red players never left it.)
+    """
+
+    def test_pocketed_cell_is_replaced_by_nearest_main_floor_cell(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        pools = reachable_spawn_pools(
+            {"red": [(0, 0), (2, 0)], "blue": [(2, 3)]},
+            {"red": (0, 0), "blue": (2, 3)},
+            adj,
+        )
+        # (2, 0) is already in the pool; (0, 2) is the next nearest (distance 2).
+        assert pools == {"red": [(0, 2), (2, 0)], "blue": [(2, 3)]}
+
+    def test_reachable_pools_come_back_unchanged(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        pools = {"red": [(2, 0), (2, 1)], "blue": [(0, 3), (1, 3)]}
+        assert (
+            reachable_spawn_pools(pools, {"red": (2, 0), "blue": (0, 3)}, adj) == pools
+        )
+
+    def test_no_floor_leaves_pools_alone(self):
+        pools = {"red": [(0, 0)]}
+        assert reachable_spawn_pools(pools, {"red": (0, 0)}, {}) == pools
+
+
+@pytest.mark.django_db
+class TestLoadMapContextSpawnPools:
+    def test_load_map_context_keeps_spawns_on_the_main_floor(self):
+        from core.map_processing import compute_sight_lines
+        from core.models import (
+            ArenaMap,
+            BaseSightLineConfig,
+            MapBaseConfig,
+            MapZoneConfig,
+            SightLineConfig,
+        )
+
+        zone_size = 50
+        arena_map = ArenaMap.objects.create(
+            name="PocketSpawn", img_width=4 * zone_size, img_height=3 * zone_size
+        )
+        MapZoneConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            zone_data={
+                "zones": _POCKET_GRID,
+                "red_spawn": [[0, 0], [2, 0]],
+                "blue_spawn": [[2, 3]],
+            },
+            confirmed=True,
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="red", x_px=25, y_px=25
+        )
+        MapBaseConfig.objects.create(
+            arena_map=arena_map, base_type="blue", x_px=175, y_px=125
+        )
+        SightLineConfig.objects.create(
+            arena_map=arena_map,
+            zone_size=zone_size,
+            sight_data=compute_sight_lines(_POCKET_GRID),
+        )
+        for base_type in ("red", "blue"):
+            BaseSightLineConfig.objects.create(
+                arena_map=arena_map,
+                base_type=base_type,
+                zone_size=zone_size,
+                visible_cells=[],
+            )
+        ctx, _ = load_map_context(arena_map)
+        assert ctx is not None
+        assert ctx.team_spawn_pools["red"] == [(0, 2), (2, 0)]
+        assert all(cell in ctx.adj for cell in ctx.team_spawn_pools["red"])
 
 
 # ---------------------------------------------------------------------------
