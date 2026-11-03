@@ -316,6 +316,11 @@ def _row(position: str, games: float = 30, **overrides: object) -> dict:
     return row
 
 
+# The original x1.2 boost, so the boost tests still exercise the multiply and
+# cap now that the calibrated default is 1.0 (no bonus).
+_BOOST_1_2 = cal.ImportConstants(preferred_role_boost=1.2)
+
+
 class TestPlayerData:
     def _stats(self, row: dict, constants: object = cal.DEFAULT_CONSTANTS) -> dict:
         pos = row["position"]
@@ -337,7 +342,7 @@ class TestPlayerData:
     def test_boost_applies_at_the_rows_own_position(self) -> None:
         row = _row("heavy", avg_accuracy=0.5)
         raw = self._stats(row)
-        pd = self._build(row, "heavy")
+        pd = self._build(row, "heavy", _BOOST_1_2)
         for stat in _SIMULATION_STATS:
             assert pd.stat_for_simulation(stat, "heavy") == min(
                 int(raw[stat] * 1.2), 100
@@ -345,13 +350,20 @@ class TestPlayerData:
         assert pd.stat_for_simulation("accuracy", "heavy") == 60
 
     def test_boost_is_capped_at_100(self) -> None:
-        pd = self._build(_row("heavy", avg_accuracy=0.9), "heavy")
+        pd = self._build(_row("heavy", avg_accuracy=0.9), "heavy", _BOOST_1_2)
         assert pd.stat_for_simulation("accuracy", "heavy") == 100
+
+    def test_calibrated_default_leaves_own_position_stats_raw(self) -> None:
+        row = _row("heavy", avg_accuracy=0.5)
+        raw = self._stats(row)
+        pd = self._build(row, "heavy")
+        for stat in _SIMULATION_STATS:
+            assert pd.stat_for_simulation(stat, "heavy") == raw[stat]
 
     def test_no_boost_at_another_role(self) -> None:
         row = _row("heavy", avg_accuracy=0.5)
         raw = self._stats(row)
-        pd = self._build(row, "commander")
+        pd = self._build(row, "commander", _BOOST_1_2)
         for stat in _SIMULATION_STATS:
             assert pd.stat_for_simulation(stat, "commander") == raw[stat]
 

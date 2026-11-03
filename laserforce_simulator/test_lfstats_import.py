@@ -141,7 +141,9 @@ class TestFormulasModule(TestCase):
         ):
             self.assertIs(getattr(compute, name), getattr(lfstats_formulas, name))
 
-    def test_default_constants_pin_todays_formulas(self) -> None:
+    def test_default_constants_pin_the_calibrated_values(self) -> None:
+        # LFS-01g: the Training search's pick (docs/lfstats-import.md
+        # "Calibration results"). Only preferred_role_boost moved, from 1.2.
         from teams.lfstats_formulas import DEFAULT_CONSTANTS, ImportConstants
 
         self.assertEqual(
@@ -151,7 +153,7 @@ class TestFormulasModule(TestCase):
                 accuracy_offset=0.0,
                 accuracy_scale=100.0,
                 survival_times_hit_weight=0.5,
-                preferred_role_boost=1.2,
+                preferred_role_boost=1.0,
             ),
         )
 

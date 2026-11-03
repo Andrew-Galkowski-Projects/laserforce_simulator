@@ -38,8 +38,9 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
   Each center fields as many full 6-player rosters as it can (`<Center> 1`, `<Center> 2`, ...):
   1. main role first;
   2. then the second preferred role;
-  3. then single-role scouts in any slot. They keep `preferred_roles = scout`, so they get
-     no x1.2 boost in the other role.
+  3. then single-role scouts in any slot. They keep `preferred_roles = scout`, so they would
+     get no preferred-role boost in the other role (the calibrated boost is 1.0, no bonus, so
+     today this changes nothing in play).
 - **Free Agents:** everyone left over goes to the Free Agents pool. The importer skips slot
   limits and slot assignment for `team = Free Agents`. Result: 34 full teams and 26 free
   agents.
@@ -76,8 +77,10 @@ splits a player into six skill areas, shown as a pie chart with the largest shar
 ## Per-stat decisions
 
 The 0-100 value written to the CSV. "Sim effect" summarises how the simulator reads the
-stat today. At run time, `Player.stat_for_simulation` multiplies the value by 1.2 (capped at
-100) in a preferred role.
+stat today. At run time, `Player.stat_for_simulation` multiplies the value by
+`ImportConstants.preferred_role_boost` (capped at 100) in a preferred role. LFS-01's
+calibration set that to 1.0, so a preferred role no longer adds a bonus; it was 1.2 (see
+**Calibration results**).
 
 | Stat | Sim effect | LFstats source | Formula | Status |
 |---|---|---|---|---|
@@ -272,6 +275,151 @@ count metrics.
   - shots-hit volume vs position: `50 + 25 * log2(player_shots_hit / position_avg)`, as a tempo signal;
   - medic hits vs position: `50 + 25 * log2(player_medic_hits / position_avg)`, as a sign of
     getting deep into enemy territory.
+
+## Calibration results (LFS-01, 2026-11-03)
+
+Spec #514, ticket #521. Every number below is from one of the two committed runs:
+[`lfstats-calibration/2026-11-03-search-train.txt`](lfstats-calibration/2026-11-03-search-train.txt)
+(the search) and
+[`lfstats-calibration/2026-11-03-test-internationals.txt`](lfstats-calibration/2026-11-03-test-internationals.txt)
+(the single Test run).
+
+### Method
+
+- **Training:** each (player, position) in `data/lfstats_train_2026-10-21.json` with 26+ games
+  there plays 3 rounds at that position on Syracuse, with five field-average teammates and six
+  field-average opponents built from the position baselines. 542 players across the five
+  positions.
+- **Search:** a seeded coordinate search over `accuracy_offset` (-20 / -10 / 0) and
+  `preferred_role_boost` (1.0 / 1.1 / 1.2), scored on Training only. The objective is the mean
+  over (position, metric) cells of `((sim - real) / max(|real|, floor))^2`, with floors 0.5 for
+  a count and 0.05 for a fraction. The other three constants stayed at their defaults: a first
+  full search moved the objective by about 0.001 over `log_scale`, below the 1-round noise,
+  and the owner narrowed it (comment on #514).
+- **Test:** each usable Internationals 2026 game is replayed 10 times with its real lineup (Fire
+  red, Ice blue), each player built from their Training row at the position played. It ran once,
+  after the search, and no constant was changed after it.
+- **Gate:** a cell passes when the simulated mean is within 15% of the real mean, or within 0.5
+  for a count / 0.05 for a fraction when that is wider. Spearman per player is reported, not
+  gated.
+
+### Chosen constants
+
+| Constant | Before | Chosen |
+|---|---|---|
+| `log_scale` | 25 | 25 |
+| `accuracy_offset` | 0 | 0 |
+| `accuracy_scale` | 100 | 100 |
+| `survival_times_hit_weight` | 0.5 | 0.5 |
+| `preferred_role_boost` | 1.2 | **1.0** |
+
+Training objective: 0.2405 at the old defaults, **0.2127** chosen. `preferred_role_boost` 1.1
+scored 0.2142, within the noise of 1.0. Lowering accuracy made the fit worse (0.2590 at -10,
+0.2850 at -20). Training cells passed: 14 / 36.
+
+The boost is read by `Player.stat_for_simulation` for every Player, so a preferred role gives
+no bonus anywhere in the app now (the owner chose this). The stat formulas did not change,
+so `data/lfstats_players.csv` is unchanged: rebuilding it from the snapshot is byte-identical.
+
+### Test set (Internationals 2026, Syracuse, 10 rounds per game)
+
+| Position | Metric | Sim | Real | Pass | Rho |
+|---|---|---|---|---|---|
+| commander | accuracy | 0.793 | 0.841 | PASS | 0.54 |
+| commander | hit diff | 1.268 | 0.977 | PASS | 0.63 |
+| commander | times hit | 59.3 | 59.1 | PASS | -0.09 |
+| commander | MVP | 14.35 | 18.74 | FAIL | 0.64 |
+| commander | uptime | 0.434 | 0.542 | FAIL | -0.11 |
+| commander | elimination rate | 0.475 | 0.380 | FAIL | 0.59 |
+| commander | nukes detonated | 0.50 | 2.79 | FAIL | -0.48 |
+| commander | missiles hit | 0.95 | 2.47 | FAIL | 0.45 |
+| heavy | accuracy | 0.759 | 0.854 | PASS | 0.31 |
+| heavy | hit diff | 1.671 | 0.969 | FAIL | 0.70 |
+| heavy | times hit | 50.0 | 47.8 | PASS | -0.09 |
+| heavy | MVP | 19.85 | 15.64 | FAIL | 0.53 |
+| heavy | uptime | 0.439 | 0.586 | FAIL | 0.39 |
+| heavy | elimination rate | 0.507 | 0.429 | FAIL | 0.50 |
+| heavy | missiles hit | 0.69 | 1.76 | FAIL | 0.52 |
+| scout | accuracy | 0.704 | 0.742 | PASS | 0.77 |
+| scout | hit diff | 1.056 | 1.117 | PASS | -0.35 |
+| scout | times hit | 39.4 | 33.8 | FAIL | 0.11 |
+| scout | MVP | 12.34 | 13.84 | PASS | 0.34 |
+| scout | uptime | 0.346 | 0.516 | FAIL | -0.26 |
+| scout | elimination rate | 0.613 | 0.447 | FAIL | 0.26 |
+| scout | rapid fire | 2.15 | 1.57 | FAIL | 0.13 |
+| ammo | accuracy | 0.749 | 0.795 | PASS | 0.60 |
+| ammo | hit diff | 0.920 | 1.100 | PASS | -0.19 |
+| ammo | times hit | 36.8 | 23.2 | FAIL | 0.07 |
+| ammo | MVP | 17.79 | 14.79 | FAIL | 0.11 |
+| ammo | uptime | 0.279 | 0.610 | FAIL | 0.10 |
+| ammo | elimination rate | 0.864 | 0.447 | FAIL | 0.34 |
+| ammo | resupplies given | 70.1 | 36.2 | FAIL | 0.15 |
+| medic | accuracy | 0.789 | 0.902 | PASS | -0.12 |
+| medic | hit diff | 0.456 | 1.062 | FAIL | -0.35 |
+| medic | times hit | 19.7 | 10.2 | FAIL | 0.16 |
+| medic | MVP | 13.07 | 15.95 | FAIL | -0.20 |
+| medic | uptime | 0.387 | 0.765 | FAIL | 0.05 |
+| medic | elimination rate | 0.964 | 0.660 | FAIL | 0.26 |
+| medic | resupplies given | 55.5 | 40.8 | FAIL | -0.08 |
+
+- **Cells passed:** 11 / 36. Accuracy passes at every position; scouts match best.
+- **Coverage:** 128 of 165 games used; 1 skipped for its lineup, 36 for thin data (a player
+  with under 5 Training games at the position played).
+- **Match level:** the sim picks the real winner in 61.7% of the 128 games; mean margin error
+  8,336 points.
+- **Scorecards:** 256 per position (512 scouts), from 128 games x 2 teams.
+
+### Commands
+
+```
+python laserforce_simulator/manage.py lfstats_calibrate --split search --search-fields accuracy_offset,preferred_role_boost --rounds 3 --seed 42 --workers 8
+python laserforce_simulator/manage.py lfstats_calibrate --split test --preferred-role-boost 1.0 --rounds 10 --seed 42 --workers 8
+```
+
+The Test command predates the new default; after this change `--preferred-role-boost 1.0` is
+the default and can be dropped.
+
+### Fixed along the way
+
+- **Spawns cut off from the floor.** On Syracuse at 30px the corridor by red's base becomes
+  two pockets that do not connect to the main floor, and 9 of red's 11 spawn cells were in
+  them. Four red players never moved or engaged, which made every earlier run on the map
+  invalid. `map_loader.reachable_spawn_pools` now moves such cells to the nearest main-floor
+  cell to the base. This also fixes app games on that map.
+
+### Findings (LFS-02 / CAL-01)
+
+Every failing Test cell, grouped by the mechanic it most likely needs. Import constants could
+not close these gaps: they are in how the sim plays, not in the imported stats.
+
+- **Downtime is about double the real figure at every position.** Uptime fails everywhere
+  (commander 0.43 vs 0.54, heavy 0.44 vs 0.59, scout 0.35 vs 0.52, ammo 0.28 vs 0.61, medic
+  0.39 vs 0.77), even where times hit matches (commander, heavy). Check the respawn timing
+  (`RESPAWN_TICKS`, `NOT_TARGETABLE_TICKS`) against SM5, and whether the sim's uptime
+  (`ticks_active / live ticks`) matches LFstats' definition.
+- **Too many eliminations.** Elimination rate fails at every position, worst for support
+  (ammo 0.86 vs 0.45, medic 0.96 vs 0.66). Lives are lost faster than medics resupply them.
+- **Support players are too exposed.** Ammo times hit 36.8 vs 23.2 and medic 19.7 vs 10.2.
+  `_goal_from_role` sends ammo to the highest-sight cell near the heavy, and medics may also
+  stand where enemies can see them. Medic hit diff (0.46 vs 1.06) and MVP (13.1 vs 15.9)
+  follow from being hit about twice as often.
+- **Resupplies are too frequent.** Ammo gives 70.1 vs 36.2, medic 55.5 vs 40.8. Check the
+  resupply cooldown and the support `resupply_ally` weights. Ammo MVP (17.8 vs 14.8) is high
+  because of it.
+- **Commanders detonate too few nukes.** 0.50 vs 2.79 per game. Check SP gain, the nuke gate
+  (`_commander_nuke_gate`) and how often a nuke is cancelled. Also, `ctx.pending_nukes` is a
+  stale alias that is rebound every tick, so `record_down` never sees a live nuke; LFS-01
+  counts the cancel at the drain fallback instead. Commander MVP (14.4 vs 18.7) is low mostly
+  because of missing nukes and missiles.
+- **Missiles land too rarely.** Commander 0.95 vs 2.47 and heavy 0.69 vs 1.76. Check missile
+  count, lock time and lock-break chance.
+- **Heavies trade too well.** Hit diff 1.67 vs 0.97 and MVP 19.8 vs 15.6, while times hit
+  matches. Heavies tag too often, about 84 tags against 46 implied by LFstats, so check the
+  heavy's tag weight and shot cadence.
+- **Scouts rapid-fire too often** (2.15 vs 1.57) and are hit a little too much (39.4 vs 33.8).
+- **Scout MVP misses the commander / heavy tag bonus.** The batch engine never fills
+  `specific_tags`, so the scout's +0.2 per commander or heavy tag never scores. Scout MVP
+  passes anyway (12.3 vs 13.8), but the cell is low.
 
 ## Findings to follow up
 

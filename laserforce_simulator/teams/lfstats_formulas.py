@@ -58,7 +58,9 @@ Row = dict[str, Any]
 
 @dataclass(frozen=True)
 class ImportConstants:
-    """The import's tunables. The defaults reproduce the original formulas exactly."""
+    """The import's tunables. LFS-01's Training search chose the defaults
+    (docs/lfstats-import.md "Calibration results"): only ``preferred_role_boost``
+    moved from the original formulas, 1.2 -> 1.0."""
 
     # The log_part scale of every ratio stat (uptime keeps UPTIME_SCALE).
     log_scale: float = 25.0
@@ -68,8 +70,9 @@ class ImportConstants:
     # survival weight on the inverted times-hit ratio; the rest is on
     # 100 * (1 - elimination_rate).
     survival_times_hit_weight: float = 0.5
-    # What Player.stat_for_simulation multiplies a preferred-Role stat by.
-    preferred_role_boost: float = 1.2
+    # What Player.stat_for_simulation multiplies a preferred-Role stat by. 1.0
+    # (no bonus) fit the Training set best; the original value was 1.2.
+    preferred_role_boost: float = 1.0
 
 
 DEFAULT_CONSTANTS = ImportConstants()
