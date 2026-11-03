@@ -183,6 +183,9 @@ def mypy_step(py_files: list[str], diff_ref: str, repo_root: str) -> tuple[str, 
     code, out = _run(_tool("mypy", "--follow-imports=silent", *py_files), cwd=repo_root)
     if code == 0:
         return ("PASS", "")
+    if not any(_MYPY_ERROR.match(line) for line in out.splitlines()):
+        # Failed without reporting an error: mypy is missing or crashed.
+        return ("FAIL", _tail(out))
     _, diff = _run(["git", "diff", "-U0", diff_ref, "--", *py_files], repo_root)
     errors = _errors_on_changed_lines(out, _changed_lines(diff), repo_root)
     if errors:
