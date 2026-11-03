@@ -33,8 +33,10 @@ verify = _load_script()
 changed_files = verify.cf
 
 
-def _git(repo: str, *args: str) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True)
+def _git(repo: str, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, check=True, capture_output=True, text=True
+    ).stdout
 
 
 class CollectChangedUntrackedTests(TestCase):
@@ -72,16 +74,67 @@ class SelectChangesTests(TestCase):
         self.assertEqual(data["changed"], ["a.py"])
         self.assertEqual(calls, ["working"])
 
-    def test_clean_tree_falls_back_to_the_branch_vs_main(self) -> None:
+    def test_clean_tree_falls_back_to_the_branch_vs_origin_main(self) -> None:
         # CI-01 retro: once everything was committed, /verify skipped every
-        # check and still printed OVERALL PASS.
+        # check and still printed OVERALL PASS. BUG-SL-01 retro: the base is
+        # origin/main, since local main often lags it.
         def compute(base: str, mode: str) -> dict:
-            self.assertEqual(base, "main")
+            self.assertEqual(base, "origin/main")
             return _changes() if mode == "working" else _changes("b.py")
 
         mode, data = verify.select_changes(compute)
         self.assertEqual(mode, "branch")
         self.assertEqual(data["changed"], ["b.py"])
+
+    def test_branch_mode_checks_the_branch_with_uncommitted_work(self) -> None:
+        # BUG-SL-01 retro: a dirty tree could only check the uncommitted work,
+        # so the branch's committed code went unchecked until the docs landed.
+        calls: list[tuple[str, str]] = []
+
+        def compute(base: str, mode: str) -> dict:
+            calls.append((base, mode))
+            return _changes("a.py") if mode == "working" else _changes("a.py", "b.py")
+
+        mode, data = verify.select_changes(compute, base="v1", mode="branch")
+        self.assertEqual(mode, "branch")
+        self.assertEqual(data["changed"], ["a.py", "b.py"])
+        self.assertEqual(calls, [("v1", "branch")])
+
+    def test_working_mode_never_falls_back(self) -> None:
+        def compute(base: str, mode: str) -> dict:
+            return _changes() if mode == "working" else _changes("b.py")
+
+        mode, data = verify.select_changes(compute, mode="working")
+        self.assertEqual(mode, "working")
+        self.assertTrue(data["nothing_changed"])
+
+
+class DiffRefTests(TestCase):
+    def test_branch_ref_is_the_merge_base_so_uncommitted_lines_count(self) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            _git(repo, "init", "-q", "-b", "main")
+            _git(repo, "config", "user.email", "t@example.com")
+            _git(repo, "config", "user.name", "t")
+            Path(repo, "a.py").write_text("x = 1\n", encoding="utf-8")
+            _git(repo, "add", "a.py")
+            _git(repo, "commit", "-q", "-m", "init")
+            fork = _git(repo, "rev-parse", "HEAD").strip()
+            _git(repo, "switch", "-q", "-c", "topic")
+            Path(repo, "a.py").write_text("x = 2\n", encoding="utf-8")
+            _git(repo, "commit", "-q", "-am", "topic")
+
+            self.assertEqual(verify._diff_ref("branch", "main", repo), fork)
+            self.assertEqual(verify._diff_ref("working", "main", repo), "HEAD")
+
+
+class ParseArgsTests(TestCase):
+    def test_defaults(self) -> None:
+        args = verify.parse_args([])
+        self.assertEqual((args.base, args.mode), ("origin/main", None))
+
+    def test_base_and_mode(self) -> None:
+        args = verify.parse_args(["--base", "main", "--mode", "branch"])
+        self.assertEqual((args.base, args.mode), ("main", "branch"))
 
 
 def _scope(targets: list[str], full_suite: bool) -> dict:

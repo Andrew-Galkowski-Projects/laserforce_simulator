@@ -34,6 +34,12 @@ class TestRefusesShellWritesToRepoFiles(TestCase):
             with self.subTest(command=command):
                 self.assertIsNotNone(guard.refusal(command))
 
+    def test_refuses_sed_in_place_before_a_scratch_command(self) -> None:
+        # BUG-SL-01 retro: the old last-token rule read the scratch path here.
+        self.assertIsNotNone(
+            guard.refusal(f"sed -i 's/a/b/' PLAN.md; cat {SCRATCH}/out.txt")
+        )
+
     def test_refuses_a_heredoc_into_a_repo_file(self) -> None:
         for command in (
             "cat >> laserforce_simulator/matches/tests/test_x.py <<'EOF'\nx = 1\nEOF",
@@ -88,6 +94,10 @@ class TestAllowsEverydayCommands(TestCase):
             f"cat > {SCRATCH}/msg.txt <<'EOF'\nhi\nEOF",
             f"python script.py > {SCRATCH}/out.json",
             "sed -i 's/a/b/' /tmp/notes.txt",
+            # BUG-SL-01 retro: the target is the sed segment's last token, not
+            # the whole command's (`head` here).
+            f"sed -i 's/a/b/' {SCRATCH}/probe.py; python x.py | grep OK | head",
+            f"sed -i 's/a/b/' {SCRATCH}/probe.py && python x.py",
         ):
             with self.subTest(command=command):
                 self.assertIsNone(guard.refusal(command))

@@ -25,12 +25,14 @@ not write is not this change's FAIL. A file with no diff hunks (new and
 untracked) keeps every error.
 
 The change set is the uncommitted work vs HEAD. On a clean tree (everything
-committed, the usual state at PR time) it falls back to the branch vs main, so
-the checks never skip a committed branch; the summary names which one ran.
+committed, the usual state at PR time) it falls back to the branch vs
+origin/main, so the checks never skip a committed branch; the summary names
+which one ran. ``--mode branch`` checks the whole branch, uncommitted work
+included, even on a dirty tree; ``--base`` changes the base ref.
 
 Run from anywhere in the repo:
 
-    python .claude/skills/verify/scripts/verify.py
+    python .claude/skills/verify/scripts/verify.py [--mode branch] [--base REF]
 
 Exit code is 0 only if every applicable step passed (skipped steps count as
 pass). The final block is the canonical VERIFY SUMMARY table.
@@ -38,6 +40,7 @@ pass). The final block is the canonical VERIFY SUMMARY table.
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import os
 import re
@@ -103,17 +106,55 @@ def _tool(name: str, *args: str) -> list[str]:
     return [sys.executable, "-m", name, *args]
 
 
-def select_changes(compute: Callable[..., Any]) -> tuple[str, Any]:
-    """The change set to check: uncommitted work, else the branch vs main.
+DEFAULT_BASE = "origin/main"
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the verify checks.")
+    parser.add_argument(
+        "--base",
+        default=DEFAULT_BASE,
+        help=f"base ref for branch mode (default: {DEFAULT_BASE})",
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["branch", "working"],
+        default=None,
+        help="branch: the whole branch vs base, uncommitted work included; "
+        "working: uncommitted work vs HEAD (default: working, else branch)",
+    )
+    return parser.parse_args(argv)
+
+
+def select_changes(
+    compute: Callable[..., Any],
+    base: str = DEFAULT_BASE,
+    mode: str | None = None,
+) -> tuple[str, Any]:
+    """The change set to check: ``mode`` when given, else uncommitted work,
+    else the branch vs ``base``.
 
     A clean tree (everything committed, the usual state at PR time) falls back
     to ``mode="branch"`` so the checks still see the branch's files instead of
-    skipping every step.
+    skipping every step. The base is ``origin/main``: local ``main`` often lags
+    it, and a stale base drags other merged work into the checks.
     """
-    data = compute(base="main", mode="working")
+    if mode is not None:
+        return mode, compute(base=base, mode=mode)
+    data = compute(base=base, mode="working")
     if not data["nothing_changed"]:
         return "working", data
-    return "branch", compute(base="main", mode="branch")
+    return "branch", compute(base=base, mode="branch")
+
+
+def _diff_ref(mode: str, base: str, repo_root: str) -> str:
+    """The ``git diff`` ref for line-level checks: HEAD for uncommitted work;
+    for a branch, the merge-base with ``base``, so the working tree's
+    uncommitted lines count too."""
+    if mode == "working":
+        return "HEAD"
+    code, out = _run(["git", "merge-base", base, "HEAD"], repo_root)
+    return out.strip() if code == 0 else f"{base}...HEAD"
 
 
 def pytest_scope(data: Any) -> list[str] | None:
@@ -130,9 +171,11 @@ def pytest_scope(data: Any) -> list[str] | None:
     return None
 
 
-def main() -> int:
-    mode, data = select_changes(cf.compute)
+def main(argv: list[str] | None = None) -> int:
+    args = parse_args(argv)
+    mode, data = select_changes(cf.compute, base=args.base, mode=args.mode)
     repo_root = str(data["repo_root"])
+    diff_ref = _diff_ref(mode, args.base, repo_root)
     django_dir = (
         os.path.join(repo_root, str(data["django_dir"]))
         if data["django_dir"]
@@ -189,8 +232,7 @@ def main() -> int:
         results["glossary"] = ("SKIP", "nothing changed")
     else:
         script = os.path.join(repo_root, "scripts", "check_glossary_avoid.py")
-        ref = "HEAD" if mode == "working" else "main...HEAD"
-        code, out = _run([sys.executable, script, "--ref", ref], cwd=repo_root)
+        code, out = _run([sys.executable, script, "--ref", diff_ref], cwd=repo_root)
         hits = [line for line in out.splitlines() if ': avoid-word "' in line]
         if code != 0:
             results["glossary"] = ("FAIL", _tail(out))
@@ -221,8 +263,7 @@ def main() -> int:
         if code == 0:
             results["mypy"] = ("PASS", "")
         else:
-            ref = "HEAD" if mode == "working" else "main...HEAD"
-            _, diff = _run(["git", "diff", "-U0", ref, "--", *py_files], repo_root)
+            _, diff = _run(["git", "diff", "-U0", diff_ref, "--", *py_files], repo_root)
             errors = _errors_on_changed_lines(out, _changed_lines(diff), repo_root)
             results["mypy"] = (
                 ("FAIL", " | ".join(errors[-15:]))
@@ -263,7 +304,9 @@ def main() -> int:
     overall = "FAIL" if any(v[0] == "FAIL" for v in results.values()) else "PASS"
 
     print("VERIFY SUMMARY")
-    print("uncommitted changes vs HEAD" if mode == "working" else "branch vs main")
+    print(
+        "uncommitted changes vs HEAD" if mode == "working" else f"branch vs {args.base}"
+    )
     print("-" * 30)
     for step in STEPS:
         status, note = results[step]

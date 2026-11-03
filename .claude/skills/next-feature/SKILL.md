@@ -292,8 +292,9 @@ against the spec issue.
 
 **A one-ticket breakdown is yours to implement:** write it test-first in the
 integration worktree, under the implementer constraints below (the red pairing
-for every Implementation Decision included), and comment the commit on the
-ticket. Step 8's review still gives it fresh eyes. PERF-03's implementer agent
+for every Implementation Decision included), run `/verify` with `--mode branch`
+right before the commit (BUG-SL-01 committed its code unverified), and comment
+the commit on the ticket. Step 8's review still gives it fresh eyes. PERF-03's implementer agent
 spent 63k tokens on a 10-line change.
 
 A departure from the spec (a rename, a changed default, an extra UI rule) is a
