@@ -22,6 +22,7 @@ from core.map_processing import compute_high_los_ranking
 from core.map_test_fixtures import (
     BLUE_BASE,
     DETECT_KEYS,
+    EDGE_ZONE_SIZE,
     GRID,
     HEATMAP_KEYS,
     RED_BASE,
@@ -30,6 +31,7 @@ from core.map_test_fixtures import (
     ZONE_SIZE,
     TempMediaMixin,
     corrupt_upload,
+    make_edge_map,
     make_heatmap_round,
     make_image_map,
     make_season,
@@ -711,6 +713,30 @@ class TestSightLinesWrites(_MapsWriteTestCase):
 
     def test_compute_array_body_is_parse_error(self) -> None:
         self.error(self.post_json("sight-lines-compute", [50]), 400, "parse_error")
+
+
+class TestSightLinesAfterAutoDetectedSave(_MapsWriteTestCase):
+    """BUG-SL-01: a zone-config PUT without ``zones`` stores the detected
+    Blocked edges as the flat dict; compute and the cell GET used to 500."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.map = make_edge_map()
+        self.ok(self.put_json("zone-config", {"zone_size": EDGE_ZONE_SIZE}))
+
+    def test_compute_honours_the_saved_blocked_edge(self) -> None:
+        data = self.ok(
+            self.post_json("sight-lines-compute", {"zone_size": EDGE_ZONE_SIZE})
+        )
+        self.assertNotIn("1,3", data["sight_data"]["1,0"])
+        self.assertIn("0,4", data["sight_data"]["0,0"])
+
+    def test_cell_honours_the_saved_blocked_edge(self) -> None:
+        data = self.ok(
+            self.get("sight-lines-cell", {"zone_size": EDGE_ZONE_SIZE, "r": 1, "c": 0})
+        )
+        self.assertNotIn("1,3", data["visible_cells"])
+        self.assertIn("0,2", data["visible_cells"])
 
 
 # ---------------------------------------------------------------------------

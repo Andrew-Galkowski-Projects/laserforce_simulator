@@ -1380,6 +1380,65 @@ class TestMap07WallTypes:
         assert _can_tag_through_windowed_wall(0, 0, 0, 2, zone_data, wall_meta) is False
 
 
+class TestSavedBlockedEdges:
+    """BUG-SL-01: a saved zone config holds Blocked edges only as the flat
+    ``"r,c,d"`` dict, never ``blocked_edges_grid``. Both LOS computes accept it.
+
+    Targets sit two or more edges past the blocked one: ``_has_los`` ignores
+    the edge next to the target (PLAN.md Deferred Items).
+    """
+
+    ZONES = [[1] * 5 for _ in range(3)]
+
+    @classmethod
+    def _saved(cls, *keys):
+        return {"zones": cls.ZONES, "blocked_edges": {k: True for k in keys}}
+
+    def test_compute_sight_lines_blocks_the_line_walk(self):
+        from core.map_processing import compute_sight_lines
+
+        sight = compute_sight_lines(self._saved("1,1,e"))
+        for far in ("1,3", "1,4"):
+            assert far not in sight["1,0"]
+            assert "1,0" not in sight[far]
+        assert "0,4" in sight["0,0"]
+        assert "2,4" in sight["2,0"]
+
+    def test_single_cell_visibility_blocks_the_line_walk(self):
+        from core.map_processing import compute_single_cell_visibility
+
+        visible = compute_single_cell_visibility(1, 0, self._saved("1,1,e"))
+        assert "1,3" not in visible
+        assert "1,4" not in visible
+        assert "0,2" in visible
+
+    def test_adjacent_cells_across_a_blocked_edge(self):
+        from core.map_processing import compute_sight_lines
+
+        east = compute_sight_lines(self._saved("1,1,e"))
+        assert "1,2" not in east["1,1"]
+        assert "1,1" not in east["1,2"]
+        south = compute_sight_lines(self._saved("1,1,s"))
+        assert "2,1" not in south["1,1"]
+        assert "1,1" not in south["2,1"]
+
+    def test_saved_shape_matches_the_detected_grid(self):
+        from core.map_processing import compute_sight_lines
+
+        grid = [[{"e": False, "s": False} for _ in range(5)] for _ in range(3)]
+        grid[1][1]["e"] = True
+        grid[0][3]["s"] = True
+        detected = {"zones": self.ZONES, "blocked_edges_grid": grid}
+        saved = self._saved("1,1,e", "0,3,s")
+        assert compute_sight_lines(saved) == compute_sight_lines(detected)
+
+    def test_off_grid_keys_are_skipped(self):
+        from core.map_processing import compute_sight_lines
+
+        with_stray = compute_sight_lines(self._saved("1,1,e", "9,9,e", "1,7,s"))
+        assert with_stray == compute_sight_lines(self._saved("1,1,e"))
+
+
 @pytest.mark.django_db
 class TestMap07DBIntegration:
     """DB-backed MAP-07 tests: wall_meta persisted and loaded by simulator."""
