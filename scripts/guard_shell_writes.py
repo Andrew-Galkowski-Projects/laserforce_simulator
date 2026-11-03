@@ -33,6 +33,8 @@ CD_MESSAGE = (
 # `cd` as a command: at the start, or after `;`, `&&`, `||`, `|` or `(`.
 _CD = re.compile(r"(?:^|[;&|(])\s*cd(?:\s|$)")
 _SED_IN_PLACE = re.compile(r"\bsed\s+(?:-[A-Za-z]*i\S*|--in-place)\S*\s")
+# Command separators: `;`, `&&`, `||`, `|`, newline.
+_SEPARATOR = re.compile(r"\s*(?:;|&&|\|\||\||\n)\s*")
 _HEREDOC = re.compile(r"<<-?\s*['\"]?\w+")
 # A redirect target: `> path`, `>> path`, `tee path`, skipping fd redirects (2>&1).
 _TARGET = re.compile(r"(?:(?<![0-9&])>>?|\btee(?:\s+-a)?)\s*([^\s|;&<>]+)")
@@ -50,10 +52,12 @@ def refusal(command: str) -> str | None:
     """The refusal message for ``command``, or ``None`` when it may run."""
     if _CD.search(command):
         return CD_MESSAGE
-    if _SED_IN_PLACE.search(command):
-        targets = command.split()[-1:]
-        if not all(_is_scratch(t) for t in targets):
-            return MESSAGE
+    # Each `sed -i` segment's target is that segment's last token (BUG-SL-01
+    # retro: the whole command's last token was a later pipe's `head`).
+    for segment in _SEPARATOR.split(command):
+        if _SED_IN_PLACE.search(segment + " "):
+            if not _is_scratch(segment.split()[-1]):
+                return MESSAGE
     targets = [t for t in _TARGET.findall(command) if not _is_scratch(t)]
     if not targets:
         return None

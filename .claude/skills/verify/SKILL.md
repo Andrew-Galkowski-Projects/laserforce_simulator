@@ -16,6 +16,10 @@ From anywhere in the repo:
 python .claude/skills/verify/scripts/verify.py
 ```
 
+`--mode branch` checks the whole branch vs `origin/main`, uncommitted work
+included, even on a dirty tree; use it before a branch's code commit or PR.
+`--base <ref>` changes the base.
+
 Use the venv's python (e.g. `.venv\Scripts\python.exe` on Windows): every
 tool runs as `python -m <tool>` from that same interpreter, so the venv does
 not need to be on PATH.
@@ -25,7 +29,8 @@ The script:
 1. Computes changed files via the shared
    [`scripts/changed_files.py`](scripts/changed_files.py) helper (mode
    `working`: vs `HEAD` plus unstaged; on a clean tree it falls back to mode
-   `branch`, vs `main`, and the summary's second line names which ran;
+   `branch`, vs `origin/main` (local `main` often lags it), and the summary's
+   second line names which ran;
    deleted files are skipped).
 2. Runs `black --check`, `ruff check` (the narrow F401/F811 set from
    `pyproject.toml`) and `mypy --follow-imports=silent` on the changed `.py`
