@@ -123,6 +123,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="branch: the whole branch vs base, uncommitted work included; "
         "working: uncommitted work vs HEAD (default: working, else branch)",
     )
+    parser.add_argument(
+        "--mypy-only",
+        action="store_true",
+        help="run only the mypy step and print its one row (CI's lint job)",
+    )
     return parser.parse_args(argv)
 
 
@@ -171,11 +176,36 @@ def pytest_scope(data: Any) -> list[str] | None:
     return None
 
 
+def mypy_step(py_files: list[str], diff_ref: str, repo_root: str) -> tuple[str, str]:
+    """mypy on the changed files; FAIL only for an error on a line changed vs ``diff_ref``."""
+    if not py_files:
+        return ("SKIP", "no changed .py files")
+    code, out = _run(_tool("mypy", "--follow-imports=silent", *py_files), cwd=repo_root)
+    if code == 0:
+        return ("PASS", "")
+    if not any(_MYPY_ERROR.match(line) for line in out.splitlines()):
+        # Failed without reporting an error: mypy is missing or crashed.
+        return ("FAIL", _tail(out))
+    _, diff = _run(["git", "diff", "-U0", diff_ref, "--", *py_files], repo_root)
+    errors = _errors_on_changed_lines(out, _changed_lines(diff), repo_root)
+    if errors:
+        return ("FAIL", " | ".join(errors[-15:]))
+    return ("PASS", "pre-existing errors only")
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     mode, data = select_changes(cf.compute, base=args.base, mode=args.mode)
     repo_root = str(data["repo_root"])
     diff_ref = _diff_ref(mode, args.base, repo_root)
+    if args.mypy_only:
+        # CI's lint job (LFS-01 retro): the same changed-lines rule, alone.
+        files = [os.path.join(repo_root, p) for p in data["python"]]
+        status, note = mypy_step(
+            [p for p in files if os.path.isfile(p)], diff_ref, repo_root
+        )
+        print(_ascii(f"mypy      {status:<5} {note}".rstrip()))
+        return 1 if status == "FAIL" else 0
     django_dir = (
         os.path.join(repo_root, str(data["django_dir"]))
         if data["django_dir"]
@@ -255,23 +285,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         results["dead-code"] = ("SKIP", "no changed .py files")
 
-    # --- mypy (changed files only; errors on changed lines only) ---
-    if py_files:
-        code, out = _run(
-            _tool("mypy", "--follow-imports=silent", *py_files), cwd=repo_root
-        )
-        if code == 0:
-            results["mypy"] = ("PASS", "")
-        else:
-            _, diff = _run(["git", "diff", "-U0", diff_ref, "--", *py_files], repo_root)
-            errors = _errors_on_changed_lines(out, _changed_lines(diff), repo_root)
-            results["mypy"] = (
-                ("FAIL", " | ".join(errors[-15:]))
-                if errors
-                else ("PASS", "pre-existing errors only")
-            )
-    else:
-        results["mypy"] = ("SKIP", "no changed .py files")
+    results["mypy"] = mypy_step(py_files, diff_ref, repo_root)
 
     # --- pytest ---
     targets = pytest_scope(data)

@@ -10,7 +10,7 @@ import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
-from unittest import TestCase
+from unittest import TestCase, mock, skipUnless
 
 _SCRIPTS = (
     Path(__file__).resolve().parent.parent / ".claude" / "skills" / "verify" / "scripts"
@@ -127,10 +127,68 @@ class DiffRefTests(TestCase):
             self.assertEqual(verify._diff_ref("working", "main", repo), "HEAD")
 
 
+# CI's test job installs requirements.txt only; mypy comes in its lint job.
+_needs_mypy = skipUnless(importlib.util.find_spec("mypy"), "mypy is not installed")
+
+
+class MypyStepTests(TestCase):
+    """LFS-01 retro: 19 mypy errors reached review across four ticket commits."""
+
+    def _repo(self, repo: str) -> str:
+        _git(repo, "init", "-q", "-b", "main")
+        _git(repo, "config", "user.email", "t@example.com")
+        _git(repo, "config", "user.name", "t")
+        path = Path(repo, "a.py")
+        path.write_text('old: int = "x"\n', encoding="utf-8")
+        _git(repo, "add", "a.py")
+        _git(repo, "commit", "-q", "-m", "init")
+        return str(path)
+
+    def test_a_mypy_that_fails_without_reporting_an_error_fails(self) -> None:
+        # CI's test job has no mypy: `python -m mypy` exited 1 with no error
+        # lines, and the step read that as "pre-existing errors only".
+        with tempfile.TemporaryDirectory() as repo:
+            path = self._repo(repo)
+            with mock.patch.object(
+                verify,
+                "_tool",
+                lambda name, *args: [sys.executable, "-m", "no_such_mypy", *args],
+            ):
+                status, note = verify.mypy_step([path], "HEAD", repo)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("no_such_mypy", note)
+
+    @_needs_mypy
+    def test_an_error_on_a_changed_line_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            path = self._repo(repo)
+            Path(path).write_text('old: int = "x"\nnew: int = "y"\n', encoding="utf-8")
+            status, note = verify.mypy_step([path], "HEAD", repo)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("a.py:2", note)
+
+    @_needs_mypy
+    def test_an_error_only_on_an_old_line_passes(self) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            path = self._repo(repo)
+            Path(path).write_text('old: int = "x"\nnew: int = 1\n', encoding="utf-8")
+            status, note = verify.mypy_step([path], "HEAD", repo)
+        self.assertEqual((status, note), ("PASS", "pre-existing errors only"))
+
+    def test_no_python_file_skips(self) -> None:
+        self.assertEqual(
+            verify.mypy_step([], "HEAD", "."), ("SKIP", "no changed .py files")
+        )
+
+
 class ParseArgsTests(TestCase):
     def test_defaults(self) -> None:
         args = verify.parse_args([])
         self.assertEqual((args.base, args.mode), ("origin/main", None))
+        self.assertFalse(args.mypy_only)
+
+    def test_mypy_only(self) -> None:
+        self.assertTrue(verify.parse_args(["--mypy-only"]).mypy_only)
 
     def test_base_and_mode(self) -> None:
         args = verify.parse_args(["--base", "main", "--mode", "branch"])

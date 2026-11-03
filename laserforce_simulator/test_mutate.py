@@ -136,6 +136,44 @@ class MutateTests(TestCase):
         self.assertNotIn("caught", printed)
         self.assertEqual(self.target.read_bytes(), _CALC)
 
+    def test_a_mutation_that_hangs_times_out_and_counts_as_caught(self) -> None:
+        # LFS-01: a mutant sent a test into a real hours-long search and the run
+        # sat on it for 2 h. A hang fails CI too, so it is caught, not survived.
+        [outcome] = mutate.mutate_with(
+            self.target,
+            [mutate.Mutation("hang", "return a + b", "while True: pass")],
+            [sys.executable, "-m", "pytest", *_ARGS],
+            cwd=self.root,
+            timeout=5,
+        )
+        self.assertEqual(outcome.status, "timeout")
+        self.assertEqual(self.target.read_bytes(), _CALC)
+
+    def test_main_prints_timeout_and_exits_0(self) -> None:
+        mutations = self.root / "mutations.json"
+        mutations.write_text(json.dumps([["hang", "return a + b", "while True: pass"]]))
+        out = io.StringIO()
+        with contextlib.chdir(self.root), contextlib.redirect_stdout(out):
+            mutate.main(
+                [str(self.target), str(mutations), "--timeout", "5", "--", *_ARGS]
+            )
+        self.assertIn("TIMEOUT   hang: no result after 5 s", out.getvalue())
+
+    def test_main_exits_2_when_the_baseline_times_out(self) -> None:
+        (self.root / "test_calc.py").write_text(
+            "def test_add():\n    while True:\n        pass\n"
+        )
+        mutations = self.root / "mutations.json"
+        mutations.write_text(json.dumps([["plus to minus", "a + b", "a - b"]]))
+        out = io.StringIO()
+        with contextlib.chdir(self.root), contextlib.redirect_stdout(out):
+            with self.assertRaises(SystemExit) as caught:
+                mutate.main(
+                    [str(self.target), str(mutations), "--timeout", "5", "--", *_ARGS]
+                )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("BASELINE TIMED OUT after 5 s", out.getvalue())
+
     def test_main_exits_0_when_every_mutation_is_caught(self) -> None:
         mutations = self.root / "mutations.json"
         mutations.write_text(json.dumps([["plus to minus", "a + b", "a - b"]]))

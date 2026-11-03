@@ -302,6 +302,11 @@ comment on the spec issue when it is decided, by you or an implementer, so the
 Spec reviewer reads it there: DESK-01's four reached the issue only through the
 PR body.
 
+A ticket that changes a documented value (a default, a constant, a limit)
+greps the docs for the old value (`git grep -n "<old value>" -- ":/*.md"`) and
+fixes every statement of it in the same commit: LFS-01 moved the preferred-role
+boost from 1.2 to 1.0, and three docs still said ×1.2 until review.
+
 For more tickets, implementers run in their own worktrees branched from
 the integration branch, started one at a time: a worktree created while
 another agent is still committing can branch from a stale tip, so confirm
@@ -433,6 +438,9 @@ constraint and was skipped).
   `checkout` outside your own worktree.
 - Run `python -m black` on the files you touched. Run `makemigrations` for
   model changes and commit the migration with the model.
+- Right before each commit, run `/verify --mode branch` and fix every FAIL,
+  mypy included: CI's lint job fails the PR on a mypy error on a changed line,
+  and LFS-01's review spent a pass on 19 of them from four tickets.
 - Ownership is filtered on the server through the `manager` seam.
 - If you need a server, it goes on a free port, never 8000. Before reporting,
   stop it with `powershell -NoProfile -File scripts/stop_worktree_servers.ps1`
@@ -496,7 +504,10 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    a `BROKEN` line (the run failed with no test named: it does not compile)
    is a mutation to rewrite; `BASELINE FAILED` (exit 2, nothing mutated) means a test is red on the
    unchanged code: fix it first. `AMBIGUOUS` / `NOT FOUND`: the old text matches more than once /
-   never, and nothing ran; make it unique.
+   never, and nothing ran; make it unique. Each run is killed after `--timeout`
+   seconds (300): `TIMEOUT` counts as caught; `BASELINE TIMED OUT` means the
+   tests are too slow to mutate, so narrow them (LFS-01 sat 2 h on one mutant
+   that sent a test into a real search before the limit existed).
    Frontend code takes `--run -- npm --prefix frontend exec -- ng test
    --watch=false --include=<spec>` in place of the pytest args.
 3. **Browser check** through Chrome DevTools MCP when anything a person sees

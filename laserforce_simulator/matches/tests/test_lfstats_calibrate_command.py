@@ -129,6 +129,17 @@ class TestTrainSplit:
 
 @pytest.mark.django_db
 class TestSearchSplit:
+    @pytest.fixture(autouse=True)
+    def _no_real_search(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # A real search takes hours: a mutant that slips past a guard must hit
+        # this stub, not the simulator (LFS-01 retro). Tests override it.
+        def stub(
+            train: dict, movement_ctx: object, **kwargs: object
+        ) -> cal.TrainReport:
+            return cal.TrainReport(cells=[], objective=1.0)
+
+        monkeypatch.setattr(cal, "run_train", stub)
+
     def test_searches_the_default_grid_and_prints_the_result(
         self, files: dict[str, str], monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -419,6 +419,15 @@ def _run_rounds(tasks: list[tuple], workers: int) -> list[dict]:
     return [calibration_round_worker(task) for task in tasks]
 
 
+def _check_engaged(position: str, rounds: list[dict[str, float]]) -> None:
+    """Raise unless some round at ``position`` made a tag or took one."""
+    if not any(r["avg_hit_diff"] or r["avg_times_hit"] for r in rounds):
+        raise ValueError(
+            f"No {position} player tagged or was tagged in any simulated round; "
+            "check the map's spawn cells reach the floor"
+        )
+
+
 def _build_cells(
     sim_rounds: dict[tuple[str, str], list[dict[str, float]]],
     weights: dict[tuple[str, str], int],
@@ -432,12 +441,18 @@ def _build_cells(
     is ``n_scorecards``); ``real_value(player_pos, metric)`` is the real average it is
     compared with. ``spearman`` ranks the players whose weight is at least
     ``min_ranked``. A position with no player has no cells.
+
+    Raises:
+        ValueError: when no player at a position tagged or was tagged in any
+            round: the sim never engaged them (a spawn cut off from the floor,
+            say), so its numbers are not a calibration result.
     """
     cells: list[CellResult] = []
     for position in POSITIONS:
         players = [player_pos for player_pos in weights if player_pos[1] == position]
         if not players:
             continue
+        _check_engaged(position, [r for p in players for r in sim_rounds[p]])
         n = sum(weights[player_pos] for player_pos in players)
         for metric, kind, positions in METRICS:
             if position not in positions:
