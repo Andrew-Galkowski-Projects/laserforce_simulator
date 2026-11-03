@@ -26,6 +26,7 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
 - **Rebuild:** `python scripts/lfstats_import/compute.py data/lfstats_snapshot_2026-10-21.json data/lfstats_players.csv`.
   `extract.py` builds a snapshot from the Claude Code session transcripts that fetched the
   data through the LFstats connector. Tests: `laserforce_simulator/test_lfstats_import.py`.
+- **Formulas:** the stat formulas and their tunables (`ImportConstants`) live in `laserforce_simulator/teams/lfstats_formulas.py`; `compute.py` imports them.
 - **Teams:** grouped by home center (the center where the player plays most, from LFstats).
   Each center fields as many full 6-player rosters as it can (`<Center> 1`, `<Center> 2`, ...):
   1. main role first;

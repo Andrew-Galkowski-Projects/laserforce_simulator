@@ -149,6 +149,18 @@ class PlayerStatForSimulationTest(TestCase):
         result = player.stat_for_simulation("survival", "ammo")
         self.assertEqual(result, 90)  # int(75 * 1.2) = 90
 
+    # LFS-01b: the boost is DEFAULT_CONSTANTS.preferred_role_boost, read per call.
+    def test_boost_follows_default_constants(self):
+        from unittest import mock
+
+        from teams import lfstats_formulas
+
+        player = self._player("Tuned", preferred_roles=["scout"], accuracy=50)
+        tuned = lfstats_formulas.ImportConstants(preferred_role_boost=1.5)
+        with mock.patch.object(lfstats_formulas, "DEFAULT_CONSTANTS", tuned):
+            self.assertEqual(player.stat_for_simulation("accuracy", "scout"), 75)
+            self.assertEqual(player.stat_for_simulation("accuracy", "heavy"), 50)
+
 
 class RosterValidationTests(TestCase):
     """Test FIX-01: Enforce Scout-only role doubling in rosters."""
