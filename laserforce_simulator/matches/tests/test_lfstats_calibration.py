@@ -6,8 +6,10 @@ real LFstats number (spec #514, Testing Decisions).
 
 from __future__ import annotations
 
+import inspect
 import json
 import random
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -21,7 +23,7 @@ from matches.sim_helpers.parallel_worker import calibration_round_worker
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS
 from matches.simulation.entrypoints import _SIMULATION_STATS, _PlayerData
-from teams.lfstats_formulas import DEFAULT_CONSTANTS
+from teams.lfstats_formulas import DEFAULT_CONSTANTS, ImportConstants
 
 ALL_POSITIONS = ("commander", "heavy", "scout", "ammo", "medic")
 BASE_METRICS = {
@@ -737,6 +739,333 @@ def _roster(train: dict, roster: list[dict]) -> list:
             )
         )
     return out
+
+
+def _train(players: dict[str, dict]) -> dict:
+    """A Training dict whose ``rows.all`` are ``players`` (keyed ``"<ipl>|<pos>"``)."""
+    return {
+        "rows": {"all": players, "loss": {}},
+        "baselines": {
+            "all": {p: _row(p) for p in ALL_POSITIONS},
+            "loss": {p: _row(p) for p in ALL_POSITIONS},
+        },
+    }
+
+
+def _field_roster(
+    train: dict,
+    player: tuple[str, object] | None = None,
+    constants: object = DEFAULT_CONSTANTS,
+) -> list:
+    """A field-average side in LINEUP order, ``player`` in its Role's first slot."""
+    out = []
+    placed = False
+    for pos in LINEUP:
+        if player is not None and not placed and player[0] == pos:
+            out.append(player)
+            placed = True
+            continue
+        base = dict(train["baselines"]["all"][pos], position=pos)
+        out.append(
+            (
+                pos,
+                cal.player_data(
+                    f"field-{pos}",
+                    f"Field {pos}",
+                    base,
+                    train["baselines"]["all"][pos],
+                    None,
+                    train["baselines"]["loss"][pos],
+                    pos,
+                    constants,
+                ),
+            )
+        )
+    return out
+
+
+class TestRunTrain:
+    def test_only_players_with_26_training_games_play(
+        self, movement_ctx: MapContext
+    ) -> None:
+        assert cal.MIN_TRAIN_GAMES == 26
+        train = _train(
+            {
+                "h1|heavy": _row("heavy", games=26),
+                "h2|heavy": _row("heavy", games=25),
+                "s1|scout": _row("scout", games=25),
+            }
+        )
+        report = cal.run_train(train, movement_ctx, rounds=1, seed=3)
+        assert {c.position for c in report.cells} == {"heavy"}
+        assert all(c.n_scorecards == 1 for c in report.cells)
+
+    def test_cells_for_applicable_pairs_and_objective(
+        self, movement_ctx: MapContext
+    ) -> None:
+        train = _train(
+            {f"p{i}|{pos}": _row(pos) for i, pos in enumerate(ALL_POSITIONS)}
+        )
+        report = cal.run_train(train, movement_ctx, rounds=1, seed=3)
+        expected = [
+            (p, mid) for p in ALL_POSITIONS for mid, _k, ps in cal.METRICS if p in ps
+        ]
+        assert [(c.position, c.metric) for c in report.cells] == expected
+        assert report.objective == pytest.approx(cal.objective(report.cells))
+        kinds = {mid: kind for mid, kind, _ps in cal.METRICS}
+        for cell in report.cells:
+            assert cell.passed == cal.within_tolerance(
+                kinds[cell.metric], cell.sim_mean, cell.real_mean
+            )
+
+    def test_real_mean_is_the_players_training_average_unweighted(
+        self, movement_ctx: MapContext
+    ) -> None:
+        train = _train(
+            {
+                "h1|heavy": _row("heavy", games=26, avg_accuracy=0.4),
+                "h2|heavy": _row("heavy", games=100, avg_accuracy=0.8),
+            }
+        )
+        report = cal.run_train(train, movement_ctx, rounds=1, seed=3)
+        cell = next(c for c in report.cells if c.metric == "avg_accuracy")
+        assert cell.real_mean == pytest.approx(0.6)
+        assert cell.n_scorecards == 2
+
+    def test_player_plays_their_role_in_a_field_average_team(
+        self, movement_ctx: MapContext
+    ) -> None:
+        # Baselines without a "position" key still build field players.
+        train = _train({"h1|heavy": _row("heavy", avg_accuracy=0.9)})
+        for base in train["baselines"]["all"].values():
+            del base["position"]
+        # Non-default constants, so the player and the field must both get them.
+        constants = cal.ImportConstants(accuracy_offset=-30, preferred_role_boost=1.0)
+        report = cal.run_train(
+            train, movement_ctx, constants=constants, rounds=2, seed=5
+        )
+
+        row = train["rows"]["all"]["h1|heavy"]
+        me = (
+            "heavy",
+            cal.player_data(
+                "h1",
+                "h1",
+                row,
+                train["baselines"]["all"]["heavy"],
+                None,
+                train["baselines"]["loss"]["heavy"],
+                "heavy",
+                constants,
+            ),
+        )
+        gen = random.Random(5)
+        rounds = []
+        for _ in range(2):
+            out = calibration_round_worker(
+                (
+                    _field_roster(train, me, constants),
+                    _field_roster(train, constants=constants),
+                    movement_ctx,
+                    gen.getrandbits(63),
+                )
+            )
+            rounds.append(out["red"][1])  # the heavy is LINEUP's second slot
+        assert {c.metric: c.sim_mean for c in report.cells} == pytest.approx(
+            {m: sum(r[m] for r in rounds) / len(rounds) for m in rounds[0]}
+        )
+
+    def test_constants_reach_the_players(self, movement_ctx: MapContext) -> None:
+        train = _train({"h1|heavy": _row("heavy", avg_accuracy=0.6)})
+        low = cal.run_train(
+            train,
+            movement_ctx,
+            constants=cal.ImportConstants(accuracy_offset=-60),
+            rounds=1,
+            seed=3,
+        )
+        high = cal.run_train(train, movement_ctx, rounds=1, seed=3)
+        assert low.cells != high.cells
+
+    def test_no_qualifying_player_raises(self) -> None:
+        train = _train({"h1|heavy": _row("heavy", games=25)})
+        with pytest.raises(ValueError, match="26"):
+            cal.run_train(train, None, rounds=1, seed=3)
+
+    def test_rounds_below_one_raises(self) -> None:
+        train = _train({"h1|heavy": _row("heavy")})
+        with pytest.raises(ValueError, match="rounds"):
+            cal.run_train(train, None, rounds=0, seed=3)
+
+    def test_serial_equals_parallel(self, movement_ctx: MapContext) -> None:
+        train = _train(
+            {
+                "h1|heavy": _row("heavy"),
+                "s1|scout": _row("scout", avg_accuracy=0.7),
+                "m1|medic": _row("medic"),
+            }
+        )
+        serial = cal.run_train(train, movement_ctx, rounds=2, seed=42, workers=1)
+        try:
+            parallel = cal.run_train(train, movement_ctx, rounds=2, seed=42, workers=2)
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Parallel worker pool unavailable: {exc!r}")
+        assert serial == parallel
+
+
+class _StubTrain:
+    """Stands in for ``run_train``: scores constants with ``score``, runs no rounds."""
+
+    def __init__(self, score: Callable[[ImportConstants], float]) -> None:
+        self.score = score
+        self.calls: list[dict] = []
+
+    def __call__(
+        self, train: dict, movement_ctx: object, **kwargs: object
+    ) -> cal.TrainReport:
+        self.calls.append(dict(kwargs, train=train, movement_ctx=movement_ctx))
+        return cal.TrainReport(cells=[], objective=self.score(kwargs["constants"]))
+
+
+GRID = {
+    "accuracy_offset": (-20.0, -10.0, 0.0),
+    "log_scale": (15.0, 25.0, 35.0),
+}
+
+
+def _search(
+    monkeypatch: pytest.MonkeyPatch,
+    score: Callable[[ImportConstants], float],
+    grid: dict[str, tuple[float, ...]] = GRID,
+    train: dict | None = None,
+) -> tuple[cal.SearchResult, _StubTrain]:
+    stub = _StubTrain(score)
+    monkeypatch.setattr(cal, "run_train", stub)
+    result = cal.search(
+        train if train is not None else {"rows": {}},
+        "ctx",
+        start=DEFAULT_CONSTANTS,
+        grid=grid,
+        rounds=2,
+        seed=17,
+        workers=3,
+    )
+    return result, stub
+
+
+def _bowl(c: ImportConstants) -> float:
+    """Separable: best at accuracy_offset -10, log_scale 35."""
+    return (c.accuracy_offset + 10) ** 2 + (c.log_scale - 35) ** 2
+
+
+class TestSearch:
+    def test_keeps_only_improving_values(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result, _stub = _search(monkeypatch, _bowl)
+        assert result.constants == cal.ImportConstants(
+            accuracy_offset=-10.0, log_scale=35.0
+        )
+        assert result.objective == _bowl(result.constants) == 0.0
+        # Start (0, 25) scores 200. Pass 1, log_scale first: 15 -> 500 (no),
+        # 35 -> 100 (kept); accuracy_offset: -20 -> 100 (a tie: no), -10 -> 0
+        # (kept), 0 -> 100 (no). The current value is never re-tried.
+        steps = [
+            (s.pass_index, s.field, s.value, s.objective, s.kept)
+            for s in result.history
+        ]
+        assert steps[:6] == [
+            (0, None, None, 200.0, True),
+            (1, "log_scale", 15.0, 500.0, False),
+            (1, "log_scale", 35.0, 100.0, True),
+            (1, "accuracy_offset", -20.0, 100.0, False),
+            (1, "accuracy_offset", -10.0, 0.0, True),
+            (1, "accuracy_offset", 0.0, 100.0, False),
+        ]
+
+    def test_a_tie_is_not_kept(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        result, _stub = _search(monkeypatch, lambda c: 1.0)
+        assert result.constants == DEFAULT_CONSTANTS
+        assert not any(s.kept for s in result.history[1:])
+
+    def test_stops_after_a_pass_with_no_change(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result, _stub = _search(monkeypatch, _bowl)
+        # Pass 1 reaches the optimum, pass 2 changes nothing, so no pass 3.
+        assert max(s.pass_index for s in result.history) == 2
+
+    def test_stops_after_three_passes(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Every new evaluation scores lower than all before it, so every pass
+        # changes something.
+        counter = iter(range(1000, 0, -1))
+        result, _stub = _search(monkeypatch, lambda c: float(next(counter)))
+        assert max(s.pass_index for s in result.history) == 3
+        assert [s.pass_index for s in result.history].count(3) > 0
+
+    def test_fields_run_in_the_dataclass_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # GRID lists accuracy_offset first, against the dataclass order.
+        assert list(GRID) == ["accuracy_offset", "log_scale"]
+        result, _stub = _search(monkeypatch, lambda c: 1.0, grid=GRID)
+        pass_one = [s.field for s in result.history if s.pass_index == 1]
+        # ImportConstants declares log_scale before accuracy_offset.
+        assert pass_one == [
+            "log_scale",
+            "log_scale",
+            "accuracy_offset",
+            "accuracy_offset",
+        ]
+
+    def test_every_evaluation_uses_the_same_seed_and_only_train(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        train = {"rows": {"all": {}}, "marker": True}
+        _result, stub = _search(monkeypatch, _bowl, train=train)
+        assert len(stub.calls) > 1
+        for call in stub.calls:
+            assert call["train"] is train
+            assert call["movement_ctx"] == "ctx"
+            assert (call["seed"], call["rounds"], call["workers"]) == (17, 2, 3)
+        assert "test" not in inspect.signature(cal.search).parameters
+
+    def test_each_constants_is_evaluated_once(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _result, stub = _search(monkeypatch, _bowl)
+        seen = [call["constants"] for call in stub.calls]
+        assert len(seen) == len(set(seen))
+
+    def test_unknown_grid_field_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        with pytest.raises(ValueError, match="nope"):
+            _search(monkeypatch, _bowl, grid={"nope": (1.0,)})
+
+
+def _cell(
+    metric: str, sim: float, real: float, position: str = "heavy"
+) -> cal.CellResult:
+    return cal.CellResult(position, metric, sim, real, 1, True, None)
+
+
+class TestObjective:
+    """Decision 25: mean of (err / max(|real|, floor)) ** 2, floor by kind."""
+
+    def test_count_under_its_floor_divides_by_half(self) -> None:
+        # |real| 0.2 < 0.5: err 0.5 / 0.5 = 1.0.
+        assert cal.objective([_cell("avg_times_hit", 0.7, 0.2)]) == pytest.approx(1.0)
+
+    def test_fraction_under_its_floor_divides_by_005(self) -> None:
+        # |real| 0.02 < 0.05: err 0.1 / 0.05 = 2.0 -> 4.0.
+        assert cal.objective([_cell("avg_accuracy", 0.12, 0.02)]) == pytest.approx(4.0)
+
+    def test_mean_of_squares_over_cells(self) -> None:
+        # count above floor: (12 - 10) / 10 = 0.2 -> 0.04; fraction above
+        # floor: (0.3 - 0.6) / 0.6 = -0.5 -> 0.25. Mean = 0.145.
+        cells = [_cell("avg_times_hit", 12.0, 10.0), _cell("avg_accuracy", 0.3, 0.6)]
+        assert cal.objective(cells) == pytest.approx(0.145)
+
+    def test_no_cells_raises(self) -> None:
+        with pytest.raises(ValueError):
+            cal.objective([])
 
 
 class TestCalibrationRoundWorker:

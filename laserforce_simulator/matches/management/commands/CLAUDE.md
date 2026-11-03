@@ -42,6 +42,38 @@ Real-world average scores used to evaluate simulation accuracy:
 
 ---
 
+## lfstats_calibrate.py
+
+The LFS-01 **Calibration harness** (spec #514): simulates imported Players and compares what they do in the Simulator with their real LFstats numbers, per Role and metric. A thin wrapper over `matches.lfstats_calibration` (`run_test`, `run_train`, `search`).
+
+```bash
+python manage.py lfstats_calibrate --split train --rounds 20 --workers 8
+python manage.py lfstats_calibrate --split test --rounds 20 --workers 8 --accuracy-offset -10
+python manage.py lfstats_calibrate --split search --rounds 20 --seed 42 --workers 8
+```
+
+**`--split` (required):**
+- `train`: each Training (player, position) with at least `MIN_TRAIN_GAMES` (26) games there plays `--rounds` rounds at that Role as red, the other five red and all six blue built from the per-position baselines (field-average teams). Compared with the player's Training averages; prints the per-Role table and the objective.
+- `test`: replays each usable Internationals 2026 game `--rounds` times with its real lineup (Fire red, Ice blue). Skips a game whose lineup is not commander / heavy / two scouts / ammo / medic on both sides, or where a player has fewer than `TEST_MIN_POSITION_GAMES` (5) Training games at the position played. Prints the table, then the coverage line and the match level (winner agreement, mean margin error).
+- `search`: a coordinate search over the `ImportConstants` fields on the Training set only (never reads `--test`), starting from the defaults plus any constant flags. Its grid is `DEFAULT_GRID` in the command, three values around each default. Prints the table for the chosen constants, a Start / Chosen constants table, the objective, and the history (every candidate tried, by pass, with `yes` where it was kept).
+
+**Other flags:** `--train` / `--test` (default the committed `data/lfstats_train_2026-10-21.json` / `data/lfstats_test_internationals_2026.json`), `--map-fixture` (default `data/maps/syracuse.json`; a missing path is a `CommandError` naming it), `--rounds` (20), `--seed` (42), `--workers` (1), and one float flag per `ImportConstants` field: `--log-scale`, `--accuracy-offset`, `--accuracy-scale`, `--survival-times-hit-weight`, `--preferred-role-boost`.
+
+**No database writes.** The map fixture is loaded by `load_map_fixture` inside `transaction.atomic()` with `transaction.set_rollback(True)`, and only `load_map_context(arena_map)[0]` (an in-memory `MapContext`) leaves the block. Players are `_PlayerData` stand-ins built by `player_data`, never ORM rows. The tests pin the `ArenaMap`, `Team` and `Player` counts unchanged.
+
+**Determinism.** Per-round seeds come from `random.Random(--seed).getrandbits(63)` (game then round order for `test`, sorted player key then round for `train`), so `--workers 1` and `--workers N` print the same numbers. Every `search` evaluation uses the same seed, and a candidate is simulated once (later repeats come from a cache).
+
+### Output
+
+1. **Per Role** (`<role> (n=<count>)`, the count being used scorecards for `test` and players for `train`): `Metric`, `Sim`, `Real`, `Diff` (sim - real), `Pass` (`within_tolerance`: within 15% of real, or 0.5 for a count / 0.05 for a fraction), `Rho` (Spearman per player, `-` when undefined). Then `Cells passed: x / y`.
+2. **`test`:** `Coverage: <used> of <total> games used, <n> skipped (lineup), <n> skipped (thin data ...)` and `Match level: ...`.
+3. **`train`:** `Objective: <x>`, the mean over cells of `(err / max(|real|, floor)) ** 2`.
+4. **`search`:** the constants table, `Objective: <x>`, and the history table.
+
+ASCII only (cp1252 console). The command writes no files; copy the output into `docs/lfstats-import.md`.
+
+---
+
 ## game_analysis.py
 
 Analyses events from a completed (DB-persisted) `GameRound` and prints per-player uptime breakdowns reconstructed from `player_downed` and resupply events.

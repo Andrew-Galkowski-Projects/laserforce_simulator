@@ -6,7 +6,8 @@ import json
 import math
 import os
 import random
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -411,6 +412,53 @@ def _run_rounds(tasks: list[tuple], workers: int) -> list[dict]:
     return [calibration_round_worker(task) for task in tasks]
 
 
+def _build_cells(
+    sim_rounds: dict[tuple[str, str], list[dict[str, float]]],
+    weights: dict[tuple[str, str], int],
+    real_value: Callable[[tuple[str, str], str], float],
+    min_ranked: int,
+) -> list[CellResult]:
+    """One ``CellResult`` per applicable (Role, metric), in ``POSITIONS`` / ``METRICS`` order.
+
+    ``sim_rounds`` maps each ``(ipl, position)`` to its simulated per-round
+    metric dicts; ``weights`` gives each its weight in ``real_mean`` (the sum
+    is ``n_scorecards``); ``real_value(pk, metric)`` is the real average it is
+    compared with. ``spearman`` ranks the players whose weight is at least
+    ``min_ranked``. A position with no player has no cells.
+    """
+    cells: list[CellResult] = []
+    for position in POSITIONS:
+        players = [pk for pk in weights if pk[1] == position]
+        if not players:
+            continue
+        n = sum(weights[pk] for pk in players)
+        for metric, kind, positions in METRICS:
+            if position not in positions:
+                continue
+            real = {pk: real_value(pk, metric) for pk in players}
+            sim = {pk: [r[metric] for r in sim_rounds[pk]] for pk in players}
+            all_sim = [v for pk in players for v in sim[pk]]
+            sim_mean = sum(all_sim) / len(all_sim)
+            real_mean = sum(real[pk] * weights[pk] for pk in players) / n
+            ranked = [pk for pk in players if weights[pk] >= min_ranked]
+            spearman = _spearman(
+                [sum(sim[pk]) / len(sim[pk]) for pk in ranked],
+                [real[pk] for pk in ranked],
+            )
+            cells.append(
+                CellResult(
+                    position=position,
+                    metric=metric,
+                    sim_mean=sim_mean,
+                    real_mean=real_mean,
+                    n_scorecards=n,
+                    passed=within_tolerance(kind, sim_mean, real_mean),
+                    spearman=spearman,
+                )
+            )
+    return cells
+
+
 def run_test(
     train: dict,
     test: dict,
@@ -502,36 +550,12 @@ def run_test(
         agree += _sign(sim_margin) == real_winner
         margin_error += abs(sim_margin - real_margin)
 
-    cells: list[CellResult] = []
-    for position in POSITIONS:
-        players = [pk for pk in scorecards if pk[1] == position]
-        if not players:
-            continue
-        n = sum(scorecards[pk] for pk in players)
-        for metric, kind, positions in METRICS:
-            if position not in positions:
-                continue
-            real = {pk: _real_average(test, pk, metric) for pk in players}
-            sim = {pk: [r[metric] for r in sim_rounds[pk]] for pk in players}
-            all_sim = [v for pk in players for v in sim[pk]]
-            sim_mean = sum(all_sim) / len(all_sim)
-            real_mean = sum(real[pk] * scorecards[pk] for pk in players) / n
-            ranked = [pk for pk in players if scorecards[pk] >= SPEARMAN_MIN_SCORECARDS]
-            spearman = _spearman(
-                [sum(sim[pk]) / len(sim[pk]) for pk in ranked],
-                [real[pk] for pk in ranked],
-            )
-            cells.append(
-                CellResult(
-                    position=position,
-                    metric=metric,
-                    sim_mean=sim_mean,
-                    real_mean=real_mean,
-                    n_scorecards=n,
-                    passed=within_tolerance(kind, sim_mean, real_mean),
-                    spearman=spearman,
-                )
-            )
+    cells = _build_cells(
+        sim_rounds,
+        scorecards,
+        lambda pk, metric: _real_average(test, pk, metric),
+        SPEARMAN_MIN_SCORECARDS,
+    )
 
     games = len(used)
     return TestReport(
@@ -548,6 +572,246 @@ def run_test(
             skipped_thin=skipped_thin,
         ),
     )
+
+
+_METRIC_KIND: dict[str, str] = {metric: kind for metric, kind, _ps in METRICS}
+
+
+def objective(cells: list[CellResult]) -> float:
+    """Decision 25: the mean over cells of ``(err / max(|real|, floor)) ** 2``.
+
+    ``err`` is ``sim_mean - real_mean``; ``floor`` is the cell kind's
+    tolerance floor (0.5 for a count, 0.05 for a fraction), so a near-zero
+    real value does not blow the error up.
+
+    Raises:
+        ValueError: when ``cells`` is empty.
+    """
+    if not cells:
+        raise ValueError("objective needs at least one cell")
+    total = 0.0
+    for cell in cells:
+        floor = TOLERANCE_FLOOR[_METRIC_KIND[cell.metric]]
+        err = cell.sim_mean - cell.real_mean
+        total += (err / max(abs(cell.real_mean), floor)) ** 2
+    return total / len(cells)
+
+
+# --- run_train --------------------------------------------------------------
+
+# A (player, position) plays in run_train only with at least this many
+# Training games there (the import's own MIN_GAMES threshold).
+MIN_TRAIN_GAMES = 26
+
+
+@dataclass(frozen=True)
+class TrainReport:
+    """``run_train``'s cells (same shape as ``TestReport.cells``) and their objective."""
+
+    cells: list[CellResult]
+    objective: float
+
+
+def _field_player(train: dict, position: str, constants: ImportConstants) -> tuple:
+    """A field-average ``(role, _PlayerData)`` built from the position baseline."""
+    baseline = train["baselines"]["all"][position]
+    return (
+        position,
+        player_data(
+            f"field-{position}",
+            f"Field {position}",
+            dict(baseline, position=position),
+            baseline,
+            None,
+            train["baselines"]["loss"][position],
+            position,
+            constants,
+        ),
+    )
+
+
+def _field_side(
+    field: dict[str, tuple], player: tuple | None = None
+) -> tuple[list, int]:
+    """A ``LINEUP``-ordered side of field players, ``player`` in its Role's first slot.
+
+    Returns the side and ``player``'s index in it (-1 without one).
+    """
+    side: list = []
+    index = -1
+    for position in LINEUP:
+        if player is not None and index < 0 and player[0] == position:
+            index = len(side)
+            side.append(player)
+        else:
+            side.append(field[position])
+    return side, index
+
+
+def run_train(
+    train: dict,
+    movement_ctx: Any,
+    *,
+    constants: ImportConstants = DEFAULT_CONSTANTS,
+    rounds: int,
+    seed: int,
+    workers: int = 1,
+) -> TrainReport:
+    """Simulate each qualifying Training player at their Role in a field-average team.
+
+    Every ``"<ipl>|<position>"`` row of ``train["rows"]["all"]`` with at least
+    ``MIN_TRAIN_GAMES`` games plays ``rounds`` rounds as red at that position;
+    the other five red players and all six blue are field-average players built
+    from ``train["baselines"]["all"]`` through ``player_data`` (each at its own
+    Role, so boosted like the player). Players run in sorted key order; per-round
+    seeds are ``random.Random(seed).getrandbits(63)`` in player then round
+    order, so ``workers=1`` and ``workers=N`` return equal reports.
+
+    Each cell's ``real_mean`` is the unweighted mean of the players' Training
+    averages (every player plays the same number of rounds); ``n_scorecards``
+    is the number of players; ``spearman`` ranks all of them.
+
+    Raises:
+        ValueError: when ``rounds`` is below 1, no row qualifies, or a
+            qualifying row has no value for a metric it is compared on.
+    """
+    if rounds < 1:
+        raise ValueError(f"rounds must be at least 1, got {rounds}")
+    rows = train["rows"]["all"]
+    keys = sorted(k for k, row in rows.items() if row["games"] >= MIN_TRAIN_GAMES)
+    if not keys:
+        raise ValueError(
+            f"No Training row has at least {MIN_TRAIN_GAMES} games at its position"
+        )
+    field = {p: _field_player(train, p, constants) for p in POSITIONS}
+    blue, _ = _field_side(field)
+
+    gen = random.Random(seed)
+    tasks: list[tuple] = []
+    slots: list[tuple[tuple[str, str], int]] = []
+    for key in keys:
+        row = rows[key]
+        position = row["position"]
+        ipl_id = key.split("|", 1)[0]
+        me = (
+            position,
+            player_data(
+                ipl_id,
+                row.get("callsign", ipl_id),
+                row,
+                train["baselines"]["all"][position],
+                train["rows"]["loss"].get(key),
+                train["baselines"]["loss"][position],
+                position,
+                constants,
+            ),
+        )
+        red, index = _field_side(field, me)
+        slots.append(((ipl_id, position), index))
+        for _ in range(rounds):
+            tasks.append((red, blue, movement_ctx, gen.getrandbits(63)))
+    outputs = _run_rounds(tasks, workers)
+
+    sim_rounds: dict[tuple[str, str], list[dict[str, float]]] = {}
+    for p, (pk, index) in enumerate(slots):
+        sim_rounds[pk] = [
+            o["red"][index] for o in outputs[p * rounds : (p + 1) * rounds]
+        ]
+
+    def real_value(pk: tuple[str, str], metric: str) -> float:
+        value = rows[_key(*pk)].get(metric)
+        if value is None:
+            raise ValueError(f"Training row {_key(*pk)} has no {metric}")
+        return float(value)
+
+    cells = _build_cells(sim_rounds, {pk: 1 for pk, _ in slots}, real_value, 1)
+    return TrainReport(cells=cells, objective=objective(cells))
+
+
+# --- search -----------------------------------------------------------------
+
+# The coordinate search stops after this many passes even if the last changed something.
+MAX_SEARCH_PASSES = 3
+
+
+@dataclass(frozen=True)
+class SearchStep:
+    """One evaluated candidate. Pass 0 is the start (``field`` / ``value`` None)."""
+
+    pass_index: int
+    field: str | None
+    value: float | None
+    objective: float
+    # True when this candidate became the new best.
+    kept: bool
+
+
+@dataclass(frozen=True)
+class SearchResult:
+    constants: ImportConstants
+    objective: float
+    history: list[SearchStep]
+
+
+def search(
+    train: dict,
+    movement_ctx: Any,
+    *,
+    start: ImportConstants,
+    grid: dict[str, tuple[float, ...] | list[float]],
+    rounds: int,
+    seed: int,
+    workers: int = 1,
+) -> SearchResult:
+    """Coordinate search over ``ImportConstants`` fields, scored by ``run_train``'s objective.
+
+    Fields are tried in the dataclass's declaration order (not ``grid``'s),
+    each over its ``grid`` values other than the current one, keeping a value
+    only when it strictly lowers the objective. The search repeats until a full
+    pass keeps nothing, or ``MAX_SEARCH_PASSES`` passes have run. Every
+    evaluation uses the same ``seed``, so a candidate's score is reproducible and
+    each distinct constants is simulated once (repeats come from a cache, and
+    still appear in ``history``). Only ``train`` is read: there is no Test input.
+
+    Raises:
+        ValueError: when ``grid`` names a field ``ImportConstants`` lacks.
+    """
+    order = [f.name for f in fields(ImportConstants)]
+    unknown = sorted(set(grid) - set(order))
+    if unknown:
+        raise ValueError(f"Unknown ImportConstants field(s): {', '.join(unknown)}")
+
+    cache: dict[ImportConstants, float] = {}
+
+    def evaluate(constants: ImportConstants) -> float:
+        if constants not in cache:
+            cache[constants] = run_train(
+                train,
+                movement_ctx,
+                constants=constants,
+                rounds=rounds,
+                seed=seed,
+                workers=workers,
+            ).objective
+        return cache[constants]
+
+    best, best_score = start, evaluate(start)
+    history = [SearchStep(0, None, None, best_score, True)]
+    for pass_index in range(1, MAX_SEARCH_PASSES + 1):
+        changed = False
+        for name in (n for n in order if n in grid):
+            for value in grid[name]:
+                if value == getattr(best, name):
+                    continue
+                candidate = replace(best, **{name: value})
+                score = evaluate(candidate)
+                kept = score < best_score
+                history.append(SearchStep(pass_index, name, value, score, kept))
+                if kept:
+                    best, best_score, changed = candidate, score, True
+        if not changed:
+            break
+    return SearchResult(constants=best, objective=best_score, history=history)
 
 
 def _real_average(test: dict, pk: tuple[str, str], metric: str) -> float:
