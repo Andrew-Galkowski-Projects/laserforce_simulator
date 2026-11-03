@@ -131,7 +131,12 @@ class Command(BaseCommand):
                 self.stdout.write(f"\nObjective: {train_report.objective:.4f}\n")
             else:
                 result = cal.search(
-                    train, movement_ctx, start=constants, grid=DEFAULT_GRID, **run
+                    train,
+                    movement_ctx,
+                    start=constants,
+                    grid=DEFAULT_GRID,
+                    on_step=self._progress,
+                    **run,
                 )
                 best = cal.run_train(
                     train, movement_ctx, constants=result.constants, **run
@@ -143,6 +148,15 @@ class Command(BaseCommand):
             raise CommandError(str(exc)) from exc
 
     # --- output -----------------------------------------------------------
+
+    def _progress(self, step: cal.SearchStep) -> None:
+        """One line per scored candidate, flushed: a search can run for hours."""
+        what = "start" if step.field is None else f"{step.field}={step.value:g}"
+        self.stdout.write(
+            f"step pass {step.pass_index} {what} objective {step.objective:.4f}"
+            f"{' kept' if step.kept else ''}\n"
+        )
+        self.stdout.flush()
 
     def _header(self, title: str, run: dict) -> None:
         self.stdout.write(

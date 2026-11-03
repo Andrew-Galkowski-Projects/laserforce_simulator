@@ -762,6 +762,7 @@ def search(
     rounds: int,
     seed: int,
     workers: int = 1,
+    on_step: Callable[[SearchStep], None] | None = None,
 ) -> SearchResult:
     """Coordinate search over ``ImportConstants`` fields, scored by ``run_train``'s objective.
 
@@ -772,6 +773,8 @@ def search(
     evaluation uses the same ``seed``, so a candidate's score is reproducible and
     each distinct constants is simulated once (repeats come from a cache, and
     still appear in ``history``). Only ``train`` is read: there is no Test input.
+    ``on_step``, when given, receives each ``SearchStep`` as soon as it is
+    scored, so a run of hours shows its progress.
 
     Raises:
         ValueError: when ``grid`` names a field ``ImportConstants`` lacks.
@@ -795,8 +798,15 @@ def search(
             ).objective
         return cache[constants]
 
+    history: list[SearchStep] = []
+
+    def record(step: SearchStep) -> None:
+        history.append(step)
+        if on_step is not None:
+            on_step(step)
+
     best, best_score = start, evaluate(start)
-    history = [SearchStep(0, None, None, best_score, True)]
+    record(SearchStep(0, None, None, best_score, True))
     for pass_index in range(1, MAX_SEARCH_PASSES + 1):
         changed = False
         for name in (n for n in order if n in grid):
@@ -806,7 +816,7 @@ def search(
                 candidate = replace(best, **{name: value})
                 score = evaluate(candidate)
                 kept = score < best_score
-                history.append(SearchStep(pass_index, name, value, score, kept))
+                record(SearchStep(pass_index, name, value, score, kept))
                 if kept:
                     best, best_score, changed = candidate, score, True
         if not changed:

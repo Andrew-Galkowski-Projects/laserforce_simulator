@@ -1035,6 +1035,29 @@ class TestSearch:
         seen = [call["constants"] for call in stub.calls]
         assert len(seen) == len(set(seen))
 
+    def test_each_step_is_reported_as_it_happens(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A long search (hours on the Syracuse map) must show progress, so a
+        # crash late in the run does not lose every evaluation.
+        stub = _StubTrain(_bowl)
+        monkeypatch.setattr(cal, "run_train", stub)
+        seen: list[tuple[cal.SearchStep, int]] = []
+        result = cal.search(
+            {"rows": {}},
+            "ctx",
+            start=DEFAULT_CONSTANTS,
+            grid=GRID,
+            rounds=2,
+            seed=17,
+            workers=3,
+            on_step=lambda step: seen.append((step, len(stub.calls))),
+        )
+        assert [step for step, _ in seen] == result.history
+        # Reported right after its own evaluation, not batched at the end.
+        assert seen[0][1] == 1
+        assert seen[2][1] == 3
+
     def test_unknown_grid_field_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         with pytest.raises(ValueError, match="nope"):
             _search(monkeypatch, _bowl, grid={"nope": (1.0,)})

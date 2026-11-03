@@ -158,6 +158,10 @@ class TestSearchSplit:
         assert "accuracy_offset" in out and "Chosen" in out
         assert "Objective: 0.0000" in out
         assert "(start)" in out and "Kept" in out
+        # Progress lines stream while the search runs (decision: a Syracuse
+        # search takes hours), one per scored candidate.
+        assert "step pass 0 start objective 10.0000" in out
+        assert "step pass 1 accuracy_offset=-10 objective 0.0000 kept" in out
 
     def test_default_grid_is_three_values_around_each_default(self) -> None:
         assert lfstats_calibrate.DEFAULT_GRID == {
