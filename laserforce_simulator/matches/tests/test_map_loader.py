@@ -186,6 +186,13 @@ class TestReachableSpawnPools:
         # (2, 0) is already in the pool; (0, 2) is the next nearest (distance 2).
         assert pools == {"red": [(0, 2), (2, 0)], "blue": [(2, 3)]}
 
+    def test_replacement_skips_cells_already_in_the_pool(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        # (0, 2) is the nearest main-floor cell to the base, but red already
+        # spawns there, so the pocketed cell takes (2, 0) instead.
+        pools = reachable_spawn_pools({"red": [(0, 0), (0, 2)]}, {"red": (0, 0)}, adj)
+        assert pools == {"red": [(2, 0), (0, 2)]}
+
     def test_reachable_pools_come_back_unchanged(self):
         adj = build_movement_adjacency(_POCKET_GRID)
         pools = {"red": [(2, 0), (2, 1)], "blue": [(0, 3), (1, 3)]}
