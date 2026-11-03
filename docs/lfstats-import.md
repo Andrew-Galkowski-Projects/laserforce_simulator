@@ -31,6 +31,7 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
   - **Test set:** `data/lfstats_test_internationals_2026.json` holds the 165 Internationals 2026 games (each team's colour, score, result, and roster with position, score, MVP and mercenary flag) and every (player, position)'s Internationals averages.
   - **Training set:** `data/lfstats_train_2026-10-21.json` is the snapshot with those games subtracted from every row (average x games), plus window rows for Internationals players outside the 230.
   - **Built by:** `python scripts/lfstats_import/calibration_data.py data/lfstats_snapshot_2026-10-21.json data/lfstats_train_2026-10-21.json data/lfstats_test_internationals_2026.json <transcript.jsonl>`. It reads the LFstats calls the same way `extract.py` does, including results too large for the transcript, which Claude Code saves to `tool-results/` files.
+  - **Map:** `data/maps/syracuse.json` is the Syracuse Laser Tag configuration the Test set replays on. It uses 30px cells (auto-detected walls, 2,001 floor cells of 3,200) and red, blue and one neutral base at the image's base markers, as approved by the owner. Export a configured map with `python scripts/lfstats_import/export_map_fixture.py "<map name>" <zone size> <out.json>`.
   - **Baselines:** the snapshot's, not subtracted. Internationals is about 4% of the window's scorecards.
   - **Tests:** `laserforce_simulator/test_lfstats_calibration_data.py`.
 - **Teams:** grouped by home center (the center where the player plays most, from LFstats).
