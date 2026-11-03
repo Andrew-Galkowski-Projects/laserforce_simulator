@@ -14,7 +14,9 @@ mutation that does not compile) is ``BROKEN``: rewrite that mutation. Exits 1
 when a mutation survives, is broken, or its pattern is missing or ambiguous.
 Exits 2, before any mutation, when the command already
 fails on the unchanged file (``BASELINE FAILED``): a red test catches every
-mutation and proves nothing.
+mutation and proves nothing. Every run is killed after ``--timeout`` seconds
+(default 300): a mutation whose run hangs is ``TIMEOUT`` and counts as caught,
+and a baseline that hangs exits 2 (``BASELINE TIMED OUT``).
 
 Usage::
 
@@ -48,7 +50,8 @@ class Mutation(NamedTuple):
 
 class Outcome(NamedTuple):
     name: str
-    status: str  # "caught", "survived", "broken", "not found" or "ambiguous"
+    # "caught", "timeout", "survived", "broken", "not found" or "ambiguous"
+    status: str
     failed: list[str]
 
 
@@ -107,30 +110,64 @@ def _crlf(pattern: str) -> str:
     return pattern.replace("\r\n", "\n").replace("\n", "\r\n")
 
 
-def _run(command: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
+class Run(NamedTuple):
+    returncode: int | None  # None: killed at the timeout
+    output: str
+
+
+def _run(command: list[str], cwd: Path, timeout: float | None = None) -> Run:
     # No bytecode writes: a cached .pyc is checked by mtime + size, so a same-size
     # mutation written within the same second as the last run would reuse stale code.
-    return subprocess.run(
+    proc = subprocess.Popen(
         command,
         cwd=cwd,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
         text=True,
         encoding="utf-8",
         errors="replace",
         env={**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1"},
         shell=sys.platform == "win32" and Path(command[0]).suffix == "",
     )
+    try:
+        output, _ = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        proc.communicate()
+        return Run(None, "")
+    return Run(proc.returncode, output)
 
 
-def baseline_failures(command: list[str], cwd: Path) -> list[str] | None:
+def _kill_tree(proc: subprocess.Popen[str]) -> None:
+    """Kill ``proc`` and its children (pytest-xdist workers, a shell's command)."""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True
+        )
+    else:
+        proc.kill()
+
+
+class BaselineTimeout(Exception):
+    """The command ran past the timeout on the unchanged files."""
+
+
+def baseline_failures(
+    command: list[str], cwd: Path, timeout: float | None = None
+) -> list[str] | None:
     """``None`` when ``command`` passes on the unchanged files, else the tests that failed.
 
     A test that is already red "catches" every mutation and proves nothing.
+
+    Raises:
+        BaselineTimeout: when the unchanged run passes ``timeout`` seconds.
     """
-    run = _run(command, cwd)
+    run = _run(command, cwd, timeout)
+    if run.returncode is None:
+        raise BaselineTimeout
     if run.returncode == 0:
         return None
-    return failed_tests(run.stdout + run.stderr)
+    return failed_tests(run.output)
 
 
 def mutate(
@@ -143,9 +180,17 @@ def mutate(
 
 
 def mutate_with(
-    target: Path, mutations: list[Mutation], command: list[str], cwd: Path
+    target: Path,
+    mutations: list[Mutation],
+    command: list[str],
+    cwd: Path,
+    timeout: float | None = None,
 ) -> list[Outcome]:
-    """Run ``command`` once per mutation of ``target``; return each outcome in order."""
+    """Run ``command`` once per mutation of ``target``; return each outcome in order.
+
+    A run killed at ``timeout`` seconds is ``timeout``, which counts as caught: a
+    hang fails CI as surely as a red test.
+    """
     original = _read(target)
     outcomes = []
     try:
@@ -157,9 +202,11 @@ def mutate_with(
                 outcomes.append(Outcome(mutation.name, status, []))
                 continue
             _write(target, original.replace(old, new))
-            run = _run(command, cwd)
-            failed = failed_tests(run.stdout + run.stderr)
-            if run.returncode == 0:
+            run = _run(command, cwd, timeout)
+            failed = failed_tests(run.output)
+            if run.returncode is None:
+                status = "timeout"
+            elif run.returncode == 0:
                 status = "survived"
             else:
                 # A failed run that names no test is a build or collection error: the
@@ -178,6 +225,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--run", action="store_true", help="the words after -- are the whole command"
     )
+    parser.add_argument(
+        "--timeout",
+        type=float,
+        default=300,
+        help="seconds before a run is killed (default 300)",
+    )
     # Split at the first `--` by hand: argparse would eat a second one the
     # command needs (`npm exec -- ng test`).
     argv = sys.argv[1:] if argv is None else argv
@@ -188,19 +241,31 @@ def main(argv: list[str] | None = None) -> None:
         Mutation(*m) for m in json.loads(args.mutations.read_text(encoding="utf-8"))
     ]
     command = tail if args.run else [sys.executable, "-m", "pytest", *tail]
-    failures = baseline_failures(command, cwd=Path.cwd())
+    try:
+        failures = baseline_failures(command, cwd=Path.cwd(), timeout=args.timeout)
+    except BaselineTimeout:
+        print(
+            f"BASELINE TIMED OUT after {args.timeout:g} s -- "
+            "narrow the tests or raise --timeout"
+        )
+        sys.exit(2)
     if failures is not None:
         detail = f": {', '.join(failures)}" if failures else ""
         line = f"BASELINE FAILED{detail} -- fix the tests before mutating"
         print(line.encode("ascii", "replace").decode("ascii"))
         sys.exit(2)
-    outcomes = mutate_with(args.target, mutations, command, cwd=Path.cwd())
+    outcomes = mutate_with(
+        args.target, mutations, command, cwd=Path.cwd(), timeout=args.timeout
+    )
     for outcome in outcomes:
         label = "caught" if outcome.status == "caught" else outcome.status.upper()
-        detail = f": {', '.join(outcome.failed)}" if outcome.failed else ""
+        if outcome.status == "timeout":
+            detail = f": no result after {args.timeout:g} s"
+        else:
+            detail = f": {', '.join(outcome.failed)}" if outcome.failed else ""
         line = f"{label:<9} {outcome.name}{detail}"
         print(line.encode("ascii", "replace").decode("ascii"))
-    if any(outcome.status != "caught" for outcome in outcomes):
+    if any(outcome.status not in ("caught", "timeout") for outcome in outcomes):
         sys.exit(1)
 
 

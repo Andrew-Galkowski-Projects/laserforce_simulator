@@ -909,6 +909,37 @@ class TestRunTrain:
         high = cal.run_train(train, movement_ctx, rounds=1, seed=3)
         assert low.cells != high.cells
 
+    def _sim_returns(
+        self, monkeypatch: pytest.MonkeyPatch, *rounds: dict[str, float]
+    ) -> None:
+        """Every task's red / blue sides play the given rounds' metrics, in turn."""
+        outputs = iter(rounds)
+        monkeypatch.setattr(
+            cal,
+            "_run_rounds",
+            lambda tasks, workers: [
+                {"red": [m] * 6, "blue": [m] * 6} for m, _ in zip(outputs, tasks)
+            ],
+        )
+
+    def test_a_role_that_never_tags_or_is_tagged_raises(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # LFS-01: red's spawns sat in pockets cut off from the floor, four Roles
+        # recorded nothing, and two searches ran on it before anyone noticed.
+        dead = {metric: 0.0 for metric, _kind, _ps in cal.METRICS}
+        self._sim_returns(monkeypatch, dead, dead)
+        train = _train({"h1|heavy": _row("heavy")})
+        with pytest.raises(ValueError, match="No heavy player tagged or was tagged"):
+            cal.run_train(train, None, rounds=2, seed=3)
+
+    def test_one_engaged_round_is_enough(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        dead = {metric: 0.0 for metric, _kind, _ps in cal.METRICS}
+        self._sim_returns(monkeypatch, dead, dict(dead, avg_times_hit=1.0))
+        train = _train({"h1|heavy": _row("heavy")})
+        report = cal.run_train(train, None, rounds=2, seed=3)
+        assert {c.position for c in report.cells} == {"heavy"}
+
     def test_no_qualifying_player_raises(self) -> None:
         train = _train({"h1|heavy": _row("heavy", games=25)})
         with pytest.raises(ValueError, match="26"):

@@ -61,6 +61,10 @@ python manage.py lfstats_calibrate --split search --rounds 20 --seed 42 --worker
 
 **No database writes.** The map fixture is loaded by `load_map_fixture` inside `transaction.atomic()` with `transaction.set_rollback(True)`, and only `load_map_context(arena_map)[0]` (an in-memory `MapContext`) leaves the block. Players are `_PlayerData` stand-ins built by `player_data`, never ORM rows. The tests pin the `ArenaMap`, `Team` and `Player` counts unchanged.
 
+**A Role that never engages is an error.** When no player at a position tagged or was tagged in any simulated round, `run_train` / `run_test` raise (a `CommandError` here): the sim never reached them, so the numbers are no result. LFS-01's first searches ran for hours on a map whose red spawns sat in pockets cut off from the floor.
+
+**Memory.** Measured on Syracuse (2026-11-03, `--split train --rounds 1 --workers 2`): each worker peaks at about **90 MB** and the parent at about **140 MB**, so `--workers 14` needs about 1.5 GB (it held flat over the first minutes; a run of hours was not measured). LFS-01's 14-worker search was still killed for low memory, so most of the machine's RAM was going elsewhere: check free RAM before a long run.
+
 **Determinism.** Per-round seeds come from `random.Random(--seed).getrandbits(63)` (game then round order for `test`, sorted player key then round for `train`), so `--workers 1` and `--workers N` print the same numbers. Every `search` evaluation uses the same seed, and a candidate is simulated once (later repeats come from a cache).
 
 ### Output

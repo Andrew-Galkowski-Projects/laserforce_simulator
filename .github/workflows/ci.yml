@@ -39,6 +39,9 @@ jobs:
       DATABASE_URL: postgres://laserforce:laserforce@localhost:5432/laserforce_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The mypy step diffs against the merge-base with origin/main.
+          fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -70,6 +73,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r ./laserforce_simulator/requirements.txt
+
+      - name: mypy on changed lines
+        # LFS-01 retro: mypy errors piled up across four ticket commits because
+        # nothing ran mypy past /verify. Same rule as /verify: fail only on an
+        # error on a line this branch changed vs origin/main.
+        run: |
+          python -m pip install mypy==2.4.0
+          python .claude/skills/verify/scripts/verify.py --mode branch --mypy-only
 
       - name: Check for missing migrations
         working-directory: ./laserforce_simulator
