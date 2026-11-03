@@ -26,6 +26,7 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
 - **Rebuild:** `python scripts/lfstats_import/compute.py data/lfstats_snapshot_2026-10-21.json data/lfstats_players.csv`.
   `extract.py` builds a snapshot from the Claude Code session transcripts that fetched the
   data through the LFstats connector. Tests: `laserforce_simulator/test_lfstats_import.py`.
+- **Formulas:** the stat formulas and their tunables (`ImportConstants`) live in `laserforce_simulator/teams/lfstats_formulas.py`; `compute.py` imports them.
 - **Calibration data (LFS-01):**
   - **Test set:** `data/lfstats_test_internationals_2026.json` holds the 165 Internationals 2026 games (each team's colour, score, result, and roster with position, score, MVP and mercenary flag) and every (player, position)'s Internationals averages.
   - **Training set:** `data/lfstats_train_2026-10-21.json` is the snapshot with those games subtracted from every row (average x games), plus window rows for Internationals players outside the 230.
