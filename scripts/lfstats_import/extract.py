@@ -17,11 +17,14 @@ recognises these calls:
 - ``lfstats_resolve`` for players -> home centers.
 
 Results with the same tool-use id are read once, and rows for the same key merge.
+A result too large for the transcript is read from the file it was saved to.
+``calibration_data.py`` reads the LFS-01 calls through ``tool_results`` too.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from collections.abc import Iterator
 from typing import Any
@@ -30,6 +33,22 @@ LEADERBOARD = "lfstats_leaderboard"
 PLAYER_STATS = "lfstats_player_stats"
 RESOLVE = "lfstats_resolve"
 QUALIFY_MIN_GAMES = 26
+SAVED = re.compile(r"Output has been saved to (.+?\.txt)\.(?:\s|$)")
+
+
+def saved_result(body: Any) -> str | None:
+    """The text of a result Claude Code saved to a file because it was too large.
+
+    Such a result's body is only a pointer ("Output has been saved to <path>.");
+    the file holds the tool's JSON verbatim.
+    """
+    if not isinstance(body, str):
+        return None
+    match = SAVED.search(body)
+    if match is None:
+        return None
+    with open(match.group(1), encoding="utf-8") as f:
+        return f.read()
 
 
 def tool_results(path: str) -> Iterator[tuple[str, dict[str, Any], dict[str, Any]]]:
@@ -60,7 +79,7 @@ def tool_results(path: str) -> Iterator[tuple[str, dict[str, Any], dict[str, Any
                             x.get("text", "") for x in body if isinstance(x, dict)
                         )
                     try:
-                        data = json.loads(body)
+                        data = json.loads(saved_result(body) or body)
                     except (TypeError, ValueError):
                         continue
                     name, inp = uses[c["tool_use_id"]]

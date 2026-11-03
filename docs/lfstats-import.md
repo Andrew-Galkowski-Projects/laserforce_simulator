@@ -26,6 +26,12 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
 - **Rebuild:** `python scripts/lfstats_import/compute.py data/lfstats_snapshot_2026-10-21.json data/lfstats_players.csv`.
   `extract.py` builds a snapshot from the Claude Code session transcripts that fetched the
   data through the LFstats connector. Tests: `laserforce_simulator/test_lfstats_import.py`.
+- **Calibration data (LFS-01):**
+  - **Test set:** `data/lfstats_test_internationals_2026.json` holds the 165 Internationals 2026 games (each team's colour, score, result, and roster with position, score, MVP and mercenary flag) and every (player, position)'s Internationals averages.
+  - **Training set:** `data/lfstats_train_2026-10-21.json` is the snapshot with those games subtracted from every row (average x games), plus window rows for Internationals players outside the 230.
+  - **Built by:** `python scripts/lfstats_import/calibration_data.py data/lfstats_snapshot_2026-10-21.json data/lfstats_train_2026-10-21.json data/lfstats_test_internationals_2026.json <transcript.jsonl>`. It reads the LFstats calls the same way `extract.py` does, including results too large for the transcript, which Claude Code saves to `tool-results/` files.
+  - **Baselines:** the snapshot's, not subtracted. Internationals is about 4% of the window's scorecards.
+  - **Tests:** `laserforce_simulator/test_lfstats_calibration_data.py`.
 - **Teams:** grouped by home center (the center where the player plays most, from LFstats).
   Each center fields as many full 6-player rosters as it can (`<Center> 1`, `<Center> 2`, ...):
   1. main role first;

@@ -272,6 +272,10 @@ Round 4 (owner accepted every recommendation, 2026-11-02; revises 8, 9 and 26):
     Training averages = window totals minus Internationals totals (average x games), per (player,
     position): LFstats can't exclude one competition from a query. No `game_detail` calls.
 
+After the pull (owner, 2026-11-02; revises 5):
+29. The Test set's thin-data rule is **5** Training games at the position played, not 10. At 10,
+    only 48 of 165 games were usable (14 player-positions blocked 116); at 5, 128 are.
+
 ### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
 
 **Goal:** use the talk ([video](https://www.youtube.com/watch?v=SngT6ipJsYU); summary in
