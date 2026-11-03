@@ -413,6 +413,45 @@ class TestRecordDownNukeCancellation(unittest.TestCase):
         self.assertTrue(nuke.cancel_logged)
 
 
+class TestRecordDownCountsCancelledNukes(unittest.TestCase):
+    """LFS-01a: marking a pending nuke ``cancel_logged`` also counts it on
+    the Commander's ``counters.own_specials_cancelled``."""
+
+    def test_live_pending_nuke_increments_own_specials_cancelled(self) -> None:
+        cmdr = _player(role="commander")
+        nuke = PendingNuke(complete_time=120, player=cmdr)
+        record_down(cmdr, tick=115, ctx=_ctx(pending_nukes=[nuke]))
+        self.assertEqual(cmdr.counters.own_specials_cancelled, 1)
+
+    def test_second_down_while_cancel_logged_does_not_increment_again(
+        self,
+    ) -> None:
+        cmdr = _player(role="commander")
+        nuke = PendingNuke(complete_time=120, player=cmdr)
+        ctx = _ctx(pending_nukes=[nuke])
+        record_down(cmdr, tick=115, ctx=ctx)
+        record_down(cmdr, tick=117, ctx=ctx)
+        self.assertEqual(cmdr.counters.own_specials_cancelled, 1)
+
+    def test_counted_when_persist_is_false(self) -> None:
+        """The batch path counts the cancel too: the count is state, not an
+        emit record."""
+        cmdr = _player(role="commander")
+        nuke = PendingNuke(complete_time=120, player=cmdr)
+        ctx = _ctx(pending_nukes=[nuke])
+        ctx.events = EventLog(persist=False)
+        record_down(cmdr, tick=115, ctx=ctx)
+        self.assertEqual(cmdr.counters.own_specials_cancelled, 1)
+
+    def test_other_commanders_nuke_does_not_increment(self) -> None:
+        cmdr_a = _player(role="commander", team_color="red")
+        cmdr_b = _player(role="commander", team_color="blue")
+        nuke_b = PendingNuke(complete_time=120, player=cmdr_b)
+        record_down(cmdr_a, tick=115, ctx=_ctx(pending_nukes=[nuke_b]))
+        self.assertEqual(cmdr_a.counters.own_specials_cancelled, 0)
+        self.assertEqual(cmdr_b.counters.own_specials_cancelled, 0)
+
+
 # ---------------------------------------------------------------------------
 # Cross-cutting: event_log is optional (batch path) for both emit kinds
 # ---------------------------------------------------------------------------

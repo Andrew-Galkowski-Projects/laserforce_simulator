@@ -2,9 +2,16 @@
 MVP score formula tests for all five roles.
 """
 
+from dataclasses import asdict
+
 import pytest
 
 from matches.models import GameRound, PlayerRoundState
+from matches.sim_helpers.down import record_down
+from matches.sim_helpers.event_log import EventLog
+from matches.sim_helpers.pending_events import PendingNuke
+from matches.sim_helpers.player_state import PlayerState
+from matches.sim_helpers.round_context import RoundContext
 from matches.sim_helpers.score_calculator import calculate_mvp
 from matches.tests.conftest import make_team_with_slots
 
@@ -457,3 +464,44 @@ class TestCalculateMvp:
         result = calculate_mvp(s)
         assert result == s.get_mvp
         assert result == -2.0
+
+    def test_commander_nuke_cancelled_by_a_down_scores_penalty_not_success(self):
+        """LFS-01a regression: a Commander Downed during the fuse of their
+        only nuke gets the -1 cancel penalty and no +1 success for it.
+
+        The round goes through ``record_down`` (the engine's cancel site)
+        and is flushed the way ``_flush_to_db`` does (``**asdict(counters)``),
+        so the test fails if the Down stops counting the cancel."""
+        cmdr = PlayerState(
+            tag_id="red_commander",
+            name="red commander",
+            team_color="red",
+            role="commander",
+            accuracy=50,
+            survival=50,
+            starting_lives=15,
+            starting_shots=30,
+            final_lives=14,
+            final_shots=30,
+        )
+        cmdr.counters.specials_used = 1
+        nuke = PendingNuke(complete_time=120, player=cmdr)
+        ctx = RoundContext(
+            events=EventLog(persist=False),
+            pending_nukes=[nuke],
+            pending_followups=[],
+            pending_reactions=[],
+            all_alive=[],
+            movement_ctx=None,
+        )
+        record_down(cmdr, tick=115, ctx=ctx)
+
+        s = self._state(
+            self.players_red["commander"],
+            "red",
+            "commander",
+            final_lives=cmdr.final_lives,
+            **asdict(cmdr.counters),
+        )
+        # accuracy 0 (+0), 0 successful nukes (+0), one cancel (-1).
+        assert calculate_mvp(s) == -1.0
