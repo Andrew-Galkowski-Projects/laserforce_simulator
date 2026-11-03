@@ -275,6 +275,9 @@ Round 4 (owner accepted every recommendation, 2026-11-02; revises 8, 9 and 26):
 After the pull (owner, 2026-11-02; revises 5):
 29. The Test set's thin-data rule is **5** Training games at the position played, not 10. At 10,
     only 48 of 165 games were usable (14 player-positions blocked 116); at 5, 128 are.
+30. The Syracuse map replays at **30px** cells (owner approved the screenshots, 2026-11-02):
+    auto-detected walls, 2,001 floor cells of 3,200 (63%), against 47% at the editor's 50px default.
+    Bases: red, blue (the arena's green base) and one neutral, at the image's base markers.
 
 ### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
 
