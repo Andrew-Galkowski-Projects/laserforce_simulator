@@ -80,6 +80,28 @@ def png_bytes(size: int = 200, border: int = 6) -> bytes:
     return buf.getvalue()
 
 
+EDGE_ZONE_SIZE = 200
+
+
+def edge_png_bytes() -> bytes:
+    """BUG-SL-01: a 1000x600 white PNG with one 1px vertical line at x=400,
+    y 200..399. At ``EDGE_ZONE_SIZE`` OpenCV detects a 3x5 all-floor grid with
+    exactly one Blocked edge, ``"1,1,e"`` (the line is under 1% of a cell)."""
+    img = PILImage.new("RGB", (1000, 600), "white")
+    ImageDraw.Draw(img).line([(400, 200), (400, 399)], fill="black", width=1)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def make_edge_map(name: str = "Edge Arena") -> ArenaMap:
+    """An ArenaMap whose real image yields the ``"1,1,e"`` Blocked edge."""
+    upload = SimpleUploadedFile("edge.png", edge_png_bytes(), content_type="image/png")
+    return ArenaMap.objects.create(
+        name=name, image=upload, img_width=1000, img_height=600
+    )
+
+
 def png_upload(filename: str = "arena.png") -> SimpleUploadedFile:
     return SimpleUploadedFile(filename, png_bytes(), content_type="image/png")
 

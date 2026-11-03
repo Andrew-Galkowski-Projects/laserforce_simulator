@@ -238,6 +238,10 @@ Whether one **Cell** can see another, after walls and elevation; the basis for *
 **Sight line**:
 A precomputed, possibly one-directional LOS link between two **Cells**, stored on the map.
 
+**Blocked edge**:
+A **Wall** on the boundary between two neighbouring **Cells**, detected from the map image, that blocks LOS across that boundary even when both Cells are floor. Stored in a zone config's `blocked_edges` as `"r,c,e"` (east of the Cell) / `"r,c,s"` (south of it) keys.
+_Avoid_: edge wall
+
 **Wall**:
 A movement/sight obstruction: **high wall** (blocks both), **low wall** (blocks movement, not sight), **windowed wall** (blocks sight but allows tagging through a directional aperture).
 

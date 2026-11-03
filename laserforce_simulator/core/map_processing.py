@@ -369,6 +369,27 @@ def _has_los(
                         return False
 
 
+def _blocked_edges_grid(zone_data: dict) -> list[list[dict[str, bool]]]:
+    """The 2D blocked-edge grid for a zone dict.
+
+    ``detect_zones`` output carries ``blocked_edges_grid``; a saved zone config
+    holds only the flat ``"r,c,d"`` dict, so the grid is built from it, sized
+    from ``zones`` (BUG-SL-01). Keys outside the grid are skipped.
+    """
+    if "blocked_edges_grid" in zone_data:
+        return zone_data["blocked_edges_grid"]
+    zones = zone_data["zones"]
+    rows = len(zones)
+    cols = len(zones[0]) if rows else 0
+    grid = [[{"e": False, "s": False} for _ in range(cols)] for _ in range(rows)]
+    for key, blocked in (zone_data.get("blocked_edges") or {}).items():
+        r, c, direction = key.split(",")
+        r, c = int(r), int(c)
+        if blocked and 0 <= r < rows and 0 <= c < cols:
+            grid[r][c][direction] = True
+    return grid
+
+
 def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
     """Compute bidirectional adjacency dict for all non-wall cell pairs.
 
@@ -389,9 +410,7 @@ def compute_sight_lines(zone_data, blocked_edges_grid=None, use_quadtree=True):
     elevation_grid = None
     wall_meta = None
     if isinstance(zone_data, dict):
-        blocked_edges_grid = zone_data.get(
-            "blocked_edges_grid", zone_data.get("blocked_edges", {})
-        )
+        blocked_edges_grid = _blocked_edges_grid(zone_data)
         zone_grid = zone_data["zones"]
         elevation_grid = zone_data.get("elevation")
         wall_meta = zone_data.get("wall_meta")
@@ -500,9 +519,7 @@ def compute_single_cell_visibility(r1, c1, zone_data, blocked_edges_grid=None):
     elevation_grid = None
     wall_meta = None
     if isinstance(zone_data, dict):
-        blocked_edges_grid = zone_data.get(
-            "blocked_edges_grid", zone_data.get("blocked_edges", {})
-        )
+        blocked_edges_grid = _blocked_edges_grid(zone_data)
         zone_grid = zone_data["zones"]
         elevation_grid = zone_data.get("elevation")
         wall_meta = zone_data.get("wall_meta")

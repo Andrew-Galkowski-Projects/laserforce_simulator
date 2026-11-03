@@ -84,7 +84,6 @@ from .round_loop import (
 
 # Module logger
 logger = logging.getLogger(__name__)
-logging.basicConfig(level=logging.DEBUG)
 
 
 # _elevation_hit_modifier, elevation_hit_modifier, _can_tag_through_windowed_wall,
