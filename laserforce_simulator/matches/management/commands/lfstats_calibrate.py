@@ -85,6 +85,13 @@ class Command(BaseCommand):
             default=1,
             help="Parallel worker processes (default: 1 = serial)",
         )
+        parser.add_argument(
+            "--search-fields",
+            dest="search_fields",
+            default=None,
+            help="search: comma-separated constants to search "
+            "(default: every constant in the grid)",
+        )
         for field in fields(ImportConstants):
             parser.add_argument(
                 _flag(field.name),
@@ -115,7 +122,7 @@ class Command(BaseCommand):
         }
 
         try:
-            if split == "test":
+            if test is not None:
                 report = cal.run_test(
                     train, test, movement_ctx, constants=constants, **run
                 )
@@ -134,7 +141,7 @@ class Command(BaseCommand):
                     train,
                     movement_ctx,
                     start=constants,
-                    grid=DEFAULT_GRID,
+                    grid=_grid(options["search_fields"]),
                     on_step=self._progress,
                     **run,
                 )
@@ -234,6 +241,20 @@ def _describe(constants: ImportConstants) -> str:
         if getattr(constants, f.name) != getattr(DEFAULT_CONSTANTS, f.name)
     ]
     return ", ".join(changed)
+
+
+def _grid(search_fields: str | None) -> dict[str, tuple[float, ...]]:
+    """``DEFAULT_GRID``, narrowed to ``search_fields`` when given."""
+    if not search_fields:
+        return DEFAULT_GRID
+    names = [n.strip() for n in search_fields.split(",") if n.strip()]
+    unknown = [n for n in names if n not in DEFAULT_GRID]
+    if unknown:
+        raise CommandError(
+            f"Unknown search field(s): {', '.join(unknown)}; "
+            f"choose from {', '.join(DEFAULT_GRID)}"
+        )
+    return {n: DEFAULT_GRID[n] for n in names}
 
 
 def _load_json(path: str, label: str) -> dict:

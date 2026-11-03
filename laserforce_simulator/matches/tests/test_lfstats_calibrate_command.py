@@ -163,6 +163,43 @@ class TestSearchSplit:
         assert "step pass 0 start objective 10.0000" in out
         assert "step pass 1 accuracy_offset=-10 objective 0.0000 kept" in out
 
+    def test_search_fields_narrows_the_grid(
+        self, files: dict[str, str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        seen: list[cal.ImportConstants] = []
+
+        def stub(
+            train: dict,
+            movement_ctx: object,
+            *,
+            constants: cal.ImportConstants,
+            **kwargs: object,
+        ) -> cal.TrainReport:
+            seen.append(constants)
+            return cal.TrainReport(cells=[], objective=1.0)
+
+        monkeypatch.setattr(cal, "run_train", stub)
+        _run(
+            "--split",
+            "search",
+            "--rounds",
+            "1",
+            "--search-fields",
+            "accuracy_offset,preferred_role_boost",
+            **files,
+        )
+        for constants in seen:
+            assert constants.log_scale == DEFAULT_CONSTANTS.log_scale
+            assert constants.accuracy_scale == DEFAULT_CONSTANTS.accuracy_scale
+        assert {c.accuracy_offset for c in seen} == {-20.0, -10.0, 0.0}
+        assert {c.preferred_role_boost for c in seen} == {1.0, 1.1, 1.2}
+
+    def test_unknown_search_field_is_a_command_error(
+        self, files: dict[str, str]
+    ) -> None:
+        with pytest.raises(CommandError, match="bogus"):
+            _run("--split", "search", "--search-fields", "bogus", **files)
+
     def test_default_grid_is_three_values_around_each_default(self) -> None:
         assert lfstats_calibrate.DEFAULT_GRID == {
             "log_scale": (15.0, 25.0, 35.0),

@@ -6,7 +6,7 @@ import json
 import math
 import os
 import random
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields, replace
 from pathlib import Path
 from typing import Any
@@ -758,7 +758,7 @@ def search(
     movement_ctx: Any,
     *,
     start: ImportConstants,
-    grid: dict[str, tuple[float, ...] | list[float]],
+    grid: Mapping[str, Sequence[float]],
     rounds: int,
     seed: int,
     workers: int = 1,
