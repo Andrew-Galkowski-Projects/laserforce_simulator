@@ -230,6 +230,31 @@ class TestSupportAvailability(unittest.TestCase):
             f"Expected no resupply from reset-window support, got: {event_types}",
         )
 
+    def _resupply_types(self, last_downed_time):
+        requestor = _ps("scout", final_lives=5)
+        support = _ps(
+            "medic",
+            team_color="red",
+            final_shots=30,
+            last_downed_time=last_downed_time,
+            last_shot_time=-99.0,
+        )
+        ctx = self._make_movement_ctx(can_see_result=True)
+        events = self._run(requestor, support, second=100, movement_ctx=ctx)
+        return [
+            e["event_type"]
+            for e in events
+            if e["event_type"] in ("resupply_lives", "resupply_ammo", "combo_resupply")
+        ]
+
+    def test_support_late_in_respawn_cooldown_excluded(self):
+        """SM5-02: the cooldown is RESPAWN_TICKS (16) ticks, not 7. Downed 10
+        ticks ago the support is still not Active, so it gives nothing."""
+        self.assertEqual(self._resupply_types(last_downed_time=90), [])
+
+    def test_support_active_again_at_respawn_ticks_resupplies(self):
+        self.assertNotEqual(self._resupply_types(last_downed_time=84), [])
+
     def test_support_with_no_shots_excluded(self):
         """Support with final_shots=0 is excluded regardless of other conditions."""
         requestor = _ps("scout", final_lives=5)
@@ -1147,3 +1172,37 @@ class TestComboResupplyCount(DjangoTestCase):
         reloaded = PlayerRoundState.objects.get(pk=prs.pk)
         self.assertEqual(reloaded.tags_made, 5)
         self.assertEqual(reloaded.combo_resupply_count, 2)
+
+
+class TestAttemptResupplyActiveGate(unittest.TestCase):
+    """SM5-02: a support that is not Active gives no Resupply (``attempt_resupply``
+    is the chokepoint for the plan path and the request queue)."""
+
+    def _attempt(self, tagger, tick):
+        from matches.sim_helpers.combat import attempt_resupply
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        mate = _ps("scout", final_lives=5, final_shots=5)
+        ctx = RoundContext(events=EventLog(persist=True))
+        attempt_resupply(tagger, mate, tick, ctx=ctx)
+        return mate, ctx
+
+    def test_downed_support_gives_nothing(self):
+        for role in ("medic", "ammo"):
+            for tick in (103, 112):  # Not-targetable window, Reset window
+                with self.subTest(role=role, tick=tick):
+                    tagger = _ps(role, last_downed_time=100)
+                    mate, ctx = self._attempt(tagger, tick)
+                    self.assertEqual((mate.final_lives, mate.final_shots), (5, 5))
+                    self.assertIsNone(mate.last_downed_time)
+                    self.assertEqual(tagger.counters.resupplies_given, 0)
+                    self.assertEqual(ctx.events.entries, [])
+
+    def test_active_support_resupplies(self):
+        for role, field in (("medic", "final_lives"), ("ammo", "final_shots")):
+            with self.subTest(role=role):
+                tagger = _ps(role, last_downed_time=100)
+                mate, ctx = self._attempt(tagger, 116)
+                self.assertGreater(getattr(mate, field), 5)
+                self.assertEqual(tagger.counters.resupplies_given, 1)

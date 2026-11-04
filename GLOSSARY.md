@@ -205,6 +205,13 @@ _Avoid_: treating seconds as a stored or API unit; the inverse of the pre-TIME-0
 **Respawn cooldown**:
 The 8 seconds after a **Down** before a player is fully active again, split into the **Not-targetable window** then the **Reset window**.
 
+**Active**:
+A player not in the **Respawn cooldown**. Only an Active player can fire a **Shot**, launch a **Missile**, give a **Resupply**, use a **Special** or **Capture** a **Base**; a Downed pack does none of these until the cooldown ends.
+_Avoid_: "alive" (a Downed player still has **Lives** and keeps moving)
+
+**Taggable**:
+A player outside the **Not-targetable window**: Active, or in the **Reset window**. A Shot at a player who is not Taggable is not a Shot at all: nothing is fired and no **Miss** is counted.
+
 **Not-targetable window**:
 The 0–3 s immediately after a **Down** when the player cannot be **Tagged**.
 

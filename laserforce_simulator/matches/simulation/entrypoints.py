@@ -1685,7 +1685,8 @@ class BatchSimulator:
         attempts: list = []
         fired_holder_ids: set = set()
         for mover in all_alive:
-            if mover.cell_row is None:
+            # SM5-02: a mover in its Not-targetable window draws no Overwatch.
+            if mover.cell_row is None or not mover.is_taggable_at(second):
                 continue
             # An enemy draws Overwatch if it is currently *in* the holder's LoS
             # OR its Advance this tick crossed it. _last_step_cells is the

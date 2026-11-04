@@ -293,6 +293,96 @@ class TestResolveShotInitial(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# SM5-02 — a non-Active shooter, or a non-Taggable defender, fires nothing
+# ---------------------------------------------------------------------------
+
+_ALL_KINDS = (
+    SHOT_KIND_INITIAL,
+    SHOT_KIND_FOLLOW_UP,
+    SHOT_KIND_REACTION,
+    SHOT_KIND_OVERWATCH,
+)
+
+
+class TestResolveShotActiveGate(unittest.TestCase):
+    """SM5-02 (spec #531): the Phase 1 gate blocks a Shot whose attacker is not
+    Active or whose defender is not Taggable. The pending Follow-up / Reaction
+    drains and the Overwatch dispatch all call ``resolve_shot``, so the
+    per-kind cases cover a shooter Downed after its Shot was queued.
+
+    RESPAWN_TICKS = 16, NOT_TARGETABLE_TICKS = 8: Downed at tick 0, a player is
+    not Taggable for ticks 0-7, in the Reset window for ticks 8-15 and Active
+    from tick 16.
+    """
+
+    def _assert_no_op(self, attacker, defender, ctx, outcome) -> None:
+        self.assertEqual(outcome, ShotOutcome(False, False, False))
+        self.assertEqual(attacker.final_shots, 20)
+        self.assertEqual(attacker.last_shot_time, -99)
+        self.assertEqual(attacker.counters.tags_made, 0)
+        self.assertEqual(attacker.counters.shots_missed, 0)
+        self.assertEqual(defender.counters.times_tagged, 0)
+        self.assertEqual(ctx.events.entries, [])
+        self.assertEqual(ctx.pending_followups, [])
+        self.assertEqual(ctx.pending_reactions, [])
+
+    def _shoot(self, attacker, defender, tick, kind):
+        ctx = _ctx(all_alive=[attacker, defender])
+        with _patch_hit(), _patch_see_through_hide():
+            outcome = resolve_shot(attacker, defender, tick=tick, kind=kind, ctx=ctx)
+        return ctx, outcome
+
+    def test_attacker_not_active_fires_nothing_for_every_kind(self) -> None:
+        # tick 3: Not-targetable window; tick 12: Reset window. Both not Active.
+        for tick in (3, 12):
+            for kind in _ALL_KINDS:
+                with self.subTest(tick=tick, kind=kind):
+                    attacker = _player(
+                        role="scout", accuracy=99, last_downed_time=0, player_id=1
+                    )
+                    defender = _player(
+                        role="scout", team_color="blue", survival=0, player_id=2
+                    )
+                    ctx, outcome = self._shoot(attacker, defender, tick, kind)
+                    self._assert_no_op(attacker, defender, ctx, outcome)
+
+    def test_attacker_active_again_at_respawn_ticks_fires(self) -> None:
+        attacker = _player(role="scout", accuracy=99, last_downed_time=0, player_id=1)
+        defender = _player(role="scout", team_color="blue", survival=0, player_id=2)
+        ctx, outcome = self._shoot(attacker, defender, 16, SHOT_KIND_INITIAL)
+        self.assertTrue(outcome.hit)
+        self.assertEqual(attacker.final_shots, 19)
+
+    def test_defender_not_taggable_is_not_shot_for_every_kind(self) -> None:
+        for kind in _ALL_KINDS:
+            with self.subTest(kind=kind):
+                attacker = _player(role="scout", accuracy=99, player_id=1)
+                defender = _player(
+                    role="scout",
+                    team_color="blue",
+                    survival=0,
+                    last_downed_time=0,
+                    player_id=2,
+                )
+                ctx, outcome = self._shoot(attacker, defender, 7, kind)
+                self._assert_no_op(attacker, defender, ctx, outcome)
+
+    def test_defender_in_reset_window_is_shot(self) -> None:
+        # tick 8 = NOT_TARGETABLE_TICKS exactly: Taggable again.
+        attacker = _player(role="scout", accuracy=99, player_id=1)
+        defender = _player(
+            role="scout",
+            team_color="blue",
+            survival=0,
+            last_downed_time=0,
+            player_id=2,
+        )
+        ctx, outcome = self._shoot(attacker, defender, 8, SHOT_KIND_INITIAL)
+        self.assertTrue(outcome.hit)
+        self.assertEqual(defender.counters.times_tagged_in_reset_window, 1)
+
+
+# ---------------------------------------------------------------------------
 # Behaviour change A — uniform Ammo non-decrement of final_shots
 # ---------------------------------------------------------------------------
 
@@ -773,7 +863,10 @@ class TestResolveShotDownChain(unittest.TestCase):
 
     def test_medic_redown_within_cooldown_emits_medic_reset(self) -> None:
         attacker = _player(role="heavy", accuracy=99, player_id=1)
-        # Medic is freshly Downed at tick=5, still in cooldown at tick=10
+        # Medic is freshly Downed at tick=5, still in cooldown at tick=14.
+        # SM5-02: tick 14 is in the Reset window (Taggable from 5 + 8 = 13);
+        # the old tick 10 sat in the Not-targetable window, where a Shot is
+        # now invalid. A re-Down in the cooldown is still what is pinned.
         medic = _player(
             role="medic",
             team_color="blue",
@@ -785,7 +878,7 @@ class TestResolveShotDownChain(unittest.TestCase):
         )
         ctx = _ctx(all_alive=[attacker, medic])
         with _patch_hit(), _patch_see_through_hide():
-            resolve_shot(attacker, medic, tick=10, kind=SHOT_KIND_INITIAL, ctx=ctx)
+            resolve_shot(attacker, medic, tick=14, kind=SHOT_KIND_INITIAL, ctx=ctx)
         resets = _events_by_type(ctx, "medic_reset")
         self.assertEqual(len(resets), 1)
         self.assertEqual(resets[0]["actor_id"], 2)

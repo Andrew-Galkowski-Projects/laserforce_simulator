@@ -421,6 +421,46 @@ not close these gaps: they are in how the sim plays, not in the imported stats.
   `specific_tags`, so the scout's +0.2 per commander or heavy tag never scores. Scout MVP
   passes anyway (12.3 vs 13.8), but the cell is low.
 
+### SM5-02: a Downed pack is dark (2026-11-03)
+
+SM5-02 (spec #531) stopped a player who is not Active from firing or resupplying, and stopped
+Shots at a player who is not Taggable. Test split, default constants, before (`origin/main`)
+and after, both `--split test --rounds 20 --seed 42 --workers 4`:
+
+```
+python laserforce_simulator/manage.py lfstats_calibrate --split test --rounds 20 --seed 42 --workers 4
+```
+
+| Position | Metric | Before | After | Real | Pass before / after |
+|---|---|---|---|---|---|
+| commander | times hit | 60.1 | 56.7 | 59.1 | PASS / PASS |
+| commander | MVP | 14.31 | 13.52 | 18.74 | FAIL / FAIL |
+| commander | nukes detonated | 0.51 | 0.65 | 2.79 | FAIL / FAIL |
+| heavy | hit diff | 1.684 | 1.908 | 0.969 | FAIL / FAIL |
+| heavy | times hit | 50.4 | 46.4 | 47.8 | PASS / PASS |
+| heavy | MVP | 19.76 | 20.75 | 15.64 | FAIL / FAIL |
+| scout | times hit | 39.4 | 36.7 | 33.8 | FAIL / **PASS** |
+| scout | MVP | 12.36 | 11.56 | 13.84 | PASS / **FAIL** |
+| scout | rapid fire | 2.18 | 1.92 | 1.57 | FAIL / **PASS** |
+| ammo | uptime | 0.272 | 0.300 | 0.610 | FAIL / FAIL |
+| ammo | resupplies given | 70.1 | 72.5 | 36.2 | FAIL / FAIL |
+| medic | accuracy | 0.789 | 0.753 | 0.902 | PASS / **FAIL** |
+| medic | hit diff | 0.455 | 0.200 | 1.062 | FAIL / FAIL |
+| medic | MVP | 12.96 | 10.63 | 15.95 | FAIL / FAIL |
+| medic | uptime | 0.388 | 0.437 | 0.765 | FAIL / FAIL |
+| medic | resupplies given | 55.6 | 58.6 | 40.8 | FAIL / FAIL |
+
+- **Cells passed:** 11 / 36 before and after (two cells flipped each way).
+- **Match level:** winner agreement 58.6% -> 57.8%, mean margin error 8,206 -> 8,433.
+- **What moved:** times hit fell at every position except the medic (no Shots in the
+  Not-targetable window), and support uptime rose. The medic lost most of its tags (they came
+  from shooting while Downed), so its hit diff and MVP fell further from the real figures.
+  Resupplies given rose slightly even though Downed supports now give none; the cause was not
+  measured (supports are Active for more of the round). No constant was retuned; this shift is
+  CAL-01's starting point.
+- **Re-run after review (2026-11-04).** The review fix that counts a negative pooled weight as 0
+  gave byte-identical output: no Ammo or Medic reaches the drain with a negative slot here.
+
 ## Findings to follow up
 
 Found while tracing how the sim uses each stat. Not yet acted on.

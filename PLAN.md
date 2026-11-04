@@ -164,13 +164,7 @@ after it.
 
 SM5-01 (`_stress_fail` rewards weak supports) is **[DONE]**; see `PLAN-completed.md`.
 
-### SM5-02 · Downed players can still fire (bug)
-
-**Prio: High (found by LFS-02).** Neither the `tag_player` plan (`sim_helpers/combat.py`) nor
-`resolve_shot` (`sim_helpers/shot.py`) checks that the shooter is active, and the down-state
-weights leave the Commander 10 tag weight and the Medic 5. A downed pack cannot fire in SM5.
-A non-active player cannot tag. The grill settles whether that is a guard, a zero tag weight
-while down, or both, and whether Overwatch's mover side needs the same check.
+SM5-02 (Downed players can still fire) is **[DONE]**; see `PLAN-completed.md`.
 
 ### SM5-03 · Resource-aware aggression (resource_awareness)
 
@@ -301,7 +295,7 @@ deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 **Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
-SM5-02..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
+SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.

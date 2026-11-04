@@ -17,7 +17,6 @@ _MEDIC = dict(
     low_lives_threshold=3,  # fixed life count (not a percentage)
     low_lives_hide_cost=30,  # hide cut when low on lives
     low_lives_resupply_gain=30,  # resupply_ally bump when low on lives
-    not_active_resupply_cost=60,  # resupply_ally drained while downed
     endgame_capture_gain=40,  # capture_base bump in the endgame rush
     endgame_resupply_cost=40,  # resupply_ally cost paid for that rush
     special_per_ally=20,  # use_special bump per active ally
@@ -98,7 +97,6 @@ _HEAVY = dict(
     seek_no_ally_hide=30,  # hide bump, no ally (lives block)
     seek_no_ammo_tag=50,  # tag_player cut, no ammo ally (shots block)
     seek_no_ammo_hide=50,  # hide bump, no ammo ally (shots block)
-    not_active_tag_cost=70,  # tag_player drained while downed
     endgame_capture_gain=30,  # capture_base bump in the endgame rush
     endgame_tag_cost=30,  # tag_player cost paid for that rush
 )
@@ -130,7 +128,6 @@ _COMMANDER = dict(
     seek_no_ally_hide=30,  # hide bump, no ally (lives block)
     seek_no_ammo_tag=50,  # tag_player cut, no ammo ally (shots block)
     seek_no_ammo_hide=50,  # hide bump, no ammo ally (shots block)
-    not_active_tag_cost=70,  # tag_player drained while downed
     special_base=100,  # base use_special weight when the nuke gate opens
     special_per_enemy=20,  # use_special reduction per enemy in zone
     endgame_capture_gain=30,  # capture_base bump in the endgame rush
@@ -305,16 +302,18 @@ def _apply_not_active(
     second,
     watch_role,
     watch_team_color,
-    drain_key="tag_player",
     also_drain_resupply=False,
     always_escape=False,
 ):
     """
     When downed, redistribute idle weight to hide or only_move based on a nearby ally.
 
+    SM5-02: a Downed pack is dark, so the whole tag_player weight drains (it
+    was a fixed cost that left the Commander 10 and the Medic 5).
+
     - watch_role / watch_team_color: the ally to look for in the current zone.
-    - drain_key: the weight index to drain from (tag_player or resupply_ally).
-    - also_drain_resupply: if True (ammo), pool tag_player + resupply_ally and zero both.
+    - also_drain_resupply: if True (Ammo, Medic), pool tag_player + resupply_ally
+      and zero both.
     - always_escape: if True, always redirect to only_move regardless of ally presence
       (used for heavy to force movement out of line of fire during reset window).
     """
@@ -331,15 +330,12 @@ def _apply_not_active(
             None,
         )
         if also_drain_resupply:
-            idle = w[i["tag_player"]] + w[i["resupply_ally"]]
+            idle = max(0, w[i["tag_player"]]) + max(0, w[i["resupply_ally"]])
             w[i["tag_player"]] = 0
             w[i["resupply_ally"]] = 0
         else:
-            cost = c[
-                f"not_active_{drain_key.replace('tag_player', 'tag').replace('resupply_ally', 'resupply')}_cost"
-            ]
-            idle = cost
-            w[i[drain_key]] -= cost
+            idle = max(0, w[i["tag_player"]])
+            w[i["tag_player"]] = 0
 
         if not always_escape and ally_in_zone:
             w[i["hide"]] += idle
@@ -464,7 +460,7 @@ def _get_medic_weights(
     Situational blocks, in application order (only the ones Medic calls):
     baseline -> hold baseline -> support capture incentive -> low-lives
     (stop tagging, dump tag weight into resupply) -> support special -> not-active
-    (downed; drains ``resupply_ally``, watches for an allied heavy) -> endgame
+    (downed; drains ``tag_player`` + ``resupply_ally``, watches for an allied heavy) -> endgame
     rush -> ``resupply_synergy`` stat scaling on ``resupply_ally`` -> request
     resupply (shots only) -> MECH-04 nuke reaction (tag weight -> resupply) ->
     MECH-06 score broadcast.
@@ -500,7 +496,7 @@ def _get_medic_weights(
         second,
         "heavy",
         player.team_color,
-        drain_key="resupply_ally",
+        also_drain_resupply=True,
     )
     _apply_endgame_rush(w, c, i, player, second, "resupply_ally", time_domain)
 
