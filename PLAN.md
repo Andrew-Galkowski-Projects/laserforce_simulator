@@ -151,43 +151,95 @@ mechanics changes from LFS-02 or CAL-01 call for re-running its `lfstats_calibra
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 
-### LFS-02 · Suggest app changes from Kodama's "How to Improve in SM5" talk
+LFS-02 (Suggest app changes from Kodama's "How to Improve in SM5" talk) is **[DONE]**; see `PLAN-completed.md`.
 
-**Goal:** use the talk ([video](https://www.youtube.com/watch?v=SngT6ipJsYU); summary in
-`docs/lfstats-import.md`) as a domain reference for where the sim and the Player model differ
-from how SM5 is really played. **Output:** a written, prioritised proposal (doc or ADR draft),
-not code. Each accepted suggestion becomes its own PLAN entry.
+---
 
-**Starting points found during the import:**
-- **Unused stats get real effects.** Six stats are never read by the sim: positioning,
-  flexibility, adaptability and the offensive/defensive/midfield synergies. Possible effects:
-  - positioning: choosing control zones over neutral ones ("why am I here?");
-  - flexibility: body angles and missile dodging (today the dodge comes from survival);
-  - adaptability: performance when losing or with unfamiliar teammates.
-- **resource_awareness has no effect** (`_observe_lives` is a dead end). The talk's "look at
-  your gun" suggests an aggression range set by your own shots and lives, plus retreat
-  timing: about 9-13 lives is safe, 6-7 means head home, adjusted for the nukes the enemy
-  commander is likely holding.
-- **decision_making** means decisiveness in the talk (act within about a second). In the
-  sim, `_stress_fail` looks inverted: a higher value raises the support fail chance.
-- **Sprinting vs jogging.** Speed trades against awareness, because sprinting misses
-  information. Stamina's second-half fade already matches the talk.
-- **Communication:**
-  - nuke call-outs remove teammates' 1-3 s reaction delay;
-  - sharing shots and lives changes how teammates play;
-  - calling downs with a location ("commander down at big box").
-- **Mechanics:** laying trails while down, stubborn zone control (about 3 resets before
-  leaving) and missile-dodging technique.
-- **overall_rating weighting.** It is a plain mean of 19 stats; the talk's pie chart puts
-  game sense largest and mechanical skill around 5%.
+## SM5 talk follow-ups
 
-**Overlap to reconcile:** MECH-08 (reset timing), MECH-10 (follow rule), MECH-13 (per-player
-information table) and MECH-14 (memory/comms-driven behaviour).
+Accepted LFS-02 suggestions, in priority order. Each row and its code facts are in
+`docs/proposals/lfs-02-sm5-talk.md`. Every entry that changes the sim changes seeded outcomes:
+it folds into the **CAL-01** re-baseline, and LFS-01's `lfstats_calibrate` harness is re-run
+after it.
 
-**Acceptance:**
-- The proposal is reviewed.
-- Each suggestion is mapped to an existing MECH item or a new PLAN entry, or rejected with a
-  reason.
+### SM5-01 · `_stress_fail` rewards weak supports (bug)
+
+**Prio: High (found by LFS-02).** `_stress_fail` (`matches/sim_helpers/resupply_queue.py`)
+fails a medic or ammo with `(decision_making + teamwork) / 10 * prior_request_count` %, so a
+better support fails more often. Flip it to `(200 - dm - tw) / 10 * prior_request_count`. Add a
+regression test that higher decision_making and teamwork never raise the fail chance.
+`docs/lfstats-import.md` says it "looks inverted" in two rows; fix both.
+
+### SM5-02 · Downed players can still fire (bug)
+
+**Prio: High (found by LFS-02).** Neither the `tag_player` plan (`sim_helpers/combat.py`) nor
+`resolve_shot` (`sim_helpers/shot.py`) checks that the shooter is active, and the down-state
+weights leave the Commander 10 tag weight and the Medic 5. A downed pack cannot fire in SM5.
+A non-active player cannot tag. The grill settles whether that is a guard, a zero tag weight
+while down, or both, and whether Overwatch's mover side needs the same check.
+
+### SM5-03 · Resource-aware aggression (resource_awareness)
+
+resource_awareness has no effect: `_observe_lives` (`simulation/round_loop.py`) writes the
+enemy's lives into memory and nothing reads them back. Two parts:
+- **(a) Own resources.** Replace the flat 30% lives/shots retreat rule (`_apply_seek_ally`,
+  the `pathfinding.py` medic/ammo goals) with the talk's bands: about 9-13 lives is safe and
+  6-7 means head home, adjusted for the nukes the enemy Commander is likely holding.
+  resource_awareness sets how reliably a player follows the bands.
+- **(b) Enemy resources.** Read the remembered enemy lives back, so a player prefers
+  low-lives targets and finishes Eliminations.
+
+**Open questions:** the exact bands per role; what "home" is (medic, own base); how the
+likely-nukes estimate is made. Reads memory, so it composes with MECH-13. The importer writes
+resource_awareness = 50 for everyone until the TDF route exists.
+
+### SM5-04 · Missile dodge from flexibility
+
+flexibility is never read. Move the missile dodge (`simulation/entrypoints.py`) from
+`min(20, survival / 5)` to `min(20, flexibility / 5)`; survival keeps only the hit roll. Add
+flexibility to `_SIMULATION_STATS` and the `PlayerRoundState` forwarding properties. The
+importer writes flexibility = 50 for everyone; `times_hit_by_missile` per game is the candidate
+source.
+
+### SM5-05 · Losing-state modifier (adaptability)
+
+adaptability is never read. While the score broadcast says a player's team is behind, low
+adaptability costs hit chance and decision sharpness; high adaptability holds steady. Matches
+the importer's formula (MVP in losses). **Open questions:** the size of the penalty, and
+whether the deficit's size scales it.
+
+### SM5-06 · Control-zone positioning (positioning)
+
+positioning is never read. Bias movement goals toward control cells over neutral ones ("why am
+I here?"), and set how far forward to play from a player's own shots and lives. **Open
+questions:** what a control zone is in the existing zone/LOS model; how "how far forward"
+shares work with SM5-03(a). Once zones are defined, the three zone synergies (rejected for
+LFS-02) are candidate modifiers here.
+
+### SM5-07 · Nuke call-outs and reaction delay (communication)
+
+Today every enemy learns the Commander's cell the tick a nuke starts (`round_loop.py`), whatever
+anyone's communication, and the reaction roll `(ga + pa) / 200` has no delay. In the talk an
+announced nuke removes teammates' 1-3 s reaction delay. Unseen nukes start with a reaction
+delay of 2-6 ticks; a teammate who sees the Commander and passes the communication roll makes a
+**Call-out**, which removes it. The fuse is 8-14 ticks, so the delay decides whether a
+cancel is possible.
+
+### SM5-08 · Sprint vs jog
+
+**Prio: Low.** No pace choice exists: cells per tick come only from speed
+(`sim_helpers/pathfinding.py`). Add one per goal: a sprint moves full speed with a lower chance
+of a memory update; a jog moves about 60% speed with full awareness. decision_making or
+game_awareness picks the pace. **Open questions:** which stat picks; whether stamina limits
+sprinting (MECH-11 also spends stamina).
+
+### SM5-09 · Weight `overall_rating` by skill area
+
+`overall_rating` is a plain mean of all 19 stats (`teams/models.py`, plus the DB versions in
+`teams/services.py` and `matches/league_screen_services.py`). Weight it by the talk's six
+areas: game sense largest, mechanical skill about 5%. It changes salary, seeding, draws and
+development, not the sim. **Open question:** the other areas' shares, which
+`docs/lfstats-import.md` does not record.
 
 ---
 
@@ -254,7 +306,7 @@ serving the SPA in every deploy (ANG-10, ADR-0049). Remaining,
 in order:
 
 ```
-LFS-02  LFstats realism (Phase 3.5)   <- NOW
+SM5-01..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
@@ -464,6 +516,9 @@ reset opportunity to re-tag a downed enemy** once it reactivates, using `SightLi
 eligibility and the appropriate target filters. Pairs with MECH-08 (timing) and builds on the MECH-02
 `last_tagged_id` reset-target machinery.
 
+**From LFS-02:** stubborn zone control. A player holding a spot keeps resetting the enemy there
+about 3 times before leaving, instead of moving on after one Down.
+
 ### MECH-10 · Follow rule — cap pursuit of downed players
 
 Medics are dying within ~4 minutes because players follow a downed target indefinitely. Add a
@@ -515,6 +570,11 @@ to encode:
 - **Scouts** push in past the Heavy when the Heavy is down.
 - **Commander** takes space when the Heavy is down.
 - **Ammo** can resupply the Heavy for free when the Commander is down.
+- **Down call-outs with a location** (from LFS-02): "commander down at big box" sends teammates
+  to finish the downed enemy. Memory entries already carry `downed` / `reset_window` status;
+  nothing reads it yet.
+- **Shared shots and lives** (from LFS-02): a teammate's call of their own shots and lives
+  changes how the others play (cover a low-lives ally, send the ammo).
 
 These are conditional goal/action overrides keyed off teammate-status memory; they extend the MECH-06
 broadcast/memory hooks and feed into the role goal selection (MAP-05 / MECH-07).
