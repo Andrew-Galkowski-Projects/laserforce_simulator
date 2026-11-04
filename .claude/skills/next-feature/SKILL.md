@@ -350,7 +350,12 @@ before reporting a test missing (ANG-06e's false P1), and both reviewers to
 quote the grep or line behind any finding about what a file contains or lacks
 (PERF-02's false "durations file predates the split"), and the line that
 produces any runtime behaviour a finding claims (DESK-01's false "a PENDING job
-fails at once": `celery_state_to_job_status` maps PENDING to `running`). When the code diff
+fails at once": `celery_state_to_job_status` maps PENDING to `running`). Give the
+Standards reviewer the task's settled grill decisions from `PLAN.md` too, so a file a
+decision asked for reads as in scope (SM5-02's false "`lfstats-import.md` is
+unrelated"). Before showing the reports, drop any finding about a file's contents
+that quotes no line (SM5-02's "probably repeats tests", in a file the reviewer never
+opened). When the code diff
 (`git diff origin/main...HEAD --shortstat -- . ":!*.md" ":!*test_*.py" ":!*.spec.ts"`) is under about 150
 changed lines, spawn both reviewers with `model: sonnet`: TEST-01's two default
 reviewers spent 138k tokens on 60 lines for one nit. Show both reports. Fix the

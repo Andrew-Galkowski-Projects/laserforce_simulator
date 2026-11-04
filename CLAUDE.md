@@ -30,6 +30,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
     `laserforce_simulator/laserforce_simulator/`. Invoke via the path —
     `python laserforce_simulator/manage.py <cmd>`, and pytest with
     `-c laserforce_simulator/pytest.ini --rootdir laserforce_simulator`. The
+    ini adds `-n auto`, so a serial run is `-n0` (`-p no:xdist` errors). The
     Bash hook (`scripts/guard_shell_writes.py`) refuses any `cd`.
 
 ## Windows Shell Conventions

@@ -303,7 +303,7 @@ Mechanics items can run in parallel with Phase 8, because they don't touch the f
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, CAL-01, then MECH-07
+- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, SIM-13, SIM-14, CAL-01, then MECH-07
   last (its design is still open).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
@@ -639,6 +639,29 @@ Stats); whether Path commitment still holds a route once it has been picked; how
 shifts seeded outcomes, so it folds into the `CAL-01` re-baseline. The ANG-06f map overlay ships
 as **beta** partly so this work can change what it shows.
 
+### SIM-13 · Tick-native cooldowns on `PlayerRoundState`, plus a literal check
+
+**Prio: Medium (found 2026-11-04, SM5-02 retro).** `PlayerRoundState.is_active_at` /
+`is_taggable_at` (`matches/models.py` ~L580-607) still use the seconds-era `< 8` / `< 4`, and
+their docstring says only `ResourceBasedSimulator` reaches them, but `BatchSimulator` is the
+sole engine. The weight tests pass `PlayerRoundState` rows straight to the role functions, so
+`test_weights.py`'s Downed tests run on 8 / 4 rather than the engine's `RESPAWN_TICKS` (16) /
+`NOT_TARGETABLE_TICKS` (8). Use the tick constants (or delete the methods if nothing but tests
+reaches them) and fix the docstring. SM5-02 found the same seconds-era bug in the resupply
+queue (`<= 7`) by hand. Then add `scripts/check_tick_literals.py` beside
+`check_sqlite_json_lookups.py`: it fails on `last_downed_time` compared with a bare number
+literal. Wire it into `/verify` and CI's lint step. It goes red on `models.py` until the fix lands,
+so land both in one PR.
+
+### SIM-14 · De-flake `test_strong_team_winpct_not_diluted_by_alternation`
+
+**Prio: Medium (SIM-12 / RV-05 retro, 2026-10-22; again in the SM5-02 retro).** The test in
+`test_batch_sim.py` asserts one master seed's batch. Its threshold or seed was hand-tuned in
+SIM-12 (58% -> 55%, seed 7777 -> 2) and again in SM5-02 (seed 2 -> 3); both times six seeds
+showed seed noise (43-63%, then a mean of 57.9%). Every engine change can trip it. Either
+assert the mean across several seeds against the 55% floor, or move it behind a `calibration`
+pytest marker run in a non-blocking CI job.
+
 ### CAL-01 · Score Calibration re-baseline
 
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
@@ -652,13 +675,6 @@ model + role MVP/weight formulas as-is for now. The **deeper rework** the user w
 scheduled later — revisiting action selection, movement selection, and goal selection
 themselves — is tracked by `MECH-07` below (extended to cover actions/movement, not
 just goals); do that only if calibration tuning alone cannot hit the targets.
-
-**Follow-up (SIM-12 / RV-05 retro, 2026-10-22):** de-flake
-`test_strong_team_winpct_not_diluted_by_alternation` (`test_batch_sim.py`). It
-asserts one master seed's batch, and has been hand-tuned twice (threshold 58% ->
-55%, then seed 7777 -> 2 in SIM-12); six seeds spanned 43-63%. Either assert the
-mean across several seeds, or move it behind a `calibration` pytest marker run in
-a non-blocking CI job.
 
 ### MECH-07 · Role-aware action / movement / goal-selection rework (MAP-05 follow-up)
 

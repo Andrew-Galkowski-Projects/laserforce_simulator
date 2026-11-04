@@ -65,6 +65,8 @@ python manage.py lfstats_calibrate --split search --rounds 20 --seed 42 --worker
 
 **Memory.** Measured on Syracuse (2026-11-03, `--split train --rounds 1 --workers 2`): each worker peaks at about **90 MB** and the parent at about **140 MB**, so `--workers 14` needs about 1.5 GB (it held flat over the first minutes; a run of hours was not measured). LFS-01's 14-worker search was still killed for low memory, so most of the machine's RAM was going elsewhere: check free RAM before a long run.
 
+**Runtime.** `--split test --rounds 20 --workers 4` takes 50 to 60 minutes (three SM5-02 runs, 2026-11-03/04), and it prints only when it finishes, so run it in the background. Before re-running after a small fix, count how often the changed branch fires in a short probe: SM5-02 re-ran for an hour after a clamp that never fired, and the output was byte-identical.
+
 **Determinism.** Per-round seeds come from `random.Random(--seed).getrandbits(63)` (game then round order for `test`, sorted player key then round for `train`), so `--workers 1` and `--workers N` print the same numbers. Every `search` evaluation uses the same seed, and a candidate is simulated once (later repeats come from a cache).
 
 ### Output
