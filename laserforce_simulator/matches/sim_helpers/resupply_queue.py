@@ -96,15 +96,23 @@ def _is_available(
     return True
 
 
+def _stress_fail_pct(support: Any, prior_request_count: int) -> float:
+    """Total percent chance a support player fails under stress, capped at 100.
+
+    SM5-01: higher decision_making and teamwork lower the chance; 0-20% for
+    each earlier request this tick, 10% each at the 50/50 default.
+    """
+    dm = getattr(support, "decision_making", 50)
+    tw = getattr(support, "teamwork", 50)
+    return min(100.0, (200 - dm - tw) / 10.0 * prior_request_count)
+
+
 def _stress_fail(support: Any, prior_request_count: int) -> bool:
     """Roll whether a support player fails under stress.
 
     Returns True if the support player fails (treat as unavailable).
     """
-    dm = getattr(support, "decision_making", 50)
-    tw = getattr(support, "teamwork", 50)
-    failure_pct = min(100.0, (dm + tw) / 10.0 * prior_request_count)
-    return random.random() * 100 < failure_pct
+    return random.random() * 100 < _stress_fail_pct(support, prior_request_count)
 
 
 def resolve_resupply_requests(

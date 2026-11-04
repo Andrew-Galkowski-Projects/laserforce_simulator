@@ -162,13 +162,7 @@ Accepted LFS-02 suggestions, in priority order. Each row and its code facts are 
 it folds into the **CAL-01** re-baseline, and LFS-01's `lfstats_calibrate` harness is re-run
 after it.
 
-### SM5-01 · `_stress_fail` rewards weak supports (bug)
-
-**Prio: High (found by LFS-02).** `_stress_fail` (`matches/sim_helpers/resupply_queue.py`)
-fails a medic or ammo with `(decision_making + teamwork) / 10 * prior_request_count` %, so a
-better support fails more often. Flip it to `(200 - dm - tw) / 10 * prior_request_count`. Add a
-regression test that higher decision_making and teamwork never raise the fail chance.
-`docs/lfstats-import.md` says it "looks inverted" in two rows; fix both.
+SM5-01 (`_stress_fail` rewards weak supports) is **[DONE]**; see `PLAN-completed.md`.
 
 ### SM5-02 · Downed players can still fire (bug)
 
@@ -307,7 +301,7 @@ deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 **Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
-SM5-01..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
+SM5-02..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.

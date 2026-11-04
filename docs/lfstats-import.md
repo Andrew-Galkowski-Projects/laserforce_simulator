@@ -89,13 +89,13 @@ calibration set that to 1.0, so a preferred role no longer adds a bonus; it was 
 | player_awareness | As the target: return-fire chance, blocks attacker follow-up chains (`shot.py`); nuke reaction `(ga + pa)/200` (`round_loop.py`) | `avg_hit_diff` + `avg_nukes_canceled` per position | Hit-diff part plus a nukes-canceled bonus of up to +10 (see below) | Decided |
 | game_awareness | Below 35, sometimes shoots enemies who are already down (`mechanics.py`); commander nuke SP banking tiers 30/50/70 (`weights.py` `_commander_nuke_gate`); half of the nuke-reaction roll | `avg_mvp` per position | `50 + 25 * log2(player_mvp / position_avg_mvp)`, weighted by games (see below) | Decided |
 | resource_awareness | None today: `_observe_lives` (`round_loop.py`) records enemy lives, but nothing reads them back | Per-game event timeline (TDF) | `50` for now (see below) | Deferred |
-| decision_making | Sharpens action choice: top weight x`(1 + dm/100)`, the rest divided by it (`weights.py`); medic/ammo `_stress_fail` (`resupply_queue.py`, looks inverted) | `win_rate`, `avg_penalties`, `avg_shots_hit` per position | Mean of a results part and an activity part (see below) | Decided (revised after the Kodama talk) |
+| decision_making | Sharpens action choice: top weight x`(1 + dm/100)`, the rest divided by it (`weights.py`); medic/ammo `_stress_fail` (`resupply_queue.py`; higher lowers the fail chance, SM5-01) | `win_rate`, `avg_penalties`, `avg_shots_hit` per position | Mean of a results part and an activity part (see below) | Decided (revised after the Kodama talk) |
 | stamina | Fatigue at each 10% of the round when stamina < checkpoint: -5% hit chance, -10% movement per penalty (`weights.py`, `player_state.py`) | Late- vs early-game performance (TDF) | `50` for now | Deferred |
 | speed | Cells per tick `max(1, ceil(speed/100 * max_movement))` (`pathfinding.py`) | None (no position data, even in TDF) | `50` for now (see below) | Deferred |
 | positioning | None (only feeds `overall_rating`) | `avg_uptime_pct` + `avg_hit_diff` per position | Mean of an uptime part and a hit-diff part (see below) | Decided |
 | adaptability | None (only feeds `overall_rating`) | `avg_mvp` per position, `team_result: loss` scope | `50 + 25 * log2(player_mvp_in_losses / position_avg_mvp_in_losses)`, weighted by games | Decided |
 | communication | Each tick and after a tag, with probability `comm/100`, shares enemy memory with allies within half the map diagonal; allies pathfind to known enemies (`round_loop.py`, `pathfinding.py`). Not the nuke call-out: every enemy learns the Commander's cell the tick a nuke starts, with no reaction delay (SM5-07) | `avg_assists` per position (team uplift later) | `50 + 25 * log2(player_assists / position_avg_assists)`, weighted by games (see below) | Decided |
-| teamwork | Above 50, with probability `tw/100`, moves to a high-sight cell an ally can see (`pathfinding.py`); medic/ammo `_stress_fail` (looks inverted) | `avg_resupplies_given` (ammo/medic), `avg_assists` (others), per position (team uplift later) | Log ratio vs position average, weighted by games (see below) | Decided |
+| teamwork | Above 50, with probability `tw/100`, moves to a high-sight cell an ally can see (`pathfinding.py`); medic/ammo `_stress_fail` (higher lowers the fail chance, SM5-01) | `avg_resupplies_given` (ammo/medic), `avg_assists` (others), per position (team uplift later) | Log ratio vs position average, weighted by games (see below) | Decided |
 | Offensive_synergy | None (only feeds `overall_rating`) | `avg_medic_hits` + `avg_eliminations` per position | Mean of two log-ratio parts vs position average (see below) | Decided |
 | defensive_synergy | None (only feeds `overall_rating`) | `avg_mvp` at ammo, medic and heavy | MVP log ratio vs position average over those games (see below) | Decided |
 | midfield_synergy | None (only feeds `overall_rating`) | `avg_mvp` at heavy and scout | MVP log ratio vs position average over those games (see below) | Decided |
@@ -430,7 +430,5 @@ Found while tracing how the sim uses each stat. Not yet acted on.
   `Offensive_synergy`, `defensive_synergy`, `midfield_synergy`.
 - `resource_awareness` has no gameplay effect: `_observe_lives` (`matches/simulation/round_loop.py`)
   records enemy lives in memory, but nothing reads them back.
-- `decision_making` and `teamwork` *raise* a support player's resupply stress-fail chance
-  (`matches/sim_helpers/resupply_queue.py` `_stress_fail`). This looks inverted.
 - The `player_state.py` comment says `resupply_efficiency` "doubles speed for Medic/Ammo".
   This is not implemented.

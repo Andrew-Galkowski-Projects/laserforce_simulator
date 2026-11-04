@@ -508,13 +508,13 @@ A support player (Medic or Ammo) can fulfill a request in the current tick only 
 
 ### Stress failure formula
 
-When a supporter has already fulfilled at least one request this tick (`prior_count ≥ 1`), each additional request has a chance of failing:
+`prior_count` is the number of requests earlier in this tick's queue: every one, both Teams' and unfulfilled ones included, not only those this supporter served. When it is ≥ 1, each available supporter rolls independently (`_stress_fail_pct`, SM5-01):
 
 ```
-failure_pct = min(100, (dm + teamwork) / 10 × prior_count)
+failure_pct = min(100, (200 - dm - teamwork) / 10 × prior_count)
 ```
 
-where `dm` and `teamwork` are the supporter's stats. A `random.random() * 100 < failure_pct` check determines failure. On failure the requestor receives nothing this tick.
+where `dm` and `teamwork` are the supporter's stats, so a better supporter fails less: 0-20% per earlier request, 10% at the 50/50 default. A `random.random() * 100 < failure_pct` check determines failure; a failed supporter is unavailable for that request.
 
 ### Combo resupply
 
