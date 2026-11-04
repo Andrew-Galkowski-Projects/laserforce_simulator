@@ -510,6 +510,23 @@ class TestOverwatchFiringCap:
         attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
         assert not [a for a in attempts if a.get("overwatch") is True]
 
+    def test_mover_not_taggable_draws_no_attempt(self):
+        """SM5-02: an enemy in its Not-targetable window draws no Overwatch shot."""
+        holder = _ps("heavy", team_color="red", cell_row=0, cell_col=0, final_shots=20)
+        holder.is_holding = True
+        e1, _ = self._two_enemies()
+        e1.last_downed_time = 25  # tick 30 is 5 ticks in: not Taggable
+        attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
+        assert not [a for a in attempts if a.get("overwatch") is True]
+
+    def test_mover_in_reset_window_draws_an_attempt(self):
+        holder = _ps("heavy", team_color="red", cell_row=0, cell_col=0, final_shots=20)
+        holder.is_holding = True
+        e1, _ = self._two_enemies()
+        e1.last_downed_time = 22  # tick 30 is 8 ticks in: Taggable again
+        attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
+        assert len([a for a in attempts if a.get("overwatch") is True]) == 1
+
 
 # ---------------------------------------------------------------------------
 # No-RNG collection / determinism

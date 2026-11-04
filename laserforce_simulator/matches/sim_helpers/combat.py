@@ -314,6 +314,14 @@ def plan_action(
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1
 
+    # SM5-02: the role functions drain these while Downed, but the losing-side
+    # score broadcast (+10 tag_player) runs after that drain, so zero them again.
+    if not player.is_active_at(second):
+        weights[_ACTION_IDX["tag_player"]] = 0
+        weights[_ACTION_IDX["resupply_ally"]] = 0
+        if sum(weights) == 0:
+            weights[_ACTION_IDX["hide"]] = 1
+
     weights = apply_decision_making_spread(
         weights, getattr(player, "decision_making", 50)
     )
@@ -356,7 +364,12 @@ def plan_action(
         player._committed_goal = None
 
     plans = []
+    # SM5-02: a Downed pack is dark. A player that is not Active plans no Shot
+    # and no Resupply, and checks it before the target pick so no RNG is drawn.
+    is_active = player.is_active_at(second)
     if choice == "tag_player":
+        if not is_active:
+            return plans
         target = choose_tag_target(
             player, all_alive, second, movement_ctx, los_filter=_get_los_targets
         )
@@ -375,6 +388,8 @@ def plan_action(
                         {"type": "tag", "actor": player, "target": second_target}
                     )
     elif choice == "resupply_ally":
+        if not is_active:
+            return plans
         teammate = choose_resupply_target(player, all_alive, second)
         if teammate:
             rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
@@ -471,7 +486,11 @@ def attempt_resupply(
     EventLog candidate: takes ``ctx: RoundContext`` and calls
     ``ctx.events.resupply_ammo(...)`` / ``ctx.events.resupply_lives(...)``
     directly. Replaces the pre-refactor ``emit_event=None`` callable seam.
+
+    SM5-02: a tagger that is not Active gives nothing (a Downed pack is dark).
     """
+    if not tagger.is_active_at(second):
+        return
     if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
         amount = _AMMO_CHART.get(teammate.role, 5)
         teammate.final_shots = min(teammate.max_shots, teammate.final_shots + amount)

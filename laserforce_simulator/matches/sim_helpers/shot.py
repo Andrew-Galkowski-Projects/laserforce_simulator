@@ -210,9 +210,15 @@ def resolve_shot(
     assert kind in _VALID_KINDS, f"unknown shot kind {kind!r}"
 
     # ── Phase 1. Validity gate ─────────────────────────────────────────
+    # SM5-02: a Downed pack is dark — it fires nothing until it is Active
+    # again, and a defender in its Not-targetable window cannot be shot.
+    # Checked here (not only at planning) so a queued Follow-up / Reaction,
+    # or a holder / target Downed earlier in the tick, is caught too.
+    if not attacker.is_active_at(tick):
+        return ShotOutcome(False, False, False)
     if attacker.final_shots <= 0 and attacker.role != "ammo":
         return ShotOutcome(False, False, False)
-    if defender.final_lives <= 0:
+    if defender.final_lives <= 0 or not defender.is_taggable_at(tick):
         return ShotOutcome(False, False, False)
 
     # ── Phase 2. Hide-50%-miss roll (uniform across all kinds) ────────

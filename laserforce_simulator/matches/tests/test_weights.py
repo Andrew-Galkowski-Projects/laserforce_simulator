@@ -180,7 +180,9 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic, heavy], 0)
-        assert w == [5, 0, 90, 0, 0, 5, 0, 0, 0]
+        # SM5-02: the whole tag_player (5) and resupply_ally (65) drain into
+        # hide (30 + 70), not the old fixed 60 off resupply_ally.
+        assert w == [0, 0, 100, 0, 0, 0, 0, 0, 0]
 
     def test_medic_not_active_no_heavy_changes_zone(self):
         """Downed medic with no nearby heavy moves to find protection."""
@@ -192,7 +194,8 @@ class TestWeightFunctions:
             last_downed_time=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
-        assert w == [5, 60, 30, 0, 0, 5, 0, 0, 0]
+        # SM5-02: tag_player (5) + resupply_ally (65) drain into only_move.
+        assert w == [0, 70, 30, 0, 0, 0, 0, 0, 0]
 
     # --- Ammo ---
 
@@ -601,9 +604,9 @@ class TestWeightFunctions:
     def test_commander_not_active_allied_medic_in_zone_hides(self):
         """Downed commander hides when allied medic is in the same zone.
 
-        not-active drains tag (70) into hide; tag baseline 80 - 70 = 10, hide
-        0 + 70 = 70; only_move stays 5 after the hold draw. final_lives=5 →
-        idx 7 = 25.
+        SM5-02: not-active drains the whole tag (80) into hide (0 + 80), not
+        the old fixed 70 that left 10 on tag; only_move stays 5 after the hold
+        draw. final_lives=5 → idx 7 = 25.
         """
         allied_medic = self._state(
             self.gr,
@@ -626,13 +629,13 @@ class TestWeightFunctions:
         w = _get_commander_weights(
             cmd, _ACTION_IDX, self._fresh(), [cmd, allied_medic], 0
         )
-        assert w == [10, 5, 70, 0, 0, 0, 0, 25, 10]
+        assert w == [0, 5, 80, 0, 0, 0, 0, 25, 10]
 
     def test_commander_not_active_no_allied_medic_changes_zone(self):
         """Downed commander moves zone to find allied medic.
 
-        not-active drains tag (70) into only_move (5 -> 75). final_lives=5 →
-        idx 7 = 25.
+        SM5-02: not-active drains the whole tag (80) into only_move (5 -> 85).
+        final_lives=5 → idx 7 = 25.
         """
         cmd = self._state(
             self.gr,
@@ -643,7 +646,7 @@ class TestWeightFunctions:
             missiles_landed=5,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd], 0)
-        assert w == [10, 75, 0, 0, 0, 0, 0, 25, 10]
+        assert w == [0, 85, 0, 0, 0, 0, 0, 25, 10]
 
     # --- hold slot, baseline-per-role ---
 
@@ -834,6 +837,11 @@ def _plan_action_internal_weights(player, all_alive, second):
     cooldown = shot_cooldown(player, second)
     if cooldown > 0.0 and (second - player.last_shot_time) < cooldown:
         weights[_COMBAT_ACTION_IDX["tag_player"]] = 0
+        if sum(weights) == 0:
+            weights[_COMBAT_ACTION_IDX["hide"]] = 1
+    if not player.is_active_at(second):  # SM5-02 Downed zeroing
+        weights[_COMBAT_ACTION_IDX["tag_player"]] = 0
+        weights[_COMBAT_ACTION_IDX["resupply_ally"]] = 0
         if sum(weights) == 0:
             weights[_COMBAT_ACTION_IDX["hide"]] = 1
     weights = apply_decision_making_spread(
@@ -1101,3 +1109,113 @@ def test_heavy_capture_branch_only_move_is_negative_raw_and_clamped() -> None:
     final = finalize_action_weights(raw)
     assert final[_COMBAT_ACTION_IDX["only_move"]] == 0
     assert final[_COMBAT_ACTION_IDX["capture_base"]] == 30
+
+
+# ---------------------------------------------------------------------------
+# SM5-02: a Downed player plans no Shot and no Resupply
+# ---------------------------------------------------------------------------
+
+_ROLES = ["medic", "ammo", "scout", "heavy", "commander"]
+
+
+def _plan_with_forced_choice(monkeypatch, player, all_alive, action):
+    """Run the real plan_action with the Action roll forced to *action*.
+
+    Returns ``(plans, weights)``: the plan list and the final weight vector
+    plan_action handed to ``random.choices``.
+    """
+    import matches.sim_helpers.combat as combat_mod
+
+    seen: dict = {}
+    real_choices = random.choices
+
+    def _choices(choices, weights=None, **kwargs):
+        # Only the first call is the Action roll; later ones (target picks)
+        # go to the real draw.
+        if "weights" in seen:
+            return real_choices(choices, weights=weights, **kwargs)
+        seen["weights"] = list(weights)
+        return [action]
+
+    monkeypatch.setattr(combat_mod.random, "choices", _choices)
+    plans = plan_action(player, all_alive, 1.0)
+    return plans, seen["weights"]
+
+
+@pytest.mark.parametrize("role", _ROLES)
+def test_downed_player_plans_no_tag_and_picks_no_target(monkeypatch, role):
+    import matches.sim_helpers.combat as combat_mod
+
+    player = _make_player_state(role, final_lives=5, last_downed_time=0)
+    enemy = _make_player_state("scout", team_color="blue", tag_id="blue_scout")
+    picks: list = []
+    real_pick = combat_mod.choose_tag_target
+    monkeypatch.setattr(
+        combat_mod,
+        "choose_tag_target",
+        lambda *a, **k: picks.append(1) or real_pick(*a, **k),
+    )
+    plans, _ = _plan_with_forced_choice(
+        monkeypatch, player, [player, enemy], "tag_player"
+    )
+    assert not [p for p in plans if p["type"] == "tag"]
+    assert picks == [], "a Downed player must draw no RNG picking a tag target"
+
+
+@pytest.mark.parametrize("role", ["medic", "ammo"])
+def test_downed_support_plans_no_resupply_and_picks_no_target(monkeypatch, role):
+    import matches.sim_helpers.combat as combat_mod
+
+    player = _make_player_state(role, final_lives=5, last_downed_time=0)
+    mate = _make_player_state("scout", tag_id="red_scout", final_lives=1, final_shots=1)
+    picks: list = []
+    real_pick = combat_mod.choose_resupply_target
+    monkeypatch.setattr(
+        combat_mod,
+        "choose_resupply_target",
+        lambda *a, **k: picks.append(1) or real_pick(*a, **k),
+    )
+    plans, _ = _plan_with_forced_choice(
+        monkeypatch, player, [player, mate], "resupply_ally"
+    )
+    assert not [p for p in plans if p["type"].startswith("resupply_")]
+    assert picks == []
+
+
+@pytest.mark.parametrize(
+    "role,action,plan_type",
+    [
+        ("scout", "tag_player", "tag"),
+        ("medic", "resupply_ally", "resupply_lives"),
+        ("ammo", "resupply_ally", "resupply_ammo"),
+    ],
+)
+def test_active_player_with_the_same_setup_still_plans(
+    monkeypatch, role, action, plan_type
+):
+    """Control for the two Downed tests above: they fail for the Down alone."""
+    player = _make_player_state(role)
+    enemy = _make_player_state("scout", team_color="blue", tag_id="blue_scout")
+    mate = _make_player_state("scout", tag_id="red_scout", final_lives=1, final_shots=1)
+    plans, _ = _plan_with_forced_choice(
+        monkeypatch, player, [player, enemy, mate], action
+    )
+    assert [p for p in plans if p["type"] == plan_type]
+
+
+@pytest.mark.parametrize("role", _ROLES)
+@pytest.mark.parametrize(
+    "state",
+    [{}, {"score_broadcast_state": {"winning_team": "blue"}}],
+    ids=["plain", "losing_broadcast"],
+)
+def test_downed_player_final_weights_leave_nothing_on_tag_or_resupply(
+    monkeypatch, role, state
+):
+    """The losing-side score broadcast (+10 tag_player) runs after the
+    not-active drain, so plan_action zeroes both slots again at the end."""
+    player = _make_player_state(role, final_lives=5, last_downed_time=0, **state)
+    _, weights = _plan_with_forced_choice(monkeypatch, player, [player], "hide")
+    assert weights[_COMBAT_ACTION_IDX["tag_player"]] == 0
+    assert weights[_COMBAT_ACTION_IDX["resupply_ally"]] == 0
+    assert sum(weights) > 0

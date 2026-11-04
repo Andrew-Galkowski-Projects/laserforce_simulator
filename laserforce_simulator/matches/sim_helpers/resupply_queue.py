@@ -79,12 +79,11 @@ def _is_available(
     """Return True if a support player is available to resupply this tick."""
     if support.final_lives <= 0:
         return False
-    # Not in reset window: last_downed_time < 0 (or None) means never downed;
-    # otherwise must be more than 7 seconds ago.
-    last_down = getattr(support, "last_downed_time", None)
-    if last_down is not None and last_down >= 0:
-        if second - last_down <= 7:
-            return False
+    # SM5-02: the support must be Active (out of the whole Respawn cooldown).
+    # The old seconds-era ``second - last_down <= 7`` freed it 7 ticks into
+    # its 16-tick cooldown.
+    if not support.is_active_at(second):
+        return False
     if support.final_shots <= 0:
         return False
     if not _is_in_los(requestor, support, movement_ctx):
