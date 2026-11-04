@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from matches.sim_helpers.player_counters import PlayerCounters
 from matches.sim_helpers.role_constants import (
@@ -166,6 +166,22 @@ class PlayerState:
     # stamina tracking (transient — not persisted to DB)
     stamina_penalty_count: int = 0
     stamina_next_check_pct: int = 10  # next 10% checkpoint to evaluate
+
+    # MECH-10: resupply death % inputs (transient — not persisted to DB).
+    # ``last_resupplied_at`` is the tick this player last received a
+    # Resupply (stamped by ``combat.attempt_resupply``); ``record_down``
+    # counts every Down in ``downs_taken`` and a Down within
+    # ``RESPAWN_TICKS`` of that Resupply in ``downs_in_resupply_cooldown``.
+    last_resupplied_at: Optional[int] = None
+    downs_taken: int = 0
+    downs_in_resupply_cooldown: int = 0
+
+    # MECH-10 Follow rule state (transient — not persisted to DB), managed
+    # by ``follow_rule``: this player's open Trail (``follow_rule.Trail`` or
+    # None) and, as an attacker, Chase progress per enemy keyed by
+    # ``tag_id_key`` (``follow_rule.Chase``).
+    _trail: Any = None
+    _chases: dict = field(default_factory=dict)
 
     # uptime breakdown in ticks (accumulated +1 each tick)
     ticks_active: int = 0

@@ -77,6 +77,8 @@ Built once in `BatchSimulator._simulate_round` after the four pending-event queu
 5. **Clear `player._committed_goal = None`** iff `_committed_goal[1]` (the `from_action_driven` flag) is True (MOVE-04 — positioning goals survive a Down).
 6. **RV-02 nuke_cancelled.** Commander only: scan `ctx.pending_nukes`; for each nuke whose `player is` this Commander and `cancel_logged` is False, emit one `nuke_cancelled` event via `ctx.events.nuke_cancelled(commander, tick)` and set `cancel_logged = True`. The nuke is LEFT in the queue (MECH-05 — drain path is structurally unchanged).
 
+**MECH-10 resupply death counts** (between 1 and 2): `downs_taken += 1` on every Down, and `downs_in_resupply_cooldown += 1` when `tick - last_resupplied_at < RESPAWN_TICKS` (the Down landed inside a Respawn cooldown a Resupply started). Read only by `score_averages`.
+
 **Does NOT touch `final_lives` or `shields`** — those mutations happen at the caller (tag / follow-up / reaction / missile / nuke). Callers: `sim_helpers.shot.resolve_shot` (the primary site — every shot-driven life loss), `BatchSimulator._complete_missile`, `BatchSimulator._complete_nuke`. `ctx` is typed `Optional[RoundContext]` for compatibility with legacy/test callsites that exercise the resolver without a per-round context; `ctx is None` skips the verb emits and the nuke scan but still does the state mutations.
 
 EventLog candidate: the medic_reset and nuke_cancelled emits route through `ctx.events.medic_reset(medic, tick)` / `ctx.events.nuke_cancelled(commander, tick)` verbs (the legacy `_actor_meta` helper here is gone — EventLog owns the metadata shape).
@@ -165,6 +167,14 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 | `medic_hit_times` | `list[float]` | Tick timestamps of the two most recent hits received (medic-under-fire alert — 2 hits within `MEDIC_ALERT_WINDOW_TICKS`, 12 s) |
 | `score_broadcast_state` | `str \| None` | Outcome of the last score broadcast: `"losing"`, `"hide"`, `"seek_medic"`, or `None` |
 | `score_broadcast_next` | `float` | Simulation tick at which the next score broadcast fires (first at `SCORE_BROADCAST_PERIOD_TICKS = 360`, i.e. 180 s) |
+
+### MECH-10 transient fields (no DB columns)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `last_resupplied_at` | `int \| None` | Tick this player last received a Resupply; stamped by `combat.attempt_resupply` on the receiver (Ammo and Medic branches) |
+| `downs_taken` | `int` | Downs this round, counted in `record_down` |
+| `downs_in_resupply_cooldown` | `int` | Downs within `RESPAWN_TICKS` of `last_resupplied_at` (the resupply death % numerator in `score_averages`) |
 
 ### Role stat lookups
 

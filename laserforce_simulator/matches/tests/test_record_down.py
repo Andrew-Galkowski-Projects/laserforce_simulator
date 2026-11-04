@@ -480,5 +480,29 @@ class TestRecordDownEventLogNone(unittest.TestCase):
         self.assertIsNone(cmdr._committed_goal)
 
 
+class TestRecordDownResupplyDeathCounts(unittest.TestCase):
+    """MECH-10: every Down counts in ``downs_taken``; one that lands inside a
+    Respawn cooldown a Resupply started also counts in
+    ``downs_in_resupply_cooldown`` (the resupply death % numerator)."""
+
+    def test_every_down_counts(self) -> None:
+        p = _player()
+        record_down(p, tick=10, ctx=_ctx())
+        record_down(p, tick=40, ctx=_ctx())
+        self.assertEqual(p.downs_taken, 2)
+        self.assertEqual(p.downs_in_resupply_cooldown, 0)
+
+    def test_down_within_respawn_ticks_of_a_resupply_counts(self) -> None:
+        from matches.sim_helpers.time_constants import RESPAWN_TICKS
+
+        for gap, counted in ((RESPAWN_TICKS - 1, 1), (RESPAWN_TICKS, 0)):
+            with self.subTest(gap=gap):
+                p = _player()
+                p.last_resupplied_at = 100
+                record_down(p, tick=100 + gap, ctx=_ctx())
+                self.assertEqual(p.downs_taken, 1)
+                self.assertEqual(p.downs_in_resupply_cooldown, counted)
+
+
 if __name__ == "__main__":
     unittest.main()

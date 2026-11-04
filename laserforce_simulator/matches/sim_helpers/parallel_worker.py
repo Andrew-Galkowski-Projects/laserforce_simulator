@@ -49,6 +49,8 @@ def score_round_worker(args: tuple) -> list[dict]:
             "was_eliminated_at": p.was_eliminated_at,
             "follow_up_shots": p.counters.follow_up_shots,
             "reaction_shots": p.counters.reaction_shots,
+            "downs_taken": p.downs_taken,
+            "downs_in_resupply_cooldown": p.downs_in_resupply_cooldown,
         }
         for p in red_players + blue_players
     ]

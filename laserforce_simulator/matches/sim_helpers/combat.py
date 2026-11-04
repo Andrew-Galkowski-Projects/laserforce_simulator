@@ -491,6 +491,7 @@ def attempt_resupply(
         amount = _AMMO_CHART.get(teammate.role, 5)
         teammate.final_shots = min(teammate.max_shots, teammate.final_shots + amount)
         teammate.last_downed_time = second
+        teammate.last_resupplied_at = second
         teammate.shields = teammate.max_shields
         if teammate.role == "scout" and teammate.special_active_until > second:
             teammate.special_active_until = second
@@ -507,6 +508,7 @@ def attempt_resupply(
         amount = _MEDIC_CHART.get(teammate.role, 3)
         teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
         teammate.last_downed_time = second
+        teammate.last_resupplied_at = second
         teammate.shields = teammate.max_shields
         if teammate.role == "scout" and teammate.special_active_until > second:
             teammate.special_active_until = second
