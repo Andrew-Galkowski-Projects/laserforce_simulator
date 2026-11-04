@@ -296,14 +296,15 @@ re-simulate, show diff vs original. Forked scenario is temporary, not a permanen
 
 ## Sequencing Summary
 
-Updated 2026-10-21. Phases 0–2, 5, 5.5, 6 and 7 are complete, as are the Found Issues at the
-top of this file. Phase 8 is the critical path. Everything else is an unscheduled backlog.
+Updated 2026-11-03. Phases 0–2, 5, 5.5, 6, 7 and 8 are complete, as are the Found Issues at the
+top of this file. Everything below the scheduled list is an unscheduled backlog.
 
-**Current — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04) is done, and
-so is the look (ANG-04b, ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker
-front door (ANG-07), the template removal (ANG-08: the SPA is served at /, ADR-0047) and Django
-serving the SPA in every deploy (ANG-10, ADR-0049). Remaining,
-in order:
+**Done — Phase 8 (Angular Frontend Migration).** The API half (ANG-01..ANG-04), the look (ANG-04b,
+ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker front door (ANG-07), the
+template removal (ANG-08: the SPA is served at /, ADR-0047) and Django serving the SPA in every
+deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
+
+**Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
 SM5-01..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW

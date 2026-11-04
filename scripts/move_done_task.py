@@ -109,7 +109,9 @@ def _append_to_phase(lines: list[str], phase: str, section: list[str]) -> list[s
 def _drop_from_summary(lines: list[str], task_id: str) -> tuple[list[str], list[str]]:
     """Drop ``task_id`` as a whole comma-list item inside ``## Sequencing Summary``.
 
-    Returns the new lines and a warning for each other mention left in place.
+    Also drops a code-block row that starts with ``task_id`` (``LFS-02  Title  <- NOW``),
+    warning when that leaves the block empty. Returns the new lines and a warning
+    for each other mention left in place.
     """
     if "## Sequencing Summary" not in lines:
         return lines, []
@@ -120,10 +122,18 @@ def _drop_from_summary(lines: list[str], task_id: str) -> tuple[list[str], list[
     only_item = re.compile(rf"^\s*- \*\*[^*]+:\*\* {item}\.?$")
     first_item = re.compile(rf"(?<=:\*\* ){item}, ")
     later_item = re.compile(rf", {item}(?=,|\.?$)")
+    code_row = re.compile(rf"^{item}\s")
     kept: list[str] = []
     warnings: list[str] = []
+    in_code = False
     for line in lines[start:end]:
-        if only_item.match(line):
+        if line.startswith("```"):
+            if in_code and kept[-1].startswith("```"):
+                warnings.append(
+                    "Sequencing Summary code block is now empty: name the next task"
+                )
+            in_code = not in_code
+        elif only_item.match(line) or (in_code and code_row.match(line)):
             continue
         line = later_item.sub("", first_item.sub("", line, count=1), count=1)
         if mention.search(line):

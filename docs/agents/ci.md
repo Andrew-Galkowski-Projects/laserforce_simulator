@@ -14,6 +14,11 @@ desktop (windows-latest) ----------------------------------------+
 
 It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `v*` tag push.
 
+- **`changes`** (LFS-02 retro): sets `code=false` on a pull request whose diff against its base
+  touches only `*.md` files, and `code=true` everywhere else (every push). `frontend` and `desktop`
+  run only when `code` is true, and `docker` skips with `frontend`. `lint` and `test` always run,
+  because tests read `GLOSSARY.md` and other docs.
+
 - **`lint`**: ruff, black, the encoding and SQLite JSON-lookup scans, actionlint,
   `makemigrations --check`, and `migrate` against the job's Postgres. It runs once,
   beside the shards.
@@ -45,8 +50,8 @@ It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `
   record, SPA build, PyInstaller one-folder from `desktop/laserforce.spec`, zip), then `python desktop/smoke.py <exe>`
   against the frozen exe. The steps are the same `run_smoke` that `desktop_app/tests/test_launcher_smoke.py`
   runs unfrozen, and the job summary gets the sizes and the cold start. It keeps the zip as the
-  `desktop-build` artifact for 7 days (download it from a PR's run to try the build). It needs nothing,
-  so it runs beside the shards.
+  `desktop-build` artifact for 7 days (download it from a PR's run to try the build). It needs only
+  `changes`, so it runs beside the shards.
 - **`desktop-publish`** (DESK-02): needs `test-result`, `frontend` and `desktop`, and runs only on a
   push to `main` or a `v*` tag (`contents: write`, job-level `concurrency: desktop-latest`, queued).
   On `main` it force-moves the `desktop-latest` tag to the commit and `gh release upload --clobber`s
