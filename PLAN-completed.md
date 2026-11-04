@@ -8598,4 +8598,69 @@ During implementation (owner, 2026-11-03; revises 20; departures on #514):
 34. `preferred_role_boost` ships at **1.0** app-wide (no preferred-role bonus in any game); it
     was 1.2. The Test run used 10 rounds per game, not the default 20, to fit the session.
 
+### LFS-02 · [DONE] Suggest app changes from Kodama's "How to Improve in SM5" talk
+
+**[DONE] Shipped (2026-11-03).** Proposal in docs/proposals/lfs-02-sm5-talk.md; nine follow-up code
+tasks SM5-01..SM5-09 added to PLAN.md (SM5 talk follow-ups), plus MECH-09 and MECH-14 bullets. Found
+two bugs: _stress_fail is inverted (SM5-01) and downed players can still fire (SM5-02).
+
+**Goal:** use the talk ([video](https://www.youtube.com/watch?v=SngT6ipJsYU); summary in
+`docs/lfstats-import.md`) as a domain reference for where the sim and the Player model differ
+from how SM5 is really played. **Output:** a written, prioritised proposal (doc or ADR draft),
+not code. Each accepted suggestion becomes its own PLAN entry.
+
+**Starting points found during the import:**
+- **Unused stats get real effects.** Six stats are never read by the sim: positioning,
+  flexibility, adaptability and the offensive/defensive/midfield synergies. Possible effects:
+  - positioning: choosing control zones over neutral ones ("why am I here?");
+  - flexibility: body angles and missile dodging (today the dodge comes from survival);
+  - adaptability: performance when losing or with unfamiliar teammates.
+- **resource_awareness has no effect** (`_observe_lives` is a dead end). The talk's "look at
+  your gun" suggests an aggression range set by your own shots and lives, plus retreat
+  timing: about 9-13 lives is safe, 6-7 means head home, adjusted for the nukes the enemy
+  commander is likely holding.
+- **decision_making** means decisiveness in the talk (act within about a second). In the
+  sim, `_stress_fail` looks inverted: a higher value raises the support fail chance.
+- **Sprinting vs jogging.** Speed trades against awareness, because sprinting misses
+  information. Stamina's second-half fade already matches the talk.
+- **Communication:**
+  - nuke call-outs remove teammates' 1-3 s reaction delay;
+  - sharing shots and lives changes how teammates play;
+  - calling downs with a location ("commander down at big box").
+- **Mechanics:** laying trails while down, stubborn zone control (about 3 resets before
+  leaving) and missile-dodging technique.
+- **overall_rating weighting.** It is a plain mean of 19 stats; the talk's pie chart puts
+  game sense largest and mechanical skill around 5%.
+
+**Overlap to reconcile:** MECH-08 (reset timing), MECH-10 (follow rule), MECH-13 (per-player
+information table) and MECH-14 (memory/comms-driven behaviour).
+
+**Acceptance:**
+- The proposal is reviewed.
+- Each suggestion is mapped to an existing MECH item or a new PLAN entry, or rejected with a
+  reason.
+
+**Grill decisions (2026-11-03):**
+1. The deliverable is `docs/proposals/lfs-02-sm5-talk.md`, one row per suggestion, plus real
+   PLAN entries in the same docs-only PR. No ADR.
+2. New code tasks get the prefix `SM5-nn`, in *SM5 talk follow-ups* directly below, ordered
+   by priority. No GitHub issues until each is grilled.
+3. Priority: bugs, then inert stats given an effect (cheapest first), then new mechanics,
+   then `overall_rating`.
+4. `_stress_fail` is a bug: SM5-01.
+5. Downed players firing is a bug: SM5-02.
+6. resource_awareness: one entry, SM5-03 (lives bands + reading remembered enemy lives).
+7. flexibility takes the missile dodge: SM5-04.
+8. adaptability is a losing-state modifier: SM5-05. "Unfamiliar teammates" is rejected (no
+   familiarity in the sim).
+9. positioning biases goals toward control cells: SM5-06.
+10. The three zone synergies are rejected for LFS-02 (not in the talk).
+11. Nuke call-outs with a reaction delay: SM5-07.
+12. Down call-outs and shared shots/lives fold into MECH-14.
+13. Sprint vs jog: SM5-08, low priority.
+14. Trails while down: already works. Stubborn zone control folds into MECH-09. Dodge technique
+    is SM5-04.
+15. `overall_rating` weighting: SM5-09, last; the area shares are its grill's question.
+16. Every sim-changing entry changes seeded outcomes and folds into the CAL-01 re-baseline.
+
 ---
