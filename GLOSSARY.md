@@ -124,6 +124,9 @@ A single tick in which a requesting player receives both a **Lives** resupply an
 **Resupply request**:
 An action by any player signalling they need a **Resupply**, resolved at end of tick against eligible nearby support players.
 
+**Stress failure**:
+A support player missing a **Resupply request** because several requests arrived in the same tick. The chance grows with each earlier request that tick and shrinks as the supporter's decision making and teamwork rise.
+
 ### Combat outcomes
 
 The shot → hit → tag → down → elimination ladder is the most-confused cluster in this domain; each rung is distinct.
