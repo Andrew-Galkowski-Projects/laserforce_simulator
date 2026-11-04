@@ -296,8 +296,7 @@ deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 follow-ups:
 
 ```
-MECH-10          Follow rule (a Chaser cannot tag the chased player)  <- NOW
-MOVE-08          Downed players move off (found by MECH-10)
+MOVE-08          Downed players move off (found by MECH-10)  <- NOW
 MOVE-06+MOVE-07  Varied goal cells and routes (one design)
 MECH-07          Modes: attack / defense / zone control
 ```
@@ -316,7 +315,7 @@ items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are 
 Angular.
 
 - **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-16, MOVE-05, SIM-13, SIM-14,
-  CAL-01 (MECH-10, MOVE-08, MOVE-06, MOVE-07 and MECH-07 are scheduled above).
+  CAL-01 (MOVE-08, MOVE-06, MOVE-07 and MECH-07 are scheduled above).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -520,95 +519,7 @@ eligibility and the appropriate target filters. Pairs with MECH-08 (timing) and 
 **From LFS-02:** stubborn zone control. A player holding a spot keeps resetting the enemy there
 about 3 times before leaving, instead of moving on after one Down.
 
-### MECH-10 · Follow rule — a Chaser cannot tag the player they chased
-
-Spec: #534
-
-**Prio: High, first in the simulation-behaviour order (owner, 2026-11-04).** Medics die within
-~4 minutes and the sim's resupply death % runs above real play, because attackers keep after a
-downed target with no limit. Today `_goal_from_action` (`sim_helpers/pathfinding.py`) filters
-`tag_player` targets on `final_lives > 0` only, so attackers path straight at a Downed enemy.
-
-**Rule (owner decisions, 2026-11-04):**
-- **Trail.** A player's Trail starts at the cell where they are Downed and extends along the
-  cells they move through until they turn back on (`RESPAWN_TICKS`). The Trail is a corridor
-  that reaches **6 ft to either side** of that path (enough to cover a hallway wall to wall).
-- **Scale.** Use **10 squares** as the 10 ft follow limit for now, a rough approximation.
-  The corridor half-width in squares is the matching approximation of 6 ft (pin it in the
-  grill). The owner can give the exact squares per foot from a map (e.g. Syracuse) later; a
-  per-map scale is a follow-up, not part of this task.
-- **Applies to every enemy**, not only the player who made the tag.
-- **Chased.** An enemy who travels **10+ squares inside a downed player's Trail** has
-  **chased** that player and **cannot tag them**. A parallel route outside the corridor to the
-  same point is legal and does not count.
-- **Movement is not blocked.** A Chaser may still move through the area and may tag anyone
-  else there, including players who have no Trail in it. The penalty is only on tagging the
-  chased player.
-- **Goal cells inside a Trail are allowed.** Whether a path through a Trail matters depends on
-  why the player is going there: an attacker heading for the enemy Medic may run the Heavy's
-  Trail on the way, and that is fine as long as they do not tag the Heavy. They can tag the
-  Medic and leave.
-
-**Baseline first.** Before changing the engine, record the current resupply death % and Medic
-survival time over a fixed seed set, so the PR can show the rule moves them.
-
-**Grill round 1 (owner, 2026-11-04):**
-1. **Trail width.** Every cell within **6 squares of walking distance** of a cell on the
-   downed player's path. It goes around walls and never bleeds through them.
-2. **Chase distance is progress along the Trail.** It counts how far the enemy advances along
-   the downed player's path (toward its current end) while inside the Trail. Distance outside
-   the Trail does not count; leaving and re-entering keeps what was counted. Crossing a hallway
-   or meeting the downed player head-on counts about 0.
-3. **Ban length.** A Chaser cannot tag the chased player until they are **Active again + 2 s**
-   (`RESPAWN_TICKS` + 4 ticks after the Down).
-4. **Every attack.** The ban covers the `choose_tag_target` pick (the chased player is
-   dropped before the draw), Follow-up / Reaction / Overwatch shots at the `resolve_shot`
-   gate, and Missiles (pick and resolution). Nukes pick no target and are exempt.
-5. **Goal selection** skips chased players in a Chaser's tag goals (nearest-enemy, the
-   Commander's enemy-Medic goal).
-6. **Ground truth.** The ban applies whether or not the Chaser saw the Down; it stands in for
-   the refs.
-7. **No DB change.** Trails and chase progress are in-memory per round; no `GameEvent` type,
-   no `PlayerCounters` column, no migration.
-8. **Baseline metrics in `score_averages`:** resupply death % (share of a player's Downs
-   within 8 ticks of receiving a Resupply), reset-window tags per role (already printed), and
-   Medic survival time (mean Elimination tick, 1800 if survived). Run before and after on the
-   same seeds and map.
-9. **Out of scope:** a per-map feet-per-square scale; players planning routes around Trails
-   (moved to MECH-07); persisted chase events; `game_analysis`'s own Down-window copy;
-   `round_playback` (reads events only).
-
-**Grill round 2 (owner, 2026-11-04):**
-10. **A Down during the Reset window continues the Trail**: it keeps growing until the player
-    is Active again after that Down, chase progress carries on, and bans run to that later
-    Active + 2 s. A Down after they are Active (in the 2 s grace or later) ends the old Trail
-    and its bans and starts a fresh Trail from zero.
-11. **Counting stops at Active.** Advancing along the Trail in the 2 s grace adds nothing;
-    bans already earned still run to Active + 2 s.
-12. **A Downed Chaser** keeps their progress and bans unchanged.
-13. **Seam:** one module `sim_helpers/follow_rule.py`, a per-round tracker on `RoundContext`
-    with `on_down(player, tick)` (from `record_down`), `on_step(player, step_cells, tick)`
-    (after each Advance, from `_last_step_cells`) and `may_tag(attacker, target, tick) -> bool`
-    (read by `choose_tag_target`, `resolve_shot`, the missile pick and resolution, and the tag
-    goals). Unit tests on hand-built grids plus one seeded `BatchSimulator` test.
-14. **One ticket, two commits:** the `score_averages` metrics and a recorded baseline first,
-    then the rule, re-measured on the same seeds and map.
-
-**Grill round 3 (owner, 2026-11-04):** a Resupply restarts the receiver's Respawn cooldown
-(`attempt_resupply` sets `last_downed_time`), so:
-15. **A Resupply starts a Trail**, exactly as a Down does, and the follow rule protects a
-    resupplied player. A Resupply while not yet Active extends the open Trail (rule 10).
-16. **Resupply death %** = the share of a player's Downs that land inside a Respawn cooldown a
-    Resupply started (within `RESPAWN_TICKS` of receiving it), from in-memory per-player
-    values (last Resupply tick, Down count), not `PlayerCounters` columns.
-
-**Grill round 4 (owner, 2026-11-04):**
-17. MECH-10's probe found Downed players barely move (about 5% of Downed ticks), so the rule
-    rarely fires. Ship MECH-10 as specced and fix the movement as **MOVE-08**, next.
-
-Draws no new RNG; every replay and parallel path runs the same `_simulate_round`.
-**Changes seeded outcomes**, so it folds into the `CAL-01` re-baseline and
-`lfstats_calibrate` is re-run after it.
+MECH-10 (Follow rule — a Chaser cannot tag the player they chased) is **[DONE]**; see `PLAN-completed.md`.
 
 ### MECH-11 · Crouch mechanic + stamina cost
 
