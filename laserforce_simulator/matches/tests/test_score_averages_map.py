@@ -99,6 +99,45 @@ class TestScoreAveragesMapOption:
         assert "on map" not in output
         assert "commander" in output
 
+    def test_follow_rule_section_prints_on_serial_and_parallel_paths(self):
+        """MECH-10: resupply death % per Role and Medic survival are printed by
+        both the serial loop and the ``--workers`` path."""
+        red, blue = self._teams()
+        _make_arena_map("TestArena")
+        for workers in ("1", "2"):
+            out = StringIO()
+            call_command(
+                "score_averages",
+                "--rounds=2",
+                "--seed=1",
+                f"--team-red={red.name}",
+                f"--team-blue={blue.name}",
+                "--map=TestArena",
+                f"--workers={workers}",
+                stdout=out,
+            )
+            output = out.getvalue()
+            assert "Resup Death %" in output, workers
+            assert "Medic survival (s):" in output, workers
+
+    def test_score_round_worker_returns_resupply_death_inputs(self):
+        """MECH-10: the ``--workers`` path aggregates from these keys, so each
+        worker row must carry them with the serial path's values."""
+        import random
+
+        from matches.sim_helpers.parallel_worker import score_round_worker
+        from matches.simulation import _precompute_roster
+
+        red, blue = self._teams()
+        red_data = _precompute_roster(list(red.active_roster))
+        blue_data = _precompute_roster(list(blue.active_roster))
+        random.seed(3)
+        rows = score_round_worker((red_data, blue_data, random.getstate(), None))
+        assert len(rows) == 12
+        for row in rows:
+            assert row["downs_in_resupply_cooldown"] <= row["downs_taken"]
+        assert sum(row["downs_taken"] for row in rows) > 0
+
     def test_unknown_map_name_raises_command_error(self):
         """Failure mode: a name with no matching ArenaMap is a clean error."""
         red, blue = self._teams()

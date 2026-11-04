@@ -6,6 +6,8 @@ satisfy the duck-type interface required by these functions.
 
 import random
 
+from .follow_rule import may_tag
+
 
 def shot_cooldown(player, second: float) -> float:
     """Seconds a player must wait between shots.
@@ -48,6 +50,7 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
         for p in all_alive
         if p.team_color != player.team_color
         and p.final_lives > 0
+        and may_tag(player, p, second)  # MECH-10 Follow rule
         and (
             p.is_active_at(second)
             or (

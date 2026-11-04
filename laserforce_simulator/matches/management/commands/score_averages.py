@@ -152,6 +152,9 @@ class Command(BaseCommand):
         role_ticks_dead = defaultdict(list)
         role_follow_up_shots = defaultdict(list)
         role_reaction_shots = defaultdict(list)
+        role_downs_taken = defaultdict(list)
+        role_downs_in_resupply_cooldown = defaultdict(list)
+        medic_survival_ticks = []
 
         if workers > 1:
             red_data = _precompute_roster(red_roster)
@@ -195,6 +198,14 @@ class Command(BaseCommand):
                     role_ticks_dead[role].append(dead)
                     role_follow_up_shots[role].append(p["follow_up_shots"])
                     role_reaction_shots[role].append(p["reaction_shots"])
+                    role_downs_taken[role].append(p["downs_taken"])
+                    role_downs_in_resupply_cooldown[role].append(
+                        p["downs_in_resupply_cooldown"]
+                    )
+                    if role == "medic":
+                        medic_survival_ticks.append(
+                            min(p["was_eliminated_at"], TICKS_PER_ROUND)
+                        )
         else:
             sim = BatchSimulator()
             for _ in range(n):
@@ -222,6 +233,14 @@ class Command(BaseCommand):
                     role_ticks_dead[p.role].append(dead)
                     role_follow_up_shots[p.role].append(p.counters.follow_up_shots)
                     role_reaction_shots[p.role].append(p.counters.reaction_shots)
+                    role_downs_taken[p.role].append(p.downs_taken)
+                    role_downs_in_resupply_cooldown[p.role].append(
+                        p.downs_in_resupply_cooldown
+                    )
+                    if p.role == "medic":
+                        medic_survival_ticks.append(
+                            min(p.was_eliminated_at, TICKS_PER_ROUND)
+                        )
 
         # ── Score summary ────────────────────────────────────────────────────
         self.stdout.write(
@@ -282,6 +301,31 @@ class Command(BaseCommand):
                 continue
             avg_rw = sum(rw) / len(rw)
             self.stdout.write(f"{role:<12} {avg_rw:>16.2f}\n")
+
+        # ── Follow rule (MECH-10) ────────────────────────────────────────────
+        # Resupply death % = Downs inside a Respawn cooldown a Resupply started,
+        # as a share of all Downs taken.
+        self.stdout.write(f"\n{'Role':<12} {'Avg Downs':>10} {'Resup Death %':>14}\n")
+        self.stdout.write("-" * 38 + "\n")
+
+        for role in ROLE_ORDER:
+            downs = role_downs_taken.get(role, [])
+            if not downs:
+                continue
+            total_downs = sum(downs)
+            resup_downs = sum(role_downs_in_resupply_cooldown[role])
+            pct = f"{resup_downs / total_downs * 100:.1f}%" if total_downs else "-"
+            self.stdout.write(
+                f"{role:<12} {total_downs / len(downs):>10.2f} {pct:>14}\n"
+            )
+
+        if medic_survival_ticks:
+            # TIME-01 DISPLAY boundary: ticks -> seconds; a survivor counts 1800.
+            avg_survival = sum(medic_survival_ticks) / len(medic_survival_ticks)
+            self.stdout.write(
+                f"Medic survival (s): {avg_survival * TICK_SECONDS:.0f} "
+                f"of {TICKS_PER_ROUND * TICK_SECONDS:.0f}\n"
+            )
 
         # ── Uptime breakdown ─────────────────────────────────────────────────
         self.stdout.write(

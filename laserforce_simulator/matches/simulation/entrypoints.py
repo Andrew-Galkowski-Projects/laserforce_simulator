@@ -29,6 +29,7 @@ from ..sim_helpers.combat import (
 )
 from ..sim_helpers.down import record_down
 from ..sim_helpers.event_log import EventLog
+from ..sim_helpers.follow_rule import may_tag, record_step
 from ..sim_helpers.map_loader import (
     load_map_context,
     zone_from_cell,
@@ -1588,7 +1589,19 @@ class BatchSimulator:
         # only_move = one single 2× step; all other (non-stationary) actions
         # Advance the normal speed-scaled distance while they act.
         multiplier = 2 if chosen == "only_move" else 1
+        start = (player.cell_row, player.cell_col)
         self._move_player_in_memory(player, second, goal_cell, movement_ctx, multiplier)
+        # MECH-10: grow this player's Trail and their Chases on enemies'
+        # Trails. Only when the cell changed: otherwise _last_step_cells may
+        # be a previous tick's.
+        if (player.cell_row, player.cell_col) != start:
+            record_step(
+                player,
+                [start, *player._last_step_cells],
+                second,
+                all_alive,
+                movement_ctx.get_adjacency(),
+            )
 
     # NOTE: ``_record_down`` is gone — lifted to
     # ``sim_helpers.down.record_down`` as a pure free function by the
@@ -1705,6 +1718,10 @@ class BatchSimulator:
                     continue
                 is_rapid_scout = h.role == "scout" and h.special_active_until > second
                 if not is_rapid_scout and id(h) in fired_holder_ids:
+                    continue
+                # MECH-10: a barred mover draws no Overwatch, so it does not
+                # use up the holder's one shot this tick.
+                if not may_tag(h, mover, second):
                     continue
                 # Shot-cooldown gate: free shot when cooldown is 0, else require
                 # the gap to have elapsed.
@@ -1836,7 +1853,11 @@ class BatchSimulator:
         # reaches resolution (gate below filters by active/taggable just like
         # the legacy path). result='hit' here; the dodge/los-broken paths emit
         # result='miss' from the caller.
-        if attacker.is_active_at(second) and defender.is_taggable_at(second):
+        if (
+            attacker.is_active_at(second)
+            and defender.is_taggable_at(second)
+            and may_tag(attacker, defender, second)  # MECH-10 Follow rule
+        ):
             if not defender.is_active_at(second) and defender.is_taggable_at(second):
                 defender.counters.times_tagged_in_reset_window += 1
             defender.shields = defender.max_shields

@@ -23,7 +23,9 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .follow_rule import start_trail, trail_adjacency
 from .round_context import RoundContext
+from .time_constants import RESPAWN_TICKS
 
 
 def record_down(player, tick: int, ctx: Optional[RoundContext]) -> None:
@@ -69,6 +71,16 @@ def record_down(player, tick: int, ctx: Optional[RoundContext]) -> None:
         player.down_chain_count += 1
     if player.role == "medic" and player.down_chain_count == 2 and ctx is not None:
         ctx.events.medic_reset(player, tick)
+
+    # MECH-10: start (or, before Active, extend) the Follow rule Trail.
+    # Must precede the last_downed_time stamp, like step 1.
+    start_trail(player, tick, trail_adjacency(ctx))
+
+    # MECH-10: resupply death % counts
+    player.downs_taken += 1
+    resupplied_at = player.last_resupplied_at
+    if resupplied_at is not None and tick - resupplied_at < RESPAWN_TICKS:
+        player.downs_in_resupply_cooldown += 1
 
     # 2-4. simple state mutations
     player.last_downed_time = tick

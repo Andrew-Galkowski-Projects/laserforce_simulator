@@ -1206,3 +1206,15 @@ class TestAttemptResupplyActiveGate(unittest.TestCase):
                 mate, ctx = self._attempt(tagger, 116)
                 self.assertGreater(getattr(mate, field), 5)
                 self.assertEqual(tagger.counters.resupplies_given, 1)
+
+    def test_receiver_stamps_last_resupplied_at(self):
+        """MECH-10: the resupply death % reads the receiver's last Resupply tick."""
+        for role in ("medic", "ammo"):
+            with self.subTest(role=role):
+                mate, _ = self._attempt(_ps(role), 116)
+                self.assertEqual(mate.last_resupplied_at, 116)
+
+    def test_no_resupply_leaves_last_resupplied_at_unset(self):
+        tagger = _ps("medic", last_downed_time=100)
+        mate, _ = self._attempt(tagger, 103)
+        self.assertIsNone(mate.last_resupplied_at)

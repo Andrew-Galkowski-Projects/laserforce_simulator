@@ -145,6 +145,17 @@ _Avoid_: using "tag" for any **Hit**, or for the act of firing (that is a **Shot
 A **Hit** that takes the target's **Shields** to zero, costing them one **Life** and triggering the **Respawn cooldown**.
 _Avoid_: "kill", "eliminate" (a Down costs one life, not the round)
 
+**Follow rule**:
+The rule that an enemy who **Chases** a **Downed** player cannot **Tag** them until two seconds after they are **Active** again. Moving through the area is never forbidden.
+
+**Trail**:
+The corridor a **Downed** or **Resupplied** player leaves: the cells they move through from the Down or Resupply until they are **Active** again, widened to everything within six squares' walk on either side. It never passes through walls. A further Down or Resupply before they are Active extends the same Trail; one after they are Active starts a new one.
+_Avoid_: "path" for the corridor (the path is the line the Downed player walked; the Trail is the band around it)
+
+**Chase / Chaser / Chased player**:
+An enemy **Chases** a Downed player by advancing ten squares along their **Trail** while inside it. That enemy is the **Chaser**; the Downed player is the **Chased player**. A parallel route outside the Trail is not a Chase, and neither is crossing it.
+_Avoid_: "follow" for the act (the **Follow rule** is the rule; the act is a Chase)
+
 **Elimination**:
 A player losing their last **Life** and being out for the remainder of the round.
 _Avoid_: "down" (a Down is one life; an Elimination is all of them)

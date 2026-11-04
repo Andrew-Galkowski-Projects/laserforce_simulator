@@ -25,6 +25,7 @@ _STALE_THRESHOLD = {
 # TIME-01: tick-domain staleness thresholds (STALENESS_SLOW_TICKS=120 for
 # slow/stationary roles, STALENESS_FAST_TICKS=30 for mobile roles). Used only
 # when time_domain == "ticks" (BatchSimulator).
+from .follow_rule import chased_tag_ids
 from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
     STALENESS_FAST_TICKS,
@@ -416,13 +417,42 @@ def _cell_from_memory(
     return (int(cell[0]), int(cell[1]))
 
 
+def _enemy_medic_goal(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    second: float,
+    time_domain: str,
+    chased: set[str],
+) -> "tuple[int, int] | None":
+    """The Commander's enemy-Medic goal: memory first, then perfect knowledge.
+
+    None when the Commander has Chased that Medic (MECH-10 Follow rule).
+    """
+    medic_tag = f"{enemy_color}_medic"
+    if medic_tag in chased:
+        return None
+    # MECH-06: prefer memory; fall back to perfect knowledge when memory is empty
+    memory_cell = _cell_from_memory(player, medic_tag, second, time_domain)
+    if memory_cell:
+        return memory_cell
+    enemy_medic = _find_role(all_alive, enemy_color, "medic")
+    if enemy_medic and enemy_medic.cell_row is not None:
+        return (enemy_medic.cell_row, enemy_medic.cell_col)
+    return None
+
+
 def _known_enemies_from_memory(
     player,
     enemy_color: str,
     second: float,
     time_domain: str = "seconds",
+    exclude: "set[str] | None" = None,
 ) -> "list[tuple[int, int]]":
-    """Return a list of (row, col) cells for non-stale enemy entries in player's memory."""
+    """Return a list of (row, col) cells for non-stale enemy entries in player's memory.
+
+    ``exclude``: tag ids to leave out (MECH-10: players this one Chased).
+    """
     memory = getattr(player, "player_memory", None)
     if not memory:
         return []
@@ -431,6 +461,8 @@ def _known_enemies_from_memory(
     for tag_id, entry in memory.items():
         # Only enemies
         if not tag_id.startswith(enemy_color):
+            continue
+        if exclude and tag_id in exclude:
             continue
         role = entry.get("role", "scout")
         threshold = table.get(role, table["scout"])
@@ -536,20 +568,17 @@ def _goal_from_action(
     cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
 
     if intended_action in ("tag_player", "missile_player"):
+        # MECH-10: a Chaser's Tag goals skip the players they Chased.
+        chased = chased_tag_ids(player, all_alive, second)
         if player.role == "commander":
-            # MECH-06: prefer memory; fall back to perfect knowledge when memory is empty
-            enemy_medic_cell = _cell_from_memory(
-                player, f"{enemy_color}_medic", second, time_domain
+            medic_goal = _enemy_medic_goal(
+                player, all_alive, enemy_color, second, time_domain, chased
             )
-            if enemy_medic_cell:
-                return enemy_medic_cell
-            # Perfect-knowledge fallback
-            enemy_medic = _find_role(all_alive, enemy_color, "medic")
-            if enemy_medic and enemy_medic.cell_row is not None:
-                return (enemy_medic.cell_row, enemy_medic.cell_col)
+            if medic_goal:
+                return medic_goal
         # MECH-06: use memory when entries exist; fall back to perfect knowledge otherwise
         known_cells = _known_enemies_from_memory(
-            player, enemy_color, second, time_domain
+            player, enemy_color, second, time_domain, exclude=chased
         )
         if known_cells:
             goal = _nearest_cell(cell_row, cell_col, known_cells)
@@ -562,6 +591,7 @@ def _goal_from_action(
             if p.team_color == enemy_color
             and p.final_lives > 0
             and p.cell_row is not None
+            and p.tag_id_key not in chased
         ]
         if enemies:
             goal = _nearest_cell(
@@ -682,16 +712,15 @@ def _goal_from_role(
                 goal = (heavy.cell_row, heavy.cell_col)
 
     elif player.role == "commander":
-        # MECH-06: try memory first, then perfect knowledge fallback
-        memory_cell = _cell_from_memory(
-            player, f"{enemy_color}_medic", second, time_domain
+        # MECH-06 memory-first enemy-Medic goal; MECH-10 skips a Chased Medic.
+        goal = _enemy_medic_goal(
+            player,
+            all_alive,
+            enemy_color,
+            second,
+            time_domain,
+            chased_tag_ids(player, all_alive, second),
         )
-        if memory_cell:
-            goal = memory_cell
-        else:
-            enemy_medic = _find_role(all_alive, enemy_color, "medic")
-            if enemy_medic and enemy_medic.cell_row is not None:
-                goal = (enemy_medic.cell_row, enemy_medic.cell_col)
 
     # MECH-06: teamwork bias — only when not in a nuke-reaction tick
     if not nuke_active and goal is not None:
