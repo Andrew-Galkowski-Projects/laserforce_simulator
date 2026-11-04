@@ -609,6 +609,8 @@ resolution → folds into the `CAL-01` re-baseline.
 
 ### MOVE-08 · Downed players move off
 
+Spec: #536
+
 **Prio: High, next after MECH-10 (owner, 2026-11-04).** Found by MECH-10's probe: Downed
 players almost never move during the Respawn cooldown, so attackers camp them and Tag them on
 reset, and the follow rule has no path to judge. Two Syracuse rounds (seeds 1-2, default
@@ -623,6 +625,61 @@ Stationary state and give the player a retreat goal for the cooldown.
 the tagger, or a stat-driven mix); whether a Resupplied player moves too; whether hiding is
 still allowed while Downed. **Changes seeded outcomes**, so it folds into `CAL-01`; re-measure
 with MECH-10's `score_averages` Follow rule section.
+
+**Grill round 1 (owner, 2026-11-04):**
+1. **Three options for a Downed player:** don't move; **shuffle to cover**; **create a trail**
+   (move out of cover 10 squares, then back into their spot). Create-trail is allowed only when
+   the player who tagged them is more than 10 squares away.
+2. No separate minimum distance: the three options replace it.
+3. **A Down clears `is_hiding`**, and while Downed, hide / hold / capture_base rolls do not
+   freeze the player (they keep to their chosen option).
+4. **The Downed goal overrides goal selection, with exceptions:** a nuke reaction still wins
+   when the player will be Active in time to cancel (e.g. Active in 2 s, the nuke drops in
+   4 s), and the critical-resource seek Medic / seek Ammo is likely unchanged.
+5. The goal is chosen at the Down and held until Active; normal goal selection resumes then.
+6. **A Resupply gets a chance to create a trail** too.
+7. No stat in this task: every role uses the same options (stat flavour goes to MECH-07).
+8. Judge it by MECH-10's probe and `score_averages` on the same seeds: Downed players should
+   move in most Downed ticks, with longer Trails; resupply death %, reset-window tags and
+   Medic survival are reported, not targets.
+
+**Grill round 2 (owner, 2026-11-04):**
+9. One roll at the Down: **stay 20% / shuffle to cover 50% / create trail 30%**; when
+   create-trail is not allowed its weight goes to the other two in proportion.
+10. "Tagger more than 10 squares away" is **walking distance, ground truth, at the Down**
+    (Missile: its shooter; Nuke: the Commander).
+11. **Create trail:** walk to a cell exactly 10 squares away by walking (of those, the farthest
+    from the tagger), then back to the Down cell. If the cooldown ends first, normal play
+    resumes.
+12. **Shuffle to cover:** the nearest cell by walking out of sight of every remembered enemy;
+    more than 3 squares away means stay instead. Re-picked if a remembered enemy now sees it.
+13. **Nuke-cancel exception:** the nuke reaction overrides the Downed option only when the
+    player is Active at least 1 tick before the Nuke detonates (Support roles' nuke rush too).
+14. **Critical resource wins:** a Downed non-support player at 30% lives or shots or less
+    still seeks their Medic / Ammo.
+15. **Resupply:** 25% chance to create a trail, only when no enemy is within 10 squares by
+    walking; it returns to the cell where they were resupplied. Otherwise unchanged.
+16. **Stay means hide at the current cell** (the 50% hide-miss applies). More likely on a
+    low-LOS cell, less likely on a high-LOS cell, and less likely for players with higher
+    speed / stamina (an owner exception to decision 7 for this option).
+
+**Grill round 3 (owner, 2026-11-04):**
+17. **Downed option formula** (tunable; its constants live in one place and the formula is
+    written out in `docs/agents/matches/sim-helpers.md` so it can be tweaked later):
+    - `stay = 20 x cell x mobility`, `shuffle = 50`, `trail = 30` (0 when not allowed), then
+      normalised.
+    - `cell = 1.5 - p`, where `p` is the cell's sight-line rank on the map (0 = most hidden,
+      1 = most open), so 1.5 .. 0.5.
+    - `mobility = 1.5 - m`, `m = (speed + stamina) / 200`, so 1.0 at 50 / 50, 1.5 .. 0.5.
+    - Stay therefore runs 5 .. 45.
+18. **Stay hidden lasts the Down:** while Downed the action roll does not clear the hide flag;
+    after Active the normal rule applies (the next roll other than hide / only_move ends it).
+19. **Names:** the **Downed option**: **Stay hidden**, **Shuffle to cover**, **Make a trail**.
+20. **A Down in the Reset window rolls a fresh Downed option**; "their spot" is the new Down
+    cell (the MECH-10 Trail still extends).
+21. **Make a trail with no cell exactly 10 squares away:** the farthest reachable cell within
+    10, then back.
+22. **Shuffle to cover with no enemy remembered** becomes Stay hidden on the spot.
 
 ### MOVE-06 · Goal-location noise to reduce balling-up
 

@@ -156,6 +156,10 @@ _Avoid_: "path" for the corridor (the path is the line the Downed player walked;
 An enemy **Chases** a Downed player by advancing ten squares along their **Trail** while inside it. That enemy is the **Chaser**; the Downed player is the **Chased player**. A parallel route outside the Trail is not a Chase, and neither is crossing it.
 _Avoid_: "follow" for the act (the **Follow rule** is the rule; the act is a Chase)
 
+**Downed option**:
+What a **Downed** player does until they are **Active** again, chosen once at the **Down**: **Stay hidden** (hide on the cell where they were Downed), **Shuffle to cover** (step to the nearest cell no enemy they remember can see), or **Make a trail** (walk ten squares out and back to their spot, so a **Chaser** who follows is barred). A **Resupply** can also lead to Make a trail.
+_Avoid_: "retreat" for all three (only two of them move)
+
 **Elimination**:
 A player losing their last **Life** and being out for the remainder of the round.
 _Avoid_: "down" (a Down is one life; an Elimination is all of them)
