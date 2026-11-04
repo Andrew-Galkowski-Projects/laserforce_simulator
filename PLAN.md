@@ -292,19 +292,30 @@ ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker front do
 template removal (ANG-08: the SPA is served at /, ADR-0047) and Django serving the SPA in every
 deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 
-**Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
+**Current — simulation behaviour** (owner, 2026-11-04), in order, ahead of the SM5 talk
+follow-ups:
 
 ```
-SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
+MECH-10          Follow rule (a Chaser cannot tag the chased player)  <- NOW
+MOVE-06+MOVE-07  Varied goal cells and routes (one design)
+MECH-07          Modes: attack / defense / zone control
 ```
+
+**Next — SM5 talk follow-ups** (from LFS-02's proposal), in order:
+
+```
+SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)
+```
+
+**Later — Phase 3.6 Learned player AI:** AI-01..AI-06, after MECH-07.
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.
 Mechanics items can run in parallel with Phase 8, because they don't touch the frontend. Analytics
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08..MECH-16, MOVE-05, MOVE-06, MOVE-07, SIM-13, SIM-14, CAL-01, then MECH-07
-  last (its design is still open).
+- **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-16, MOVE-05, SIM-13, SIM-14,
+  CAL-01 (MECH-10, MOVE-06, MOVE-07 and MECH-07 are scheduled above).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -508,16 +519,91 @@ eligibility and the appropriate target filters. Pairs with MECH-08 (timing) and 
 **From LFS-02:** stubborn zone control. A player holding a spot keeps resetting the enemy there
 about 3 times before leaving, instead of moving on after one Down.
 
-### MECH-10 · Follow rule — cap pursuit of downed players
+### MECH-10 · Follow rule — a Chaser cannot tag the player they chased
 
-Medics are dying within ~4 minutes because players follow a downed target indefinitely. Add a
-**follow rule**: a player cannot follow a downed player more than **10 squares along the downed
-player's path**. The path is modelled as a hallway (corridor spread) that starts at the square where
-the player was downed and extends until the player turns back on. Pursuit beyond the 10-square limit
-is disallowed, which should give Medics survivable breathing room.
+Spec: #534
 
-**Open question:** corridor width / spread of the "hallway" and how it interacts with LOS and walls
-(MAP-07) still needs pinning.
+**Prio: High, first in the simulation-behaviour order (owner, 2026-11-04).** Medics die within
+~4 minutes and the sim's resupply death % runs above real play, because attackers keep after a
+downed target with no limit. Today `_goal_from_action` (`sim_helpers/pathfinding.py`) filters
+`tag_player` targets on `final_lives > 0` only, so attackers path straight at a Downed enemy.
+
+**Rule (owner decisions, 2026-11-04):**
+- **Trail.** A player's Trail starts at the cell where they are Downed and extends along the
+  cells they move through until they turn back on (`RESPAWN_TICKS`). The Trail is a corridor
+  that reaches **6 ft to either side** of that path (enough to cover a hallway wall to wall).
+- **Scale.** Use **10 squares** as the 10 ft follow limit for now, a rough approximation.
+  The corridor half-width in squares is the matching approximation of 6 ft (pin it in the
+  grill). The owner can give the exact squares per foot from a map (e.g. Syracuse) later; a
+  per-map scale is a follow-up, not part of this task.
+- **Applies to every enemy**, not only the player who made the tag.
+- **Chased.** An enemy who travels **10+ squares inside a downed player's Trail** has
+  **chased** that player and **cannot tag them**. A parallel route outside the corridor to the
+  same point is legal and does not count.
+- **Movement is not blocked.** A Chaser may still move through the area and may tag anyone
+  else there, including players who have no Trail in it. The penalty is only on tagging the
+  chased player.
+- **Goal cells inside a Trail are allowed.** Whether a path through a Trail matters depends on
+  why the player is going there: an attacker heading for the enemy Medic may run the Heavy's
+  Trail on the way, and that is fine as long as they do not tag the Heavy. They can tag the
+  Medic and leave.
+
+**Baseline first.** Before changing the engine, record the current resupply death % and Medic
+survival time over a fixed seed set, so the PR can show the rule moves them.
+
+**Grill round 1 (owner, 2026-11-04):**
+1. **Trail width.** Every cell within **6 squares of walking distance** of a cell on the
+   downed player's path. It goes around walls and never bleeds through them.
+2. **Chase distance is progress along the Trail.** It counts how far the enemy advances along
+   the downed player's path (toward its current end) while inside the Trail. Distance outside
+   the Trail does not count; leaving and re-entering keeps what was counted. Crossing a hallway
+   or meeting the downed player head-on counts about 0.
+3. **Ban length.** A Chaser cannot tag the chased player until they are **Active again + 2 s**
+   (`RESPAWN_TICKS` + 4 ticks after the Down).
+4. **Every attack.** The ban covers the `choose_tag_target` pick (the chased player is
+   dropped before the draw), Follow-up / Reaction / Overwatch shots at the `resolve_shot`
+   gate, and Missiles (pick and resolution). Nukes pick no target and are exempt.
+5. **Goal selection** skips chased players in a Chaser's tag goals (nearest-enemy, the
+   Commander's enemy-Medic goal).
+6. **Ground truth.** The ban applies whether or not the Chaser saw the Down; it stands in for
+   the refs.
+7. **No DB change.** Trails and chase progress are in-memory per round; no `GameEvent` type,
+   no `PlayerCounters` column, no migration.
+8. **Baseline metrics in `score_averages`:** resupply death % (share of a player's Downs
+   within 8 ticks of receiving a Resupply), reset-window tags per role (already printed), and
+   Medic survival time (mean Elimination tick, 1800 if survived). Run before and after on the
+   same seeds and map.
+9. **Out of scope:** a per-map feet-per-square scale; players planning routes around Trails
+   (moved to MECH-07); persisted chase events; `game_analysis`'s own Down-window copy;
+   `round_playback` (reads events only).
+
+**Grill round 2 (owner, 2026-11-04):**
+10. **A Down during the Reset window continues the Trail**: it keeps growing until the player
+    is Active again after that Down, chase progress carries on, and bans run to that later
+    Active + 2 s. A Down after they are Active (in the 2 s grace or later) ends the old Trail
+    and its bans and starts a fresh Trail from zero.
+11. **Counting stops at Active.** Advancing along the Trail in the 2 s grace adds nothing;
+    bans already earned still run to Active + 2 s.
+12. **A Downed Chaser** keeps their progress and bans unchanged.
+13. **Seam:** one module `sim_helpers/follow_rule.py`, a per-round tracker on `RoundContext`
+    with `on_down(player, tick)` (from `record_down`), `on_step(player, step_cells, tick)`
+    (after each Advance, from `_last_step_cells`) and `may_tag(attacker, target, tick) -> bool`
+    (read by `choose_tag_target`, `resolve_shot`, the missile pick and resolution, and the tag
+    goals). Unit tests on hand-built grids plus one seeded `BatchSimulator` test.
+14. **One ticket, two commits:** the `score_averages` metrics and a recorded baseline first,
+    then the rule, re-measured on the same seeds and map.
+
+**Grill round 3 (owner, 2026-11-04):** a Resupply restarts the receiver's Respawn cooldown
+(`attempt_resupply` sets `last_downed_time`), so:
+15. **A Resupply starts a Trail**, exactly as a Down does, and the follow rule protects a
+    resupplied player. A Resupply while not yet Active extends the open Trail (rule 10).
+16. **Resupply death %** = the share of a player's Downs that land inside a Respawn cooldown a
+    Resupply started (within `RESPAWN_TICKS` of receiving it), from in-memory per-player
+    values (last Resupply tick, Down count), not `PlayerCounters` columns.
+
+Draws no new RNG; every replay and parallel path runs the same `_simulate_round`.
+**Changes seeded outcomes**, so it folds into the `CAL-01` re-baseline and
+`lfstats_calibrate` is re-run after it.
 
 ### MECH-11 · Crouch mechanic + stamina cost
 
@@ -616,6 +702,14 @@ nuke-reaction, critical-resource, `seek_medic`) stay deterministic; only the
 steady-state positioning layer gains jitter. **Consumes RNG** → shifts seeded
 outcomes; folds into the `CAL-01` re-baseline (no separate obligation).
 
+**Second in the simulation-behaviour order (owner, 2026-11-04), built with MOVE-07.** The owner
+wants goal positions much more varied, both within a role and in general. Cause: every role
+branch of `_goal_from_role` / `_goal_from_action` takes the single nearest best cell, so e.g.
+all Scouts converge on one high-LOS area. Proposed shape: **scored candidate cells** (cell
+value minus distance cost minus a spacing penalty against teammates' goals), then a
+**weighted draw** instead of the argmax, with a player stat setting how sharp the draw is.
+Build the scoring so MECH-07's Modes plug in as alternative scoring functions.
+
 ### MOVE-07 · Varied pathing + action-choice sweep
 
 **Prio: Medium (found 2026-10-23, ANG-06f grill).** Watching the playback map overlay, the
@@ -683,7 +777,69 @@ the broader **action-selection and movement-selection** layers it sits on (the d
 rework `CAL-01` defers to once calibration tuning is exhausted). Shape is **still
 being worked out** — scope and acceptance criteria are deliberately deferred.
 
-**Status:** TBD — intentionally sequenced **last** in this batch until the design is settled.
+**Modes (owner, 2026-11-04; third in the simulation-behaviour order, after MOVE-06/07).** Give
+each player a **Mode** that picks how goals are scored, chosen from role, Stats and game state:
+- **Attack:** go for Medic hits (and Ammo), using memory of where they were last seen.
+- **Defense:** take positions that complement the Heavy while resupplying.
+- **Zone control:** choose high-value areas and hold them, or harass enemies in the area.
+
+Each Mode is a scoring function over MOVE-06's candidate cells. Modes switch on game-state
+triggers (Heavy down, losing, low resources) with a minimum dwell so players do not flip-flop;
+those triggers are the MECH-14 behaviours, and SM5-06's control-zone positioning is the Zone
+control Mode's input. Settle in the grill whether MECH-07 absorbs MECH-14 and SM5-06. Players
+planning routes around MECH-10's Trails (avoid becoming a Chaser, take the parallel route)
+belongs here too (owner, 2026-11-04). The Mode
+layer is also the decision seam the AI-01 controller learns over.
+
+**Status:** design in its own grill; sequenced after MOVE-06/07.
+
+---
+
+## Phase 3.6 — Learned player AI (added 2026-11-04)
+
+Long-term goal (owner, 2026-11-04): teach an AI / neural net to play the sim with a genetic
+algorithm. Sequenced after MECH-10, MOVE-06/07 and MECH-07. Each task needs its own grill.
+
+### AI-01 · Close the rule loopholes a learner would exploit
+
+A learner exploits every bug. Prerequisites: MECH-10 (follow rule), MECH-16 (missile spent
+twice), MOVE-05 (cell occupancy) and MECH-13 (imperfect information; without it the policy
+learns from ground truth no real player has). This task is the audit that they are done and
+that nothing else hands out free points.
+
+### AI-02 · Player controller seam
+
+Separate decision-making from the engine: an observation (own resources, memory of enemies,
+teammates' states, candidate cells with features) and a decision (Mode, candidate-cell scores,
+optionally action weights). The scripted role logic becomes one controller; A* keeps doing
+the movement. Deterministic for a given seed, so Replay and serial == parallel still hold.
+
+### AI-03 · Headless throughput budget
+
+Time a headless round and size the training budget (e.g. 50 policies x 20 games = 1,000 rounds
+per generation; SIM-14 shows seed noise needs many games per fitness). Reuse
+`parallel_worker.py`.
+
+### AI-04 · Evolve the scripted policy's parameters
+
+A GA or CMA-ES over the ~20-50 numeric parameters of the scripted Mode policy. Cheap,
+interpretable, and it proves the training loop end to end.
+
+### AI-05 · Neuroevolution of a small network
+
+Evolve a small MLP (fixed-topology weights with CMA-ES / evolution strategies, or NEAT) behind
+the AI-02 seam. Self-play against a hall of fame of past champions plus scripted bots, across
+several maps and seeds; one policy per role or role as an input.
+
+**Open for the grill:** the fitness goal. A strong AI (win rate, score) and a realistic AI
+(matching LFstats per-role distributions) pull apart; a pure win-rate learner will not play
+like real players.
+
+### AI-06 · Ship the trained controller
+
+Store weights as a file, run inference in plain numpy (keeps the Desktop build free of
+PyTorch), offer it as a per-player or per-team controller option, and record the design in an
+ADR.
 
 ---
 
