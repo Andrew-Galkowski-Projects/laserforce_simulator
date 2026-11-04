@@ -316,7 +316,8 @@ def plan_action(
 
     # SM5-02: the role functions drain these while Downed, but the losing-side
     # score broadcast (+10 tag_player) runs after that drain, so zero them again.
-    if not player.is_active_at(second):
+    is_active = player.is_active_at(second)
+    if not is_active:
         weights[_ACTION_IDX["tag_player"]] = 0
         weights[_ACTION_IDX["resupply_ally"]] = 0
         if sum(weights) == 0:
@@ -366,7 +367,6 @@ def plan_action(
     plans = []
     # SM5-02: a Downed pack is dark. A player that is not Active plans no Shot
     # and no Resupply, and checks it before the target pick so no RNG is drawn.
-    is_active = player.is_active_at(second)
     if choice == "tag_player":
         if not is_active:
             return plans
@@ -430,7 +430,7 @@ def plan_action(
     elif choice == "capture_base":
         # MECH-15: a player in the respawn cooldown (Downed, not yet active)
         # cannot interact with a Base — never plan a capture while inactive.
-        if not player.is_active_at(second):
+        if not is_active:
             pass
         elif movement_ctx is not None and player.cell_row is not None:
             base_id = _get_base_interaction(player, movement_ctx)
@@ -451,11 +451,7 @@ def plan_action(
             )
             plans.append({"type": "capture_base", "actor": player, "base_id": base_id})
     elif choice == "use_special":
-        if (
-            player.can_use_special
-            and player.final_lives > 0
-            and player.is_active_at(second)
-        ):
+        if player.can_use_special and player.final_lives > 0 and is_active:
             plans.append({"type": "use_special", "actor": player})
     elif choice == "hide":
         plans.append({"type": "hide", "actor": player})

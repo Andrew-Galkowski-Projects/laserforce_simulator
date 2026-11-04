@@ -44,6 +44,7 @@ from matches.sim_helpers.weights import (
     _get_scout_weights,
     _get_heavy_weights,
     _get_commander_weights,
+    _apply_not_active,
     apply_decision_making_spread,
     check_stamina_penalty,
     finalize_action_weights,
@@ -196,6 +197,26 @@ class TestWeightFunctions:
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
         # SM5-02: tag_player (5) + resupply_ally (65) drain into only_move.
         assert w == [0, 70, 30, 0, 0, 0, 0, 0, 0]
+
+    def test_pooled_drain_ignores_a_negative_tag_weight(self):
+        """A negative tag_player moves nothing and takes nothing from resupply_ally.
+
+        Unclamped, the pooled sum would send 50 - 10 = 40 to only_move.
+        """
+        medic = self._state(self.gr, self.players["medic"], "medic", last_downed_time=0)
+        w = [-10, 0, 0, 0, 0, 50, 0, 0, 0]
+        _apply_not_active(
+            w,
+            {},
+            _ACTION_IDX,
+            medic,
+            [medic],
+            0,
+            "heavy",
+            "red",
+            also_drain_resupply=True,
+        )
+        assert w == [0, 50, 0, 0, 0, 0, 0, 0, 0]
 
     # --- Ammo ---
 

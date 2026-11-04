@@ -330,7 +330,7 @@ def _apply_not_active(
             None,
         )
         if also_drain_resupply:
-            idle = w[i["tag_player"]] + w[i["resupply_ally"]]
+            idle = max(0, w[i["tag_player"]]) + max(0, w[i["resupply_ally"]])
             w[i["tag_player"]] = 0
             w[i["resupply_ally"]] = 0
         else:
