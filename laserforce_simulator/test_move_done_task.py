@@ -271,6 +271,19 @@ class SequencingSummaryTests(TestCase):
         self.assertEqual(len(result.warnings), 1)
         self.assertIn(line, result.warnings[0])
 
+    def test_code_block_row_naming_only_the_task_is_dropped(self) -> None:
+        # LFS-02 retro: "LFS-02  LFstats realism (Phase 3.5)   <- NOW" was left behind.
+        rows = ["```", "TEST-01  Test harness   <- NOW", "LG-06  Seasons", "```"]
+        result = _move(plan=_summary(*rows))
+        self.assertIn("```\nLG-06  Seasons\n```", result.plan)
+        self.assertEqual(result.warnings, [])
+
+    def test_emptied_code_block_warns_to_name_the_next_task(self) -> None:
+        result = _move(plan=_summary("```", "TEST-01  Test harness   <- NOW", "```"))
+        self.assertIn("```\n```", result.plan)
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("code block is now empty", result.warnings[0])
+
     def test_mentions_outside_the_summary_are_untouched(self) -> None:
         plan = _PLAN.replace("Intro.", "Intro: TEST-01, LG-06.")
         result = _move(plan=plan)

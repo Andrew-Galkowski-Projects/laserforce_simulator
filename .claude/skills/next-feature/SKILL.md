@@ -92,6 +92,9 @@ every frontier question at once, numbered, each with a recommended answer
 worded so "yes" accepts it. `AskUserQuestion` takes at most four questions, so
 a bigger round goes as numbered text in chat and the owner answers there.
 Facts come from subagents reading the code; decisions come from the owner.
+A subagent mapping Player stats to the engine starts from the "Sim effect" column in
+`docs/lfstats-import.md` and reads code only for what it lacks (LFS-02's agent re-derived it
+for 190k tokens).
 When the task is a bug or a red check, reproduce it before round 1: the
 probe's result is a settled fact in that round, not a question. Match the
 probe to the report, the same error and the same order of output, before
@@ -279,6 +282,11 @@ number the ADR states cites one of those files, committed on the spike
 branch. Before writing the ADR, map each acceptance criterion to the file that
 proves it: ANG-09's review found three ADR numbers backed only by an
 overwritten JSON or a console line, and two criteria never run.
+
+A **proposal** task (a reviewed doc whose accepted items become PLAN entries, with no
+measurement) publishes no spec or ticket issues. The orchestrator writes the doc and the
+PLAN entries on the integration branch, and the PR title carries the task ID. Steps 6-8
+shrink to that doc, then Step 9 runs as usual (LFS-02).
 
 **The owner's approval of the breakdown authorises local commits** on this
 task's integration and ticket branches (the `CLAUDE.md` exception). Say so

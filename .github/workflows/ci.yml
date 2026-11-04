@@ -13,6 +13,31 @@ env:
   ZIP: LaserforceSimulator-windows-x64.zip
 
 jobs:
+  changes:
+    # LFS-02 retro: a pull request that changes only Markdown skips the
+    # frontend, desktop and docker jobs (about 6 min). lint and test still
+    # run: tests read GLOSSARY.md and other docs. A push always builds
+    # everything, since desktop-publish needs the desktop build.
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Does the change touch anything but Markdown?
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = pull_request ] && ! git diff --name-only "$BASE" HEAD | grep -qv '\.md$'; then
+            code=false
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "code=$code"
+
   lint:
     # PERF-02: lint and the migration checks run once, beside the test shards.
     # Its services, env and setup steps are kept in step with `test`.
@@ -249,6 +274,8 @@ jobs:
 
   frontend:
     # ANG-04: the Angular SPA in /frontend (ADR-0042). Runs in parallel with the Python jobs.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -283,8 +310,10 @@ jobs:
   desktop:
     # DESK-02: build the Desktop build on a python.org CPython (not conda:
     # ADR-0048), smoke-test the frozen exe with the same steps the suite runs
-    # unfrozen (desktop/smoke.py), and keep the zip. Every PR and push; only
-    # desktop-publish publishes it.
+    # unfrozen (desktop/smoke.py), and keep the zip. Every push and every PR
+    # but a Markdown-only one; only desktop-publish publishes it.
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
@@ -405,6 +434,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    # Skipped with frontend on a Markdown-only PR (see `changes`).
     needs: [test-result, frontend]
     env:
       # Job-level so the deploy steps' `if:` can test it: the `secrets`
