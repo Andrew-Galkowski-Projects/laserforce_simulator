@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
+from .follow_rule import may_tag, start_trail, trail_adjacency
 from .round_context import RoundContext
 from .mechanics import (
     shot_cooldown,
@@ -402,6 +403,7 @@ def plan_action(
                 if p.team_color != player.team_color
                 and p.final_lives > 0
                 and p.is_taggable_at(second)
+                and may_tag(player, p, second)  # MECH-10 Follow rule
             ]
             targets = _get_los_targets(player, candidates, movement_ctx)
             if targets:
@@ -490,6 +492,9 @@ def attempt_resupply(
     if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
         amount = _AMMO_CHART.get(teammate.role, 5)
         teammate.final_shots = min(teammate.max_shots, teammate.final_shots + amount)
+        # MECH-10: a Resupply starts a Follow rule Trail, as a Down does
+        # (before the last_downed_time stamp).
+        start_trail(teammate, second, trail_adjacency(ctx))
         teammate.last_downed_time = second
         teammate.last_resupplied_at = second
         teammate.shields = teammate.max_shields
@@ -507,6 +512,9 @@ def attempt_resupply(
     ):
         amount = _MEDIC_CHART.get(teammate.role, 3)
         teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
+        # MECH-10: a Resupply starts a Follow rule Trail, as a Down does
+        # (before the last_downed_time stamp).
+        start_trail(teammate, second, trail_adjacency(ctx))
         teammate.last_downed_time = second
         teammate.last_resupplied_at = second
         teammate.shields = teammate.max_shields

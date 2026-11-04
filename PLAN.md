@@ -297,6 +297,7 @@ follow-ups:
 
 ```
 MECH-10          Follow rule (a Chaser cannot tag the chased player)  <- NOW
+MOVE-08          Downed players move off (found by MECH-10)
 MOVE-06+MOVE-07  Varied goal cells and routes (one design)
 MECH-07          Modes: attack / defense / zone control
 ```
@@ -315,7 +316,7 @@ items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are 
 Angular.
 
 - **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-16, MOVE-05, SIM-13, SIM-14,
-  CAL-01 (MECH-10, MOVE-06, MOVE-07 and MECH-07 are scheduled above).
+  CAL-01 (MECH-10, MOVE-08, MOVE-06, MOVE-07 and MECH-07 are scheduled above).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -601,6 +602,10 @@ survival time over a fixed seed set, so the PR can show the rule moves them.
     Resupply started (within `RESPAWN_TICKS` of receiving it), from in-memory per-player
     values (last Resupply tick, Down count), not `PlayerCounters` columns.
 
+**Grill round 4 (owner, 2026-11-04):**
+17. MECH-10's probe found Downed players barely move (about 5% of Downed ticks), so the rule
+    rarely fires. Ship MECH-10 as specced and fix the movement as **MOVE-08**, next.
+
 Draws no new RNG; every replay and parallel path runs the same `_simulate_round`.
 **Changes seeded outcomes**, so it folds into the `CAL-01` re-baseline and
 `lfstats_calibrate` is re-run after it.
@@ -690,6 +695,23 @@ its own grill:** hard block vs allow transient mid-Advance pass-through but forb
 end-of-tick co-occupancy; whether occupancy is enemy-only or also same-team; tie-break
 when two players target the same free cell the same tick. Consumes/perturbs movement
 resolution → folds into the `CAL-01` re-baseline.
+
+### MOVE-08 · Downed players move off
+
+**Prio: High, next after MECH-10 (owner, 2026-11-04).** Found by MECH-10's probe: Downed
+players almost never move during the Respawn cooldown, so attackers camp them and Tag them on
+reset, and the follow rule has no path to judge. Two Syracuse rounds (seeds 1-2, default
+Teams), Downed player-ticks by reason they did not move: still **hiding** (the pre-Down hide
+carries over) 6,751; already **at their goal cell** 6,393; still on a pre-Down
+**capture_base** 2,183; **holding** 1,169; goal elsewhere but no advance 710; **moved** only
+1,043 (about 5%). Down Trails averaged 2.5-3.1 cells (136-173 a round, 3-8 reaching 10
+squares); Resupply Trails 3.4-5.0. Fix: at a Down (and a Resupply?) clear the carried-over
+Stationary state and give the player a retreat goal for the cooldown.
+
+**Open for its own grill:** where a Downed player goes (own base, the allied Medic, away from
+the tagger, or a stat-driven mix); whether a Resupplied player moves too; whether hiding is
+still allowed while Downed. **Changes seeded outcomes**, so it folds into `CAL-01`; re-measure
+with MECH-10's `score_averages` Follow rule section.
 
 ### MOVE-06 · Goal-location noise to reduce balling-up
 

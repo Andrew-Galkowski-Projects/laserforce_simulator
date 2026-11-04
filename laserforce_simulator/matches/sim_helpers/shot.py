@@ -33,6 +33,7 @@ from dataclasses import dataclass
 
 from .combat import _elevation_hit_modifier
 from .down import record_down
+from .follow_rule import may_tag
 from .mechanics import shot_cooldown
 from .pending_events import PendingFollowup, PendingReaction
 from .round_context import RoundContext
@@ -219,6 +220,9 @@ def resolve_shot(
     if attacker.final_shots <= 0 and attacker.role != "ammo":
         return ShotOutcome(False, False, False)
     if defender.final_lives <= 0 or not defender.is_taggable_at(tick):
+        return ShotOutcome(False, False, False)
+    # MECH-10: a Chaser cannot Tag the player they Chased (every shot kind).
+    if not may_tag(attacker, defender, tick):
         return ShotOutcome(False, False, False)
 
     # ── Phase 2. Hide-50%-miss roll (uniform across all kinds) ────────
