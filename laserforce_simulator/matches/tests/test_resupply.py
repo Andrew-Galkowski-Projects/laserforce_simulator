@@ -365,6 +365,47 @@ class TestComboChanceFormula(unittest.TestCase):
         self.assertAlmostEqual(result, 0.20, places=6)
 
 
+class TestStressFailPct(unittest.TestCase):
+    """SM5-01: min(100, (200 - dm - tw) / 10 × prior_request_count)."""
+
+    _STEPS = (0, 25, 50, 75, 100)
+
+    def _pct(self, dm: int, tw: int, prior: int) -> float:
+        from matches.sim_helpers.resupply_queue import _stress_fail_pct
+
+        return _stress_fail_pct(_ps("medic", decision_making=dm, teamwork=tw), prior)
+
+    def test_higher_dm_or_teamwork_never_raises_fail_chance(self):
+        for prior in (1, 2, 3):
+            for lo, hi in zip(self._STEPS, self._STEPS[1:]):
+                for other in self._STEPS:
+                    with self.subTest(prior=prior, step=(lo, hi), other=other):
+                        self.assertLessEqual(
+                            self._pct(hi, other, prior), self._pct(lo, other, prior)
+                        )
+                        self.assertLessEqual(
+                            self._pct(other, hi, prior), self._pct(other, lo, prior)
+                        )
+
+    def test_best_support_never_fails(self):
+        for prior in (1, 2, 3):
+            with self.subTest(prior=prior):
+                self.assertEqual(self._pct(100, 100, prior), 0.0)
+
+    def test_worst_support_fails_20_pct_per_prior_request(self):
+        for prior in (1, 2, 3):
+            with self.subTest(prior=prior):
+                self.assertAlmostEqual(self._pct(0, 0, prior), 20.0 * prior)
+
+    def test_capped_at_100(self):
+        self.assertEqual(self._pct(0, 0, 6), 100.0)
+
+    def test_default_50_50_unchanged_at_10_pct_per_prior_request(self):
+        for prior in (1, 2, 3):
+            with self.subTest(prior=prior):
+                self.assertAlmostEqual(self._pct(50, 50, prior), 10.0 * prior)
+
+
 # ---------------------------------------------------------------------------
 # TestResolveResupplyRequests — pure unit, no DB
 # ---------------------------------------------------------------------------
@@ -650,6 +691,47 @@ class TestResolveResupplyRequests(unittest.TestCase):
             0,
             f"Second requestor should get no resupply under stress failure, got: {requestor2_resupply}",
         )
+
+    # --- Test 7b (SM5-01): the second Medic's dm/teamwork decide its stress roll ---
+
+    def _second_requestor_resupplies(self, dm: int, tw: int) -> int:
+        """Two requestors; medic 1 serves the first and is then on shot cooldown,
+        so medic 2 (dm, tw) takes the stress roll for the second at roll 0.05 (5%)."""
+        requestor1 = _ps(
+            "heavy", team_color="red", final_lives=5, tag_id="red_heavy", player_id=1
+        )
+        requestor2 = _ps(
+            "scout", team_color="red", final_lives=5, tag_id="red_scout", player_id=2
+        )
+        medic1 = _ps("medic", team_color="red", tag_id="red_medic_1", player_id=3)
+        medic2 = _ps(
+            "medic",
+            team_color="red",
+            tag_id="red_medic_2",
+            player_id=4,
+            decision_making=dm,
+            teamwork=tw,
+        )
+        events = self._run(
+            [requestor1, requestor2],
+            [requestor1, requestor2, medic1, medic2],
+            movement_ctx=self._los_ctx(can_see=True),
+            rng_value=0.05,
+        )
+        return sum(
+            1
+            for e in events
+            if e.get("target_id") == requestor2.player_id
+            and e["event_type"] == "resupply_lives"
+        )
+
+    def test_stress_decisive_team_minded_medic_still_serves(self):
+        """dm = tw = 100 → 0% stress failure → the second requestor is healed."""
+        self.assertEqual(self._second_requestor_resupplies(100, 100), 1)
+
+    def test_stress_weak_medic_fails_second_request(self):
+        """dm = tw = 0 → 20% stress failure → a 5% roll fails, no heal."""
+        self.assertEqual(self._second_requestor_resupplies(0, 0), 0)
 
     # --- Test 8: Queue ordering — Heavy before Scout ---
 
