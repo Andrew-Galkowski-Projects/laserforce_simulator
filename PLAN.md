@@ -681,6 +681,33 @@ with MECH-10's `score_averages` Follow rule section.
     10, then back.
 22. **Shuffle to cover with no enemy remembered** becomes Stay hidden on the spot.
 
+**Grill round 4 (owner, 2026-11-04), after Syracuse probes:** with 1 square read as 1 ft, 81%
+of Downs ended as Stay hidden (Shuffle found no cover within 3; the tagger was within 10 in
+~80%). The owner measured the map: **2 squares is about 10 ft**. Re-probed at 5 ft / square
+(10 rounds): moved-off 21% -> 36% (62% with a 6-square shuffle), Follow rule bans 4 -> 44 a
+round, Heavy reset-window tags 58 -> 45. Players moved 1-10 squares a tick (10-100 ft/s).
+23. **Shuffle is short:** 5 ft (1 square on Syracuse).
+24. Keep the tagger-more-than-10-ft rule for Make a trail.
+25. Already in cover at the Down: Shuffle becomes Stay hidden.
+26. **One scale:** every distance is set in feet and turned into squares by the map's scale
+    (rounded, at least 1): follow limit 10 ft, Trail width 6 ft each side, trail out 10 ft,
+    tagger distance 10 ft, shuffle 5 ft. This changes MECH-10's merged constants here.
+27. **Player speed scaling is part of this task** (not a separate MOVE-09).
+28. The higher ban count is accepted for now (revisit with CAL-01).
+29. **Scale per map:** a new `ArenaMap.feet_per_pixel` (default 1/6, Syracuse's scale);
+    `feet_per_square = zone_size x feet_per_pixel`, so a finer grid on the same image keeps
+    real distances. Set through Django admin and the map fixture; a map-editor control is a
+    follow-up. One `core` migration.
+30. **Speed in feet:** `MAX_PLAYER_FEET_PER_SECOND = 10`; a player's top speed is
+    `10 x (0.5 + 0.5 x speed / 100)` = 5-10 ft/s (1-2 squares a second at 5 ft). Squares a
+    tick = that x 0.5 s / feet_per_square, with the fraction carried tick to tick; `only_move`
+    still doubles it.
+31. Distances in feet as in 26.
+32. **Two tickets, in order, by the orchestrator:** (1) map scale + speed (field, migration,
+    movement formula with carry, MECH-10 distances in feet, movement tests rewritten);
+    (2) the Downed option on the feet distances. Seeded outcomes change a lot (movement about
+    4x slower); CAL-01 and the LFS-01 calibration carry it.
+
 ### MOVE-06 · Goal-location noise to reduce balling-up
 
 **Prio: Medium (found 2026-06-25).** Players **ball up** because role-aware goal
