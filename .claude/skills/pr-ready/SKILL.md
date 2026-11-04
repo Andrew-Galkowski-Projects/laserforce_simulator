@@ -32,7 +32,13 @@ before).
 `python .claude/skills/verify/scripts/changed_files.py --base origin/main --mode branch`.
 When its `python`, `templates` and `migrations` buckets are all empty, skip
 Steps 2, 2b and 3 (CI runs them) and write
-`pytest: CI only (no Python changes)` in the test plan. Otherwise:
+`pytest: CI only (no Python changes)` in the test plan.
+
+**Cosmetic since the last green run:** when this session already ran both suites
+green (`/next-feature` Step 7) at commit `<sha>`, run
+`python scripts/cosmetic_diff.py <sha>`. `cosmetic` (exit 0) means every change
+since is Markdown, comments, docstrings or formatting: skip Steps 2, 2b and 3, and
+write that run's counts with `(at <sha>; later changes cosmetic)`. Otherwise:
 
 ```powershell
 python scripts/run_suite.py

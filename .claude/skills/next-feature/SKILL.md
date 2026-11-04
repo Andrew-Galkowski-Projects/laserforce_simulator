@@ -36,6 +36,16 @@ Review standards: `CODING_STANDARDS.md`. Everything in `CLAUDE.md` still
 holds. In particular: PowerShell, no `cd` or `-C` before git, never `git add
 -A` or a folder pathspec, and ASCII-only console output.
 
+**Branch files.** Rules only some tasks reach live beside this file. Read each one
+when its branch applies, at the step it names:
+
+- `port-and-frontend.md` — a Django-to-Angular port, or any `frontend/` change (grill, spec, verify).
+- `parallel-tickets.md` — a breakdown of more than one ticket (spec invariants, starting and
+  merging implementers, prepping the integration tip).
+- `special-tasks.md` — performance or CI time, deploy or serving, a CI job or release ref,
+  removal, prototype / spike / proposal, Desktop App.
+- `browser-check.md` — Step 7's browser check, when anything a person sees changed.
+
 ## Step 1: Pick the task
 
 Run `git fetch origin` first. The main checkout is often on someone else's
@@ -100,37 +110,13 @@ probe's result is a settled fact in that round, not a question. Match the
 probe to the report, the same error and the same order of output, before
 round 1: a nearby failure is a different bug (BUG-WV-01's first probe failed
 at once with `E_UNEXPECTED`; CI's `E_ABORT` was a hang, and round 1 was re-asked). A performance
-task gets the same probe: time the suspected cost locally, with and without it,
-scaled to the target's core count (CI runners have 4 vCPUs; pin a run to 4 cores,
-children included, through the PowerShell tool with `cmd /c start '""' /b /wait
-/affinity F <python> -m pytest ...`, as PERF-06 did). PERF-02 built a
-ticket on coverage being the cost, and one local timing would have shown the
-suite was CPU-bound. A probe for a split or a schedule also checks that each
-unit's cost holds wherever it lands: PERF-04 rebalanced on test durations that
-doubled in the shard holding the CPU-wide batch-sim pools. Local wall time is
-noisy (PERF-05's baseline ran 196 s, then 265 s): write `--junitxml` on both
-runs and compare them with `python scripts/compare_junit.py <base> <after>`;
-a flat control file (one the change can't touch) shows the gap is real.
+task gets the same probe (`special-tasks.md`), and so does a deploy task's running stack; a
+port task maps its screens to routes first (`port-and-frontend.md`).
 Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
 become ADRs in `docs/adr/` (next free number).
 
 The PLAN.md section often already holds answers the owner gave earlier. Read
 them and don't re-ask; put them in the first round as settled.
-
-A port task (a Django screen moving to Angular) maps every screen it replaces
-to its `/api/` route before round 1: grep `api_urls.py` and the viewsets'
-`@action`s. A missing or partial route is a settled fact in round 1, and a
-backend ticket. PLAN.md said ANG-01 covered every ANG-06 item; ANG-06-9's
-Team match history had no endpoint. Also grep `frontend/src` for each feature
-PLAN.md lists: one already shipped is a settled fact, not a ticket (ANG-06-10's
-Export PDF came with ANG-06d).
-
-A deploy or serving task lists what is running before round 1: `docker ps` and
-each image's created date, plus one real build's output tree, with each top-level
-path checked against Django's prefixes (`api/`, `admin/`, `static/`, `media/`).
-ANG-10 found the owner's live stack predated nginx only at the browser check,
-and Angular's `media/` fonts colliding with Django's `/media/` only after
-round 2.
 
 Cover, in the same rounds:
 
@@ -168,13 +154,8 @@ exists (a model field, a service method) before publishing: ANG-06a's spec said
 `currentUser().player` where the field is `self_insert`. For every HTTP assertion
 the spec makes (a status, a body text, a header), `curl` the real endpoint once:
 ANG-07's spec expected `/` to show `base.html`'s title, and anonymous `/`
-redirects to the sign-in page. Probe the way each CI job that runs the test will:
-list the setup the probe needed (an SPA build, a seed, a service) and check every
-such job has it (DESK-02 probed with the SPA built; CI's Python jobs never build it,
-and the smoke went red there). Probe each ref it runs on too (a PR, `main`, a `v*`
-tag): a step that branches on `GITHUB_REF` names in Testing Decisions how each
-branch runs before merge (DESK-04's smoke passed as a PR's `dev` build, and the
-first `main` build, `latest`, went red). For every user-facing message the spec quotes,
+redirects to the sign-in page. A test that runs in a CI job or on a release ref
+probes the way that job and ref will (`special-tasks.md`). For every user-facing message the spec quotes,
 find the line that produces it: ANG-06 item 7 promised "Something went wrong"
 where `ApiClient` says "Could not reach the server.". For every field the
 spec adds to an API output, grep the tests for it as well (`assertNotIn`,
@@ -183,50 +164,9 @@ spec as a test to update: ANG-06b's full suite found one that pinned
 `overall_rating` absent, and ANG-06-15's found `ok_page`
 (`matches/tests/league_api_fixtures.py`), which pins paged `meta` to the page
 keys exactly.
-Check each frontend decision against `CODING_STANDARDS.md`'s Angular section
-and cite the rule it follows or the reason it departs: ANG-06c's grill left
-the team pickers without `required`, and review sent them back.
-A port or migration spec takes its behaviour from the source being ported
-(the template and its script), not from the app `CLAUDE.md` summary: ANG-06h's
-doc described a wall-height input the template never had. For each template
-card, table row and page heading, list every value it renders and name the API
-field behind it; a value with no field is a backend change in the spec
-(ANG-06-9's Single Round cards showed Won / Lost / Tie, and the spec's response
-shape had no `result`; ANG-06-14's History heading needed the League name, which
-the History endpoint lacks, so every page change re-fetched the League). Quote
-each screen's h1 and route `title` verbatim (ANG-06-17's spec named no title, so an
-agent chose one) and list which controls each empty state hides:
-templates differ screen by screen, and ANG-06-15's spec said only "copied word
-for word", so an agent copied a sibling's "<League> — X" heading and kept
-pickers the template hides. Check every "one of" the spec writes against the
-template's `if` branches (ANG-06-15's Playoffs template shows the champion and
-the bracket together). Quote headers and empty-state text from the template file
-itself, never from a subagent's summary of it, and check each empty branch is
-reachable from the API response: ANG-06-16's spec took "Survival(s)" from a
-summary (the template says "Survival") and listed Team History's "No history
-yet.", which renders only when no Team resolves.
-
-When tickets will run in parallel, write each behaviour they share (input
-during a save, retry after a failed load, the dirty flag) once as a spec
-invariant, and cite it in every such ticket's acceptance criteria: ANG-06h's
-Sight Lines ignored canvas edits during a save and Zones & Bases lost them.
-An invariant that reloads or refreshes after an action names each landing
-case: the screen already open, a screen the action navigates to, and a screen
-that keeps its state. Each case gets a spec that counts the screen's GETs.
-ANG-06-19's I2 said "after every success … `changed` ticks", and a navigating
-action re-created the screen it had just landed on, so every GET went out
-twice. Only the Spec review caught it, and the fix pass cost 204k tokens.
-Also when tickets will run in parallel, give each parallel ticket its own
-module(s) at the seam (e.g. a package with one file per ticket) so
-implementers never append to the same file. Shared files caused every merge
-conflict in the last run.
-
-A **removal** spec (deleting views, modules or test files) gives a
-port-or-delete verdict per test class, not per file: ANG-08's verdicts covered
-files, and `views_tests.py` went with League play cases no verdict had read.
-Before the spec moves a helper out of a module being deleted, grep its callers
-outside the deleted code; none means delete it, not move it (ANG-08 moved
-`_coerce_sort` / `_coerce_dir` with no caller, and review sent them back).
+A frontend decision or a port spec follows `port-and-frontend.md`; tickets that will run in
+parallel get the shared invariants in `parallel-tickets.md`; a removal spec gives the
+per-class verdicts in `special-tasks.md`.
 
 Before publishing, map every numbered grill decision in `PLAN.md` to the spec
 section that carries it. A decision with no section is a missing Implementation
@@ -245,11 +185,8 @@ mutation runs costs about 160k tokens (ANG-06-10: one screen per ticket, 157k
 and 170k), so count screens before dividing. A ticket that adds API fields, a
 service and shared helpers before its screen costs about 230k (ANG-06-17a: 233k
 for one small screen). A link-wiring ticket that also changes the seed costs
-about 200k (ANG-06-18g: 217k across five screens' specs and the seed tests). A
-deletion ticket costs about 400k per app area it clears (ANG-08: 352k, 400k and
-617k for the League one), so give the League area two tickets. A docs-sweep
-ticket edits the docs itself, with no subagents (ANG-08j: 353k plus about 2.4M
-across nine prune agents it spawned); say so in its body. A
+about 200k (ANG-06-18g: 217k across five screens' specs and the seed tests).
+Deletion and docs-sweep tickets: `special-tasks.md`. A
 task small enough for one session gets one ticket.
 Don't pad.
 
@@ -267,26 +204,11 @@ its header). A body names another ticket as `{{KEY}}` (its JSON key), and the
 script swaps in the real `#<number>` once every issue exists. A run that fails half
 way is finished by running it again.
 
-A **prototype** task (throwaway samples the owner picks from) adds two kinds of
-ticket. Prototype tickets target a `prototype/<task>` branch cut from the
-integration branch. It is pushed but never merged, and the PR still says
-`Closes #<ticket>` for it. A **pick** ticket, labelled `ready-for-human`,
-holds the screenshots and records the owner's choice on the issue. The tickets
-that build on that choice are blocked by the pick.
+A **one-ticket** breakdown publishes no sub-issue: the spec issue carries the
+acceptance criteria, the commit comment goes on the spec, and the PR closes the
+spec alone (SM5-01's ticket only restated its spec).
 
-A **spike** task (an investigation whose deliverable is an ADR, no merged code)
-is one ticket the orchestrator does itself, on a `spike/<task>` branch cut
-from the integration branch, pushed and never merged; the PR merges the docs.
-Its measurement scripts write each run to a new timestamped file, and every
-number the ADR states cites one of those files, committed on the spike
-branch. Before writing the ADR, map each acceptance criterion to the file that
-proves it: ANG-09's review found three ADR numbers backed only by an
-overwritten JSON or a console line, and two criteria never run.
-
-A **proposal** task (a reviewed doc whose accepted items become PLAN entries, with no
-measurement) publishes no spec or ticket issues. The orchestrator writes the doc and the
-PLAN entries on the integration branch, and the PR title carries the task ID. Steps 6-8
-shrink to that doc, then Step 9 runs as usual (LFS-02).
+Prototype, spike and proposal tasks change the tickets: `special-tasks.md`.
 
 **The owner's approval of the breakdown authorises local commits** on this
 task's integration and ticket branches (the `CLAUDE.md` exception). Say so
@@ -302,7 +224,7 @@ against the spec issue.
 integration worktree, under the implementer constraints below (the red pairing
 for every Implementation Decision included), run `/verify` with `--mode branch`
 right before the commit (BUG-SL-01 committed its code unverified), and comment
-the commit on the ticket. Step 8's review still gives it fresh eyes. PERF-03's implementer agent
+the commit on the spec issue. Step 8's review still gives it fresh eyes. PERF-03's implementer agent
 spent 63k tokens on a 10-line change.
 
 A departure from the spec (a rename, a changed default, an extra UI rule) is a
@@ -315,108 +237,15 @@ greps the docs for the old value (`git grep -n "<old value>" -- ":/*.md"`) and
 fixes every statement of it in the same commit: LFS-01 moved the preferred-role
 boost from 1.2 to 1.0, and three docs still said ×1.2 until review.
 
-For more tickets, implementers run in their own worktrees branched from
-the integration branch, started one at a time: a worktree created while
-another agent is still committing can branch from a stale tip, so confirm
-each one's base before starting the next. The agent moves its own worktree
-off `origin/main` as its first step, sometimes onto a branch it names itself;
-wait for its worktree, not its branch, with one background call through the
-PowerShell tool (the Bash worktree guard refuses an `until` loop over `git`):
-`while (-not ((git worktree list) -match 'agent-<id>\s+<integration sha>')) {
-Start-Sleep 5 }` (ANG-06-16: a `rev-parse` wait on the agent's branch spun on a
-renamed one). Before starting tickets that run in
-parallel, prepare the integration tip yourself:
+For more tickets, starting implementers, preparing the integration tip and merging each
+ticket follow `parallel-tickets.md`.
 
-- Grep it for every helper two of them will need, and move each into a neutral
-  service module; every new action goes in its own ticket's file. Also list in
-  each ticket the existing shared UI helpers its screens need
-  (`shared/_alerts.scss`, `_badges.scss`, `api-message.ts`, `notify.ts`,
-  `confirm-dialog.ts`), and create any missing one on the integration tip
-  first, so agents reuse it instead of copying (ANG-06-8's badge, error box and
-  load-error code each came back twice). When two tickets each need a card or
-  flow an existing screen already has (an import card, a picker with its load
-  error), extract the whole piece, its state included, not only its pure
-  functions: ANG-06-13a moved `classifyImportErrors` alone, both agents copied
-  roster-import's chooser, template download and error lists, and review paid
-  for a shared `CsvImport`.
-- When a foundation ticket ships a **worked-example screen** for parallel
-  tickets to copy, move every helper it defines on the component into the kit
-  before they start: agents copy the example, helpers included (ANG-06-15's
-  Team Stats defined `arrow`, `sortParams` and `pickSeason`; six screens copied
-  them, and the review fix pass cost 184k tokens). Its load + Retry pipeline
-  counts as a helper: the foundation ticket ships it as an `inject*Load` kit
-  function, and the spec names it at the seam (ANG-06-18: four screens copied
-  the dashboard's constructor chain, and the fix pass cost 150k). A kit whose output feeds each
-  ticket's service call gets a compile-time assignment test against every
-  target params type (`const p: PlayerStatsParams = statsApiParams(...)`):
-  ANG-06-15's header comment claimed assignability it lacked, and three agents
-  worked around it two ways.
-- For each existing kit helper a ticket will call (a screen loader, a picker),
-  check it against the spec's invariants and that ticket's screen, and add any
-  missing input on the integration tip first: a nav gate, a Retry, an option the
-  screen must hide. ANG-06-16's `injectStatsScreen` loaded before the nav and had
-  no Retry, and `TeamPicker` always offered "All Teams": five screens
-  hand-rolled around them, and the review fix pass cost 285k tokens.
-- For each new public seam method, grep what it calls (an `ApiClient` verb, a
-  model method). Add anything missing to its shared module first, or the ticket
-  that is barred from that file stops half-done (ANG-06a: `ApiClient.put`).
-- When an earlier ticket left **stubs** for later tickets to replace, check its
-  specs against the real screen: they assert *which* component routed (not
-  the stub's text), and a spec that opens another ticket's screen releases
-  that screen's requests before `verify()`. Otherwise every parallel ticket
-  breaks the earlier specs. A kit helper that releases a stubbed screen's loads
-  matches every GET the screen may add later (the method, or the API prefix),
-  never an exact URL list: ANG-06-18's `releaseSeasonScreenLoads` missed
-  Standings' League GET, and five layout specs broke at the merge. Also check each stub's **inputs** against the
-  ticket that replaces it: every acceptance criterion must be computable from
-  them (ANG-06f: the map stub could not dim deactivated players). A slot for
-  later work needs a caller that can fill it; a routed component gets no
-  projected content (ANG-06f's RV-04 `<ng-content>`). When an early ticket
-  registers **placeholder routes**, give their block in `app.routes.spec.ts`
-  an `afterEach(() => http.match(() => true))`, so the screen tickets never
-  edit that spec as their screens start loading data (ANG-06-9).
-- When a ticket adds a request to a layout or the Shell that every screen
-  under it makes (a toolbar or nav GET), add its release to the test kit on the
-  integration tip first, and call it from the existing `release*Loads`
-  helpers, so no screen spec changes. This holds for tickets that run one
-  after another too. ANG-06-19a's toolbar `play-controls/` GET took a
-  hand-written release in 25 League specs, and review moved them all into
-  `releaseLeagueChrome()`.
-- When a ticket adds a **required** field to a shared API model type, add the
-  field to every shared spec fixture that builds that type first. Otherwise
-  the ticket must edit fixtures another ticket owns (ANG-06d: `scoreboard`
-  on `GameRound` broke `match-fixtures.ts`).
+These constraints bind whoever implements, you on a one-ticket breakdown or each
+implementer agent (whose prompt adds `parallel-tickets.md`'s *Implementer-only
+constraints*). Check them against each ticket's acceptance criteria: a criterion
+overrides a blanket ban, so say which in that ticket's prompt (ANG-06-18g's docs
+criterion met a "no docs" constraint and was skipped).
 
-Point each one at the spec issue and its ticket issue rather than pasting them.
-
-Merge each finished ticket branch yourself. Into the branch checked out in your
-worktree, use `git merge`. Into a branch checked out nowhere (a
-`prototype/<task>` branch), use `python scripts/merge_into_branch.py <target>
-<ticket branch>`. It fast-forwards when it can, otherwise writes the merge
-commit, and leaves the target alone on a conflict. After each merge of a
-ticket that ran in parallel, run `npm --prefix frontend run test:ci` once
-(about 15 s, with no agent running Vitest), so a spec that opens a stub
-another ticket replaced fails at the merge that broke it: ANG-06-13a's list
-spec clicked into Create and left the real screen's Teams GET open. After
-every ticket merge that touches `frontend/`, run
-`npm --prefix frontend run format:check` too (about 5 s): ANG-06-19c's
-unformatted `playback.spec.ts` was caught only at `/pr-ready`. After merging a
-ticket that deletes tests, run `python scripts/deleted_tests.py <tip before the
-merge>` and match every line it prints to a spec verdict or a ported test; an
-unmatched one is a port before the next deletion ticket starts (ANG-08's
-`views_tests.py` lost 11 League play behaviours this way).
-
-Add these constraints to every implementer prompt, after checking them against
-each ticket's acceptance criteria: a criterion overrides a blanket ban, so say
-which in that ticket's prompt (ANG-06-18g's docs criterion met a "no docs"
-constraint and was skipped).
-
-- **First step:** confirm your worktree is based on the integration branch,
-  else `git merge --ff-only <integration branch>` in your own worktree (the
-  auto-mode classifier refuses `git reset --hard`). Agent worktrees branch from
-  `origin/main` by default. Then copy
-  `laserforce_simulator/.env` from the main checkout into your worktree (Django
-  needs its `SECRET_KEY`); it stays uncommitted.
 - Follow `mattpocock-skills:tdd` at the spec's agreed seams: one failing
   test, then just enough code, one slice at a time. Tests and code for a
   ticket come from the **same** agent. Test placement is in `CLAUDE.md`.
@@ -428,8 +257,8 @@ constraint and was skipped).
   action exists, it is red, and its owner-gets-200 half keeps it from passing
   on a 404 for everyone. This is the ownership red, since a guard mutation
   is refused (Step 7).
-- Run only your own test files, with pytest given the nested Django dir's config
-  (`-c laserforce_simulator/pytest.ini --rootdir laserforce_simulator`). The full suite is the orchestrator's job. A ticket
+- Give pytest the nested Django dir's config
+  (`-c laserforce_simulator/pytest.ini --rootdir laserforce_simulator`). A ticket
   that touches `frontend/` also runs `npm --prefix frontend run build`. A new
   API endpoint also gets an entry in the N+1 registry and runs it:
   `laserforce_simulator/api/tests/test_detail_action_query_counts.py` (a
@@ -455,12 +284,6 @@ constraint and was skipped).
   through the PowerShell tool (it defaults to the current worktree; the Bash
   tool's worktree guard refuses it): stopping the npm wrapper alone leaves node,
   esbuild and dart running, and they block `git worktree remove`.
-- When tickets run in parallel, they share one MCP Chrome. Open your own page
-  with `new_page`, close only that page, and leave `close_mcp_browser.ps1` to
-  the orchestrator, who runs it once after the last agent reports. This
-  overrides the reuse-the-tab rule in `CLAUDE.md`.
-- Commit only on your ticket branch. Merge the integration tip into it before
-  reporting done. Comment the commit hash on your ticket issue.
 - Stage and commit in one call, `git add <paths>; if ($?) { git commit -F <file> }`,
   naming the paths `git status --short` lists (a `git mv` or `git rm` has
   staged its old path already, and naming it fails the add).
@@ -482,15 +305,8 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    Run `run_suite.py` in the foreground (about 70 s on SQLite, 130 s on Postgres,
    inside the 600 s limit): a background run can be stopped for low memory while
    the session waits (DESK-03 lost one).
-   When `frontend/` changed, run `test:ci` as CI's 4-vCPU runner does, through the
-   PowerShell tool: `$env:CI='true'; cmd /c start '""' /b /wait /affinity F npm
-   --prefix frontend run test:ci`. The spec-to-worker layout decides which specs
-   share a jsdom, so a leak between specs shows only at CI's core count (ANG-06-13b
-   passed locally and failed CI twice). A spec that passes alone and fails there:
-   bisect with `docs/agents/ci.md` *Spec passes alone, fails in the suite*.
-   Run every suite on its own, never in the background beside another: any
-   `pytest -n auto` run (SQLite or Postgres) beside `test:ci` starves Vitest
-   into false timeouts (ANG-06c, ANG-06d). **Python-free diff:** when
+   When `frontend/` changed, run `test:ci` as `port-and-frontend.md` *Verify* says.
+   **Python-free diff:** when
    `python .claude/skills/verify/scripts/changed_files.py --base origin/main --mode branch`
    reports empty `python`, `templates` and `migrations` buckets, skip both suite
    runs and `makemigrations` (CI runs them) and report
@@ -516,53 +332,11 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    seconds (300): `TIMEOUT` counts as caught; `BASELINE TIMED OUT` means the
    tests are too slow to mutate, so narrow them (LFS-01 sat 2 h on one mutant
    that sent a test into a real search before the limit existed).
-   Frontend code takes `--run -- npm --prefix frontend exec -- ng test
-   --watch=false --include=<spec>` in place of the pytest args.
-3. **Browser check** through Chrome DevTools MCP when anything a person sees
-   changed, following `CLAUDE.md`'s *Browser Sessions* rules (reuse the
-   existing tab, close what you open, close the browser when done). Server on 8001;
-   for the Angular SPA, `npm --prefix frontend run start:worktree` (4201, API on
-   8001) with Django started as `frontend/CLAUDE.md` **API and auth** says.
-   Seed with `python laserforce_simulator/manage.py seed_browser_check` (two
-   Accounts, Teams, a Match, a Single Round, an unfinished Match, and a
-   full-fidelity Single Round on the configured "Browser Check Arena" map for
-   map features; add `--league` for League features: a career, finance-enabled
-   League with two completed Seasons and an active one at its playoffs (round
-   robin played, seeded bracket built, no bracket games yet), a three-Player
-   free-agent pool, a ratings snapshot per Player per Season, and settled finances
-   for both completed Seasons (cash, Season history, one injured Player), plus a
-   sandbox League whose draft Season splits four Teams into two Conferences
-   (ANG-06-18: editable Conferences, draft Standings); `--tournaments` for
-   Tournament features: one sandbox Tournament per format and stage) and
-   remove it with `--clean` when done.
-   Assert on `innerText` or the API response body, not a status code. Wait with
-   `evaluate_script` (poll for a selector, return only the text you assert):
-   `wait_for` returns the whole page snapshot, 3-6k tokens on a League screen.
-   Take a viewport screenshot of each changed screen at 1280px and at 768px
-   (`resize_page`): a `fullPage` shot drops an inner box's scrollbar, so check
-   a box scrolls with `scrollWidth > clientWidth` (ANG-06-15's Feats table);
-   shoot transient UI (a snackbar lasts 5 s) in the same turn it appears,
-   right after the script that waits for it (ANG-06-11),
-   read it, and fix anything clipped or wrapped mid-word before review: specs
-   assert text, so only the picture shows layout (ANG-06c's winner chips).
-   After a style fix, read the changed property's computed value before
-   re-taking the screenshot: the dev server may not have reloaded it yet
-   (ANG-06-8). Fix by reflowing (a second line, a stacked cell) so every field the spec's
-   user stories show stays on screen (ANG-06e first hid the names). Check
-   from a second Account when ownership changed. An API-only task checks the
-   endpoints in the browsable API or with the test client instead, and says
-   which. A test-client script runs through `manage.py shell -c
-   "exec(open(r'<path>').read())"` with `APIClient(SERVER_NAME="localhost")`:
-   outside pytest the default host `testserver` is not in `ALLOWED_HOSTS`.
-   A Desktop App **App window** change checks the real window instead (the MCP
-   cannot see a native window): install `laserforce_simulator/requirements-desktop.txt`
-   in a scratchpad venv, build the SPA, and run `python desktop/smoke.py <venv
-   python> desktop/main.py --window`.
-   A Desktop-only SPA change (the `desktop` flag, its notices) runs the unfrozen
-   launcher, after the SPA build: `python desktop/main.py --no-browser` with
-   `LF_DESKTOP_HOME` set to a scratchpad folder prints `LF_READY <s> <launch url>`;
-   open that URL in the MCP tab, which signs it in (DESK-04).
-   Clean up any other test data the pass created.
+   Frontend code mutates as `port-and-frontend.md` *Verify* says.
+3. **Browser check** when anything a person sees changed, and an endpoint check
+   for an API-only task: follow `browser-check.md`. A Desktop App change checks
+   the real window instead (`special-tasks.md`). A change nobody sees skips it
+   and says so.
 
 ## Step 8: Review
 
@@ -616,7 +390,7 @@ No visual change: <reason, on its own line: `scripts/check_pr_evidence.py` accep
 **Blast radius:** <one word or phrase>
 
 Closes #<spec>
-Closes #<ticket> (one line per ticket)
+Closes #<ticket> (one line per ticket; none for a one-ticket breakdown)
 ```
 
 A migration that drops or rewrites data is a one-way door. Say so plainly.
@@ -636,13 +410,7 @@ owner reports a red or unmergeable PR, run `ci_timings.py <run-id>` (each
 shard's pytest line) and `gh pr view <n> --json mergeable,mergeStateStatus`
 first: a raw shard log mixes in the Postgres service's expected
 `duplicate key` errors (DESK-01).
-A task that changes CI time reads each run with
-`<main checkout>/.venv/Scripts/python.exe scripts/ci_timings.py <run-id>` (every job,
-each shard's pytest line, coverage total, run start to `test-result`) and
-claims the **slowest of at least two runs** (PERF-02: 4m57s, then 6m08s).
-More runs of one commit come from closing and reopening the PR
-(`docs/agents/ci.md`); watch the new run with `watch_pr_ci.py <n> --after-run
-<previous run-id>`, or the watcher passes on the previous run's checks (PERF-05).
+A task that changes CI time claims its timing as `special-tasks.md` says.
 Then stop again: the owner reviews and says when to merge. PRs are
 **squash-merged**, so after the merge `git fetch origin` and confirm `git diff
 <integration tip> origin/main -- <the paths the PR touched>` is empty: the work

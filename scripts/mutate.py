@@ -67,7 +67,8 @@ def failed_tests(output: str) -> list[str]:
 
     An ``ERROR`` line counts only with a test id (``::``): a fixture that failed
     for that test. ``ERROR <file>`` alone is a collection error, which names no
-    test, so the mutation stays ``BROKEN``.
+    test, so the mutation stays ``BROKEN``. Each test is named once, in
+    first-seen order: a ``subTest`` grid prints one line per failing case.
     """
     failed = []
     for line in output.splitlines():
@@ -82,7 +83,7 @@ def failed_tests(output: str) -> list[str]:
                 failed.append(match.group(1).replace("\\", "/"))
             elif match := _VITEST_FAIL.match(line):
                 failed.append(match.group(1))
-    return failed
+    return list(dict.fromkeys(failed))
 
 
 def _read(path: Path) -> str:

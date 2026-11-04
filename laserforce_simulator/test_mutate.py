@@ -319,3 +319,19 @@ class FailedTestsTests(TestCase):
         self.assertEqual(
             mutate.failed_tests(output), ["app/tests/test_x.py::T::test_sub"]
         )
+
+    def test_names_each_test_once_in_first_seen_order(self) -> None:
+        """A ``subTest`` grid prints one SUBFAIL per failing case, and pytest-subtests
+        also prints FAILED for the parent: SM5-01's report named one test ~60 times."""
+        output = (
+            r"(a=1) SUBFAIL app\tests\test_x.py::T::test_grid - AssertionError"
+            "\n"
+            "(a=2) SUBFAIL app/tests/test_x.py::T::test_grid - AssertionError\n"
+            "(a=1) SUBFAIL app/tests/test_x.py::T::test_other - AssertionError\n"
+            "FAILED app/tests/test_x.py::T::test_grid\n"
+            "FAILED app/tests/test_x.py::T::test_other\n"
+        )
+        self.assertEqual(
+            mutate.failed_tests(output),
+            ["app/tests/test_x.py::T::test_grid", "app/tests/test_x.py::T::test_other"],
+        )
