@@ -164,45 +164,7 @@ after it.
 
 SM5-01 (`_stress_fail` rewards weak supports) is **[DONE]**; see `PLAN-completed.md`.
 
-### SM5-02 · Downed players can still fire (bug)
-
-Spec: #531
-
-**Prio: High (found by LFS-02).** Neither the `tag_player` plan (`sim_helpers/combat.py`) nor
-`resolve_shot` (`sim_helpers/shot.py`) checks that the shooter is active, and the down-state
-weights leave the Commander 10 tag weight and the Medic 5. A downed pack cannot fire in SM5.
-A non-active player cannot tag. The grill settles whether that is a guard, a zero tag weight
-while down, or both, and whether Overwatch's mover side needs the same check.
-
-**Probe (2026-11-03, 20 rounds, seed 42, all stats 50).** Non-active shooters fired 3,030 of
-17,257 initial shots with no map and 2,903 of 12,651 on Syracuse, plus 150 of 4,079 Overwatch
-shots there and a few dozen follow-ups. Non-active Ammo / Medics gave 235 of 3,902 resupplies
-(no map) and 336 of 4,375 (Syracuse). Shots at a non-Taggable defender: 1,259 (no map) and
-3,261 (Syracuse, 2,091 of them Overwatch). Missiles, `use_special`, base capture and the
-Overwatch holder pool already gate on the actor being active.
-
-**Settled (owner, 2026-11-03):**
-1. **Rule.** A player who is not **Active** (anywhere in the 8 s **Respawn cooldown**) fires no
-   Shot of any kind: initial, follow-up, reaction or Overwatch.
-2. **Enforcement.** A guard in `resolve_shot` Phase 1 (covers queued follow-ups / reactions and a
-   holder Downed earlier in the tick): the shot is invalid, no Shot consumed, no event, no
-   counter. Plus a guard in the `tag_player` plan before `choose_tag_target`, so no target RNG
-   is drawn.
-3. **Weights.** `tag_player` is 0 for every role while not Active; the leftover goes where each
-   role's not-active branch already sends its drained weight (no new destinations).
-4. **Resupply.** In scope: a non-active Ammo / Medic gives no resupply (a guard in
-   `attempt_resupply` plus the plan).
-5. **Target side.** A Shot at a defender who is not **Taggable** is invalid (no Shot consumed,
-   no Miss), guarded in `resolve_shot` Phase 1; the Overwatch mover loop also skips a
-   non-Taggable mover so no attempt is built.
-6. **Determinism.** No new RNG source, so serial == parallel holds; seeded outcomes change and
-   fold into **CAL-01**. Seeded-value tests are updated honestly, with a comment. Run
-   `lfstats_calibrate --split test` once before and once after and record both in
-   `docs/lfstats-import.md`; no constant retune.
-7. **Glossary.** **Active** and **Taggable** entries added; no ADR (a reversible bug fix).
-
-**Out of scope:** SM5-03's retreat bands, MECH-14's downed status in memory, any change to the
-8 s cooldown or its 4 s split.
+SM5-02 (Downed players can still fire) is **[DONE]**; see `PLAN-completed.md`.
 
 ### SM5-03 · Resource-aware aggression (resource_awareness)
 
@@ -333,7 +295,7 @@ deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 **Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
-SM5-02..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
+SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.

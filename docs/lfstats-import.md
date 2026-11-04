@@ -458,6 +458,8 @@ python laserforce_simulator/manage.py lfstats_calibrate --split test --rounds 20
   Resupplies given rose slightly even though Downed supports now give none; the cause was not
   measured (supports are Active for more of the round). No constant was retuned; this shift is
   CAL-01's starting point.
+- **Re-run after review (2026-11-04).** The review fix that counts a negative pooled weight as 0
+  gave byte-identical output: no Ammo or Medic reaches the drain with a negative slot here.
 
 ## Findings to follow up
 
