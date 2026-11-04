@@ -162,35 +162,7 @@ Accepted LFS-02 suggestions, in priority order. Each row and its code facts are 
 it folds into the **CAL-01** re-baseline, and LFS-01's `lfstats_calibrate` harness is re-run
 after it.
 
-### SM5-01 · `_stress_fail` rewards weak supports (bug)
-
-Spec: #527
-
-**Prio: High (found by LFS-02).** `_stress_fail` (`matches/sim_helpers/resupply_queue.py`)
-fails a medic or ammo with `(decision_making + teamwork) / 10 * prior_request_count` %, so a
-better support fails more often. Flip it to `(200 - dm - tw) / 10 * prior_request_count`. Add a
-regression test that higher decision_making and teamwork never raise the fail chance.
-`docs/lfstats-import.md` says it "looks inverted" in two rows; fix both.
-
-**Grill (owner, 2026-11-03).** Settled facts: stats are 0-100, so each earlier request adds 0-20%;
-dm = tw = 50 gives 10% under both formulas (the existing 50/50 stress test stays green); the RNG
-draw count is unchanged, only the threshold moves. Decisions:
-1. Formula `min(100, (200 - dm - tw) / 10 * prior_request_count)`; the cap and the roll stay.
-2. Seam: a private `_stress_fail_pct(support: Any, prior_request_count: int) -> float`;
-   `_stress_fail` keeps only the roll. Tests: a monotonicity grid (dm, tw in 0-100, prior 1-3),
-   the end points (100/100 is 0%, 0/0 is 20% per earlier request, the 100 cap), and one
-   `resolve_resupply_requests` behaviour test with `random.random` at 0.05 (a 100/100 Medic
-   serves the second requestor, a 0/0 Medic does not).
-3. Out of scope: `prior_request_count` counts every earlier request in the tick's queue (both
-   Teams, unfulfilled ones too), not the supporter's own. Only the `sim_helpers/CLAUDE.md`
-   wording is corrected to say so. Possible follow-up, not a ticket.
-4. No serial-vs-parallel test (no RNG, parallelism or ordering change). The seeded drift for
-   supports with dm + tw != 100 folds into CAL-01.
-5. Docs: `docs/lfstats-import.md` rows for decision_making and teamwork lose "looks inverted";
-   its oddities bullet is removed; `sim_helpers/CLAUDE.md` gets the new formula. The LFS-02
-   proposal doc stays as the historical record.
-6. The `lfstats_calibrate` re-run waits for the SM5 batch / CAL-01.
-7. One spec, one ticket, implemented by the orchestrator in the integration worktree.
+SM5-01 (`_stress_fail` rewards weak supports) is **[DONE]**; see `PLAN-completed.md`.
 
 ### SM5-02 · Downed players can still fire (bug)
 
@@ -329,7 +301,7 @@ deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 **Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
-SM5-01..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
+SM5-02..SM5-09  SM5 talk follow-ups (from LFS-02)   <- NOW
 ```
 
 **Backlog — unscheduled, no fixed order.** Each item needs its own grill before it is picked up.

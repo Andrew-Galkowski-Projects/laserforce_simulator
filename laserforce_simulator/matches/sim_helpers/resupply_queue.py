@@ -97,10 +97,10 @@ def _is_available(
 
 
 def _stress_fail_pct(support: Any, prior_request_count: int) -> float:
-    """Percent chance a support player fails under stress.
+    """Total percent chance a support player fails under stress, capped at 100.
 
-    SM5-01: higher decision_making and teamwork lower the chance; 0-20% per
-    earlier request this tick, 10% at the 50/50 default.
+    SM5-01: higher decision_making and teamwork lower the chance; 0-20% for
+    each earlier request this tick, 10% each at the 50/50 default.
     """
     dm = getattr(support, "decision_making", 50)
     tw = getattr(support, "teamwork", 50)
