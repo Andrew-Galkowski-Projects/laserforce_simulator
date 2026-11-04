@@ -1719,6 +1719,10 @@ class BatchSimulator:
                 is_rapid_scout = h.role == "scout" and h.special_active_until > second
                 if not is_rapid_scout and id(h) in fired_holder_ids:
                     continue
+                # MECH-10: a barred mover draws no Overwatch, so it does not
+                # use up the holder's one shot this tick.
+                if not may_tag(h, mover, second):
+                    continue
                 # Shot-cooldown gate: free shot when cooldown is 0, else require
                 # the gap to have elapsed.
                 h_cd = shot_cooldown(h, second)

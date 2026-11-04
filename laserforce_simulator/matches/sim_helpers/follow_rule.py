@@ -34,7 +34,7 @@ Django imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import NamedTuple, Optional
 
 from .time_constants import RESPAWN_TICKS
 
@@ -48,15 +48,23 @@ FOLLOW_GRACE_TICKS: int = 4
 Cell = tuple[int, int]
 
 
+class BandCell(NamedTuple):
+    """A cell the Trail covers: its walk ``distance`` to the nearest path
+    cell, and that path cell's ``path_index``."""
+
+    distance: int
+    path_index: int
+
+
 @dataclass
 class Trail:
     """One Trail: ``start_tick`` identifies it; ``band`` maps each covered
-    cell to ``(walk distance, index of its nearest path cell)``. Path cells
-    are 4-adjacent, so an index difference is squares along the path."""
+    cell to its ``BandCell``. Path cells are 4-adjacent, so a
+    ``path_index`` difference is squares along the path."""
 
     start_tick: float
     path: list[Cell] = field(default_factory=list)
-    band: dict[Cell, tuple[int, int]] = field(default_factory=dict)
+    band: dict[Cell, BandCell] = field(default_factory=dict)
 
 
 @dataclass
@@ -99,8 +107,8 @@ def _widen(trail: Trail, index: int, adjacency: dict) -> None:
     while frontier:
         for cell in frontier:
             known = trail.band.get(cell)
-            if known is None or distance < known[0]:
-                trail.band[cell] = (distance, index)
+            if known is None or distance < known.distance:
+                trail.band[cell] = BandCell(distance, index)
         if distance == TRAIL_HALF_WIDTH_SQUARES:
             break
         distance += 1
@@ -170,7 +178,7 @@ def record_step(
             if covered is None:
                 previous = None  # distance outside the Trail never counts
                 continue
-            index = covered[1]
+            index = covered.path_index
             if previous is not None and index > previous:
                 chase.progress += index - previous
             previous = index

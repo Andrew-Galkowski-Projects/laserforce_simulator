@@ -263,6 +263,32 @@ class TestEngineRefusesBarredTags(_Barred):
                 self.assertEqual(self.downed.final_lives, 10)
                 self.assertEqual(ctx.events.entries, [])
 
+    def test_chased_tag_ids_names_only_the_chased_player(self) -> None:
+        from matches.sim_helpers.follow_rule import chased_tag_ids
+
+        other = _ps("blue_heavy", "blue", (12, 12))
+        everyone = [self.downed, other, self.chaser]
+        self.assertEqual(
+            chased_tag_ids(self.chaser, everyone, self.tick), {"blue_scout_1"}
+        )
+        lifts = 100 + RESPAWN_TICKS + GRACE
+        self.assertEqual(chased_tag_ids(self.chaser, everyone, lifts), set())
+
+    def test_overwatch_holder_keeps_its_shot_for_a_legal_mover(self) -> None:
+        """A barred mover crossing first must not use up the holder's one
+        Overwatch shot this tick."""
+        from types import SimpleNamespace
+
+        from matches.simulation import BatchSimulator
+
+        other = _ps("blue_heavy", "blue", (12, 12))
+        self.chaser.is_holding = True
+        sees_all: Any = SimpleNamespace(can_see=lambda a, b: True)
+        attempts = BatchSimulator()._collect_overwatch_attempts(
+            [self.downed, other, self.chaser], self.tick, sees_all
+        )
+        self.assertEqual([a["defender"] for a in attempts], [other])
+
     def test_missile_does_not_land_on_a_chased_player(self) -> None:
         from matches.simulation import BatchSimulator
 
@@ -444,6 +470,58 @@ class TestSeededRoundOnAMap:
             )
         assert bans, "the rule never fired in these rounds"
         assert violations == []
+
+
+class TestComboResupply(unittest.TestCase):
+    """A combo Resupply calls ``attempt_resupply`` twice on one tick, with the
+    receiver's old ``last_downed_time`` restored between the calls, so the
+    second call starts a fresh Trail rather than extending: same start tick,
+    same one-cell path, so a Chase keyed on it is unaffected."""
+
+    def test_combo_resupply_leaves_one_trail_from_that_tick(self) -> None:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from matches.sim_helpers import resupply_queue
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        medic = _ps("blue_medic", "blue", (12, 2))
+        medic.role = "medic"
+        ammo = _ps("blue_ammo", "blue", (12, 4))
+        ammo.role = "ammo"
+        mate = _ps("blue_scout_1", "blue", (12, 3))
+        mate.final_lives = mate.final_shots = 5
+        ctx = RoundContext(
+            events=EventLog(persist=False),
+            movement_ctx=SimpleNamespace(get_adjacency=lambda: OPEN),
+        )
+        with mock.patch.object(resupply_queue.random, "random", lambda: 0.0):
+            resupply_queue.resolve_resupply_requests(
+                [mate], [medic, ammo, mate], 100, None, ctx=ctx
+            )
+        self.assertEqual(mate.counters.combo_resupply_count, 1)
+        self.assertEqual(mate._trail.start_tick, 100)
+        self.assertEqual(mate._trail.path, [(12, 3)])
+        self.assertEqual(mate.last_downed_time, 100)
+
+
+class TestTrailAdjacency(unittest.TestCase):
+    def test_adjacency_comes_from_the_round_map(self) -> None:
+        from types import SimpleNamespace
+
+        from matches.sim_helpers.follow_rule import trail_adjacency
+
+        ctx = SimpleNamespace(movement_ctx=SimpleNamespace(get_adjacency=lambda: OPEN))
+        self.assertIs(trail_adjacency(ctx), OPEN)
+
+    def test_no_context_or_no_map_gives_none(self) -> None:
+        from types import SimpleNamespace
+
+        from matches.sim_helpers.follow_rule import trail_adjacency
+
+        self.assertIsNone(trail_adjacency(None))
+        self.assertIsNone(trail_adjacency(SimpleNamespace(movement_ctx=None)))
 
 
 class TestInertWithoutMap(unittest.TestCase):

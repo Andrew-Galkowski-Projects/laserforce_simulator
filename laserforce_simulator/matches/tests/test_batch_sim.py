@@ -703,11 +703,17 @@ class TestSim06FlushFields:
     # ------------------------------------------------------------------
 
     def _run_and_flush(self, team_red, team_blue, arena_map, n_rounds=3):
-        """Run n_rounds via BatchSimulator.run() then flush the first avg_seed.
+        """Run n_rounds via BatchSimulator.run() then flush every seed it kept.
 
         SIM-08: ``run()`` returns ``avg_seeds`` / ``outlier_seeds`` as
         ``[seed, flipped]`` pairs and ``save_games`` consumes that
         ``(seed, flipped)``-pair list directly.
+
+        MECH-10: flushes all the kept seeds, not just the first, so the
+        "> 0 on at least one player across 3 rounds" checks below really span
+        the rounds. One round's Reaction shots are seed-sensitive (a Scout
+        averages under one a round), and the Follow rule shifted this seed's
+        round to one with none. Each field check is unchanged.
         """
         import random
 
@@ -716,13 +722,13 @@ class TestSim06FlushFields:
         stats = sim.run(
             team_red, team_blue, n=n_rounds, arena_map=arena_map, master_seed=42
         )
-        seeds = stats["avg_seeds"] or stats["outlier_seeds"]
+        seeds = stats["avg_seeds"] + stats["outlier_seeds"]
         assert seeds, "run() produced no seeds — cannot flush to DB"
         game_rounds = sim.save_games(
-            team_red, team_blue, seeds, n=1, arena_map=arena_map
+            team_red, team_blue, seeds, n=len(seeds), arena_map=arena_map
         )
         assert game_rounds, "save_games returned no GameRound objects"
-        return game_rounds[0]
+        return game_rounds
 
     # ------------------------------------------------------------------
     # Tests
@@ -745,9 +751,9 @@ class TestSim06FlushFields:
         team_blue, _ = make_team_with_slots("Sim06B")
         arena_map = self._make_arena_map("Sim06")
 
-        gr = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
+        rounds = self._run_and_flush(team_red, team_blue, arena_map, n_rounds=3)
 
-        states = list(PlayerRoundState.objects.filter(game_round=gr))
+        states = list(PlayerRoundState.objects.filter(game_round__in=rounds))
         assert states, "No PlayerRoundState rows were created"
 
         # ticks_active > 0 for every player not eliminated at tick 0 (sentinel
