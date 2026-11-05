@@ -106,3 +106,17 @@ class AfterRunTests(TestCase):
         checks = [_check("test", "fail", "222"), _check("screenshots", "pass", "333")]
         statuses = {"222": "completed", "333": "completed"}
         self.assertEqual(watch_pr_ci.verdict(checks, statuses, after_run=111), "fail")
+
+
+class TestCiRunId(TestCase):
+    """The shard-balance read needs the CI workflow's run, not PR evidence's."""
+
+    def _named(self, workflow: str, run: str) -> dict[str, str]:
+        return {**_check("job", "pass", run), "workflow": workflow}
+
+    def test_picks_the_ci_workflow(self) -> None:
+        checks = [self._named("PR evidence", "111"), self._named("CI", "222")]
+        self.assertEqual(watch_pr_ci.ci_run_id(checks), "222")
+
+    def test_no_ci_workflow_is_none(self) -> None:
+        self.assertIsNone(watch_pr_ci.ci_run_id([self._named("PR evidence", "111")]))

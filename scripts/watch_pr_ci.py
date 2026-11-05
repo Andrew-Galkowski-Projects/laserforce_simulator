@@ -7,7 +7,8 @@ does the whole wait in one plain command: poll ``gh pr checks`` until every
 check has left ``pending`` and every workflow run behind them is completed
 (a later job such as ``docker`` is only listed once the job it needs passes),
 then print each check, each run's id (``run: <workflow> <id>``, for
-``ci_timings.py`` and the next ``--after-run``) and the PR's mergeable state.
+``ci_timings.py`` and the next ``--after-run``), a warning when the test shards
+are unbalanced, and the PR's mergeable state.
 
 Right after a close/reopen, ``gh pr checks`` still lists the previous run's
 finished checks. Pass that run's id as ``--after-run`` so the watch waits for
@@ -53,6 +54,15 @@ def run_lines(checks: list[dict[str, str]]) -> list[str]:
         if match:
             workflows.setdefault(match.group(1), check.get("workflow", ""))
     return [f"run: {workflow} {rid}" for rid, workflow in workflows.items()]
+
+
+def ci_run_id(checks: list[dict[str, str]]) -> str | None:
+    """The run id behind the CI workflow's checks, if any."""
+    for check in checks:
+        match = _RUN_RE.search(check.get("link", ""))
+        if match and check.get("workflow") == "CI":
+            return match.group(1)
+    return None
 
 
 def verdict(
@@ -112,6 +122,13 @@ def main() -> int:
         print(f"{check['bucket']:<9} {check.get('workflow', '')}/{check['name']}")
     for line in run_lines(checks):
         print(line)
+    ci_run = ci_run_id(checks)
+    if ci_run:
+        from ci_timings import run_balance_warning
+
+        warning = run_balance_warning(ci_run)
+        if warning:
+            print(warning)
     mergeable = _gh_json("pr", "view", args.pr, "--json", "mergeable")
     if isinstance(mergeable, dict):
         print(f"mergeable: {mergeable.get('mergeable')}")

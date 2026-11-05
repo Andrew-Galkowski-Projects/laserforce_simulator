@@ -181,7 +181,7 @@ the record:
 - New Django views get tests for both success responses and invalid input.
 - Bug fixes must include a regression test that would have caught the bug.
 
-**Simulation tests** use fixed random seeds (`random.seed(42)`) or inject deterministic player stats to keep results reproducible — avoid asserting on exact point totals from unseeded runs.
+**Simulation tests** use fixed random seeds (`random.seed(42)`) or inject deterministic player stats to keep results reproducible — avoid asserting on exact point totals from unseeded runs. The root `conftest.py` also starts every test from an RNG state fixed by its name, so a test that needs a particular draw must pin it: a passing seed is not proof (`test_map.py`'s only_move test failed on about 15% of seeds).
 
 **Do not** write tests that only verify mocks return what you told them to return. Prefer testing real behavior with lightweight in-memory objects or Django's `TestCase` with a test database.
 

@@ -15,6 +15,7 @@ test imports a task.
 from __future__ import annotations
 
 import os
+import random
 import shutil
 import tempfile
 from pathlib import Path
@@ -54,6 +55,25 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_unconfigure(config: pytest.Config) -> None:
     if _session_media_root is not None:
         shutil.rmtree(_session_media_root, ignore_errors=True)
+
+
+# A fixed RNG state per test (MECH-07 retro), so a rare simulator outcome fails
+# the same way on every run, in any xdist order, and can be replayed locally. A
+# class's setUpTestData runs inside its first test's setup, before any
+# function-scoped fixture, and which test is first can vary: it gets the class's
+# seed, and each test body then gets its own.
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    from laserforce_simulator.testing import stable_seed
+
+    random.seed(stable_seed(item.parent.nodeid if item.parent else item.nodeid))
+
+
+@pytest.fixture(autouse=True)
+def seed_test_rng(request: pytest.FixtureRequest) -> None:
+    from laserforce_simulator.testing import stable_seed
+
+    random.seed(stable_seed(request.node.nodeid))
 
 
 # ---------------------------------------------------------------------------

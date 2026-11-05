@@ -30,6 +30,9 @@ from datetime import datetime
 _MESSAGE_RE = re.compile(r"\d{4}-\d\d-\d\dT[\d:.]+Z ?(.*)$")
 _SUMMARY_RE = re.compile(r"^=+ (.+ in [\d.]+s.*?) =+$")
 _TOTAL_RE = re.compile(r"^\d{1,3}(\.\d+)?$")
+_SECONDS_RE = re.compile(r" in ([\d.]+)s\b")
+#: How far over the shards' mean the slowest shard may run (docs/agents/ci.md).
+BALANCE_LIMIT = 0.40
 
 
 def _messages(log: str) -> list[str]:
@@ -66,6 +69,26 @@ def coverage_total(log: str) -> str | None:
             if _TOTAL_RE.match(messages[i + 1]):
                 return messages[i + 1]
     return None
+
+
+def summary_seconds(summary: str) -> float | None:
+    """The seconds in a pytest result line, if it has any."""
+    match = _SECONDS_RE.search(summary)
+    return float(match.group(1)) if match else None
+
+
+def balance_warning(seconds: list[float]) -> str | None:
+    """A warning when the slowest shard's pytest is over ``BALANCE_LIMIT`` above the
+    mean; docs/agents/ci.md's refresh trigger is two such runs in a row."""
+    if len(seconds) < 2:
+        return None
+    mean = sum(seconds) / len(seconds)
+    if max(seconds) <= mean * (1 + BALANCE_LIMIT):
+        return None
+    return (
+        f"shard balance: the slowest shard is {max(seconds) / mean - 1:.0%} over the "
+        "mean; two runs in a row means refresh .test_durations (docs/agents/ci.md)"
+    )
 
 
 def shard_drift(
@@ -107,6 +130,22 @@ def _job_log(run_id: str, job: dict[str, object]) -> str:
     return _gh("run", "view", run_id, "--log", "--job", str(job["databaseId"]))
 
 
+def _is_test_shard(name: str) -> bool:
+    return name == "test" or name.startswith("test (")
+
+
+def run_balance_warning(run_id: str) -> str | None:
+    """``balance_warning`` for a finished run, read from its test shards' logs."""
+    jobs = json.loads(_gh("run", "view", run_id, "--json", "jobs"))["jobs"]
+    seconds = []
+    for job in jobs:
+        if _is_test_shard(job["name"]):
+            value = summary_seconds(pytest_summary(_job_log(run_id, job)) or "")
+            if value is not None:
+                seconds.append(value)
+    return balance_warning(seconds)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("run_id")
@@ -119,17 +158,24 @@ def main() -> int:
 
     run = json.loads(_gh("run", "view", args.run_id, "--json", "createdAt,jobs"))
     started = run["createdAt"]
+    shard_seconds = []
     for job in run["jobs"]:
         name = job["name"]
         line = f"{name:<12} {elapsed(job['startedAt'], job['completedAt']):>10}"
-        if name == "test" or name.startswith("test ("):
+        if _is_test_shard(name):
             summary = pytest_summary(_job_log(args.run_id, job))
             line += f"  {summary or 'no pytest summary'}"
+            seconds = summary_seconds(summary or "")
+            if seconds is not None:
+                shard_seconds.append(seconds)
         elif name == "coverage":
             line += f"  total {coverage_total(_job_log(args.run_id, job)) or '?'}%"
         print(line)
         if name == "test-result":
             print(f"run start -> test-result: {elapsed(started, job['completedAt'])}")
+    warning = balance_warning(shard_seconds)
+    if warning:
+        print(warning)
     if args.durations:
         from refresh_test_durations import DURATIONS_FILE, download_shards
 

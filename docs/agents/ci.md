@@ -78,8 +78,9 @@ It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `
 still runs, at the average duration, so a stale file only unbalances the shards.
 
 Every green shard keeps its own tests' CI timings as the `durations-shard-<n>`
-artifact for 30 days (PERF-04). **Refresh** when `ci_timings.py` shows the slowest
-shard's pytest more than about 40% over the mean of the shards, on two runs in a row.
+artifact for 30 days (PERF-04). **Refresh** when the slowest shard's pytest is more than
+40% over the mean of the shards on two runs in a row: `watch_pr_ci.py` and `ci_timings.py`
+print a `shard balance:` warning for each such run.
 Also refresh right after a change that shifts a broad class of tests' cost: PERF-05's
 test hasher made shard 1 run at a fifth of its prediction, and one slow runner kept the
 40% check from firing (PERF-06):

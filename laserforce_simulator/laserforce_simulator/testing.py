@@ -23,6 +23,7 @@ import functools
 import os
 import subprocess
 import sys
+import zlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -79,6 +80,11 @@ def install_close_in_transaction_guard() -> None:
 
         guarded_close._close_in_transaction_guard = True  # type: ignore[attr-defined]
         backend_class.close = guarded_close
+
+
+def stable_seed(name: str) -> int:
+    """A seed fixed by *name* across processes, unlike ``hash(name)``."""
+    return zlib.crc32(name.encode())
 
 
 def run_project_python(
