@@ -35,7 +35,11 @@ Django imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import NamedTuple, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
+
+if TYPE_CHECKING:
+    from .map_context import MapContext
+    from .round_context import RoundContext
 
 from .time_constants import RESPAWN_TICKS
 
@@ -96,7 +100,7 @@ def _trail_is_open(player, tick: float) -> bool:
     )
 
 
-def _widen(trail: Trail, index: int, movement_ctx) -> None:
+def _widen(trail: Trail, index: int, movement_ctx: MapContext) -> None:
     """Add every cell within the half-width walk of ``trail.path[index]``.
 
     A cell already in the band keeps the nearer path cell (the first one
@@ -125,7 +129,7 @@ def _widen(trail: Trail, index: int, movement_ctx) -> None:
         frontier = nxt
 
 
-def _extend_path(trail: Trail, cells: list[Cell], movement_ctx) -> None:
+def _extend_path(trail: Trail, cells: list[Cell], movement_ctx: MapContext) -> None:
     for cell in cells:
         if trail.path and trail.path[-1] == cell:
             continue
@@ -133,7 +137,7 @@ def _extend_path(trail: Trail, cells: list[Cell], movement_ctx) -> None:
         _widen(trail, len(trail.path) - 1, movement_ctx)
 
 
-def round_map(ctx):
+def round_map(ctx: Optional[RoundContext]) -> Optional[MapContext]:
     """The round's ``MapContext`` from a ``RoundContext``, or None when there
     is no context or no map (the rule is then inert)."""
     if ctx is None:
@@ -141,7 +145,7 @@ def round_map(ctx):
     return ctx.movement_ctx
 
 
-def start_trail(player, tick: float, movement_ctx) -> None:
+def start_trail(player, tick: float, movement_ctx: Optional[MapContext]) -> None:
     """A Down or a Resupply happened to ``player`` at ``tick``.
 
     Must run before ``last_downed_time`` is stamped. No map
@@ -162,7 +166,7 @@ def record_step(
     step_cells: list[Cell],
     tick: float,
     all_alive: list,
-    movement_ctx,
+    movement_ctx: MapContext,
 ) -> None:
     """Record one Advance: ``step_cells`` is the start cell, then the cells
     passed through, in order."""

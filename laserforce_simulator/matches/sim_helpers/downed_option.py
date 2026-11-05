@@ -37,7 +37,11 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 from math import hypot
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .map_context import MapContext
+    from .round_context import RoundContext
 
 from .time_constants import RESPAWN_TICKS
 
@@ -90,6 +94,30 @@ def active_before_nuke(player) -> bool:
     return player.last_downed_time + RESPAWN_TICKS <= detonates - 1
 
 
+def overrides_stay_hidden(player, tick: float, all_alive: list) -> bool:
+    """True when a goal-selection override beats Stay hidden's hide: the nuke
+    reaction while Active in time (decision 13), or the critical-resource
+    seek for a non-support player with that support alive (decision 14,
+    the same 30% rule as ``choose_goal_cell`` step 1)."""
+    if getattr(player, "reacting_to_nuke", False) and active_before_nuke(player):
+        return True
+    if player.role in ("medic", "ammo"):
+        return False
+    if player.final_lives <= player.max_lives * 0.3:
+        support = "medic"
+    elif player.final_shots <= player.max_shots * 0.3:
+        support = "ammo"
+    else:
+        return False
+    return any(
+        p.team_color == player.team_color
+        and p.role == support
+        and p.final_lives > 0
+        and p.cell_row is not None
+        for p in all_alive
+    )
+
+
 def _walk_distances(start: Cell, adjacency: dict, limit: int) -> dict[Cell, int]:
     """Walking distance from ``start`` to every cell within ``limit`` steps."""
     distances = {start: 0}
@@ -109,7 +137,9 @@ def _cell(player) -> Cell:
     return (player.cell_row, player.cell_col)
 
 
-def option_weights(player, trail_allowed: bool, movement_ctx) -> dict[str, float]:
+def option_weights(
+    player, trail_allowed: bool, movement_ctx: MapContext
+) -> dict[str, float]:
     """The un-normalised weights of the three options (the tunable formula)."""
     p = movement_ctx.los_rank(_cell(player))
     mobility = (player.speed + player.stamina) / 200
@@ -128,7 +158,7 @@ def _remembered_enemy_cells(player, tick: float) -> list[Cell]:
 
 
 def _nearest_cover(
-    player, from_cell: Cell, tick: float, movement_ctx
+    player, from_cell: Cell, tick: float, movement_ctx: MapContext
 ) -> Optional[Cell]:
     """Nearest cell within ``SHUFFLE_MAX_FEET`` (ties by row, col) that no
     remembered enemy can see; None when none, or no enemy is remembered."""
@@ -146,7 +176,7 @@ def _nearest_cover(
     return None
 
 
-def _turn_cell(spot: Cell, away_from: Optional[Cell], movement_ctx) -> Cell:
+def _turn_cell(spot: Cell, away_from: Optional[Cell], movement_ctx: MapContext) -> Cell:
     """The cell ``TRAIL_FEET`` from ``spot`` by walking (the farthest
     within it when none is that far), farthest from ``away_from``: by walking,
     then straight line, then (row, col)."""
@@ -169,7 +199,9 @@ def _turn_cell(spot: Cell, away_from: Optional[Cell], movement_ctx) -> Cell:
     )
 
 
-def _within_tagger_range(cell: Cell, others: list[Cell], movement_ctx) -> bool:
+def _within_tagger_range(
+    cell: Cell, others: list[Cell], movement_ctx: MapContext
+) -> bool:
     """True when any of ``others`` is within ``TAGGER_MIN_FEET`` by walking."""
     distances = _walk_distances(
         cell, movement_ctx.get_adjacency(), movement_ctx.squares(TAGGER_MIN_FEET)
@@ -177,7 +209,9 @@ def _within_tagger_range(cell: Cell, others: list[Cell], movement_ctx) -> bool:
     return any(o in distances for o in others)
 
 
-def _trail_plan(spot: Cell, away_from: Optional[Cell], movement_ctx) -> DownedPlan:
+def _trail_plan(
+    spot: Cell, away_from: Optional[Cell], movement_ctx: MapContext
+) -> DownedPlan:
     return DownedPlan(
         option=MAKE_A_TRAIL,
         spot=spot,
@@ -185,7 +219,9 @@ def _trail_plan(spot: Cell, away_from: Optional[Cell], movement_ctx) -> DownedPl
     )
 
 
-def choose_downed_option(player, tagger, tick: float, ctx) -> None:
+def choose_downed_option(
+    player, tagger, tick: float, ctx: Optional[RoundContext]
+) -> None:
     """Roll the Downed option at a Down (``record_down``, before the
     ``last_downed_time`` stamp). No map or no cell: no plan."""
     movement_ctx = getattr(ctx, "movement_ctx", None)
@@ -220,7 +256,7 @@ def choose_downed_option(player, tagger, tick: float, ctx) -> None:
     player.is_hiding = True
 
 
-def choose_resupply_trail(player, tick: float, ctx) -> None:
+def choose_resupply_trail(player, tick: float, ctx: Optional[RoundContext]) -> None:
     """After a Resupply: Make a trail with ``RESUPPLY_TRAIL_CHANCE`` when no
     enemy is within ``TAGGER_MIN_FEET`` by walking. No roll otherwise."""
     # A combo Resupply resets the receiver twice on one tick: one roll only.
@@ -230,7 +266,7 @@ def choose_resupply_trail(player, tick: float, ctx) -> None:
     # an earlier Down back to life: a Resupply starts from no plan.
     player.downed_plan = None
     movement_ctx = getattr(ctx, "movement_ctx", None)
-    if movement_ctx is None or player.cell_row is None:
+    if ctx is None or movement_ctx is None or player.cell_row is None:
         return
     player.resupply_rolled_at = tick
     spot = _cell(player)
@@ -251,9 +287,10 @@ def choose_resupply_trail(player, tick: float, ctx) -> None:
         default=None,
     )
     player.downed_plan = _trail_plan(spot, nearest, movement_ctx)
+    player.is_hiding = False  # a pre-Resupply hide would freeze the trail
 
 
-def downed_goal(player, tick: float, movement_ctx) -> Optional[Cell]:
+def downed_goal(player, tick: float, movement_ctx: MapContext) -> Optional[Cell]:
     """The goal cell while the Downed plan is live, else None.
 
     At Active the plan and the MOVE-04 goal commitment are cleared.

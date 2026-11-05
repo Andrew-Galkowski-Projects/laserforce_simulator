@@ -28,7 +28,7 @@ from ..sim_helpers.combat import (
     tick_missile_lock as _tick_missile_lock_shared,
 )
 from ..sim_helpers.down import record_down
-from ..sim_helpers.downed_option import plan_is_live
+from ..sim_helpers.downed_option import overrides_stay_hidden, plan_is_live
 from ..sim_helpers.event_log import EventLog
 from ..sim_helpers.follow_rule import may_tag, record_step
 from ..sim_helpers.map_loader import (
@@ -1582,7 +1582,11 @@ class BatchSimulator:
         # (Stay hidden) holds the player still; hold / capture_base rolls do not.
         if plan_is_live(player, second):
             if player.is_hiding:
-                return
+                # MOVE-08 decisions 13-14: the nuke-cancel exception and the
+                # critical-resource seek still pull a Stay hidden player out.
+                if not overrides_stay_hidden(player, second, all_alive):
+                    return
+                player.is_hiding = False
         elif (
             player.is_hiding
             or getattr(player, "is_holding", False)

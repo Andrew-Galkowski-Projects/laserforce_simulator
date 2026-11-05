@@ -15,6 +15,10 @@ from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Any
 
+#: MOVE-08: Syracuse's square (30 px at ``core.models.DEFAULT_FEET_PER_PIXEL``
+#: = 1/6 ft a pixel), used for hand-built contexts.
+DEFAULT_FEET_PER_SQUARE: float = 5.0
+
 
 @dataclass
 class MapContext:
@@ -48,7 +52,7 @@ class MapContext:
     elevation_grid: list[list[float]] | None = None
     #: MOVE-08: real-world feet a square covers (``zone_size x
     #: ArenaMap.feet_per_pixel``); 5.0, Syracuse's, for hand-built contexts.
-    feet_per_square: float = 5.0
+    feet_per_square: float = DEFAULT_FEET_PER_SQUARE
 
     def squares(self, feet: float) -> int:
         """MOVE-08: *feet* in this map's squares, rounded, at least 1."""
@@ -175,7 +179,7 @@ class MapContext:
             wall_meta=d.get("wall_meta", {}),
             team_spawn_pools=d.get("team_spawn_pools", {}),
             elevation_grid=d.get("elevation_grid"),
-            feet_per_square=d.get("feet_per_square", 5.0),
+            feet_per_square=d.get("feet_per_square", DEFAULT_FEET_PER_SQUARE),
         )
 
     def to_dict(self) -> dict:

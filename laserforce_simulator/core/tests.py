@@ -51,6 +51,21 @@ class GetImageLocalPathTests(TestCase):
                 mock_field.open.assert_called_once()
 
 
+class ArenaMapAdminTests(TestCase):
+    """MOVE-08 decision 29: a map's real-world scale is set in Django admin."""
+
+    def test_feet_per_pixel_is_editable_in_admin(self) -> None:
+        from django.contrib import admin
+
+        from .models import ArenaMap
+
+        self.assertTrue(admin.site.is_registered(ArenaMap))
+        model_admin = admin.site._registry[ArenaMap]
+        form = model_admin.get_form(request=None)
+        self.assertIn("feet_per_pixel", form.base_fields)
+        self.assertIn("feet_per_pixel", model_admin.list_display)
+
+
 class SeedDefaultsTests(TestCase):
     @patch("django.core.files.storage.default_storage", new=MagicMock())
     def test_skips_seeding_for_remote_storage(self) -> None:

@@ -183,8 +183,8 @@ class TestShuffleToCover(unittest.TestCase):
         self.assertEqual(downed_goal(self.downed, 101, OPEN), (6, 3))
         self.assertFalse(self.downed.is_hiding)
 
-    def test_cover_farther_than_three_squares_becomes_stay_hidden(self) -> None:
-        # A 1-wide corridor on the enemy's row: no unseen cell within 3.
+    def test_no_cover_in_reach_becomes_stay_hidden(self) -> None:
+        # A 1-wide corridor on the enemy's row: every reachable cell is seen.
         mc = _map(["." * 30])
         downed = _ps("blue_scout_1", "blue", (0, 3))
         enemy = _ps("red_heavy", "red", (0, 20))
@@ -321,6 +321,14 @@ class TestResupplyTrail(unittest.TestCase):
         self._resupply([mate, far], 0.0)
         self.assertEqual(mate.downed_plan.option, MAKE_A_TRAIL)
         self.assertEqual(mate.downed_plan.spot, (7, 14))
+
+    def test_a_resupply_trail_drops_a_hide(self) -> None:
+        mate = _ps("blue_scout_1", "blue", (7, 14))
+        mate.is_hiding = True
+        far = _ps("red_heavy", "red", (7, 29))
+        self._resupply([mate, far], 0.0)
+        self.assertEqual(mate.downed_plan.option, MAKE_A_TRAIL)
+        self.assertFalse(mate.is_hiding)
 
     def test_a_combo_resupply_rolls_once(self) -> None:
         mate = _ps("blue_scout_1", "blue", (7, 14))
@@ -461,6 +469,51 @@ class TestStationaryWhileDowned(unittest.TestCase):
         BatchSimulator()._advance_player(downed, [downed, tagger], 101, OPEN, "")
         self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 14))
 
+    def test_critical_resource_moves_a_stay_hidden_player(self) -> None:
+        """Decision 14 reaches Stay hidden too: at 30% lives or less a Downed
+        non-support player leaves the hide for their Medic."""
+        from matches.simulation import BatchSimulator
+
+        downed = _ps("blue_scout_1", "blue", (7, 2))
+        _down(downed, None, 100, OPEN, 0.0)
+        medic = _ps("blue_medic", "blue", (7, 20), role="medic")
+        downed.final_lives = 2
+        BatchSimulator()._advance_player(downed, [downed, medic], 101, OPEN, "")
+        self.assertFalse(downed.is_hiding)
+        self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 2))
+
+    def test_no_medic_alive_keeps_stay_hidden(self) -> None:
+        from matches.simulation import BatchSimulator
+
+        downed = _ps("blue_scout_1", "blue", (7, 2))
+        _down(downed, None, 100, OPEN, 0.0)
+        downed.final_lives = 2
+        BatchSimulator()._advance_player(downed, [downed], 101, OPEN, "")
+        self.assertTrue(downed.is_hiding)
+        self.assertEqual((downed.cell_row, downed.cell_col), (7, 2))
+
+    def test_nuke_cancel_moves_a_stay_hidden_player(self) -> None:
+        """Decision 13 reaches Stay hidden too, when Active in time."""
+        from matches.simulation import BatchSimulator
+
+        downed = _ps("blue_scout_1", "blue", (7, 2))
+        _down(downed, None, 100, OPEN, 0.0)
+        commander = _ps("red_commander", "red", (7, 20), role="commander")
+        _remember(downed, commander, 101)
+        downed.reacting_to_nuke = True
+        downed.nuke_detonates_at = 100 + RESPAWN_TICKS + 1
+        BatchSimulator()._advance_player(downed, [downed, commander], 101, OPEN, "")
+        self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 2))
+
+    def test_stay_hidden_holds_without_an_override(self) -> None:
+        from matches.simulation import BatchSimulator
+
+        downed = _ps("blue_scout_1", "blue", (7, 2))
+        _down(downed, None, 100, OPEN, 0.0)
+        BatchSimulator()._advance_player(downed, [downed], 101, OPEN, "")
+        self.assertEqual((downed.cell_row, downed.cell_col), (7, 2))
+        self.assertTrue(downed.is_hiding)
+
     def test_a_hide_roll_does_not_freeze_a_trail(self) -> None:
         from matches.simulation import BatchSimulator
 
@@ -534,7 +587,7 @@ class TestSeededRoundsMove:
         # cover, and every Shuffle would fall back to Stay hidden.
         syracuse = Path(__file__).resolve().parents[3] / "data/maps/syracuse.json"
         movement_ctx, _ = load_map_context(load_map_fixture(syracuse))
-        for seed in range(1, 3):
+        for seed in range(1, 4):
             random.seed(seed)
             BatchSimulator()._simulate_round(
                 list(red.active_roster),

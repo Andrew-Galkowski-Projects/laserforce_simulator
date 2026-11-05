@@ -21,7 +21,7 @@ or ``shields`` — those differ per call site and are the caller's job.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
 from .downed_option import choose_downed_option
 from .follow_rule import round_map, start_trail
@@ -29,7 +29,9 @@ from .round_context import RoundContext
 from .time_constants import RESPAWN_TICKS
 
 
-def record_down(player, tick: int, ctx: Optional[RoundContext], *, tagger=None) -> None:
+def record_down(
+    player, tick: int, ctx: Optional[RoundContext], *, tagger: Any = None
+) -> None:
     """Single life-loss chokepoint.
 
     ``tagger`` (MOVE-08) is who caused the Down: the shooter of a Tag or a

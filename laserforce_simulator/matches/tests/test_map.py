@@ -2370,10 +2370,12 @@ _TEST_FEET_PER_SQUARE = 0.75
 def cells_to_move(speed: int, grid=None) -> int:
     """Squares a fresh player (no carry) covers on its first tick of a
     ``_TEST_FEET_PER_SQUARE`` map: the expected Advance for these tests."""
-    from matches.sim_helpers.pathfinding import MAX_PLAYER_FEET_PER_SECOND
+    from types import SimpleNamespace
+
+    from matches.sim_helpers.pathfinding import feet_per_second
     from matches.sim_helpers.time_constants import TICK_SECONDS
 
-    feet = MAX_PLAYER_FEET_PER_SECOND * (0.5 + 0.5 * speed / 100)
+    feet = feet_per_second(SimpleNamespace(speed=speed))
     return int(feet * TICK_SECONDS / _TEST_FEET_PER_SQUARE)
 
 

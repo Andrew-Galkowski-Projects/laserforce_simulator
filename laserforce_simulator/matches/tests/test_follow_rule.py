@@ -540,19 +540,17 @@ class TestFeetScale(unittest.TestCase):
 
 class TestRoundMap(unittest.TestCase):
     def test_the_map_comes_from_the_round_context(self) -> None:
-        from types import SimpleNamespace
-
         from matches.sim_helpers.follow_rule import round_map
+        from matches.sim_helpers.round_context import RoundContext
 
-        self.assertIs(round_map(SimpleNamespace(movement_ctx=OPEN)), OPEN)
+        self.assertIs(round_map(RoundContext(movement_ctx=OPEN)), OPEN)
 
     def test_no_context_or_no_map_gives_none(self) -> None:
-        from types import SimpleNamespace
-
         from matches.sim_helpers.follow_rule import round_map
+        from matches.sim_helpers.round_context import RoundContext
 
         self.assertIsNone(round_map(None))
-        self.assertIsNone(round_map(SimpleNamespace(movement_ctx=None)))
+        self.assertIsNone(round_map(RoundContext(movement_ctx=None)))
 
 
 class TestInertWithoutMap(unittest.TestCase):
