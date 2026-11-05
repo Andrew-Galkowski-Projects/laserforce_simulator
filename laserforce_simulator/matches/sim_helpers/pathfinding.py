@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import heapq
-import math
 import random
 from typing import Any, TYPE_CHECKING
 
@@ -25,11 +24,13 @@ _STALE_THRESHOLD = {
 # TIME-01: tick-domain staleness thresholds (STALENESS_SLOW_TICKS=120 for
 # slow/stationary roles, STALENESS_FAST_TICKS=30 for mobile roles). Used only
 # when time_domain == "ticks" (BatchSimulator).
+from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
     STALENESS_FAST_TICKS,
     STALENESS_SLOW_TICKS,
+    TICK_SECONDS,
 )
 
 _STALE_THRESHOLD_TICKS = {
@@ -305,27 +306,35 @@ def astar_advance_cached(
     return reached
 
 
-def max_movement_for_map(zone_data: list[list[int]] | None) -> int:
-    """Cells-per-tick ceiling, scaled by map size (PLAN.md STAT-03 Phase 1).
+#: MOVE-08: the fastest a player moves (speed 100), in real-world feet a second.
+MAX_PLAYER_FEET_PER_SECOND: float = 10.0
 
-    Larger maps allow more cells per tick so traversal time stays sane:
-    ``max(rows, cols) // 10`` clamped to the documented 5..10 range.
+
+def feet_per_second(player) -> float:
+    """MOVE-08: a player's top speed, ``MAX x (0.5 + 0.5 x speed / 100)``:
+    5 ft/s at speed 0, 10 ft/s at 100 (replaces STAT-03's cells-per-tick)."""
+    speed = getattr(player, "speed", 50)
+    return MAX_PLAYER_FEET_PER_SECOND * (0.5 + 0.5 * speed / 100.0)
+
+
+def squares_this_tick(player, movement_ctx, multiplier: int = 1) -> int:
+    """MOVE-08: whole squares ``player`` advances this tick on this map.
+
+    ``feet_per_second x TICK_SECONDS / feet_per_square x multiplier`` plus the
+    fraction carried from earlier ticks (``PlayerState.move_carry``); the
+    whole part moves and the rest carries, so a 1.5 squares-a-second player
+    moves 0, 1, 1, 1 over four ticks. ``only_move`` passes ``multiplier=2``.
     """
-    if not zone_data:
-        return 5
-    rows = len(zone_data)
-    cols = len(zone_data[0]) if rows else 0
-    return max(5, min(10, max(rows, cols) // 10))
-
-
-def cells_to_move(speed: int, zone_data: list[list[int]] | None) -> int:
-    """Cells a player traverses this tick: ``ceil(speed/100 * max_movement)``.
-
-    PLAN.md STAT-03 Phase 1 (pairs with MAP-02). Floored at 1 so a moving
-    player is never frozen by a low ``speed`` stat.
-    """
-    mm = max_movement_for_map(zone_data)
-    return max(1, math.ceil((speed / 100.0) * mm))
+    reach = (
+        feet_per_second(player)
+        * TICK_SECONDS
+        / movement_ctx.feet_per_square
+        * multiplier
+        + player.move_carry
+    )
+    steps = int(reach)
+    player.move_carry = reach - steps
+    return steps
 
 
 def _nearest_cell(
@@ -775,8 +784,10 @@ def choose_goal_cell(
     max_shots = getattr(player, "max_shots", player.starting_shots)
 
     # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
+    # MOVE-08: a Downed player's option holds unless they are Active at least
+    # one tick before the Nuke detonates (still time to cancel / resupply).
     nuke_active = getattr(player, "reacting_to_nuke", False)
-    if nuke_active:
+    if nuke_active and (not plan_is_live(player, second) or active_before_nuke(player)):
         if player.role in ("medic", "ammo"):
             # Support roles: rush toward the neediest ally to maximise resupply
             # output in the ticks before the nuke lands.
@@ -838,6 +849,12 @@ def choose_goal_cell(
 
     if movement_ctx is None or cell_row is None or cell_col is None:
         return default_goal
+
+    # ── 1a. MOVE-08: the Downed option's goal (Shuffle to cover / Make a
+    # trail) while Downed; beats 1b, the commitment and steps 2-4.
+    downed = downed_goal(player, second, movement_ctx)
+    if downed is not None:
+        return downed
 
     # ── 1b. MECH-06: score broadcast movement override ────────────────────────
     # Winning + low lives + medic alive + enough time still remaining → seek

@@ -3,23 +3,24 @@
 A Downed or Resupplied player leaves a **Trail**: the cells they walk
 through until they are Active again (``last_downed_time +
 RESPAWN_TICKS``), widened to every cell within
-``TRAIL_HALF_WIDTH_SQUARES`` squares' walk of that path. The walk uses
-the map's 4-connected movement adjacency, so the band never passes
-through a wall.
+``TRAIL_HALF_WIDTH_FEET`` of walking (in the map's squares) of that path.
+The walk uses the map's 4-connected movement adjacency, so the band never
+passes through a wall.
 
-An enemy who advances ``FOLLOW_LIMIT_SQUARES`` along the path while
-inside the band has **Chased** that player and may not Tag them until
+An enemy who advances ``FOLLOW_LIMIT_FEET`` along the path while inside
+the band has **Chased** that player and may not Tag them until
 ``FOLLOW_GRACE_TICKS`` after they are Active again. Moving through the
-area is never blocked, and the Chaser may Tag anyone else.
+area is never blocked, and the Chaser may Tag anyone else. MOVE-08: the
+distances are feet, turned into squares by ``movement_ctx.squares``.
 
-Three entry points:
+Three entry points, each given the round's map (``MapContext``):
 
-- ``start_trail(player, tick, adjacency)``: a Down (``record_down``) or a
+- ``start_trail(player, tick, movement_ctx)``: a Down (``record_down``) or a
   Resupply (``attempt_resupply``) at ``tick``. Call it BEFORE
   ``last_downed_time`` is stamped: a player who is not yet Active keeps
   their open Trail (it grows until the later Active tick, and Chases and
   bans on it carry over); otherwise a fresh Trail starts at their cell.
-- ``record_step(player, step_cells, tick, all_alive, adjacency)``: after
+- ``record_step(player, step_cells, tick, all_alive, movement_ctx)``: after
   each Advance, with the cell the player started the tick on followed by
   the cells they passed through. Grows the mover's own open Trail and
   advances the mover's Chase progress on every enemy's open Trail.
@@ -34,14 +35,19 @@ Django imports.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import NamedTuple, Optional
+from typing import TYPE_CHECKING, NamedTuple, Optional
+
+if TYPE_CHECKING:
+    from .map_context import MapContext
+    from .round_context import RoundContext
 
 from .time_constants import RESPAWN_TICKS
 
-#: Squares advanced along a Trail that make a Chase (10 squares ~ 10 ft).
-FOLLOW_LIMIT_SQUARES: int = 10
-#: Squares' walk on either side of the path that the Trail covers (~ 6 ft).
-TRAIL_HALF_WIDTH_SQUARES: int = 6
+#: Feet advanced along a Trail that make a Chase (2 squares on Syracuse).
+FOLLOW_LIMIT_FEET: float = 10.0
+#: Feet of walking on either side of the path the Trail covers (1 square on
+#: Syracuse).
+TRAIL_HALF_WIDTH_FEET: float = 6.0
 #: Ticks after the Chased player is Active again that the ban still holds (2 s).
 FOLLOW_GRACE_TICKS: int = 4
 
@@ -94,12 +100,14 @@ def _trail_is_open(player, tick: float) -> bool:
     )
 
 
-def _widen(trail: Trail, index: int, adjacency: dict) -> None:
+def _widen(trail: Trail, index: int, movement_ctx: MapContext) -> None:
     """Add every cell within the half-width walk of ``trail.path[index]``.
 
     A cell already in the band keeps the nearer path cell (the first one
     on a tie).
     """
+    adjacency = movement_ctx.get_adjacency()
+    half_width = movement_ctx.squares(TRAIL_HALF_WIDTH_FEET)
     origin = trail.path[index]
     frontier = [origin]
     seen = {origin}
@@ -109,7 +117,7 @@ def _widen(trail: Trail, index: int, adjacency: dict) -> None:
             known = trail.band.get(cell)
             if known is None or distance < known.distance:
                 trail.band[cell] = BandCell(distance, index)
-        if distance == TRAIL_HALF_WIDTH_SQUARES:
+        if distance == half_width:
             break
         distance += 1
         nxt = []
@@ -121,34 +129,35 @@ def _widen(trail: Trail, index: int, adjacency: dict) -> None:
         frontier = nxt
 
 
-def _extend_path(trail: Trail, cells: list[Cell], adjacency: dict) -> None:
+def _extend_path(trail: Trail, cells: list[Cell], movement_ctx: MapContext) -> None:
     for cell in cells:
         if trail.path and trail.path[-1] == cell:
             continue
         trail.path.append(cell)
-        _widen(trail, len(trail.path) - 1, adjacency)
+        _widen(trail, len(trail.path) - 1, movement_ctx)
 
 
-def trail_adjacency(ctx) -> Optional[dict]:
-    """The movement adjacency from a ``RoundContext``, or None when there is
-    no context or no map (the rule is then inert)."""
-    if ctx is None or ctx.movement_ctx is None:
+def round_map(ctx: Optional[RoundContext]) -> Optional[MapContext]:
+    """The round's ``MapContext`` from a ``RoundContext``, or None when there
+    is no context or no map (the rule is then inert)."""
+    if ctx is None:
         return None
-    return ctx.movement_ctx.get_adjacency()
+    return ctx.movement_ctx
 
 
-def start_trail(player, tick: float, adjacency: Optional[dict]) -> None:
+def start_trail(player, tick: float, movement_ctx: Optional[MapContext]) -> None:
     """A Down or a Resupply happened to ``player`` at ``tick``.
 
-    Must run before ``last_downed_time`` is stamped. No map (``adjacency``
-    is None) or no cell: nothing to measure, the rule stays inert.
+    Must run before ``last_downed_time`` is stamped. No map
+    (``movement_ctx`` is None) or no cell: nothing to measure, the rule
+    stays inert.
     """
-    if adjacency is None or player.cell_row is None:
+    if movement_ctx is None or player.cell_row is None:
         return
     if _trail_is_open(player, tick):
         return  # not yet Active: the same Trail keeps growing
     trail = Trail(start_tick=tick)
-    _extend_path(trail, [(player.cell_row, player.cell_col)], adjacency)
+    _extend_path(trail, [(player.cell_row, player.cell_col)], movement_ctx)
     player._trail = trail
 
 
@@ -157,12 +166,13 @@ def record_step(
     step_cells: list[Cell],
     tick: float,
     all_alive: list,
-    adjacency: dict,
+    movement_ctx: MapContext,
 ) -> None:
     """Record one Advance: ``step_cells`` is the start cell, then the cells
     passed through, in order."""
     if _trail_is_open(player, tick):
-        _extend_path(player._trail, step_cells, adjacency)
+        _extend_path(player._trail, step_cells, movement_ctx)
+    limit = movement_ctx.squares(FOLLOW_LIMIT_FEET)
 
     for enemy in all_alive:
         if enemy.team_color == player.team_color or not _trail_is_open(enemy, tick):
@@ -182,7 +192,7 @@ def record_step(
             if previous is not None and index > previous:
                 chase.progress += index - previous
             previous = index
-        if chase.progress >= FOLLOW_LIMIT_SQUARES and not chase.banned:
+        if chase.progress >= limit and not chase.banned:
             chase.banned = True
             chase.banned_at = tick
 

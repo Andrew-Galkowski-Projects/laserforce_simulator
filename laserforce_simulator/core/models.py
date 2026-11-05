@@ -1,5 +1,8 @@
 from django.db import models
 
+#: MOVE-08: Syracuse's drawing scale (30 px a square = 5 ft, owner-measured).
+DEFAULT_FEET_PER_PIXEL = 1 / 6
+
 
 class ArenaMap(models.Model):
     name = models.CharField(max_length=100)
@@ -7,6 +10,10 @@ class ArenaMap(models.Model):
     is_default = models.BooleanField(default=False)
     img_width = models.IntegerField(null=True)
     img_height = models.IntegerField(null=True)
+    # MOVE-08: real-world feet per image pixel. A square is
+    # ``zone_size x feet_per_pixel`` feet, so a finer grid on the same image
+    # keeps every distance and speed in feet.
+    feet_per_pixel = models.FloatField(default=DEFAULT_FEET_PER_PIXEL)
     created_at = models.DateTimeField(auto_now_add=True)
 
     def __str__(self):

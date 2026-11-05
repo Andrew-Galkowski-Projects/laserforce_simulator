@@ -2358,36 +2358,32 @@ class TestAstarPathAndAdvance:
         assert astar_advance((0, 0), (0, 2), adj, 5) == (0, 0)
 
 
+# MOVE-08 replaced STAT-03's ``cells_to_move`` / ``max_movement_for_map``
+# (ceil(speed/100 x 5..10) squares a tick) with feet a second on the map's
+# scale; the formula, carry and finer-grid tests are in test_map_scale.py.
+# These movement tests keep their meaning (several squares in one Advance)
+# on a fine grid: at 0.75 ft a square, speed 50 (7.5 ft/s) covers exactly 5
+# squares a tick (10 on an only_move tick), so no fraction carries.
+_TEST_FEET_PER_SQUARE = 0.75
+
+
+def cells_to_move(speed: int, grid=None) -> int:
+    """Squares a fresh player (no carry) covers on its first tick of a
+    ``_TEST_FEET_PER_SQUARE`` map: the expected Advance for these tests."""
+    from types import SimpleNamespace
+
+    from matches.sim_helpers.pathfinding import feet_per_second
+    from matches.sim_helpers.time_constants import TICK_SECONDS
+
+    feet = feet_per_second(SimpleNamespace(speed=speed))
+    return int(feet * TICK_SECONDS / _TEST_FEET_PER_SQUARE)
+
+
 class TestSpeedCellsPerTick:
-    """STAT-03 / PLAN.md: ceil(speed/100 * max_movement), max_movement 5..10."""
-
-    def test_max_movement_clamped_5_to_10(self):
-        from matches.sim_helpers.pathfinding import max_movement_for_map
-
-        assert max_movement_for_map([[1] * 5 for _ in range(5)]) == 5  # tiny → 5
-        assert max_movement_for_map([[1] * 89 for _ in range(55)]) == 8  # 89//10
-        assert max_movement_for_map([[1] * 200 for _ in range(10)]) == 10  # clamp
-
-    def test_cells_to_move_formula(self):
-        import math
-
-        from matches.sim_helpers.pathfinding import (
-            cells_to_move,
-            max_movement_for_map,
-        )
-
-        big = [[1] * 89 for _ in range(55)]
-        mm = max_movement_for_map(big)  # 8
-        assert cells_to_move(100, big) == math.ceil(1.0 * mm)
-        assert cells_to_move(50, big) == math.ceil(0.5 * mm)
-        assert cells_to_move(1, big) == 1  # min 1 floor
-        assert cells_to_move(0, big) == 1  # never freeze a mover
+    """MOVE-08: higher speed still moves at least as far (fine-grid helper)."""
 
     def test_higher_speed_moves_at_least_as_far(self):
-        from matches.sim_helpers.pathfinding import cells_to_move
-
-        big = [[1] * 89 for _ in range(55)]
-        assert cells_to_move(90, big) >= cells_to_move(40, big) >= 1
+        assert cells_to_move(90) >= cells_to_move(40) >= 1
 
 
 class TestPlayerStateSpeedField:
@@ -2421,6 +2417,7 @@ class TestMoveInMemoryMultiCell:
                 "spawn_cells": {"red": (0, 0), "blue": (0, len(grid[0]) - 1)},
                 "zone_data": grid,
                 "sight_data": None,
+                "feet_per_square": _TEST_FEET_PER_SQUARE,
             }
         )
 
@@ -2444,7 +2441,6 @@ class TestMoveInMemoryMultiCell:
         )
 
     def test_moves_multiple_cells_in_one_tick(self):
-        from matches.sim_helpers.pathfinding import cells_to_move
         from matches.simulation import BatchSimulator
 
         grid = [[1] * 30]  # long corridor so the goal is far
@@ -2540,6 +2536,7 @@ def _move01_ctx(grid):
             "spawn_cells": {"red": (0, 0), "blue": (0, len(grid[0]) - 1)},
             "zone_data": grid,
             "sight_data": None,
+            "feet_per_square": _TEST_FEET_PER_SQUARE,
         }
     )
 
@@ -2553,7 +2550,6 @@ class TestMove01OnlyMoveDoubleStep:
         from matches.sim_helpers.pathfinding import (
             astar_advance,
             build_movement_adjacency,
-            cells_to_move,
         )
 
         grid = _FLOOR_30X1
@@ -2573,7 +2569,6 @@ class TestMove01OnlyMoveDoubleStep:
         """BatchSim: multiplier=2 covers twice the cells of multiplier=1
         for the same start/goal/speed, in one move call."""
         from matches.simulation import BatchSimulator
-        from matches.sim_helpers.pathfinding import cells_to_move
 
         grid = _FLOOR_30X1
         ctx = _move01_ctx(grid)
@@ -2593,7 +2588,6 @@ class TestMove01OnlyMoveDoubleStep:
         """_advance_player reads last_chosen_action == 'only_move' and applies
         the 2× multiplier; a non-only_move action uses the 1× distance."""
         from matches.simulation import BatchSimulator
-        from matches.sim_helpers.pathfinding import cells_to_move
 
         grid = _FLOOR_30X1
         ctx = _move01_ctx(grid)
@@ -2621,7 +2615,6 @@ class TestMove01AlwaysOnAdvance:
         """A non-stationary action (tag) Advances the normal distance —
         movement is NOT gated by picking only_move."""
         from matches.simulation import BatchSimulator
-        from matches.sim_helpers.pathfinding import cells_to_move
 
         grid = _FLOOR_30X1
         ctx = _move01_ctx(grid)
@@ -2749,6 +2742,10 @@ class TestMove01BaselineZeroPlayerMovesAcrossMap:
         from matches.sim_helpers.map_loader import load_map_context
 
         arena_map = self._make_map("Move01Baseline10x10", _FLOOR_10X10)
+        # MOVE-08: 100 px squares at the default 1/6 ft a pixel are ~17 ft;
+        # give this map Syracuse's 5 ft squares so 40 ticks still cross it.
+        arena_map.feet_per_pixel = 0.05
+        arena_map.save()
         team_red, _ = make_team_with_slots("M01R")
         team_blue, _ = make_team_with_slots("M01B")
         red_roster = list(team_red.active_roster)
@@ -3049,6 +3046,9 @@ def _move02_ctx(grid, *, spawn_blue=None):
             },
             "zone_data": grid,
             "sight_data": None,
+            # MOVE-08: speed 20 is 6 ft/s = 3 ft a tick, so 3 ft a square
+            # keeps the old 1 square a tick these route tests rely on.
+            "feet_per_square": 3.0,
         }
     )
 
@@ -3236,7 +3236,6 @@ class TestMove02OnlyMoveDoubleStepNoExtraRecompute:
 
     def test_only_move_consumes_double_on_committed_route_no_recompute(self):
         from matches.simulation import BatchSimulator
-        from matches.sim_helpers.pathfinding import cells_to_move
 
         grid = _FLOOR_30X1  # long 1-D corridor: column == distance travelled
         ctx = _move01_ctx(grid)

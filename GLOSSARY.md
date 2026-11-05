@@ -149,12 +149,20 @@ _Avoid_: "kill", "eliminate" (a Down costs one life, not the round)
 The rule that an enemy who **Chases** a **Downed** player cannot **Tag** them until two seconds after they are **Active** again. Moving through the area is never forbidden.
 
 **Trail**:
-The corridor a **Downed** or **Resupplied** player leaves: the cells they move through from the Down or Resupply until they are **Active** again, widened to everything within six squares' walk on either side. It never passes through walls. A further Down or Resupply before they are Active extends the same Trail; one after they are Active starts a new one.
+The corridor a **Downed** or **Resupplied** player leaves: the cells they move through from the Down or Resupply until they are **Active** again, widened to everything within six feet's walk on either side. It never passes through walls. A further Down or Resupply before they are Active extends the same Trail; one after they are Active starts a new one.
 _Avoid_: "path" for the corridor (the path is the line the Downed player walked; the Trail is the band around it)
 
 **Chase / Chaser / Chased player**:
-An enemy **Chases** a Downed player by advancing ten squares along their **Trail** while inside it. That enemy is the **Chaser**; the Downed player is the **Chased player**. A parallel route outside the Trail is not a Chase, and neither is crossing it.
+An enemy **Chases** a Downed player by advancing ten feet along their **Trail** while inside it. That enemy is the **Chaser**; the Downed player is the **Chased player**. A parallel route outside the Trail is not a Chase, and neither is crossing it.
 _Avoid_: "follow" for the act (the **Follow rule** is the rule; the act is a Chase)
+
+**Downed option**:
+What a **Downed** player does until they are **Active** again, chosen once at the **Down**: **Stay hidden** (hide on the cell where they were Downed), **Shuffle to cover** (step to the nearest cell no enemy they remember can see), or **Make a trail** (walk ten feet out and back to their spot, so a **Chaser** who follows is barred). A **Resupply** can also lead to Make a trail.
+_Avoid_: "retreat" for all three (only two of them move)
+
+**Map scale**:
+How many real-world feet one square of a map's grid covers, from the map's drawing scale and its square size. Every distance and every player speed is set in feet and turned into squares by the Map scale, so a finer grid on the same map keeps the same real distances.
+_Avoid_: reading a square as a fixed distance (on Syracuse one square is about five feet)
 
 **Elimination**:
 A player losing their last **Life** and being out for the remainder of the round.

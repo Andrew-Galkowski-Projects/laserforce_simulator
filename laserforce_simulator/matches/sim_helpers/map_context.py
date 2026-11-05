@@ -11,8 +11,13 @@ Backward-compatibility helpers:
 
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Any
+
+#: MOVE-08: Syracuse's square (30 px at ``core.models.DEFAULT_FEET_PER_PIXEL``
+#: = 1/6 ft a pixel), used for hand-built contexts.
+DEFAULT_FEET_PER_SQUARE: float = 5.0
 
 
 @dataclass
@@ -45,6 +50,13 @@ class MapContext:
     wall_meta: dict[str, Any]
     team_spawn_pools: dict[str, list[tuple[int, int]]]
     elevation_grid: list[list[float]] | None = None
+    #: MOVE-08: real-world feet a square covers (``zone_size x
+    #: ArenaMap.feet_per_pixel``); 5.0, Syracuse's, for hand-built contexts.
+    feet_per_square: float = DEFAULT_FEET_PER_SQUARE
+
+    def squares(self, feet: float) -> int:
+        """MOVE-08: *feet* in this map's squares, rounded, at least 1."""
+        return max(1, round(feet / self.feet_per_square))
 
     # ------------------------------------------------------------------
     # Domain-level accessors
@@ -120,6 +132,22 @@ class MapContext:
         """Return the number of cells that can see *cell* (pre-computed LOS count)."""
         return self.cell_los_counts.get(f"{cell[0]},{cell[1]}", 0)
 
+    def los_rank(self, cell: tuple[int, int]) -> float:
+        """MOVE-08: *cell*'s sight-line rank on the map, 0.0 .. 1.0.
+
+        The share of the other cells whose LOS count is lower than this
+        cell's (0 = most hidden, 1 = most open). The sorted counts are built
+        once per map and cached on the context.
+        """
+        ranked = self.__dict__.get("_los_sorted")
+        if ranked is None:
+            ranked = sorted(self.cell_los_counts.values())
+            self.__dict__["_los_sorted"] = ranked
+        if len(ranked) < 2:
+            return 0.0
+        lower = bisect_left(ranked, self.get_los_count(cell))
+        return lower / (len(ranked) - 1)
+
     def get_high_los_cells(self) -> list[tuple[int, int]]:
         """Return the top-25%-LOS cells (Scout sniping positions)."""
         return self.high_los_cells
@@ -151,6 +179,7 @@ class MapContext:
             wall_meta=d.get("wall_meta", {}),
             team_spawn_pools=d.get("team_spawn_pools", {}),
             elevation_grid=d.get("elevation_grid"),
+            feet_per_square=d.get("feet_per_square", DEFAULT_FEET_PER_SQUARE),
         )
 
     def to_dict(self) -> dict:
@@ -167,6 +196,7 @@ class MapContext:
             "wall_meta": self.wall_meta,
             "team_spawn_pools": self.team_spawn_pools,
             "elevation_grid": self.elevation_grid,
+            "feet_per_square": self.feet_per_square,
         }
 
     # ------------------------------------------------------------------

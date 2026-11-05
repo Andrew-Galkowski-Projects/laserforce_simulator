@@ -21,15 +21,22 @@ or ``shields`` — those differ per call site and are the caller's job.
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Optional
 
-from .follow_rule import start_trail, trail_adjacency
+from .downed_option import choose_downed_option
+from .follow_rule import round_map, start_trail
 from .round_context import RoundContext
 from .time_constants import RESPAWN_TICKS
 
 
-def record_down(player, tick: int, ctx: Optional[RoundContext]) -> None:
+def record_down(
+    player, tick: int, ctx: Optional[RoundContext], *, tagger: Any = None
+) -> None:
     """Single life-loss chokepoint.
+
+    ``tagger`` (MOVE-08) is who caused the Down: the shooter of a Tag or a
+    Missile, the Commander of a Nuke. It decides whether Make a trail is
+    allowed (``downed_option.choose_downed_option``).
 
     Behaviours, in evaluation order:
       1. RV-02 medic-reset chain — set or increment
@@ -74,7 +81,12 @@ def record_down(player, tick: int, ctx: Optional[RoundContext]) -> None:
 
     # MECH-10: start (or, before Active, extend) the Follow rule Trail.
     # Must precede the last_downed_time stamp, like step 1.
-    start_trail(player, tick, trail_adjacency(ctx))
+    start_trail(player, tick, round_map(ctx))
+
+    # MOVE-08: a Down clears the pre-Down hide, then rolls the Downed option
+    # (which may set it again: Stay hidden). A Reset-window Down rolls afresh.
+    player.is_hiding = False
+    choose_downed_option(player, tagger, tick, ctx)
 
     # MECH-10: resupply death % counts
     player.downs_taken += 1

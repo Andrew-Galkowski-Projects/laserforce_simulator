@@ -39,7 +39,7 @@ class PlayerState:
     resupply_synergy: int = 50
     teamwork: int = 50
     communication: int = 50
-    speed: int = 50  # 0-100, from Player model; cells traversed per move tick
+    speed: int = 50  # 0-100, from Player model; 5-10 ft/s (MOVE-08)
     final_missiles: int = 0
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model
@@ -182,6 +182,18 @@ class PlayerState:
     # ``tag_id_key`` (``follow_rule.Chase``).
     _trail: Any = None
     _chases: dict = field(default_factory=dict)
+
+    # MOVE-08 Downed option (transient — not persisted to DB), managed by
+    # ``downed_option``: the plan rolled at the last Down or Resupply
+    # (``downed_option.DownedPlan`` or None), and the earliest detonation
+    # tick of a pending enemy Nuke (set each tick with ``reacting_to_nuke``).
+    downed_plan: Any = None
+    nuke_detonates_at: Optional[int] = None
+    # The tick of the last resupply-trail roll (one roll per combo Resupply).
+    resupply_rolled_at: Optional[float] = None
+    # MOVE-08: the fraction of a square carried to the next tick's Advance
+    # (``pathfinding.squares_this_tick``).
+    move_carry: float = 0.0
 
     # uptime breakdown in ticks (accumulated +1 each tick)
     ticks_active: int = 0
