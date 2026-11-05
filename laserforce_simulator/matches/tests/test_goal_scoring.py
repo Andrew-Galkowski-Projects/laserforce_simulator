@@ -21,6 +21,7 @@ from matches.sim_helpers.goal_scoring import (
     temperature,
 )
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.modes import Mode
 from matches.sim_helpers.pathfinding import astar_path
 from matches.sim_helpers.player_state import PlayerState
 
@@ -304,9 +305,18 @@ class TestGoalSelectionDraws(unittest.TestCase):
         self.assertTrue(a._committed_goal[1])  # now an action commitment
 
     def test_a_teamwork_biased_goal_is_not_held(self) -> None:
+        # MECH-07: the bias now only reaches a Medic or Ammo in Defense (until #545
+        # removes it). The invariant holds there: a swapped cell was not drawn.
         from matches.sim_helpers import pathfinding
 
-        mc, a, _ = self._scouts()
+        mc = _map(["." * 40] * 20)
+        mc.sight_data = {"5,20": frozenset({"5,21"})}
+        mc.cell_los_counts = {"5,21": 1, "5,22": 2}
+        medic = _ps("red_medic", "red", (5, 5))
+        medic.role = "medic"
+        medic.mode = Mode.DEFENSE
+        heavy = _ps("red_heavy", "red", (5, 20))
+        heavy.role = "heavy"
         with mock.patch.object(
             goal_scoring.random, "random", lambda: 0.0
         ), mock.patch.object(
@@ -314,9 +324,9 @@ class TestGoalSelectionDraws(unittest.TestCase):
             "_apply_teamwork_bias",
             lambda player, goal, *rest: (0, 39),
         ):
-            goal = self._goal(a, [a], mc, 10)
+            goal = self._goal(medic, [medic, heavy], mc, 10)
         self.assertEqual(goal, (0, 39))
-        self.assertEqual(a._committed_goal[2], 10 + 4)
+        self.assertEqual(medic._committed_goal[2], 10 + 4)
 
     def test_a_reactive_override_still_interrupts(self) -> None:
         mc, a, _ = self._scouts()

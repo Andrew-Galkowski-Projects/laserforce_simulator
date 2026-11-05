@@ -12,8 +12,14 @@ from __future__ import annotations
 
 import random
 from enum import StrEnum
+from typing import TYPE_CHECKING, Callable
 
-from .time_constants import _stale_table
+if TYPE_CHECKING:
+    from .map_context import MapContext
+
+from .follow_rule import chased_tag_ids
+from .goal_scoring import Cell, draw_goal
+from .time_constants import HELD_GOAL_EXPIRY, _stale_table
 
 
 class Mode(StrEnum):
@@ -49,6 +55,16 @@ _MODE_WEIGHT_SLOTS: dict[Mode, tuple[int, ...]] = {
     Mode.DEFENSE: (5,),
     Mode.CONTROL: (3, 8),
 }
+
+# ── Goals (spec decisions 14, 16, 17) ────────────────────────────────────
+#: Attack: the value of a cell that can see a remembered target of this role.
+_ATTACK_TARGET_VALUES: dict[str, float] = {"medic": 1.0, "ammo": 0.7}
+#: Control: added for a cell in range of the enemy base, and for one that sees a
+#: fresh enemy; the value then stops at the cap.
+CONTROL_BONUS: float = 0.25
+CONTROL_VALUE_CAP: float = 1.0
+#: Control: how long a player stays on a drawn goal they reached.
+CONTROL_HOLD_TICKS: int = 20
 
 _DEFAULT_MODE: dict[str, Mode] = {
     "commander": Mode.ATTACK,
@@ -94,13 +110,17 @@ def _team_is_losing(player) -> bool:
     return winning_team not in (None, "tied", player.team_color)
 
 
+def _low_on_resources(player) -> bool:
+    return (
+        player.final_lives <= player.max_lives * LOW_RESOURCE_SHARE
+        or player.final_shots <= player.max_shots * LOW_RESOURCE_SHARE
+    )
+
+
 def _wanted_mode(player, tick: float) -> Mode:
     """The Mode the triggers ask for; the first matching row wins."""
     role = player.role
-    if role in _LOW_RESOURCE_ROLES and (
-        player.final_lives <= player.max_lives * LOW_RESOURCE_SHARE
-        or player.final_shots <= player.max_shots * LOW_RESOURCE_SHARE
-    ):
+    if role in _LOW_RESOURCE_ROLES and _low_on_resources(player):
         return Mode.CONTROL
     if role in _HEAVY_DOWNED_MODE and _own_heavy_seen_downed(player, tick):
         return _HEAVY_DOWNED_MODE[role]
@@ -121,10 +141,207 @@ def update_mode(player, tick: float) -> None:
         return
     player.mode = wanted
     player.mode_since = int(tick)
+    player.mode_hold_until = None
     # An action goal (committed[1]) stays: it interrupts the Mode's goals anyway.
     committed = player._committed_goal
     if committed is not None and not committed[1]:
         player._committed_goal = None
+
+
+def _remembered_cell(entry: dict) -> Cell:
+    return (int(entry["cell"][0]), int(entry["cell"][1]))
+
+
+def _as_cells(cells: list) -> list[Cell]:
+    """A map's stored cells as tuples, which ``draw_goal`` needs (JSON gives lists)."""
+    return [(c[0], c[1]) for c in cells]
+
+
+def _fresh_enemies(
+    player, all_alive: list, enemy_color: str, tick: float, time_domain: str
+) -> list[tuple[str, dict]]:
+    """``(tag_id, entry)`` per fresh enemy entry, by tag id. Memory has no eliminated
+    status, so an enemy who is not alive is dropped here (spec decision 26)."""
+    alive = sorted(
+        p.tag_id_key
+        for p in all_alive
+        if p.team_color == enemy_color and p.final_lives > 0
+    )
+    entries = ((tag, _fresh_entry(player, tag, tick, time_domain)) for tag in alive)
+    return [
+        (tag, entry)
+        for tag, entry in entries
+        if entry is not None and entry.get("cell") is not None
+    ]
+
+
+def _attack_targets(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    tick: float,
+    time_domain: str,
+    exclude: set[str],
+) -> list[tuple[str, Cell]]:
+    """``(role, cell)`` of the Medics and Ammos worth hunting. Only ``downed`` is out:
+    a player in ``reset_window`` can still be hunted (spec decision 27)."""
+    return [
+        (entry["role"], _remembered_cell(entry))
+        for tag, entry in _fresh_enemies(
+            player, all_alive, enemy_color, tick, time_domain
+        )
+        if entry.get("role") in _ATTACK_TARGET_VALUES
+        and entry.get("status") != "downed"
+        and tag not in exclude
+    ]
+
+
+def _attack_candidates(
+    targets: list[tuple[str, Cell]], movement_ctx: MapContext
+) -> dict[Cell, float]:
+    """Every cell that can see a target, worth the best target it sees."""
+    values: dict[Cell, float] = {}
+    for role, cell in targets:
+        for candidate in movement_ctx.cells_visible_from(cell):
+            values[candidate] = max(
+                values.get(candidate, 0.0), _ATTACK_TARGET_VALUES[role]
+            )
+    return values
+
+
+def attack_tag_goal(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    tick: float,
+    time_domain: str = "ticks",
+    exclude: set[str] | None = None,
+) -> Cell | None:
+    """The nearest Attack target's remembered cell, for a Tag or Missile action;
+    ties by (row, col). ``exclude``: tag ids to skip (the Follow rule's Chased)."""
+    targets = _attack_targets(
+        player, all_alive, enemy_color, tick, time_domain, exclude or set()
+    )
+    return min(
+        (cell for _, cell in targets),
+        key=lambda c: (abs(c[0] - player.cell_row) + abs(c[1] - player.cell_col), c),
+        default=None,
+    )
+
+
+def _control_value(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str,
+) -> Callable[[Cell], float]:
+    """The Control value rule. Reads ``base_sight_data[enemy_color]``, because
+    ``base_in_range`` answers 14 for either team's base."""
+    base_keys = (
+        frozenset()
+        if player.opposing_base_destroyed
+        else movement_ctx.base_sight_data.get(enemy_color, frozenset())
+    )
+    enemy_cells = [
+        _remembered_cell(entry)
+        for _, entry in _fresh_enemies(
+            player, all_alive, enemy_color, tick, time_domain
+        )
+    ]
+
+    def value_of(cell: Cell) -> float:
+        value = movement_ctx.los_rank(cell)
+        if f"{cell[0]},{cell[1]}" in base_keys:
+            value += CONTROL_BONUS
+        if any(movement_ctx.can_see(cell, seen) for seen in enemy_cells):
+            value += CONTROL_BONUS
+        return min(CONTROL_VALUE_CAP, value)
+
+    return value_of
+
+
+def _holding(player, tick: float) -> bool:
+    """True while a Control player stays on the drawn goal they reached.
+
+    Reaching one starts ``mode_hold_until``. ``choose_goal_cell`` then recommits the
+    current cell, so the hold only stands while the commitment is still on this cell
+    and not an action goal: an override or action goal that moved the player on ends
+    it, and they are not frozen wherever that goal stopped.
+    """
+    committed = player._committed_goal
+    on_goal = (
+        committed is not None
+        and committed[0] == (player.cell_row, player.cell_col)
+        and not committed[1]
+    )
+    if player.mode_hold_until is None:
+        if on_goal and committed[2] == HELD_GOAL_EXPIRY:
+            player.mode_hold_until = int(tick) + CONTROL_HOLD_TICKS
+            return True
+        return False
+    if on_goal and tick < player.mode_hold_until:
+        return True
+    player.mode_hold_until = None
+    return False
+
+
+def mode_goal(
+    player,
+    all_alive: list,
+    enemy_color: str,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str = "ticks",
+) -> Cell | None:
+    """The player's positioning goal under their Mode, or None for the enemy-base
+    default. Sets ``_goal_was_drawn``, so a drawn goal is held until reached."""
+    player._goal_was_drawn = False
+
+    if player.role == "heavy" and _low_on_resources(player):
+        for support in ("medic", "ammo"):
+            entry = _fresh_entry(
+                player, f"{player.team_color}_{support}", tick, time_domain
+            )
+            if entry is not None and entry.get("cell") is not None:
+                player.mode_hold_until = None
+                return _remembered_cell(entry)
+
+    def drawn(candidates: list[Cell], value_of: Callable[[Cell], float]) -> Cell | None:
+        pick = draw_goal(player, candidates, value_of, all_alive, movement_ctx, tick)
+        player._goal_was_drawn = pick is not None
+        return pick
+
+    if player.mode is Mode.ATTACK:
+        targets = _attack_targets(
+            player,
+            all_alive,
+            enemy_color,
+            tick,
+            time_domain,
+            chased_tag_ids(player, all_alive, tick),
+        )
+        values = _attack_candidates(targets, movement_ctx)
+        goal = drawn(list(values), values.__getitem__) if values else None
+        if goal is not None:
+            return goal
+        return drawn(
+            _as_cells(movement_ctx.get_high_los_cells()), movement_ctx.los_rank
+        )
+
+    if player.mode is Mode.CONTROL:
+        if _holding(player, tick):
+            return (player.cell_row, player.cell_col)
+        spots = movement_ctx.get_strong_spots() if player.role == "heavy" else []
+        return drawn(
+            _as_cells(spots or movement_ctx.get_high_los_cells()),
+            _control_value(
+                player, all_alive, enemy_color, movement_ctx, tick, time_domain
+            ),
+        )
+
+    return None  # Defense: pathfinding keeps today's role logic until #545.
 
 
 def apply_mode_weights(player, weights: list) -> None:

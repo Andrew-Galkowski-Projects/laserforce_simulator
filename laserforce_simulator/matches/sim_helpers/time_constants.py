@@ -112,3 +112,7 @@ MEDIC_UNDER_FIRE_WINDOW_TICKS: int = 24
 #: 2–4). Reactive overrides (steps 0/1/1b) bypass the throttle and run every
 #: tick. BatchSimulator only — RBS path is unchanged. (MOVE-04 / ADR-0010.)
 GOAL_RECOMPUTE_PERIOD_TICKS: int = 4
+
+#: MOVE-06: the commitment expiry of a drawn positioning goal: after the round,
+#: so it is held until reached (action goals keep the 4-tick cadence).
+HELD_GOAL_EXPIRY: int = TICKS_PER_ROUND + 1
