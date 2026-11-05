@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import heapq
 import random
+from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -10,6 +11,7 @@ if TYPE_CHECKING:
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
+from .modes import trail_costs
 from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
     TICK_SECONDS,
@@ -101,6 +103,7 @@ def astar_path(
     adj: dict[tuple[int, int], list[tuple[int, int]]],
     elevation_data: dict | None = None,
     route_seed: int | None = None,
+    extra_costs: Mapping[tuple[int, int], float] | None = None,
 ) -> list[tuple[int, int]]:
     """Return the shortest path from start to goal, excluding start.
 
@@ -113,6 +116,9 @@ def astar_path(
     ``ROUTE_NOISE_MAX`` more (``route_noise``), so the route is a
     near-shortest one particular to that player. Every step still costs at
     least 1, so the Manhattan heuristic stays admissible.
+
+    MECH-07: ``extra_costs`` adds its cost to each step into a listed cell, a
+    cost and never a block (``modes.trail_costs``). Omitted, routes are unchanged.
     """
     if start == goal or start not in adj:
         return []
@@ -141,6 +147,8 @@ def astar_path(
             cost = g + _movement_cost(current, neighbor, elevation_data)
             if route_seed is not None:
                 cost += ROUTE_NOISE_MAX * route_noise(route_seed, neighbor)
+            if extra_costs:
+                cost += extra_costs.get(neighbor, 0.0)
             if cost < g_score.get(neighbor, float("inf")):
                 g_score[neighbor] = cost
                 came_from[neighbor] = current
@@ -192,6 +200,8 @@ def astar_advance_cached(
     adj: dict[tuple[int, int], list[tuple[int, int]]],
     steps: int,
     elevation_data: dict | None = None,
+    all_alive: list | None = None,
+    tick: float = 0.0,
 ) -> tuple[int, int]:
     """Re-step a goal-keyed cached A* route instead of recomputing per tick.
 
@@ -225,6 +235,11 @@ def astar_advance_cached(
     Cache exhaustion and an ``only_move`` 2× ``steps`` are NOT recompute
     triggers; when the cache empties the player has reached ``goal`` and the
     next tick's fresh ``choose_goal_cell`` drives recompute-or-idle.
+
+    MECH-07: a recompute routes around the Trails ``modes.trail_costs`` finds in
+    ``all_alive`` at ``tick``, and only a recompute reads them: a Trail is not a
+    recompute trigger, so a committed route keeps going. With no ``all_alive`` the
+    route ignores Trails.
 
     Consumes **no RNG** — re-stepping a committed route is fully reproducible,
     so the SIM-07/SIM-08 serial == parallel contract still holds (the round is
@@ -273,6 +288,9 @@ def astar_advance_cached(
             adj,
             elevation_data,
             route_seed=getattr(player, "route_seed", None),
+            extra_costs=(
+                None if all_alive is None else trail_costs(player, all_alive, tick)
+            ),
         )
         if not remaining:
             # Unreachable goal: no negative caching — this recomputes again

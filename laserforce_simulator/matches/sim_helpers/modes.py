@@ -13,6 +13,7 @@ from __future__ import annotations
 import random
 from enum import StrEnum
 
+from .follow_rule import Cell, open_trail
 from .time_constants import _stale_table
 
 
@@ -39,6 +40,10 @@ _HEAVY_DOWNED_MODE: dict[str, Mode] = {
 }
 #: The memory statuses the Heavy trigger reads as Downed (spec decision 27).
 _DOWNED_STATUSES: tuple[str, ...] = ("downed", "reset_window")
+
+# ── Trail avoidance (spec decisions 10, 22) ──────────────────────────────
+#: What a step into a band cell of a remembered Downed enemy's Trail adds.
+TRAIL_COST: float = 3.0
 
 # ── Weights (spec decisions 8, 21) ───────────────────────────────────────
 MODE_WEIGHT_MULTIPLIER: float = 1.25
@@ -136,3 +141,22 @@ def apply_mode_weights(player, weights: list) -> None:
     for idx in _MODE_WEIGHT_SLOTS[player.mode]:
         if weights[idx] > 0:
             weights[idx] = round(weights[idx] * MODE_WEIGHT_MULTIPLIER)
+
+
+def trail_costs(
+    player, all_alive: list, tick: float, time_domain: str = "ticks"
+) -> dict[Cell, float]:
+    """The route cost of each cell in the open Trail of an enemy in *all_alive* the
+    player freshly remembers as Downed. Trails that overlap cost the same as one,
+    so the order of *all_alive* cannot change the result. No RNG."""
+    costs: dict[Cell, float] = {}
+    for other in all_alive:
+        if other.team_color == player.team_color:
+            continue
+        trail = open_trail(other, tick)
+        if trail is None:
+            continue
+        entry = _fresh_entry(player, other.tag_id_key, tick, time_domain)
+        if entry is not None and _shows_downed(entry):
+            costs.update(dict.fromkeys(trail.band, TRAIL_COST))
+    return costs

@@ -1630,7 +1630,9 @@ class BatchSimulator:
         # Advance the normal speed-scaled distance while they act.
         multiplier = 2 if chosen == "only_move" else 1
         start = (player.cell_row, player.cell_col)
-        self._move_player_in_memory(player, second, goal_cell, movement_ctx, multiplier)
+        self._move_player_in_memory(
+            player, second, goal_cell, movement_ctx, multiplier, all_alive
+        )
         # MECH-10: grow this player's Trail and their Chases on enemies'
         # Trails. Only when the cell changed: otherwise _last_step_cells may
         # be a previous tick's.
@@ -1650,7 +1652,13 @@ class BatchSimulator:
     # See ``.claude/worktrees/shot-resolver-seam-contract.md``.
 
     def _move_player_in_memory(
-        self, player, second, goal_cell, movement_ctx, multiplier: int = 1
+        self,
+        player,
+        second,
+        goal_cell,
+        movement_ctx,
+        multiplier: int = 1,
+        all_alive: list | None = None,
     ):
         if goal_cell is None or player.cell_row is None:
             return
@@ -1671,7 +1679,9 @@ class BatchSimulator:
         # only_move multiplier consumes 2×steps cells from the SAME committed
         # route — it is not a recompute trigger. BatchSimulator-only; RBS keeps
         # astar_advance. Consumes no RNG (serial == parallel still holds).
-        next_cell = astar_advance_cached(player, current, goal_cell, adj, steps)
+        next_cell = astar_advance_cached(
+            player, current, goal_cell, adj, steps, all_alive=all_alive, tick=second
+        )
         if next_cell == current:
             # MOVE-01: record a move only when the cell actually changed. The
             # cache (if any) is preserved so the next tick re-steps the same
