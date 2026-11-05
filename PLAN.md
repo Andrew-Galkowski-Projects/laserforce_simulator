@@ -650,6 +650,8 @@ just goals); do that only if calibration tuning alone cannot hit the targets.
 
 ### MECH-07 · Role-aware action / movement / goal-selection rework (MAP-05 follow-up)
 
+Spec: #542
+
 Make changes to role-aware goal selection (MAP-05) — and, per the 2026-06-25 review,
 the broader **action-selection and movement-selection** layers it sits on (the deeper
 rework `CAL-01` defers to once calibration tuning is exhausted). Shape is **still
@@ -671,7 +673,83 @@ planning routes around MECH-10's Trails (avoid becoming a Chaser, take the paral
 belongs here too (owner, 2026-11-04). The Mode
 layer is also the decision seam the AI-01 controller learns over.
 
-**Status:** design in its own grill; next (MOVE-06/07 shipped).
+**Status:** in grill (2026-11-04).
+
+**Grill round 1 (owner, 2026-11-04):**
+1. **Names:** the Modes are Attack, Defense and Control; "Zone control" clashes with the glossary's
+   Zone. New terms: **Mode**, **Control cell**.
+2. **MECH-14:** MECH-07 takes only what is a Mode switch (Scouts push and the Commander takes space
+   when the Heavy is down). Down call-outs with a location, shared shots and lives, and the Ammo's
+   free Heavy resupply stay in MECH-14.
+3. **SM5-06:** MECH-07 defines Control cells and the Control value rule. "How far forward to play"
+   stays in SM5-06. SM5-06's "positioning is never read" is stale since MOVE-06: correct it.
+4. **Control cells are derived** from existing map data (LOS rank, `base_in_range`, Zones): no new
+   model, editor field or migration.
+5. **Modes per role (default, alternative):** Commander Attack, Control; Scout Attack, Control; Heavy
+   Control, Attack; Medic Defense, Control; Ammo Defense, Control. The Scout's default is the one
+   real change from today's role goals.
+6. **Placement:** Modes replace only the role goal step of `choose_goal_cell`. Nuke, critical, Downed,
+   broadcast and action goals still win, and the enemy-base default stays the last fallback. A Mode
+   switch clears a held drawn goal. The Commander's undrawn Medic goal becomes a draw.
+7. **Triggers read only what the player could know:** the Heavy's status from memory, losing from the
+   existing score broadcast, enemy targets from memory (respecting staleness, eliminated enemies
+   filtered out).
+8. **The action-choice sweep becomes its own task, MECH-17,** right after this one. MECH-07 adds only
+   a small per-Mode weight table (Attack `tag_player`, Defense `resupply_ally`, Control `hold` and
+   `capture_base`).
+9. **Teamwork bias:** becomes part of Defense scoring (a value bonus near the Heavy) and stops
+   overriding drawn goals in every Mode.
+10. **Routes around Trails** are in scope as the last ticket: a per-player cost overlay on the A* step
+    cost.
+11. **Mode is transient engine state:** no migration, API, UI or new `GameEvent` type; a per-Mode tick
+    counter on the player serves tests and the probe. Playback display is a follow-up.
+12. **Map rounds only:** no-map rounds are unchanged.
+13. **Judged by a same-seed probe:** time in each Mode per role, Attack players closer to enemy Medics
+    and Ammos, Defense players closer to their Heavy. `score_averages` is evidence, not a target. A
+    serial-vs-parallel determinism test. Retuning and the `lfstats_calibrate` re-run stay in CAL-01.
+
+**Grill round 2 (owner, 2026-11-04; every number is a named, tunable constant):**
+14. **Attack:** targets are remembered enemy Medics and Ammos that are not stale, Downed, eliminated or
+    barred by the Follow rule. Candidates are the cells that can see a target's last-seen cell; value
+    1.0 for a Medic, 0.7 for an Ammo. With no target, draw high-LOS cells by `los_rank`. The
+    Commander's true-state Medic fallback goes.
+15. **Defense:** candidates are the cells that can see the Heavy's remembered cell. Value is
+    `0.7 x base + 0.3 x (teamwork / 100) x closeness`, closeness falling to 0 at 30 ft, base
+    `1 - los_rank` for a Medic and `los_rank` for an Ammo. With the Heavy not remembered (120 ticks
+    stale), use the Control rule.
+16. **Control:** candidates are the high-LOS cells (a Heavy's are its strong spots). Value is `los_rank`,
+    +0.25 if the cell is in range of the enemy base, +0.25 if a remembered enemy can be seen from it,
+    capped at 1.0.
+17. **Holding:** a Control player stays 20 ticks after reaching a goal before drawing again.
+18. **Low-health Heavy:** at or below 50% lives or shots a Heavy walks to its Medic or Ammo in every
+    Mode, using remembered cells. The flat 30% critical override stays; SM5-03 replaces it.
+19. **Triggers, first match wins:** (1) own lives or shots at or below 50%: Commander and Scout to
+    Control; (2) remembers own Heavy Downed: Commander to Control, Scout to Attack, Medic and Ammo to
+    Control; (3) the broadcast says own team is losing: Heavy to Attack; (4) otherwise the role
+    default. No winning trigger.
+20. **Dwell and Stat:** at least 60 ticks in a Mode, then check the triggers every 10 ticks. When a
+    trigger calls for a different Mode, switch with probability `game_awareness / 100`. Default Modes
+    do not depend on Stats.
+21. **Weights:** the Mode multiplies its actions by 1.25, after the role weights and before stamina and
+    cooldown zeroing. No extra RNG draw.
+22. **Trail avoidance:** Trails of enemies the player remembers as Downed cost +3 per step on a band
+    cell, never a block. Routes pick it up at their next recompute; no new invalidation. Every player
+    avoids equally. Scoring's walk distances ignore the overlay.
+23. **Other true-state reads stay for MECH-13:** the tag-goal fallback, the critical override's ally
+    resources, `_find_ally` and `enemies_in_zone`.
+
+**Grill round 3 (owner, 2026-11-04).** A probe of 6 seeded Syracuse rounds found positioning sets the
+goal on 54.9% of a Scout's moving ticks, 40.3% of a Heavy's, 39.4% of a Commander's, 13.6% of an Ammo's
+and 4.4% of a Medic's: `resupply_ally` walks a support to the neediest ally even at full resources.
+24. **Defense:** `resupply_ally` sets a goal only when the neediest ally is at or below 75% of the
+    resource that support restores; otherwise it falls through to the Defense draw. Narrows decision 6.
+25. **Attack:** a `tag_player` or `missile_player` goal heads for the nearest remembered enemy Medic or
+    Ammo first, then the nearest enemy as today, keeping the Follow rule exclusions. Narrows decision 6.
+26. **Eliminated enemies:** the Mode layer drops any memory entry whose player is not in `all_alive`.
+27. **Memory statuses:** the Heavy trigger and Trail avoidance count both `downed` and `reset_window`;
+    Attack excludes only `downed` targets.
+28. **Seams:** a new pure module `sim_helpers/modes.py` (`Mode`, `default_mode`, `update_mode`,
+    `mode_goal`, `apply_mode_weights`, `trail_costs`) and `astar_path(..., extra_costs=None)`.
 
 ---
 

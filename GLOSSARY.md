@@ -320,6 +320,14 @@ The state in which a player does **not Advance** this tick. True only while **hi
 **Weight**:
 The per-action numeric likelihood, derived from role, situation, and **Stats**, that drives the random **Action** choice.
 
+**Mode**:
+How a player currently chooses where to go: **Attack** (hunt enemy Medics and Ammos), **Defense** (take positions that complement their Heavy while resupplying) or **Control** (hold high-value areas of the map). A player has one Mode at a time, starts in their role's default and switches on game-state triggers after a minimum time in the current Mode. A Mode shapes role positioning; reactive overrides still win.
+_Avoid_: "zone control" (a **Zone** is only the red/neutral/blue classification); "stance", "behaviour"
+
+**Control cell**:
+A **Cell** worth holding in **Control** Mode, derived from the **Arena map**'s **Sight lines** and **Base** positions rather than marked by hand.
+_Avoid_: "control zone"
+
 **Goal cell**:
 The **Cell** a player is navigating toward via **Advance**. Held under **Goal commitment** between recomputes (the steady-state positioning cascade — action-driven, role-positioning, enemy-base default — recomputes on a fixed tick cadence rather than every tick; a role-positioning or enemy-base Goal cell is drawn from the best-scored nearby cells, teammates' cells and goals counting against a cell, and is held until the player reaches it); the reactive overrides — nuke-reaction, critical-resource (lives/shots ≤ 30% → seek medic/ammo), and score-broadcast seek-medic — bypass the commitment and may set a fresh Goal cell every tick.
 
