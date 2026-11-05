@@ -8865,4 +8865,124 @@ Draws no new RNG; every replay and parallel path runs the same `_simulate_round`
 **Changes seeded outcomes**, so it folds into the `CAL-01` re-baseline and
 `lfstats_calibrate` is re-run after it.
 
+### MOVE-08 · [DONE] Downed players move off
+
+Spec: #536
+
+**[DONE] Shipped (2026-11-04).** Map scale and player speed in feet plus the Downed option (spec
+#536; tickets #537, #538). ArenaMap.feet_per_pixel (default 1/6, Syracuse's owner-measured 5 ft
+squares; editable in Django admin) gives MapContext.feet_per_square; every rule distance is feet
+turned into squares (MECH-10's follow limit 10 ft and band 6 ft converted here), and player speed is
+5-10 ft/s with the fraction carried, replacing STAT-03's 1-10 squares a tick (10-100 ft/s). At every
+Down one roll picks Stay hidden, Shuffle to cover (5 ft) or Make a trail (10 ft out and back, tagger
+more than 10 ft away); the tunable formula is in docs/agents/matches/sim-helpers.md. On Syracuse 27%
+of Downs move off (from ~5%): cover within 5 ft is rare, so Stay hidden is about 73%. Medic survival
+on 200 seeded rounds rose from 374 s to about 535 s, much of it from the slower movement; CAL-01 and
+the LFS-01 calibration re-run carry the changed outcomes.
+
+**Prio: High, next after MECH-10 (owner, 2026-11-04).** Found by MECH-10's probe: Downed
+players almost never move during the Respawn cooldown, so attackers camp them and Tag them on
+reset, and the follow rule has no path to judge. Two Syracuse rounds (seeds 1-2, default
+Teams), Downed player-ticks by reason they did not move: still **hiding** (the pre-Down hide
+carries over) 6,751; already **at their goal cell** 6,393; still on a pre-Down
+**capture_base** 2,183; **holding** 1,169; goal elsewhere but no advance 710; **moved** only
+1,043 (about 5%). Down Trails averaged 2.5-3.1 cells (136-173 a round, 3-8 reaching 10
+squares); Resupply Trails 3.4-5.0. Fix: at a Down (and a Resupply?) clear the carried-over
+Stationary state and give the player a retreat goal for the cooldown.
+
+**Open for its own grill:** where a Downed player goes (own base, the allied Medic, away from
+the tagger, or a stat-driven mix); whether a Resupplied player moves too; whether hiding is
+still allowed while Downed. **Changes seeded outcomes**, so it folds into `CAL-01`; re-measure
+with MECH-10's `score_averages` Follow rule section.
+
+**Grill round 1 (owner, 2026-11-04):**
+1. **Three options for a Downed player:** don't move; **shuffle to cover**; **create a trail**
+   (move out of cover 10 squares, then back into their spot). Create-trail is allowed only when
+   the player who tagged them is more than 10 squares away.
+2. No separate minimum distance: the three options replace it.
+3. **A Down clears `is_hiding`**, and while Downed, hide / hold / capture_base rolls do not
+   freeze the player (they keep to their chosen option).
+4. **The Downed goal overrides goal selection, with exceptions:** a nuke reaction still wins
+   when the player will be Active in time to cancel (e.g. Active in 2 s, the nuke drops in
+   4 s), and the critical-resource seek Medic / seek Ammo is likely unchanged.
+5. The goal is chosen at the Down and held until Active; normal goal selection resumes then.
+6. **A Resupply gets a chance to create a trail** too.
+7. No stat in this task: every role uses the same options (stat flavour goes to MECH-07).
+8. Judge it by MECH-10's probe and `score_averages` on the same seeds: Downed players should
+   move in most Downed ticks, with longer Trails; resupply death %, reset-window tags and
+   Medic survival are reported, not targets.
+
+**Grill round 2 (owner, 2026-11-04):**
+9. One roll at the Down: **stay 20% / shuffle to cover 50% / create trail 30%**; when
+   create-trail is not allowed its weight goes to the other two in proportion.
+10. "Tagger more than 10 squares away" is **walking distance, ground truth, at the Down**
+    (Missile: its shooter; Nuke: the Commander).
+11. **Create trail:** walk to a cell exactly 10 squares away by walking (of those, the farthest
+    from the tagger), then back to the Down cell. If the cooldown ends first, normal play
+    resumes.
+12. **Shuffle to cover:** the nearest cell by walking out of sight of every remembered enemy;
+    more than 3 squares away means stay instead. Re-picked if a remembered enemy now sees it.
+13. **Nuke-cancel exception:** the nuke reaction overrides the Downed option only when the
+    player is Active at least 1 tick before the Nuke detonates (Support roles' nuke rush too).
+14. **Critical resource wins:** a Downed non-support player at 30% lives or shots or less
+    still seeks their Medic / Ammo.
+15. **Resupply:** 25% chance to create a trail, only when no enemy is within 10 squares by
+    walking; it returns to the cell where they were resupplied. Otherwise unchanged.
+16. **Stay means hide at the current cell** (the 50% hide-miss applies). More likely on a
+    low-LOS cell, less likely on a high-LOS cell, and less likely for players with higher
+    speed / stamina (an owner exception to decision 7 for this option).
+
+**Grill round 3 (owner, 2026-11-04):**
+17. **Downed option formula** (tunable; its constants live in one place and the formula is
+    written out in `docs/agents/matches/sim-helpers.md` so it can be tweaked later):
+    - `stay = 20 x cell x mobility`, `shuffle = 50`, `trail = 30` (0 when not allowed), then
+      normalised.
+    - `cell = 1.5 - p`, where `p` is the cell's sight-line rank on the map (0 = most hidden,
+      1 = most open), so 1.5 .. 0.5.
+    - `mobility = 1.5 - m`, `m = (speed + stamina) / 200`, so 1.0 at 50 / 50, 1.5 .. 0.5.
+    - Stay therefore runs 5 .. 45.
+18. **Stay hidden lasts the Down:** while Downed the action roll does not clear the hide flag;
+    after Active the normal rule applies (the next roll other than hide / only_move ends it).
+19. **Names:** the **Downed option**: **Stay hidden**, **Shuffle to cover**, **Make a trail**.
+20. **A Down in the Reset window rolls a fresh Downed option**; "their spot" is the new Down
+    cell (the MECH-10 Trail still extends).
+21. **Make a trail with no cell exactly 10 squares away:** the farthest reachable cell within
+    10, then back.
+22. **Shuffle to cover with no enemy remembered** becomes Stay hidden on the spot.
+
+**Grill round 4 (owner, 2026-11-04), after Syracuse probes:** with 1 square read as 1 ft, 81%
+of Downs ended as Stay hidden (Shuffle found no cover within 3; the tagger was within 10 in
+~80%). The owner measured the map: **2 squares is about 10 ft**. Re-probed at 5 ft / square
+(10 rounds): moved-off 21% -> 36% (62% with a 6-square shuffle), Follow rule bans 4 -> 44 a
+round, Heavy reset-window tags 58 -> 45. Players moved 1-10 squares a tick (10-100 ft/s).
+23. **Shuffle is short:** 5 ft (1 square on Syracuse).
+24. Keep the tagger-more-than-10-ft rule for Make a trail.
+25. Already in cover at the Down: Shuffle becomes Stay hidden.
+26. **One scale:** every distance is set in feet and turned into squares by the map's scale
+    (rounded, at least 1): follow limit 10 ft, Trail width 6 ft each side, trail out 10 ft,
+    tagger distance 10 ft, shuffle 5 ft. This changes MECH-10's merged constants here.
+27. **Player speed scaling is part of this task** (not a separate MOVE-09).
+28. The higher ban count is accepted for now (revisit with CAL-01).
+29. **Scale per map:** a new `ArenaMap.feet_per_pixel` (default 1/6, Syracuse's scale);
+    `feet_per_square = zone_size x feet_per_pixel`, so a finer grid on the same image keeps
+    real distances. Set through Django admin and the map fixture; a map-editor control is a
+    follow-up. One `core` migration.
+30. **Speed in feet:** `MAX_PLAYER_FEET_PER_SECOND = 10`; a player's top speed is
+    `10 x (0.5 + 0.5 x speed / 100)` = 5-10 ft/s (1-2 squares a second at 5 ft). Squares a
+    tick = that x 0.5 s / feet_per_square, with the fraction carried tick to tick; `only_move`
+    still doubles it.
+31. Distances in feet as in 26.
+32. **Two tickets, in order, by the orchestrator:** (1) map scale + speed (field, migration,
+    movement formula with carry, MECH-10 distances in feet, movement tests rewritten);
+    (2) the Downed option on the feet distances. Seeded outcomes change a lot (movement about
+    4x slower); CAL-01 and the LFS-01 calibration carry it.
+
+**Grill round 5 (owner, 2026-11-04):** the full design on Syracuse (4 rounds): Downs that
+move off 27% (from ~5%), options 73% Stay / 3% Shuffle / 23% Trail, Follow rule bans 22 a
+round, Medic survival 512 s (from ~384, mostly the slower movement). A 10 ft shuffle only
+reaches 33%: Syracuse's long sight lines leave little cover within a square or two.
+33. **Accept the 5 ft shuffle**; the seeded test asserts more than 20% of Downs move off.
+34. **Cover stays "no remembered enemy sees it"**; a fewer-watchers cover is a CAL-01 /
+    MECH-07 tuning.
+
 ---
