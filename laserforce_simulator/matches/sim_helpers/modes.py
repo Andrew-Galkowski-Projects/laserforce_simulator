@@ -12,10 +12,11 @@ from __future__ import annotations
 
 import random
 from enum import StrEnum
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, cast
 
 if TYPE_CHECKING:
     from .map_context import MapContext
+    from .player_state import PlayerState
 
 from .follow_rule import Cell, chased_tag_ids, open_trail
 from .goal_scoring import draw_goal
@@ -148,7 +149,7 @@ def _wanted_mode(player, tick: float) -> Mode:
     return default_mode(role)
 
 
-def update_mode(player, tick: float) -> None:
+def update_mode(player: PlayerState, tick: float) -> None:
     """One tick of Mode switching: count the tick, then, past the dwell and on the
     check cadence, switch toward the wanted Mode. See sim-helpers.md."""
     player.mode_ticks[player.mode] = player.mode_ticks.get(player.mode, 0) + 1
@@ -244,7 +245,7 @@ def _attack_candidates(
 
 
 def attack_tag_goal(
-    player,
+    player: PlayerState,
     all_alive: list,
     enemy_color: str,
     tick: float,
@@ -256,9 +257,10 @@ def attack_tag_goal(
     targets = _attack_targets(
         player, all_alive, enemy_color, tick, time_domain, exclude or set()
     )
+    row, col = cast(Cell, (player.cell_row, player.cell_col))
     return min(
         (cell for _, cell in targets),
-        key=lambda c: (abs(c[0] - player.cell_row) + abs(c[1] - player.cell_col), c),
+        key=lambda c: (abs(c[0] - row) + abs(c[1] - col), c),
         default=None,
     )
 
@@ -316,8 +318,9 @@ def _defense_value(
     return value_of
 
 
-def _holding(player, tick: float) -> bool:
-    """True while a Control player stays on the drawn goal they reached.
+def _update_control_hold(player, tick: float) -> bool:
+    """Start or end the player's hold, and return True while it stands: a Control
+    player stays on the drawn goal they reached.
 
     Reaching one starts ``mode_hold_until``. ``choose_goal_cell`` then recommits the
     current cell, so the hold only stands while the commitment is still on this cell
@@ -341,8 +344,115 @@ def _holding(player, tick: float) -> bool:
     return False
 
 
+def _draw(
+    player: PlayerState,
+    candidates: list[Cell],
+    value_of: Callable[[Cell], float],
+    all_alive: list,
+    movement_ctx: MapContext,
+    tick: float,
+) -> Cell | None:
+    """``draw_goal``, recording on the player whether it produced a goal."""
+    pick = draw_goal(player, candidates, value_of, all_alive, movement_ctx, tick)
+    player._goal_was_drawn = pick is not None
+    return pick
+
+
+def _low_health_heavy_goal(
+    player: PlayerState, all_alive: list, tick: float, time_domain: str
+) -> Cell | None:
+    """A low Heavy's remembered Medic, then Ammo. Not drawn; ends any hold."""
+    for support in ("medic", "ammo"):
+        cell = _fresh_teammate_cell(player, support, all_alive, tick, time_domain)
+        if cell is not None:
+            player.mode_hold_until = None
+            return cell
+    return None
+
+
+def _attack_goal(
+    player: PlayerState,
+    all_alive: list,
+    enemy_color: str,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str,
+) -> Cell | None:
+    """A cell that sees a target, else a high-LOS cell."""
+    targets = _attack_targets(
+        player,
+        all_alive,
+        enemy_color,
+        tick,
+        time_domain,
+        chased_tag_ids(player, all_alive, tick),
+    )
+    values = _attack_candidates(targets, movement_ctx)
+    goal = (
+        _draw(player, list(values), values.__getitem__, all_alive, movement_ctx, tick)
+        if values
+        else None
+    )
+    if goal is not None:
+        return goal
+    return _draw(
+        player,
+        _as_cells(movement_ctx.get_high_los_cells()),
+        movement_ctx.los_rank,
+        all_alive,
+        movement_ctx,
+        tick,
+    )
+
+
+def _defense_goal(
+    player: PlayerState,
+    all_alive: list,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str,
+) -> Cell | None:
+    """A cell that sees the remembered Heavy, or None to fall back on Control."""
+    heavy_cell = _fresh_teammate_cell(player, "heavy", all_alive, tick, time_domain)
+    if heavy_cell is None:
+        return None
+    goal = _draw(
+        player,
+        movement_ctx.cells_visible_from(heavy_cell),
+        _defense_value(player, heavy_cell, movement_ctx),
+        all_alive,
+        movement_ctx,
+        tick,
+    )
+    if goal is not None:
+        player.mode_hold_until = None
+    return goal
+
+
+def _control_goal(
+    player: PlayerState,
+    all_alive: list,
+    enemy_color: str,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str,
+) -> Cell | None:
+    """The cell being held, else a draw over strong spots or high-LOS cells."""
+    if _update_control_hold(player, tick):
+        return cast(Cell, (player.cell_row, player.cell_col))
+    spots = movement_ctx.get_strong_spots() if player.role == "heavy" else []
+    return _draw(
+        player,
+        _as_cells(spots or movement_ctx.get_high_los_cells()),
+        _control_value(player, all_alive, enemy_color, movement_ctx, tick, time_domain),
+        all_alive,
+        movement_ctx,
+        tick,
+    )
+
+
 def mode_goal(
-    player,
+    player: PlayerState,
     all_alive: list,
     enemy_color: str,
     movement_ctx: MapContext,
@@ -352,58 +462,25 @@ def mode_goal(
     """The player's positioning goal under their Mode, or None for the enemy-base
     default. Sets ``_goal_was_drawn``, so a drawn goal is held until reached."""
     player._goal_was_drawn = False
-
     if player.role == "heavy" and _low_on_resources(player):
-        for support in ("medic", "ammo"):
-            cell = _fresh_teammate_cell(player, support, all_alive, tick, time_domain)
-            if cell is not None:
-                player.mode_hold_until = None
-                return cell
-
-    def drawn(candidates: list[Cell], value_of: Callable[[Cell], float]) -> Cell | None:
-        pick = draw_goal(player, candidates, value_of, all_alive, movement_ctx, tick)
-        player._goal_was_drawn = pick is not None
-        return pick
-
-    if player.mode is Mode.ATTACK:
-        targets = _attack_targets(
-            player,
-            all_alive,
-            enemy_color,
-            tick,
-            time_domain,
-            chased_tag_ids(player, all_alive, tick),
-        )
-        values = _attack_candidates(targets, movement_ctx)
-        goal = drawn(list(values), values.__getitem__) if values else None
+        goal = _low_health_heavy_goal(player, all_alive, tick, time_domain)
         if goal is not None:
             return goal
-        return drawn(
-            _as_cells(movement_ctx.get_high_los_cells()), movement_ctx.los_rank
+    if player.mode is Mode.ATTACK:
+        return _attack_goal(
+            player, all_alive, enemy_color, movement_ctx, tick, time_domain
         )
-
     if player.mode is Mode.DEFENSE:
-        heavy_cell = _fresh_teammate_cell(player, "heavy", all_alive, tick, time_domain)
-        if heavy_cell is not None:
-            goal = drawn(
-                movement_ctx.cells_visible_from(heavy_cell),
-                _defense_value(player, heavy_cell, movement_ctx),
-            )
-            if goal is not None:
-                player.mode_hold_until = None
-                return goal
-
+        goal = _defense_goal(player, all_alive, movement_ctx, tick, time_domain)
+        if goal is not None:
+            return goal
     # Control, and Defense with no fresh Heavy or no reachable cell that sees it.
-    if _holding(player, tick):
-        return (player.cell_row, player.cell_col)
-    spots = movement_ctx.get_strong_spots() if player.role == "heavy" else []
-    return drawn(
-        _as_cells(spots or movement_ctx.get_high_los_cells()),
-        _control_value(player, all_alive, enemy_color, movement_ctx, tick, time_domain),
+    return _control_goal(
+        player, all_alive, enemy_color, movement_ctx, tick, time_domain
     )
 
 
-def apply_mode_weights(player, weights: list) -> None:
+def apply_mode_weights(player: PlayerState, weights: list) -> None:
     """Nudge the Mode's Actions in place by ``MODE_WEIGHT_MULTIPLIER``. No RNG.
 
     A zero stays zero. A negative raw slot is left for ``finalize_action_weights``
@@ -415,7 +492,7 @@ def apply_mode_weights(player, weights: list) -> None:
 
 
 def trail_costs(
-    player, all_alive: list, tick: float, time_domain: str = "ticks"
+    player: PlayerState, all_alive: list, tick: float, time_domain: str = "ticks"
 ) -> dict[Cell, float]:
     """The route cost of each cell in the open Trail of an enemy in *all_alive* the
     player freshly remembers as Downed. Trails that overlap cost the same as one,

@@ -296,6 +296,7 @@ follow-ups:
 
 ```
 MECH-07          Modes: attack / defense / zone control  <- NOW
+MECH-17          Action-choice sweep (MECH-07 decision 8)
 ```
 
 **Next — SM5 talk follow-ups** (from LFS-02's proposal), in order:
@@ -773,13 +774,23 @@ carry-over of hide / hold, how memory and comms feed in) for flat or unrealistic
 what the sweep finds. It overlaps `MECH-14`; settle in this task's grill whether it absorbs that
 task or stays a sweep that feeds it. MECH-07 added only the small per-Mode weight table.
 
-**Leads from MECH-07's probe (2026-11-05, decisions 29-30).** Positioning sets only about 19% of a
-Medic's goals and 28% of an Ammo's, so Mode goals reach supports only part of the time; how Mode should
-shape action goals and `hide` is the first thing to look at. Commanders ended further from enemy
+**Leads from MECH-07's probe (2026-11-05, decisions 29-30).** Over 12 rounds, positioning sets about
+25% of a Medic's goals and 28% of an Ammo's, against 48% and 50% from action goals, so Mode goals reach
+supports only part of the time; how Mode should shape action goals and `hide` is the first thing to
+look at. Commanders ended further from enemy
 Medics and Ammos than before (20.7 to 23.7 squares) after losing their true-state Medic hunt. One
 scratch variant limiting Defense candidates to 40 ft of the Heavy, combined with the Heavy trigger
 window, gave Ammo 11.7, Heavy 19.9 and Scout 20.2 squares over 12 rounds; that is 1-2 squares and may
 be noise, so it needs more rounds before anyone relies on it.
+
+**Left alone in MECH-07's review (owner, 2026-11-05):**
+- A Heavy that drops to 50% mid-walk finishes its held goal before heading to its Medic or Ammo, unless
+  an action goal takes over or it hits the 30% override. Decision 18 and held goals pull against each
+  other here; SM5-03 replaces the override.
+- Two reads still use the full staleness table, though a Down lasts 16 ticks. Attack skips a Medic or
+  Ammo seen `downed` for up to 120 ticks unless re-sighted (`modes._attack_targets`), which may help
+  explain the Attack distances (not measured). An old `downed` entry can also charge for a later Trail
+  the player never saw (`modes.trail_costs`). Changing them means re-probing goal sharing, now 14.5%.
 
 ---
 
