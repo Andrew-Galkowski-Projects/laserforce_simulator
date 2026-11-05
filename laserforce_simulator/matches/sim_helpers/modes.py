@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 from .follow_rule import Cell, chased_tag_ids, open_trail
 from .goal_scoring import draw_goal
-from .time_constants import HELD_GOAL_EXPIRY, _stale_table
+from .time_constants import HELD_GOAL_EXPIRY, RESPAWN_TICKS, _stale_table
 
 
 class Mode(StrEnum):
@@ -36,7 +36,7 @@ MODE_CHECK_PERIOD_TICKS: int = 10
 #: Row 1: lives or shots at or below this share of max.
 LOW_RESOURCE_SHARE: float = 0.5
 _LOW_RESOURCE_ROLES: tuple[str, ...] = ("commander", "scout")
-#: Row 2: what each role wants when a fresh memory shows its own Heavy Downed.
+#: Row 2: what each role wants when a recent sighting shows its own Heavy Downed.
 _HEAVY_DOWNED_MODE: dict[str, Mode] = {
     "commander": Mode.CONTROL,
     "scout": Mode.ATTACK,
@@ -45,6 +45,8 @@ _HEAVY_DOWNED_MODE: dict[str, Mode] = {
 }
 #: The memory statuses the Heavy trigger reads as Downed (spec decision 27).
 _DOWNED_STATUSES: tuple[str, ...] = ("downed", "reset_window")
+#: Row 2 reads a sighting for this long: after one Down's length, that Down is over.
+HEAVY_DOWN_WINDOW_TICKS: int = RESPAWN_TICKS
 
 # ── Trail avoidance (spec decisions 10, 22) ──────────────────────────────
 #: What a step into a band cell of a remembered Downed enemy's Trail adds.
@@ -112,8 +114,13 @@ def _shows_downed(entry: dict) -> bool:
 
 
 def _own_heavy_seen_downed(player, tick: float) -> bool:
-    entry = _fresh_entry(player, f"{player.team_color}_heavy", tick)
-    return entry is not None and _shows_downed(entry)
+    """True while a remembered Down of the own Heavy could still be going on."""
+    entry = player.player_memory.get(f"{player.team_color}_heavy")
+    return (
+        entry is not None
+        and tick - entry.get("timestamp", 0) <= HEAVY_DOWN_WINDOW_TICKS
+        and _shows_downed(entry)
+    )
 
 
 def _team_is_losing(player) -> bool:

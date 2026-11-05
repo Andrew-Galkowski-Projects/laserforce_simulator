@@ -28,7 +28,11 @@ from matches.sim_helpers.modes import (
 )
 from matches.sim_helpers.pathfinding import choose_goal_cell
 from matches.sim_helpers.player_state import PlayerState
-from matches.sim_helpers.time_constants import HELD_GOAL_EXPIRY, _stale_table
+from matches.sim_helpers.time_constants import (
+    HELD_GOAL_EXPIRY,
+    RESPAWN_TICKS,
+    _stale_table,
+)
 from matches.simulation import BatchSimulator, entrypoints
 
 
@@ -228,17 +232,21 @@ class TestRowTwoHeavyDowned:
         update_mode(player, 60)
         assert player.mode is Mode.DEFENSE
 
-    def test_the_entry_at_the_staleness_limit_still_triggers(self) -> None:
+    def test_a_sighting_one_down_old_still_triggers(self) -> None:
         player = _player("medic", game_awareness=100)
-        player.player_memory["red_heavy"] = _heavy_entry(80, status="downed")
-        update_mode(player, 200)  # age 120 ticks, the Heavy limit
+        player.player_memory["red_heavy"] = _heavy_entry(184, status="downed")
+        update_mode(player, 200)  # age 16 ticks, how long a Down lasts
         assert player.mode is Mode.CONTROL
 
-    def test_a_stale_entry_stops_triggering(self) -> None:
+    def test_an_older_sighting_stops_triggering(self) -> None:
+        # Still fresh by the 120-tick Heavy limit, but that Down must be over.
         player = _player("medic", game_awareness=100)
-        player.player_memory["red_heavy"] = _heavy_entry(79, status="downed")
-        update_mode(player, 200)  # age 121
+        player.player_memory["red_heavy"] = _heavy_entry(183, status="downed")
+        update_mode(player, 200)  # age 17
         assert player.mode is Mode.DEFENSE
+
+    def test_the_window_follows_the_length_of_a_down(self) -> None:
+        assert modes.HEAVY_DOWN_WINDOW_TICKS == RESPAWN_TICKS == 16
 
     def test_the_enemy_heavy_does_not_trigger(self) -> None:
         player = _player("medic", game_awareness=100)

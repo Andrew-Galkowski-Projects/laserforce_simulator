@@ -633,6 +633,10 @@ pytest marker run in a non-blocking CI job.
 
 ### CAL-01 · Score Calibration re-baseline
 
+**Check the Down rate here (MECH-07, 2026-11-05).** On `origin/main`, 6 seeded Syracuse rounds, the
+share of ticks a player is not Active: Scout 64.4%, Heavy 62.8%, Commander 55.6%, Ammo 52.7%,
+Medic 34.2%. That limits how far Modes can move players, so it is worth settling before Mode tuning.
+
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
 documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout
 5,102 / Ammo 3,242 / Medic 2,282 — `docs/agents/matches/simulation-engine.md`). This is the long-pending
@@ -748,6 +752,19 @@ and 4.4% of a Medic's: `resupply_ally` walks a support to the neediest ally even
 28. **Seams:** a new pure module `sim_helpers/modes.py` (`Mode`, `default_mode`, `update_mode`,
     `mode_goal`, `apply_mode_weights`, `trail_costs`) and `astar_path(..., extra_costs=None)`.
 
+**Owner, after the verify probe (2026-11-05).** 12 seeded Syracuse rounds, `origin/main` against the
+integration branch before this ruling: squares to the nearest enemy Medic or Ammo went Scout 23.9 to
+21.0, Heavy 21.9 to 20.9, Commander 20.7 to 23.7; squares to the own Heavy went Medic 16.7 to 16.7,
+Ammo 12.2 to 13.2. Team-ticks sharing a goal went 11.7% to 13.6%, inside the 15% limit.
+29. **Heavy trigger window:** row 2 of decision 19 reads a sighting for 16 ticks, one Down's length,
+    not the 120-tick staleness limit. Narrows decision 19.
+30. **Decision 13's distance criteria stay unmet** for Commander, Medic and Ammo. Players are not
+    Active on 34-64% of ticks on `origin/main`, which limits what Modes can do; that goes to CAL-01 and
+    MECH-17 rather than more tuning here.
+31. **Goal-sharing guard:** the 15% limit stays, measured over seeds 1-12 instead of 1-2. Single rounds
+    range from 9% to 24%. With the window it is 14.5% over those 12 and 14.6% over 24 rounds; without it,
+    13.8% over 24. It is met narrowly, so a later RNG change may need this revisited in CAL-01 or MECH-17.
+
 ### MECH-17 · Action-choice sweep
 
 Moved out of MOVE-07 by MECH-07's decision 8, to run right after MECH-07. **Full sweep of the
@@ -755,6 +772,14 @@ action-choice logic.** Review the weighted **Action** selection end to end (weig
 carry-over of hide / hold, how memory and comms feed in) for flat or unrealistic behaviour, and fix
 what the sweep finds. It overlaps `MECH-14`; settle in this task's grill whether it absorbs that
 task or stays a sweep that feeds it. MECH-07 added only the small per-Mode weight table.
+
+**Leads from MECH-07's probe (2026-11-05, decisions 29-30).** Positioning sets only about 19% of a
+Medic's goals and 28% of an Ammo's, so Mode goals reach supports only part of the time; how Mode should
+shape action goals and `hide` is the first thing to look at. Commanders ended further from enemy
+Medics and Ammos than before (20.7 to 23.7 squares) after losing their true-state Medic hunt. One
+scratch variant limiting Defense candidates to 40 ft of the Heavy, combined with the Heavy trigger
+window, gave Ammo 11.7, Heavy 19.9 and Scout 20.2 squares over 12 rounds; that is 1-2 squares and may
+be noise, so it needs more rounds before anyone relies on it.
 
 ---
 
