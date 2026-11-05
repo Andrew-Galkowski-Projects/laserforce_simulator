@@ -381,7 +381,7 @@ class TestEngineRefusesBarredTags(_Barred):
             cmdr, everyone, "blue", 12, 10, "tag_player", ctx, self.tick, "ticks"
         )
         role_goal = _goal_from_role(
-            cmdr, everyone, "blue", 12, 10, ctx, self.tick, time_domain="ticks"
+            cmdr, everyone, "blue", ctx, self.tick, time_domain="ticks"
         )
         self.assertNotEqual(action_goal, (12, 30))
         self.assertIsNone(role_goal)

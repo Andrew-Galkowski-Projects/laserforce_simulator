@@ -69,6 +69,14 @@ CONTROL_BONUS: float = 0.25
 CONTROL_VALUE_CAP: float = 1.0
 #: Control: how long a player stays on a drawn goal they reached.
 CONTROL_HOLD_TICKS: int = 20
+#: Defense: value = base weight x base + closeness weight x teamwork share x closeness.
+DEFENSE_BASE_WEIGHT: float = 0.7
+DEFENSE_CLOSENESS_WEIGHT: float = 0.3
+#: Defense: closeness falls from 1 on the Heavy's cell to 0 at this distance.
+DEFENSE_CLOSENESS_FEET: float = 30.0
+#: Defense: ``resupply_ally`` sets a goal only when the neediest ally is at or below
+#: this share of the resource the support restores.
+DEFENSE_RESUPPLY_SHARE: float = 0.75
 
 _DEFAULT_MODE: dict[str, Mode] = {
     "commander": Mode.ATTACK,
@@ -159,6 +167,21 @@ def _remembered_cell(entry: dict) -> Cell:
 def _as_cells(cells: list) -> list[Cell]:
     """A map's stored cells as tuples, which ``draw_goal`` needs (JSON gives lists)."""
     return [(c[0], c[1]) for c in cells]
+
+
+def _fresh_teammate_cell(
+    player, role: str, all_alive: list, tick: float, time_domain: str
+) -> Cell | None:
+    """The remembered cell of the player's own *role*, or None when the entry is not
+    fresh or the teammate is eliminated: memory has no eliminated status, and
+    ``all_alive`` is built at tick start, so lives are checked too."""
+    tag = f"{player.team_color}_{role}"
+    if not any(p.tag_id_key == tag and p.final_lives > 0 for p in all_alive):
+        return None
+    entry = _fresh_entry(player, tag, tick, time_domain)
+    if entry is None or entry.get("cell") is None:
+        return None
+    return _remembered_cell(entry)
 
 
 def _fresh_enemies(
@@ -266,6 +289,26 @@ def _control_value(
     return value_of
 
 
+def _defense_value(
+    player, heavy_cell: Cell, movement_ctx: MapContext
+) -> Callable[[Cell], float]:
+    """The Defense value rule: hidden cells for a Medic, open ones for an Ammo, and
+    the player's ``teamwork`` pulls them toward the Heavy."""
+
+    def value_of(cell: Cell) -> float:
+        rank = movement_ctx.los_rank(cell)
+        base = 1.0 - rank if player.role == "medic" else rank
+        squares = max(abs(cell[0] - heavy_cell[0]), abs(cell[1] - heavy_cell[1]))
+        feet = squares * movement_ctx.feet_per_square
+        closeness = max(0.0, 1.0 - feet / DEFENSE_CLOSENESS_FEET)
+        return (
+            DEFENSE_BASE_WEIGHT * base
+            + DEFENSE_CLOSENESS_WEIGHT * (player.teamwork / 100) * closeness
+        )
+
+    return value_of
+
+
 def _holding(player, tick: float) -> bool:
     """True while a Control player stays on the drawn goal they reached.
 
@@ -305,12 +348,10 @@ def mode_goal(
 
     if player.role == "heavy" and _low_on_resources(player):
         for support in ("medic", "ammo"):
-            entry = _fresh_entry(
-                player, f"{player.team_color}_{support}", tick, time_domain
-            )
-            if entry is not None and entry.get("cell") is not None:
+            cell = _fresh_teammate_cell(player, support, all_alive, tick, time_domain)
+            if cell is not None:
                 player.mode_hold_until = None
-                return _remembered_cell(entry)
+                return cell
 
     def drawn(candidates: list[Cell], value_of: Callable[[Cell], float]) -> Cell | None:
         pick = draw_goal(player, candidates, value_of, all_alive, movement_ctx, tick)
@@ -334,18 +375,25 @@ def mode_goal(
             _as_cells(movement_ctx.get_high_los_cells()), movement_ctx.los_rank
         )
 
-    if player.mode is Mode.CONTROL:
-        if _holding(player, tick):
-            return (player.cell_row, player.cell_col)
-        spots = movement_ctx.get_strong_spots() if player.role == "heavy" else []
-        return drawn(
-            _as_cells(spots or movement_ctx.get_high_los_cells()),
-            _control_value(
-                player, all_alive, enemy_color, movement_ctx, tick, time_domain
-            ),
-        )
+    if player.mode is Mode.DEFENSE:
+        heavy_cell = _fresh_teammate_cell(player, "heavy", all_alive, tick, time_domain)
+        if heavy_cell is not None:
+            goal = drawn(
+                movement_ctx.cells_visible_from(heavy_cell),
+                _defense_value(player, heavy_cell, movement_ctx),
+            )
+            if goal is not None:
+                player.mode_hold_until = None
+                return goal
 
-    return None  # Defense: pathfinding keeps today's role logic until #545.
+    # Control, and Defense with no fresh Heavy or no reachable cell that sees it.
+    if _holding(player, tick):
+        return (player.cell_row, player.cell_col)
+    spots = movement_ctx.get_strong_spots() if player.role == "heavy" else []
+    return drawn(
+        _as_cells(spots or movement_ctx.get_high_los_cells()),
+        _control_value(player, all_alive, enemy_color, movement_ctx, tick, time_domain),
+    )
 
 
 def apply_mode_weights(player, weights: list) -> None:

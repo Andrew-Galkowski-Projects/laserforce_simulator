@@ -880,14 +880,6 @@ class TestControlGoal:
         mode_goal(heavy, [heavy, enemy], "blue", ctx, 100)
         assert draws[-1][1]((1, 4)) == 1.0  # 0.75 + 0.25 + 0.25
 
-    def test_defense_is_left_to_the_role_logic_for_now(self) -> None:
-        # #545 gives Defense its own rule; until then the caller keeps today's logic.
-        medic = _placed("medic", _goal_was_drawn=True)
-        ctx = _grid_map(high_los=[(1, 5)], counts=_RANKS)
-        assert medic.mode is Mode.DEFENSE
-        assert mode_goal(medic, [medic], "blue", ctx, 100) is None
-        assert medic._goal_was_drawn is False
-
 
 @pytest.mark.usefixtures("best_draw")
 class TestLowHealthHeavy:
@@ -896,13 +888,18 @@ class TestLowHealthHeavy:
         heavy.final_lives = heavy.max_lives // 2
         return heavy
 
+    def _everyone(self, heavy: PlayerState) -> list[PlayerState]:
+        """The Heavy and its living supports, really at (9, 9): an eliminated support
+        is passed over, so these tests need them in ``all_alive``."""
+        return [heavy, _placed("medic", (9, 9)), _placed("ammo", (9, 9))]
+
     @pytest.mark.parametrize("mode", list(Mode))
     def test_lives_at_half_goes_to_the_remembered_medic(self, mode: Mode) -> None:
         heavy = self._low_heavy(mode, _goal_was_drawn=True)
         _remember(heavy, "red_medic", (4, 4), 100, "medic")
         _remember(heavy, "red_ammo", (5, 5), 100, "ammo")
         ctx = _grid_map(strong=[(1, 1)], high_los=[(1, 5)], counts=_RANKS)
-        assert mode_goal(heavy, [heavy], "blue", ctx, 100) == (4, 4)
+        assert mode_goal(heavy, self._everyone(heavy), "blue", ctx, 100) == (4, 4)
         # Not drawn, so it follows the support on the 4-tick cadence.
         assert heavy._goal_was_drawn is False
 
@@ -911,19 +908,44 @@ class TestLowHealthHeavy:
         heavy = _placed("heavy", mode=mode)
         heavy.final_shots = heavy.max_shots // 2
         _remember(heavy, "red_medic", (4, 4), 100, "medic")
-        assert mode_goal(heavy, [heavy], "blue", _grid_map(), 100) == (4, 4)
+        everyone = self._everyone(heavy)
+        assert mode_goal(heavy, everyone, "blue", _grid_map(), 100) == (4, 4)
 
     @pytest.mark.parametrize("mode", list(Mode))
     def test_then_the_remembered_ammo(self, mode: Mode) -> None:
         heavy = self._low_heavy(mode)
         _remember(heavy, "red_ammo", (5, 5), 100, "ammo")
-        assert mode_goal(heavy, [heavy], "blue", _grid_map(), 100) == (5, 5)
+        everyone = self._everyone(heavy)
+        assert mode_goal(heavy, everyone, "blue", _grid_map(), 100) == (5, 5)
 
     def test_a_stale_medic_is_passed_over(self) -> None:
         heavy = self._low_heavy(Mode.CONTROL)
         _remember(heavy, "red_medic", (4, 4), 100 - 121, "medic")
         _remember(heavy, "red_ammo", (5, 5), 100, "ammo")
-        assert mode_goal(heavy, [heavy], "blue", _grid_map(), 100) == (5, 5)
+        everyone = self._everyone(heavy)
+        assert mode_goal(heavy, everyone, "blue", _grid_map(), 100) == (5, 5)
+
+    def test_a_medic_not_in_all_alive_is_passed_over(self) -> None:
+        heavy = self._low_heavy(Mode.CONTROL)
+        ammo = _placed("ammo", (9, 9))
+        _remember(heavy, "red_medic", (4, 4), 100, "medic")
+        _remember(heavy, "red_ammo", (5, 5), 100, "ammo")
+        assert mode_goal(heavy, [heavy, ammo], "blue", _grid_map(), 100) == (5, 5)
+
+    def test_a_medic_eliminated_earlier_this_tick_is_passed_over(self) -> None:
+        heavy = self._low_heavy(Mode.CONTROL)
+        medic, ammo = _placed("medic", final_lives=0), _placed("ammo", (9, 9))
+        _remember(heavy, "red_medic", (4, 4), 100, "medic")
+        _remember(heavy, "red_ammo", (5, 5), 100, "ammo")
+        goal = mode_goal(heavy, [heavy, medic, ammo], "blue", _grid_map(), 100)
+        assert goal == (5, 5)
+
+    def test_with_both_supports_eliminated_the_mode_rule_runs(self) -> None:
+        heavy = self._low_heavy(Mode.CONTROL)
+        _remember(heavy, "red_medic", (4, 4), 100, "medic")
+        _remember(heavy, "red_ammo", (5, 5), 100, "ammo")
+        ctx = _grid_map(strong=[(1, 1)], counts=_RANKS)
+        assert mode_goal(heavy, [heavy], "blue", ctx, 100) == (1, 1)
 
     def test_with_neither_remembered_the_mode_rule_runs(self) -> None:
         heavy = self._low_heavy(Mode.CONTROL)
@@ -1079,7 +1101,8 @@ class TestHolding:
         mode_goal(heavy, [heavy], "blue", ctx, 100)
         heavy.final_lives = 1
         _remember(heavy, "red_medic", (4, 4), 105, "medic")
-        assert mode_goal(heavy, [heavy], "blue", ctx, 105) == (4, 4)
+        everyone = [heavy, _placed("medic", (9, 9))]
+        assert mode_goal(heavy, everyone, "blue", ctx, 105) == (4, 4)
         assert heavy.mode_hold_until is None
 
     def test_a_mode_switch_ends_the_hold(self) -> None:
@@ -1124,24 +1147,16 @@ class TestChooseGoalCellUsesModes:
         medic = _placed("medic", (7, 7))
         assert _choose(cmdr, [*everyone, medic], ctx) == (7, 7)
 
-    def test_an_attack_goal_is_not_teamwork_biased(self) -> None:
-        cmdr, everyone, ctx = _attack_scene()
-        cmdr.teamwork = 100
-        ally = _placed("scout", (10, 0))  # too far to crowd any candidate
-        # The bias would take (1, 1).
-        ctx.sight_data = {**(ctx.sight_data or {}), "10,0": frozenset({"1,1"})}
-        assert _choose(cmdr, [*everyone, ally], ctx) == (3, 2)
-
     def test_the_enemy_medic_goal_is_gone(self) -> None:
         assert not hasattr(pathfinding, "_enemy_medic_goal")
 
 
 @pytest.mark.usefixtures("best_draw")
-class TestDefenseKeepsTheRoleLogicUntil545:
+class TestSupportsThroughChooseGoalCell:
     def _scene(self, role: str) -> tuple[PlayerState, list, MapContext]:
         support = _placed(role, teamwork=0)
-        # No memory of the Heavy: today's logic reads its true cell.
         heavy = _placed("heavy", (2, 2))
+        _remember(support, "red_heavy", (2, 2), 100, "heavy")
         ctx = _grid_map(
             sight={"2,2": {"2,1", "2,3"}},
             counts={"2,1": 1, "2,3": 10},
@@ -1158,21 +1173,143 @@ class TestDefenseKeepsTheRoleLogicUntil545:
         ammo, everyone, ctx = self._scene("ammo")
         assert _choose(ammo, everyone, ctx) == (2, 3)
 
-    def test_the_teamwork_bias_still_applies(self) -> None:
-        medic, everyone, ctx = self._scene("medic")
-        with mock.patch.object(
-            pathfinding, "_apply_teamwork_bias", return_value=(9, 9)
-        ) as bias:
-            assert _choose(medic, everyone, ctx) == (9, 9)
-        assert bias.called
-        # Not drawn, so it keeps the 4-tick cadence.
-        assert medic._committed_goal == ((9, 9), False, 100 + 4)
+    @pytest.mark.parametrize("role", ["medic", "ammo"])
+    def test_with_no_memory_of_the_heavy_it_does_not_walk_to_it(
+        self, role: str
+    ) -> None:
+        # Teammates' true cells are not information the Mode layer has.
+        support, everyone, ctx = self._scene(role)
+        support.player_memory.clear()
+        assert _choose(support, everyone, ctx) == (9, 9)
 
     @pytest.mark.parametrize("role", ["medic", "ammo"])
     def test_in_control_a_support_uses_the_control_rule(self, role: str) -> None:
         support, everyone, ctx = self._scene(role)
         support.mode = Mode.CONTROL
         assert _choose(support, everyone, ctx) == (9, 9)
+
+    def test_high_teamwork_does_not_override_a_drawn_goal(self) -> None:
+        # The old bias took the nearest high-LOS cell an ally could see, here (9, 9).
+        medic, everyone, ctx = self._scene("medic")
+        medic.teamwork = 100
+        ctx.sight_data = {**(ctx.sight_data or {}), "8,8": frozenset({"9,9"})}
+        everyone.append(_placed("scout", (8, 8)))
+        goal = _choose(medic, everyone, ctx)
+        assert goal in {(2, 1), (2, 3)}
+        assert medic._committed_goal == (goal, False, HELD_GOAL_EXPIRY)
+
+    def test_the_teamwork_bias_is_gone(self) -> None:
+        assert not hasattr(pathfinding, "_apply_teamwork_bias")
+
+
+class TestDefenseResupplyGoal:
+    """Decision 24: in Defense, ``resupply_ally`` sets a goal only at or below 75% of
+    the resource the support restores. The ally read stays true state."""
+
+    def _goal(
+        self, support: PlayerState, ally: PlayerState, ctx: MapContext | None = None
+    ) -> tuple[int, int] | None:
+        return pathfinding._goal_from_action(
+            support,
+            [support, ally],
+            "blue",
+            0,
+            0,
+            "resupply_ally",
+            ctx or _grid_map(),
+            100,
+            "ticks",
+        )
+
+    @pytest.mark.parametrize(
+        "role, field, cap, kept, expected",
+        [
+            ("medic", "final_lives", "max_lives", 15, (7, 7)),
+            ("medic", "final_lives", "max_lives", 16, None),
+            ("ammo", "final_shots", "max_shots", 15, (7, 7)),
+            ("ammo", "final_shots", "max_shots", 16, None),
+        ],
+    )
+    def test_the_boundary(
+        self, role: str, field: str, cap: str, kept: int, expected: object
+    ) -> None:
+        ally = _placed("scout", (7, 7), **{cap: 20, field: kept})
+        assert self._goal(_placed(role), ally) == expected
+
+    @pytest.mark.parametrize(
+        "role, low_field", [("medic", "final_shots"), ("ammo", "final_lives")]
+    )
+    def test_the_other_resource_does_not_count(self, role: str, low_field: str) -> None:
+        ally = _placed("scout", (7, 7), **{low_field: 1})
+        assert self._goal(_placed(role), ally) is None
+
+    @pytest.mark.parametrize("role", ["medic", "ammo"])
+    def test_other_modes_keep_todays_rule(self, role: str) -> None:
+        ally = _placed("scout", (7, 7))  # full resources
+        assert self._goal(_placed(role, mode=Mode.CONTROL), ally) == (7, 7)
+
+    def test_the_neediest_ally_is_the_one_read(self) -> None:
+        medic = _placed("medic")
+        full = _placed("scout", (3, 3), max_lives=20, final_lives=20)
+        needy = _placed("heavy", (7, 7), max_lives=20, final_lives=10)
+        goal = pathfinding._goal_from_action(
+            medic,
+            [medic, full, needy],
+            "blue",
+            0,
+            0,
+            "resupply_ally",
+            _grid_map(),
+            100,
+            "ticks",
+        )
+        assert goal == (7, 7)
+
+    @pytest.mark.usefixtures("best_draw")
+    def test_above_the_share_the_mode_goal_runs(self) -> None:
+        medic = _placed("medic", teamwork=0)
+        ally = _placed("scout", (7, 7))
+        ctx = _grid_map(high_los=[(1, 1)])
+        assert _choose(medic, [medic, ally], ctx, action="resupply_ally") == (1, 1)
+        assert medic._committed_goal == ((1, 1), False, HELD_GOAL_EXPIRY)
+
+    @pytest.mark.usefixtures("best_draw")
+    def test_at_the_share_it_interrupts_a_held_goal(self) -> None:
+        medic = _placed("medic", _committed_goal=((1, 1), False, HELD_GOAL_EXPIRY))
+        ally = _placed("scout", (7, 7), max_lives=20, final_lives=15)
+        ctx = _grid_map(high_los=[(1, 1)])
+        assert _choose(medic, [medic, ally], ctx, action="resupply_ally") == (7, 7)
+        assert medic._committed_goal == ((7, 7), True, 100 + 4)
+
+    def test_above_the_share_a_held_goal_is_kept(self) -> None:
+        medic = _placed("medic", _committed_goal=((1, 1), False, HELD_GOAL_EXPIRY))
+        ally = _placed("scout", (7, 7))
+        ctx = _grid_map(high_los=[(1, 1)])
+        assert _choose(medic, [medic, ally], ctx, action="resupply_ally") == (1, 1)
+
+    @pytest.mark.parametrize(
+        "role, plan_type", [("medic", "resupply_lives"), ("ammo", "resupply_ammo")]
+    )
+    def test_the_action_itself_is_unaffected(
+        self, role: str, plan_type: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Decision 24 is about where the support walks. Rolling the Action still
+        # plans a Resupply on an ally who is well above the share.
+        support = _placed(role)
+        ally = _placed("scout", (0, 1))
+        ally.final_lives = ally.max_lives - 1
+        ally.final_shots = ally.max_shots - 1
+        real_choices = random.choices
+
+        def roll_resupply(population: list, *args: Any, **kwargs: Any) -> list:
+            # Only the Action roll: picking the target draws from the same function.
+            if population is combat._CHOICES:
+                return ["resupply_ally"]
+            return real_choices(population, *args, **kwargs)
+
+        monkeypatch.setattr(combat.random, "choices", roll_resupply)
+        plans = combat.plan_action(support, [support, ally], 100, _grid_map())
+        assert [(p["type"], p["target"]) for p in plans] == [(plan_type, ally)]
 
 
 class TestTagActionGoal:
@@ -1355,6 +1492,179 @@ class TestAttackTargets:
         enemy = _enemy("medic")
         ctx = _grid_map(high_los=[(1, 1)], sight={"11,11": {"10,11"}})
         assert self._candidates(scout, [scout, enemy], ctx) == [(1, 1)]
+
+
+#: Ranks 0, 0.5 and 1. Seen from (5, 0) at 5 ft a square: 10 ft, 15 ft and 30 ft.
+_HEAVY_VIEW_RANKS = {"5,2": 1, "5,3": 5, "5,6": 9}
+
+
+def _defense_scene(
+    role: str = "medic", teamwork: int = 100, heavy_seen: int | None = 100
+) -> tuple[PlayerState, list[PlayerState], MapContext]:
+    """A support who remembers its Heavy at (5, 0); the Heavy is really at (9, 9)."""
+    support = _placed(role, teamwork=teamwork)
+    heavy = _placed("heavy", (9, 9))
+    if heavy_seen is not None:
+        _remember(support, "red_heavy", (5, 0), heavy_seen, "heavy")
+    ctx = _grid_map(
+        high_los=[(1, 1)],
+        sight={"5,0": {"5,2", "5,3", "5,6"}, "9,9": {"9,8"}},
+        counts=_HEAVY_VIEW_RANKS,
+    )
+    return support, [support, heavy], ctx
+
+
+@pytest.mark.usefixtures("best_draw")
+class TestDefenseGoal:
+    def test_candidates_are_the_cells_that_see_the_remembered_heavy(
+        self, draws: list
+    ) -> None:
+        medic, everyone, ctx = _defense_scene()
+        goal = mode_goal(medic, everyone, "blue", ctx, 100)
+        assert draws[-1][0] == [(5, 2), (5, 3), (5, 6)]
+        assert goal in draws[-1][0]
+        assert medic._goal_was_drawn is True
+
+    @pytest.mark.parametrize(
+        "role, teamwork, expected",
+        [
+            # 0.7 x (1 - rank) + 0.3 x 1.0 x closeness
+            ("medic", 100, {(5, 2): 0.9, (5, 3): 0.5, (5, 6): 0.0}),
+            # 0.7 x rank + 0.3 x 0.5 x closeness
+            ("ammo", 50, {(5, 2): 0.1, (5, 3): 0.425, (5, 6): 0.7}),
+            # No teamwork, no closeness.
+            ("medic", 0, {(5, 2): 0.7, (5, 3): 0.35, (5, 6): 0.0}),
+            ("ammo", 0, {(5, 2): 0.0, (5, 3): 0.35, (5, 6): 0.7}),
+        ],
+    )
+    def test_value_formula(
+        self, role: str, teamwork: int, expected: dict, draws: list
+    ) -> None:
+        support, everyone, ctx = _defense_scene(role, teamwork)
+        mode_goal(support, everyone, "blue", ctx, 100)
+        value_of = draws[-1][1]
+        for cell, value in expected.items():
+            assert value_of(cell) == pytest.approx(value)
+
+    def test_closeness_stops_at_zero_past_thirty_feet(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene(teamwork=100)
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        # (5, 9) is 45 ft away, with rank 0 (not in the counts): base 1, closeness 0.
+        assert draws[-1][1]((5, 9)) == pytest.approx(0.7)
+
+    def test_closeness_is_chebyshev(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene(teamwork=100)
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        # 2 squares diagonally is 10 ft, not 20: closeness 2/3.
+        assert draws[-1][1]((7, 2)) == pytest.approx(0.7 + 0.3 * 2 / 3)
+
+    def test_closeness_reads_the_maps_scale(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene(teamwork=100)
+        ctx.feet_per_square = 10.0
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        # 2 squares is 20 ft on this map: closeness 1/3.
+        assert draws[-1][1]((5, 2)) == pytest.approx(0.7 + 0.3 / 3)
+
+    def test_teamwork_draws_a_support_closer_to_the_heavy(self) -> None:
+        # With no teamwork the cells are worth the same, and the near one is a
+        # longer walk. Teamwork is what brings the Ammo in.
+        def goal_at(teamwork: int) -> tuple[int, int] | None:
+            ammo = _placed("ammo", (5, 11), teamwork=teamwork)
+            _remember(ammo, "red_heavy", (5, 0), 100, "heavy")
+            ctx = _grid_map(sight={"5,0": {"5,2", "5,8"}}, counts={"5,2": 1, "5,8": 1})
+            return mode_goal(ammo, [ammo, _placed("heavy", (9, 9))], "blue", ctx, 100)
+
+        assert goal_at(0) == (5, 8)
+        assert goal_at(100) == (5, 2)
+
+    def test_a_drawn_goal_is_held_until_reached(self) -> None:
+        medic, everyone, ctx = _defense_scene()
+        goal = _choose(medic, everyone, ctx)
+        assert medic._committed_goal == (goal, False, HELD_GOAL_EXPIRY)
+
+    def test_the_heavys_true_cell_is_not_used_when_remembered_elsewhere(
+        self, draws: list
+    ) -> None:
+        medic, everyone, ctx = _defense_scene()
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        assert (9, 8) not in draws[-1][0]
+
+
+@pytest.mark.usefixtures("best_draw")
+class TestDefenseFallsBackToControl:
+    def _control_cells(self, support: PlayerState, everyone: list, ctx: MapContext):
+        """The goal, which on this map only the Control rule's (1, 1) can be."""
+        return mode_goal(support, everyone, "blue", ctx, 100)
+
+    def test_no_memory_of_the_heavy(self) -> None:
+        # The Heavy is on the floor at (9, 9), and that is not known.
+        medic, everyone, ctx = _defense_scene(heavy_seen=None)
+        assert self._control_cells(medic, everyone, ctx) == (1, 1)
+        assert medic._goal_was_drawn is True
+
+    def test_a_stale_memory_of_the_heavy(self) -> None:
+        medic, everyone, ctx = _defense_scene(heavy_seen=100 - 121)
+        assert self._control_cells(medic, everyone, ctx) == (1, 1)
+
+    def test_a_memory_at_the_staleness_limit_still_counts(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene(heavy_seen=100 - 120)
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        assert draws[-1][0] == [(5, 2), (5, 3), (5, 6)]
+
+    def test_a_heavy_entry_without_a_cell(self) -> None:
+        medic, everyone, ctx = _defense_scene()
+        medic.player_memory["red_heavy"]["cell"] = None
+        assert self._control_cells(medic, everyone, ctx) == (1, 1)
+
+    def test_no_reachable_cell_sees_the_heavy(self) -> None:
+        medic, everyone, ctx = _defense_scene()
+        ctx.sight_data = {"5,0": frozenset({"99,99"})}  # off the floor
+        assert self._control_cells(medic, everyone, ctx) == (1, 1)
+        assert medic._goal_was_drawn is True
+
+    def test_the_enemy_heavys_memory_does_not_count(self) -> None:
+        medic, everyone, ctx = _defense_scene(heavy_seen=None)
+        _remember(medic, "blue_heavy", (5, 0), 100, "heavy")
+        everyone.append(_enemy("heavy"))
+        assert self._control_cells(medic, everyone, ctx) == (1, 1)
+
+    def test_the_heavy_not_in_all_alive(self) -> None:
+        medic, everyone, ctx = _defense_scene()
+        assert self._control_cells(medic, [medic], ctx) == (1, 1)
+
+    def test_the_heavy_eliminated_earlier_this_tick(self) -> None:
+        # all_alive is built at tick start, so it can still hold the Heavy.
+        medic, everyone, ctx = _defense_scene()
+        everyone[1].final_lives = 0
+        assert self._control_cells(medic, everyone, ctx) == (1, 1)
+
+    def test_the_fallback_holds_a_reached_goal_like_control(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene(heavy_seen=None)
+        medic.cell_row, medic.cell_col = 1, 1
+        medic._committed_goal = ((1, 1), False, HELD_GOAL_EXPIRY)
+        assert mode_goal(medic, everyone, "blue", ctx, 100) == (1, 1)
+        assert medic.mode_hold_until == 120
+        assert draws == []
+
+    def test_seeing_the_heavy_ends_a_fallback_hold(self) -> None:
+        medic, everyone, ctx = _defense_scene(heavy_seen=None)
+        medic.cell_row, medic.cell_col = 1, 1
+        medic._committed_goal = ((1, 1), False, HELD_GOAL_EXPIRY)
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        _remember(medic, "red_heavy", (5, 0), 105, "heavy")
+        assert mode_goal(medic, everyone, "blue", ctx, 105) != (1, 1)
+        assert medic.mode_hold_until is None
+
+    def test_a_goal_reached_with_the_heavy_in_memory_is_not_held(
+        self, draws: list
+    ) -> None:
+        # Holding is the Control rule's: the Defense rule draws again on arrival.
+        medic, everyone, ctx = _defense_scene()
+        medic.cell_row, medic.cell_col = 5, 2
+        medic._committed_goal = ((5, 2), False, HELD_GOAL_EXPIRY)
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        assert len(draws) == 1
+        assert medic.mode_hold_until is None
 
 
 def _sight_map(sight_data: dict[str, frozenset[str]] | None) -> MapContext:

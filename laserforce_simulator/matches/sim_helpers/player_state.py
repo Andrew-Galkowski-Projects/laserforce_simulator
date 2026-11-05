@@ -312,6 +312,6 @@ class PlayerState:
     # resupply_synergy: keeps support pairs together; scales double-resupply chance
 
     # ------ Stats wired in MECH-06 ------
-    # teamwork: scales ally-cover bias in _goal_from_role (pathfinding.py)
+    # teamwork: the Defense closeness term in modes.mode_goal (MECH-07)
     # communication: % chance to broadcast spotted enemy positions to nearby teammates
     # Global broadcasts: nuke activation, score delta every 3 min, medic-under-fire alert

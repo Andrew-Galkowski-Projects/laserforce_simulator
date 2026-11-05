@@ -272,8 +272,8 @@ def plan_action(
     # Copy the module constant — plan_action mutates the list in place.
     weights = list(BASELINE_ACTION_WEIGHTS)
 
-    # MECH-06 wired: teamwork bias in pathfinding._goal_from_role; communication
-    # broadcast in simulation.py tick loop; memory updated from LOS + global broadcasts.
+    # MECH-06 wired: communication broadcast in simulation.py tick loop; memory updated
+    # from LOS + global broadcasts. Teamwork reaches goals through modes.mode_goal.
 
     if time_domain == "ticks":
         from .time_constants import TICKS_PER_ROUND

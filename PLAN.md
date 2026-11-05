@@ -198,10 +198,9 @@ whether the deficit's size scales it.
 
 ### SM5-06 · Control-zone positioning (positioning)
 
-positioning is never read. Bias movement goals toward control cells over neutral ones ("why am
-I here?"), and set how far forward to play from a player's own shots and lives. **Open
-questions:** what a control zone is in the existing zone/LOS model; how "how far forward"
-shares work with SM5-03(a). Once zones are defined, the three zone synergies (rejected for
+`positioning` sets how sharply a player draws a goal (MOVE-06), and MECH-07 defines Control cells
+and the Control value rule. What is left is how far forward to play, set from a player's own shots
+and lives. **Open question:** how "how far forward" shares work with SM5-03(a). Once zones are defined, the three zone synergies (rejected for
 LFS-02) are candidate modifiers here.
 
 ### SM5-07 · Nuke call-outs and reaction delay (communication)
@@ -556,8 +555,6 @@ Now that memory (MECH-06) and communication are implemented, players should **ch
 based on new information they receive, rather than following static role scripts. Concrete behaviours
 to encode:
 
-- **Scouts** push in past the Heavy when the Heavy is down.
-- **Commander** takes space when the Heavy is down.
 - **Ammo** can resupply the Heavy for free when the Commander is down.
 - **Down call-outs with a location** (from LFS-02): "commander down at big box" sends teammates
   to finish the downed enemy. Memory entries already carry `downed` / `reset_window` status;
@@ -750,6 +747,14 @@ and 4.4% of a Medic's: `resupply_ally` walks a support to the neediest ally even
     Attack excludes only `downed` targets.
 28. **Seams:** a new pure module `sim_helpers/modes.py` (`Mode`, `default_mode`, `update_mode`,
     `mode_goal`, `apply_mode_weights`, `trail_costs`) and `astar_path(..., extra_costs=None)`.
+
+### MECH-17 · Action-choice sweep
+
+Moved out of MOVE-07 by MECH-07's decision 8, to run right after MECH-07. **Full sweep of the
+action-choice logic.** Review the weighted **Action** selection end to end (weights, role scripts,
+carry-over of hide / hold, how memory and comms feed in) for flat or unrealistic behaviour, and fix
+what the sweep finds. It overlaps `MECH-14`; settle in this task's grill whether it absorbs that
+task or stays a sweep that feeds it. MECH-07 added only the small per-Mode weight table.
 
 ---
 

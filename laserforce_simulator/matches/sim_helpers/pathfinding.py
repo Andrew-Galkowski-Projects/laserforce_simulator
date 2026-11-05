@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import heapq
-import random
 from collections.abc import Mapping
 from typing import Any, TYPE_CHECKING
 
@@ -11,7 +10,13 @@ if TYPE_CHECKING:
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
-from .modes import Mode, attack_tag_goal, mode_goal, trail_costs
+from .modes import (
+    DEFENSE_RESUPPLY_SHARE,
+    Mode,
+    attack_tag_goal,
+    mode_goal,
+    trail_costs,
+)
 from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
     HELD_GOAL_EXPIRY,
@@ -456,71 +461,13 @@ def _find_enemy_commander_in_memory(
     return _cell_from_memory(player, commander_tag, second, time_domain)
 
 
-def _apply_teamwork_bias(
-    player,
-    goal: "tuple[int, int] | None",
-    all_alive: list,
-    cell_row: int,
-    cell_col: int,
-    movement_ctx: "MapContext",
-) -> "tuple[int, int] | None":
-    """Gently bias goal toward high-LOS cells also visible to ≥1 living ally.
-
-    Only applied when teamwork > 50. Returns a modified goal or the original goal.
-    """
-    teamwork = getattr(player, "teamwork", 50)
-    if teamwork <= 50:
-        return goal
-
-    # Find living allies
-    allies = [
-        p
-        for p in all_alive
-        if p.team_color == player.team_color
-        and p is not player
-        and p.final_lives > 0
-        and p.cell_row is not None
-    ]
-    if not allies:
-        return goal
-
-    sight_data = movement_ctx.sight_data or {}
-
-    # Check if the current goal is already in LOS of an ally
-    if goal is not None:
-        goal_key = f"{goal[0]},{goal[1]}"
-        for ally in allies:
-            ally_key = f"{ally.cell_row},{ally.cell_col}"
-            ally_visible = sight_data.get(ally_key, frozenset())
-            if goal_key in ally_visible:
-                return goal  # already ally-visible, no bias needed
-
-    # Find high-LOS cells also visible to at least one ally
-    high_los_cells = movement_ctx.get_high_los_cells()
-    if not high_los_cells:
-        return goal
-
-    # Build set of cells visible from any ally
-    ally_visible_cells: set = set()
-    for ally in allies:
-        ally_key = f"{ally.cell_row},{ally.cell_col}"
-        for cell_str in sight_data.get(ally_key, frozenset()):
-            ally_visible_cells.add(cell_str)
-
-    teamwork_cells = [
-        rc for rc in high_los_cells if f"{rc[0]},{rc[1]}" in ally_visible_cells
-    ]
-    if not teamwork_cells:
-        return goal
-
-    # With probability teamwork/100, choose the teamwork goal instead
-    teamwork_prob = teamwork / 100.0
-    if random.random() < teamwork_prob:
-        tw_goal = _nearest_cell(cell_row, cell_col, teamwork_cells)
-        if tw_goal:
-            return tw_goal
-
-    return goal
+def _resupply_share(ally, supporter_role: str) -> float:
+    """How full *ally* is of what the supporter restores: a Medic lives, an Ammo shots."""
+    if supporter_role == "medic":
+        return ally.final_lives / max(
+            1, getattr(ally, "max_lives", ally.starting_lives)
+        )
+    return ally.final_shots / max(1, getattr(ally, "max_shots", ally.starting_shots))
 
 
 def _goal_from_action(
@@ -581,18 +528,15 @@ def _goal_from_action(
             and p is not player
         ]
         if allies:
-            if player.role == "medic":
-                target = min(
-                    allies,
-                    key=lambda p: p.final_lives
-                    / max(1, getattr(p, "max_lives", p.starting_lives)),
-                )
-            else:
-                target = min(
-                    allies,
-                    key=lambda p: p.final_shots
-                    / max(1, getattr(p, "max_shots", p.starting_shots)),
-                )
+            shares = {id(p): _resupply_share(p, player.role) for p in allies}
+            target = min(allies, key=lambda p: shares[id(p)])
+            # MECH-07: in Defense a support walks only to an ally who needs it, and
+            # otherwise takes its place around the Heavy (mode_goal).
+            if (
+                player.mode is Mode.DEFENSE
+                and shares[id(target)] > DEFENSE_RESUPPLY_SHARE
+            ):
+                return None
             return (target.cell_row, target.cell_col)
 
     elif intended_action == "hide":
@@ -611,67 +555,12 @@ def _goal_from_role(
     player,
     all_alive: list,
     enemy_color: str,
-    cell_row: int,
-    cell_col: int,
     movement_ctx: "MapContext",
     second: float = 0.0,
-    nuke_active: bool = False,
     time_domain: str = "seconds",
 ) -> tuple[int, int] | None:
-    """Return the positioning goal cell, or None: MECH-07's ``modes.mode_goal``.
-
-    Teamwork bias applies only to the Defense branch, at the end (when teamwork
-    > 50 and not nuke_active): it reads teammates' true cells, which a Mode must
-    not, and would move a Control player off a held cell.
-    """
-    if player.mode is not Mode.DEFENSE or player.role not in ("medic", "ammo"):
-        return mode_goal(
-            player, all_alive, enemy_color, movement_ctx, second, time_domain
-        )
-
-    # A Medic or Ammo in Defense keeps the role logic and the teamwork bias until
-    # MECH-07c (#545) gives Defense its own rule.
-    cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
-    goal: tuple[int, int] | None = None
-    # MOVE-06: the positioning pick below is a scored draw (goal_scoring);
-    # a drawn goal is held until reached (choose_goal_cell's commitment).
-    player._goal_was_drawn = False
-
-    heavy = _find_role(all_alive, player.team_color, "heavy")
-    if heavy and heavy.cell_row is not None:
-        heavy_visible = movement_ctx.cells_visible_from(
-            (heavy.cell_row, heavy.cell_col)
-        )
-        if heavy_visible and cell_los_counts:
-            # Medic: hidden cells the Heavy can see score higher. Ammo: open ones.
-            goal = draw_goal(
-                player,
-                heavy_visible,
-                (
-                    (lambda cell: 1.0 - movement_ctx.los_rank(cell))
-                    if player.role == "medic"
-                    else movement_ctx.los_rank
-                ),
-                all_alive,
-                movement_ctx,
-                second,
-            )
-            player._goal_was_drawn = goal is not None
-        if goal is None:
-            goal = (heavy.cell_row, heavy.cell_col)
-
-    # MECH-06: teamwork bias — only when not in a nuke-reaction tick
-    if not nuke_active and goal is not None:
-        biased = _apply_teamwork_bias(
-            player, goal, all_alive, cell_row, cell_col, movement_ctx
-        )
-        if biased != goal:
-            # MOVE-06: the bias's nearest teamwork cell was not drawn, so it
-            # keeps the 4-tick cadence instead of being held.
-            player._goal_was_drawn = False
-        goal = biased
-
-    return goal
+    """Return the positioning goal cell, or None: MECH-07's ``modes.mode_goal``."""
+    return mode_goal(player, all_alive, enemy_color, movement_ctx, second, time_domain)
 
 
 def choose_goal_cell(
@@ -693,19 +582,15 @@ def choose_goal_cell(
        - tag_player / missile_player: in Attack the nearest remembered enemy Medic or
          Ammo, then the nearest remembered enemy, then the nearest enemy's true cell.
        - resupply_ally: Medic → neediest ally by lives; Ammo → neediest ally by shots.
+         In Defense, only when that ally is at or below 75% of the resource.
        - hide: move to the safest adjacent cell (lowest LOS count).
     3. Positioning (for only_move, capture_base, use_special, or fallback), by the
-       player's Mode: ``modes.mode_goal``, which covers Attack, Control and the
-       low-health Heavy, written out in docs/agents/matches/sim-helpers.md.
-       Until #545, a Medic or Ammo in Defense keeps the role logic:
-       - Medic: a drawn cell in the allied Heavy's visible set, hidden ones first.
-       - Ammo: a drawn cell in the allied Heavy's visible set, open ones first.
-       MOVE-06: "drawn" is goal_scoring.draw_goal, held until reached.
+       player's Mode: ``modes.mode_goal``, written out in
+       docs/agents/matches/sim-helpers.md.
+       MOVE-06: its draws are goal_scoring.draw_goal, held until reached.
     4. Default: a drawn floor cell within 15 ft of the enemy base.
 
-    MECH-06 additions:
-    - teamwork bias applied to step 3's Defense branch (when teamwork > 50 and not
-      nuke-reacting).
+    MECH-06 addition:
     - score broadcast override: winning + low lives + medic alive + second >= 360 → seek medic.
     """
     enemy_color = "blue" if player.team_color == "red" else "red"
@@ -861,11 +746,8 @@ def choose_goal_cell(
             player,
             all_alive,
             enemy_color,
-            cell_row,
-            cell_col,
             movement_ctx,
             second,
-            nuke_active=nuke_active,
             time_domain=time_domain,
         )
 
