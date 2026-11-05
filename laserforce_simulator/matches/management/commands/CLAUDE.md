@@ -110,7 +110,10 @@ Match looks like mid-Season). The mapped Single Round plays on "Browser Check Ar
 map (zone size 20) whose PNG is drawn in code with PIL (no `media/` file needed) and uploaded via
 `core/services.py::upload_map`, then given a confirmed zone config with red/blue bases, sight lines
 and base sight lines, so `load_map_context` resolves. The Round is upgraded to `fidelity="full"`
-(movement events) for Playback's map, the heatmap and map-editor checks. Its first missile hit
+(movement events) for Playback's map, the heatmap and map-editor checks. A real Round can fire no
+missile, so `create_mapped_round` simulates up to `MISSILE_ROUND_ATTEMPTS` (5) times. If none fires, it
+keeps the last Round and the summary prints a warning: a short Round (the Tournament tests' 40 ticks)
+fires none, and the rest of the seed must still run. Its first missile hit
 (or first missile) is flagged `friendly_fire` by `mark_friendly_fire_missile`, so the Missile log
 shows one tinted Friendly-fire row; only the flag changes, actor and target stay as simulated
 (ANG-06-10 retro). The map-less Single Round
