@@ -305,6 +305,8 @@ def load_map_context(
         wall_meta=md.wall_meta,
         team_spawn_pools=reachable_spawn_pools(md.spawn_pools, md.spawn_cells, adj),
         elevation_grid=md.elevation_grid,
+        # MOVE-08: a square's real-world size, from the map's drawing scale.
+        feet_per_square=md.zone_size * arena_map.feet_per_pixel,
     )
 
     return movement_ctx, md.zone_size

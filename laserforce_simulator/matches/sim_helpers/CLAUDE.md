@@ -11,6 +11,7 @@ Paths are relative to the repo root.
 - `RoundContext`, the per-round mutable bundle — `docs/agents/matches/sim-helpers.md#round_contextpy`
 - life loss, `record_down`, medic-reset chain, nuke cancellation — `docs/agents/matches/sim-helpers.md#downpy`
 - Follow rule: Trails, Chases, `may_tag` (MECH-10) — `docs/agents/matches/sim-helpers.md#follow_rulepy`
+- Downed option: Stay hidden / Shuffle to cover / Make a trail, the tunable formula (MOVE-08) — `docs/agents/matches/sim-helpers.md#downed_optionpy`
 - shot resolver, hit roll, follow-ups, reactions, Overwatch shot — `docs/agents/matches/sim-helpers.md#shotpy`
 - `PlayerState` fields, transient caches, uptime counters, baked stats — `docs/agents/matches/sim-helpers.md#player_statepy`
 - action weights, weight layout, role baselines, weight-safety rules — `docs/agents/matches/sim-helpers.md#weightspy`

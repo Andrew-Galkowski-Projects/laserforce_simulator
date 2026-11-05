@@ -708,6 +708,14 @@ round, Heavy reset-window tags 58 -> 45. Players moved 1-10 squares a tick (10-1
     (2) the Downed option on the feet distances. Seeded outcomes change a lot (movement about
     4x slower); CAL-01 and the LFS-01 calibration carry it.
 
+**Grill round 5 (owner, 2026-11-04):** the full design on Syracuse (4 rounds): Downs that
+move off 27% (from ~5%), options 73% Stay / 3% Shuffle / 23% Trail, Follow rule bans 22 a
+round, Medic survival 512 s (from ~384, mostly the slower movement). A 10 ft shuffle only
+reaches 33%: Syracuse's long sight lines leave little cover within a square or two.
+33. **Accept the 5 ft shuffle**; the seeded test asserts more than 20% of Downs move off.
+34. **Cover stays "no remembered enemy sees it"**; a fewer-watchers cover is a CAL-01 /
+    MECH-07 tuning.
+
 ### MOVE-06 · Goal-location noise to reduce balling-up
 
 **Prio: Medium (found 2026-06-25).** Players **ball up** because role-aware goal

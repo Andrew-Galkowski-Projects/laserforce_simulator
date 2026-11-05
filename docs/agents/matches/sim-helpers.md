@@ -66,7 +66,7 @@ Built once in `BatchSimulator._simulate_round` after the four pending-event queu
 
 ## down.py
 
-`record_down(player, tick, ctx)` is the **single life-loss bookkeeping chokepoint**. Pure free function; no Django imports; the only sibling sim_helper imports are `round_context` and `pending_events`. Lifted from `BatchSimulator._record_down` by the shot-resolver consolidation (May 2026) — the static→instance hack RV-02 introduced is structurally unnecessary now that `event_log` and `pending_nukes` ride on `ctx`.
+`record_down(player, tick, ctx, *, tagger=None)` is the **single life-loss bookkeeping chokepoint**. **MOVE-08:** `tagger` (the Tag / Missile shooter, the Nuke's Commander) feeds the Downed option; `record_down` clears `is_hiding` and calls `downed_option.choose_downed_option` before the `last_downed_time` stamp. Pure free function; no Django imports; the only sibling sim_helper imports are `round_context` and `pending_events`. Lifted from `BatchSimulator._record_down` by the shot-resolver consolidation (May 2026) — the static→instance hack RV-02 introduced is structurally unnecessary now that `event_log` and `pending_nukes` ride on `ctx`.
 
 **Six behaviours, in evaluation order:**
 
@@ -87,17 +87,47 @@ EventLog candidate: the medic_reset and nuke_cancelled emits route through `ctx.
 
 ## follow_rule.py
 
-**MECH-10 Follow rule** (spec #534; GLOSSARY.md **Follow rule**, **Trail**, **Chase**). Pure, Django-free, no RNG. A Downed or Resupplied player leaves a **Trail**: their path from the Down / Resupply until Active again (`last_downed_time + RESPAWN_TICKS`), widened to every cell within `TRAIL_HALF_WIDTH_SQUARES` (6) squares' walk over the 4-connected movement adjacency, so it never passes a wall. An enemy who advances `FOLLOW_LIMIT_SQUARES` (10) along the path while inside the band is barred from Tagging that player until `FOLLOW_GRACE_TICKS` (4, 2 s) after they are Active.
+**MECH-10 Follow rule** (spec #534; GLOSSARY.md **Follow rule**, **Trail**, **Chase**). Pure, Django-free, no RNG. A Downed or Resupplied player leaves a **Trail**: their path from the Down / Resupply until Active again (`last_downed_time + RESPAWN_TICKS`), widened to every cell within `TRAIL_HALF_WIDTH_FEET` (6 ft) of walking over the 4-connected movement adjacency, so it never passes a wall. An enemy who advances `FOLLOW_LIMIT_FEET` (10 ft) along the path while inside the band is barred from Tagging that player until `FOLLOW_GRACE_TICKS` (4, 2 s) after they are Active. **MOVE-08:** the distances are feet, turned into squares by the round's map (`MapContext.squares`): on Syracuse (5 ft a square) a Chase is 2 squares and the band 1 square either side.
 
-- `start_trail(player, tick, adjacency)` — from `record_down` (every Down) and `combat._reset_resupplied` (the receiver of either Resupply branch), **before** `last_downed_time` is stamped. Not yet Active: the open Trail is kept (it grows to the later Active tick; Chases and bans carry over). Otherwise a fresh `Trail(start_tick=tick)` at the player's cell, which ends every ban on the old one. No-op with no map (`adjacency is None`) or no cell.
-- `record_step(player, step_cells, tick, all_alive, adjacency)` — from `BatchSimulator._advance_player` after `_move_player_in_memory`, only when the cell changed, with `[start, *player._last_step_cells]`. Grows the mover's own open Trail and, for each enemy with an open Trail, adds forward progress: for consecutive step cells inside the band, `max(0, index - previous index)` of their nearest path cells; a cell outside the band resets "previous", so distance outside never counts. 10+ sets `Chase.banned` / `banned_at`.
+- `start_trail(player, tick, movement_ctx)` — from `record_down` (every Down) and `combat._reset_resupplied` (the receiver of either Resupply branch), **before** `last_downed_time` is stamped. Not yet Active: the open Trail is kept (it grows to the later Active tick; Chases and bans carry over). Otherwise a fresh `Trail(start_tick=tick)` at the player's cell, which ends every ban on the old one. No-op with no map (`movement_ctx is None`) or no cell.
+- `record_step(player, step_cells, tick, all_alive, movement_ctx)` — from `BatchSimulator._advance_player` after `_move_player_in_memory`, only when the cell changed, with `[start, *player._last_step_cells]`. Grows the mover's own open Trail and, for each enemy with an open Trail, adds forward progress: for consecutive step cells inside the band, `max(0, index - previous index)` of their nearest path cells; a cell outside the band resets "previous", so distance outside never counts. Reaching `squares(FOLLOW_LIMIT_FEET)` sets `Chase.banned` / `banned_at`.
 - `may_tag(attacker, target, tick) -> bool` — False while the attacker holds a ban on the target's **current** Trail and `tick < target.last_downed_time + RESPAWN_TICKS + FOLLOW_GRACE_TICKS`. Read by `choose_tag_target` (before the draw), the `resolve_shot` Phase 1 gate (all four kinds: no Shot at all, like a non-Taggable target), `_collect_overwatch_attempts` (a barred mover draws no Overwatch, so the holder keeps its one shot a tick for a legal mover), the Missile candidate list in `plan_action`, and the `_complete_missile` gate. Nukes are exempt. Duck-typed players without the state (`PlayerRoundState`) are never barred.
 - `chased_tag_ids(attacker, all_alive, tick)` — the barred `tag_id_key`s, for goal selection: `_goal_from_action`'s `tag_player` / `missile_player` branch (memory via `_known_enemies_from_memory(exclude=...)`, then the perfect-knowledge list) and the Commander's enemy-Medic goal (`_enemy_medic_goal`, both call sites) skip them.
-- `trail_adjacency(ctx)` — the adjacency from a `RoundContext`'s `movement_ctx`, or None.
+- `round_map(ctx)` — the round's `MapContext` from a `RoundContext`, or None (no context / no map).
 
-State is transient on `PlayerState` (`_trail`, `_chases`), never flushed. A `Trail`'s `band` maps each covered cell to a `BandCell(distance, path_index)`. A combo Resupply calls `attempt_resupply` twice on one tick with the receiver's old `last_downed_time` restored in between, so the second call starts a fresh Trail rather than extending; it has the same start tick and one-cell path, so Chases keyed on it are unaffected. **Found by the MECH-10 probe:** Downed players move in only about 5% of their Downed ticks (pre-Down hide / hold / capture_base carry over, or the goal is already reached), so Trails average 2-3 cells and the rule rarely fires; MOVE-08 tracks it.
+State is transient on `PlayerState` (`_trail`, `_chases`), never flushed. A `Trail`'s `band` maps each covered cell to a `BandCell(distance, path_index)`. A combo Resupply calls `attempt_resupply` twice on one tick with the receiver's old `last_downed_time` restored in between, so the second call starts a fresh Trail rather than extending; it has the same start tick and one-cell path, so Chases keyed on it are unaffected. **Found by the MECH-10 probe:** Downed players move in only about 5% of their Downed ticks (pre-Down hide / hold / capture_base carry over, or the goal is already reached), so Trails average 2-3 cells and the rule rarely fires; MOVE-08's Downed option (below) answers it.
 
-**Tests:** `matches/tests/test_follow_rule.py` — hand-built grids for the rule, the engine refusal at every gate and goal, and seeded 12x12 rounds (bans form; a spy on the tag / missiled emits finds no hit on a barred target).
+**Tests:** `matches/tests/test_follow_rule.py` — hand-built grids at 1 ft a square (so the feet read as squares), a 5 ft-a-square `TestFeetScale`, the engine refusal at every gate and goal, and seeded 12x12 rounds (bans form; a spy on the tag / missiled emits finds no hit on a barred target).
+
+## downed_option.py
+
+**MOVE-08 Downed option** (spec #536, tickets #537 / #538; GLOSSARY.md **Downed option**). At every Down a player rolls one option and keeps to it until Active (`last_downed_time + RESPAWN_TICKS`); state is the transient `PlayerState.downed_plan` (`DownedPlan(option, spot, turn_cell, outbound, cover)`). Map-less rounds: inert.
+
+- **Stay hidden** (`STAY_HIDDEN`): `is_hiding = True` on the Down cell for the whole Down (the 50% hide-miss applies; the action roll does not clear it while the plan is live).
+- **Shuffle to cover** (`SHUFFLE_TO_COVER`): the nearest cell by walking, within `SHUFFLE_MAX_FEET` (5 ft), that no remembered enemy (`_known_enemies_from_memory`, tick domain) can see (`MapContext.can_see`); ties by (row, col). No remembered enemy, no such cell, or already in cover ⇒ Stay hidden. Re-picked from the current cell when a remembered enemy can now see the cover (none ⇒ Stay hidden there).
+- **Make a trail** (`MAKE_A_TRAIL`): walk to a turn cell `TRAIL_FEET` (10 ft) away by walking (the farthest reachable within it when none is that far), then back to the spot, so a following enemy becomes a MECH-10 Chaser. Turn-cell tie-break: farthest from the tagger by walking, then straight line, then (row, col). Allowed only when the tagger is more than `TAGGER_MIN_FEET` (10 ft) away by walking (no tagger counts as allowed).
+
+### Downed option formula (tunable)
+
+One `random.random()` draw at the Down over the normalised weights, in the order stay, shuffle, trail:
+
+```
+stay    = STAY_BASE_WEIGHT (20) x (1.5 - p) x (1.5 - (speed + stamina) / 200)   # 5 .. 45
+shuffle = SHUFFLE_WEIGHT (50)
+trail   = TRAIL_WEIGHT (30) if allowed else 0
+```
+
+`p` is the Down cell's sight-line rank, `MapContext.los_rank(cell)`: the share of the other cells with a lower `cell_los_counts` value (0 = most hidden, 1 = most open). A Shuffle that resolves to no cover becomes Stay hidden after the roll (no second draw). After a **Resupply**, `RESUPPLY_TRAIL_CHANCE` (0.25) to Make a trail, drawn only when no enemy is within `TAGGER_MIN_FEET` by walking (the trail runs away from the nearest enemy and returns to the resupply cell); a combo Resupply rolls once (`PlayerState.resupply_rolled_at`). Every constant lives at the top of `downed_option.py`; distances are feet, turned into squares by `MapContext.squares`.
+
+- `choose_downed_option(player, tagger, tick, ctx)` — from `record_down` (which first clears `is_hiding`); `tagger` is the Tag / Missile shooter or the Nuke's Commander (`record_down(..., tagger=...)`). A Reset-window Down rolls afresh from the new cell.
+- `choose_resupply_trail(player, tick, ctx)` — from `combat._reset_resupplied`, after the stamp; clears any stale plan first.
+- `downed_goal(player, tick, movement_ctx)` — read by `choose_goal_cell` as step **1a** (after step 0's nuke reaction and step 1's critical resource, before 1b, the MOVE-04 commitment and steps 2-4). At Active it clears the plan and the commitment and returns None.
+- `plan_is_live(player, tick)` / `active_before_nuke(player)` — step 0's nuke reaction overrides a live plan only when `last_downed_time + RESPAWN_TICKS <= nuke_detonates_at - 1` (`round_loop._apply_nuke_reaction_flags` stores the earliest detonation tick on each target player).
+- **Stationary while Downed:** while the plan is live, `_advance_player` freezes only Stay hidden's hide (hold / `capture_base` rolls do not freeze), and `BatchSimulator._apply_hide` does not set `is_hiding` for a moving option.
+
+Measured on Syracuse (4 seeded rounds, PLAN.md MOVE-08 round 5): Downs that move off 27% (from ~5%), options 73% Stay / 3% Shuffle / 23% Trail; cover within 5 ft is rare on Syracuse's long sight lines.
+
+**Tests:** `matches/tests/test_downed_option.py` — the formula, each option, the overrides, the resupply roll, the Stationary rules, `TestFeetScale` at 5 ft a square, engine wiring, and seeded Syracuse rounds (more than 20% of Downs move off).
 
 ## shot.py
 
@@ -189,6 +219,16 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 | `last_resupplied_at` | `int \| None` | Tick this player last received a Resupply; stamped by `combat.attempt_resupply` on the receiver (Ammo and Medic branches) |
 | `downs_taken` | `int` | Downs this round, counted in `record_down` |
 | `downs_in_resupply_cooldown` | `int` | Downs within `RESPAWN_TICKS` of `last_resupplied_at` (the resupply death % numerator in `score_averages`) |
+| `_trail` / `_chases` | `Trail \| None` / `dict` | The Follow rule's open Trail and, as attacker, Chase progress per enemy (`follow_rule`) |
+
+### MOVE-08 transient fields (no DB columns)
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `downed_plan` | `DownedPlan \| None` | The Downed option rolled at the last Down / Resupply (`downed_option`); live while not Active |
+| `nuke_detonates_at` | `int \| None` | Earliest detonation tick of a pending Nuke aimed at this player's team, set each tick by `_apply_nuke_reaction_flags` |
+| `resupply_rolled_at` | `float \| None` | Tick of the last resupply-trail roll (a combo Resupply rolls once) |
+| `move_carry` | `float` | Fraction of a square carried to the next tick's Advance (`squares_this_tick`) |
 
 ### Role stat lookups
 
@@ -273,9 +313,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 
 **`astar_advance_cached(player, current, goal, adj, steps, elevation_data=None)` (MOVE-02, [ADR-0008](../../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md))** — the path-commitment variant used by `BatchSimulator`. Manages `player._path_cache` (transient `Optional[tuple]` — a `(cached_goal, remaining_cells, anchor)` 3-tuple, where `remaining_cells` is the route still to walk, same shape `astar_path` returns: excludes `current`, ends at `goal`; `anchor` is the cell the previous re-step left the player on). Runs a full `astar_path` recompute **iff** any of: cache `None`/empty, live `goal` ≠ cached goal, live `current` ≠ `anchor` (off-route displacement — *enforces* the off-path invariant rather than relying on it; no mechanic does this today), or `remaining[0] ∉ adj` (next cell blocked — map adjacency is immutable per round so this never fires in production); the BatchSim caller separately clears `_path_cache = None` at every tag / follow-up / reaction / missile / nuke life-loss site via the shared `BatchSimulator._record_down(player, second)` helper (knocked off-path → falls into the "cache None" recompute branch). A legacy 2-tuple cache (no anchor) is tolerated for hand-built test caches (the anchor check is skipped). Otherwise it **re-steps the committed route**: pops up to `steps` cells, stops at `goal` (no overshoot — identical traversal semantics to `astar_advance`), and clears the cache to `None` once the route is consumed (player has reached `goal`; next tick's fresh `choose_goal_cell` drives recompute-or-idle). Cache exhaustion and an `only_move` 2× `steps` are **not** recompute triggers. Consumes **no RNG**, so the SIM-07/SIM-08 serial == parallel / faithful Replay contract still holds (the transient cache never crosses the parallel-worker process boundary; the round is re-simulated in-worker). Called by `BatchSimulator._move_player_in_memory` in place of `astar_advance`. **MOVE-03 ([ADR-0009](../../../docs/adr/0009-hold-overwatch.md)):** the cells popped this tick (the player's traversed cells for this Advance, between the start and end cell) are also recorded on the transient `player._last_step_cells` so the `BatchSimulator` Overwatch resolution step can test whether the traversal crossed any **Hold**ing player's **Line of sight** — MOVE-01 otherwise discards the intermediate route (`movement_trail` keeps only `(start, end, tick)`), so this committed-route exposure is what makes the "moved *through* LoS in one Advance" guarantee resolvable. Recording it is pure bookkeeping — still **no RNG**, contract unchanged.
 
-**`max_movement_for_map(zone_data)`** — cells-per-tick ceiling scaled by map size: `max(rows, cols) // 10` clamped to **5..10** (PLAN.md STAT-03 Phase 1). `None`/empty → 5.
-
-**`cells_to_move(speed, zone_data)`** — `max(1, ceil(speed/100 * max_movement_for_map(zone_data)))`. The PLAN.md `speed`-stat formula; floored at 1 so a moving player is never frozen by a low `speed`. Called by `BatchSimulator._move_player_in_memory` with `getattr(player, "speed", 50)` (a baked `PlayerState.speed` field). **MOVE-01:** on an `only_move` tick the move function passes `cells_to_move(...) * 2` (one single 2× step, no other deliberate effect); every other non-**Stationary** Action still Advances the normal `cells_to_move(...)` distance. **MOVE-02:** the doubled `steps` is consumed along the **same** committed route via `astar_advance_cached` (the 2× is not a recompute trigger).
+**Player speed in feet (MOVE-08, replaces STAT-03's `max_movement_for_map` / `cells_to_move`).** `MAX_PLAYER_FEET_PER_SECOND = 10`. **`feet_per_second(player)`** — `10 x (0.5 + 0.5 x speed / 100)`: 5 ft/s at speed 0, 10 at 100 (1-2 squares a second on Syracuse's 5 ft squares; the old formula moved 1-10 squares a **tick**, 10-100 ft/s). **`squares_this_tick(player, movement_ctx, multiplier=1)`** — `feet_per_second x TICK_SECONDS / movement_ctx.feet_per_square x multiplier + player.move_carry`; the whole part moves and the fraction carries (`PlayerState.move_carry`), so a 1.5 squares-a-second player moves 0, 1, 1, 1 over four ticks, and a finer grid moves proportionally more squares. A 0-square tick skips the Advance. Called by `BatchSimulator._move_player_in_memory`. **MOVE-01:** an `only_move` tick passes `multiplier=2` (one single 2× step); every other non-**Stationary** Action Advances the normal distance. **MOVE-02:** the doubled `steps` is consumed along the **same** committed route via `astar_advance_cached` (the 2× is not a recompute trigger).
 
 **`_find_role(all_alive, team_color, role) -> Any`** — returns the first alive player on `team_color` with the given `role`, or `None`. Return type is `Any` (not `object`) because callers access duck-typed attributes (`cell_row`, `cell_col`, etc.).
 
@@ -437,10 +475,12 @@ The round report PDF (RV-03) and its chart section (RV-05). All three are pure (
 
 ### Fields (mirror the old dict keys)
 
-`adj`, `spawn_cells`, `zone_data`, `sight_data`, `base_sight_data`, `cell_los_counts`, `high_los_cells`, `strong_spots`, `wall_meta`, `team_spawn_pools`, `elevation_grid`.
+`adj`, `spawn_cells`, `zone_data`, `sight_data`, `base_sight_data`, `cell_los_counts`, `high_los_cells`, `strong_spots`, `wall_meta`, `team_spawn_pools`, `elevation_grid`, and (MOVE-08) `feet_per_square` — the real-world feet a square covers, `zone_size x ArenaMap.feet_per_pixel` from `load_map_context` (5.0, Syracuse's, for hand-built contexts and `from_dict`).
 
 ### Domain-level accessors
 
+- `squares(feet) -> int` (MOVE-08) — `max(1, round(feet / feet_per_square))`: every rule distance (Follow rule, Downed option) is a feet constant turned into this map's squares, so the scale holds on any grid size.
+- `los_rank(cell) -> float` (MOVE-08) — the share of the other cells whose LOS count is lower (0 = most hidden, 1 = most open); the sorted counts are cached on the context. Feeds the Downed option's Stay hidden weight.
 - `can_see(from_cell, to_cell) -> bool` — frozenset lookup in `sight_data`.
 - `elevation_at(r, c) -> float` — safe `elevation_grid` access, returns 0.0 on None/OOB.
 - `base_in_range(cell) -> int | None` — checks `base_sight_data`; returns 15/14/None.

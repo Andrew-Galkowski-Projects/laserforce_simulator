@@ -299,7 +299,7 @@ def resolve_shot(
             if defender.role == "commander" and defender.special_active_until > tick:
                 defender.special_active_until = 0
             defender.final_lives = max(0, defender.final_lives - 1)
-            record_down(defender, tick, ctx)
+            record_down(defender, tick, ctx, tagger=attacker)
             defender.shields = defender.max_shields
             eliminated = defender.final_lives <= 0
             if eliminated:

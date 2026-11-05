@@ -15,23 +15,38 @@ from typing import Any
 import pytest
 
 from matches.sim_helpers.follow_rule import may_tag, record_step, start_trail
+from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.time_constants import RESPAWN_TICKS
 
 GRACE = 4
 
 
-def _grid(rows: list[str]) -> dict:
-    """4-connected adjacency over the ``.`` cells of ``rows``."""
+def _grid(rows: list[str]) -> MapContext:
+    """A map over the ``.`` cells of ``rows`` (4-connected) at 1 ft a square,
+    so the rule's feet read as squares: a 10-square Chase, a 6-square band."""
     floor = {
         (r, c) for r, line in enumerate(rows) for c, ch in enumerate(line) if ch == "."
     }
-    return {
+    adjacency = {
         (r, c): [
             n for n in ((r - 1, c), (r + 1, c), (r, c - 1), (r, c + 1)) if n in floor
         ]
         for (r, c) in floor
     }
+    return MapContext(
+        adj=adjacency,
+        spawn_cells={},
+        zone_data=None,
+        sight_data=None,
+        base_sight_data={},
+        cell_los_counts={},
+        high_los_cells=[],
+        strong_spots=[],
+        wall_meta={},
+        team_spawn_pools={},
+        feet_per_square=1.0,
+    )
 
 
 OPEN = _grid(["." * 40] * 25)
@@ -57,7 +72,7 @@ def _ps(tag: str, team: str, cell: tuple[int, int]) -> PlayerState:
     return p
 
 
-def _down(player: PlayerState, tick: int, adj: dict) -> None:
+def _down(player: PlayerState, tick: int, adj: MapContext) -> None:
     """What ``record_down`` does for the rule: start the Trail, then stamp."""
     start_trail(player, tick, adj)
     player.last_downed_time = tick
@@ -375,15 +390,10 @@ class TestEngineRefusesBarredTags(_Barred):
 
 class TestDownAndResupplyStartTrails(unittest.TestCase):
     def _ctx(self):
-        from types import SimpleNamespace
-
         from matches.sim_helpers.event_log import EventLog
         from matches.sim_helpers.round_context import RoundContext
 
-        return RoundContext(
-            events=EventLog(persist=False),
-            movement_ctx=SimpleNamespace(get_adjacency=lambda: OPEN),
-        )
+        return RoundContext(events=EventLog(persist=False), movement_ctx=OPEN)
 
     def test_record_down_starts_a_trail(self) -> None:
         from matches.sim_helpers.down import record_down
@@ -430,8 +440,8 @@ class TestSeededRoundOnAMap:
         bans: list = []
         violations: list = []
 
-        def spy_step(player, step_cells, tick, all_alive, adjacency):
-            follow_rule.record_step(player, step_cells, tick, all_alive, adjacency)
+        def spy_step(player, step_cells, tick, all_alive, movement_ctx):
+            follow_rule.record_step(player, step_cells, tick, all_alive, movement_ctx)
             bans.extend(c for c in player._chases.values() if c.banned_at == tick)
 
         real_tag, real_missiled = EventLog.tag, EventLog.missiled
@@ -479,7 +489,6 @@ class TestComboResupply(unittest.TestCase):
     same one-cell path, so a Chase keyed on it is unaffected."""
 
     def test_combo_resupply_leaves_one_trail_from_that_tick(self) -> None:
-        from types import SimpleNamespace
         from unittest import mock
 
         from matches.sim_helpers import resupply_queue
@@ -492,10 +501,7 @@ class TestComboResupply(unittest.TestCase):
         ammo.role = "ammo"
         mate = _ps("blue_scout_1", "blue", (12, 3))
         mate.final_lives = mate.final_shots = 5
-        ctx = RoundContext(
-            events=EventLog(persist=False),
-            movement_ctx=SimpleNamespace(get_adjacency=lambda: OPEN),
-        )
+        ctx = RoundContext(events=EventLog(persist=False), movement_ctx=OPEN)
         with mock.patch.object(resupply_queue.random, "random", lambda: 0.0):
             resupply_queue.resolve_resupply_requests(
                 [mate], [medic, ammo, mate], 100, None, ctx=ctx
@@ -506,22 +512,47 @@ class TestComboResupply(unittest.TestCase):
         self.assertEqual(mate.last_downed_time, 100)
 
 
-class TestTrailAdjacency(unittest.TestCase):
-    def test_adjacency_comes_from_the_round_map(self) -> None:
+class TestFeetScale(unittest.TestCase):
+    """MOVE-08: the 10 ft limit and 6 ft band are squares by the map's scale.
+    At 5 ft a square (Syracuse) a Chase is 2 squares and the band 1 wide."""
+
+    def setUp(self) -> None:
+        self.mc = _grid(["." * 20] * 9)
+        self.mc.feet_per_square = 5.0
+        self.downed = _ps("blue_scout_1", "blue", (4, 0))
+        self.chaser = _ps("red_scout_1", "red", (4, 0))
+        self.everyone = [self.downed, self.chaser]
+        _down(self.downed, 100, self.mc)
+        _walk(self.downed, _row(4, 1, 15), 101, self.everyone, self.mc)
+
+    def test_two_squares_is_a_chase(self) -> None:
+        _walk(self.chaser, _row(4, 1, 2), 102, self.everyone, self.mc)
+        self.assertFalse(may_tag(self.chaser, self.downed, 110))
+
+    def test_one_square_is_not(self) -> None:
+        _walk(self.chaser, _row(4, 1, 1), 102, self.everyone, self.mc)
+        self.assertTrue(may_tag(self.chaser, self.downed, 110))
+
+    def test_band_is_one_square_wide(self) -> None:
+        rows = {r for r, _ in self.downed._trail.band}
+        self.assertEqual(rows, {3, 4, 5})
+
+
+class TestRoundMap(unittest.TestCase):
+    def test_the_map_comes_from_the_round_context(self) -> None:
         from types import SimpleNamespace
 
-        from matches.sim_helpers.follow_rule import trail_adjacency
+        from matches.sim_helpers.follow_rule import round_map
 
-        ctx = SimpleNamespace(movement_ctx=SimpleNamespace(get_adjacency=lambda: OPEN))
-        self.assertIs(trail_adjacency(ctx), OPEN)
+        self.assertIs(round_map(SimpleNamespace(movement_ctx=OPEN)), OPEN)
 
     def test_no_context_or_no_map_gives_none(self) -> None:
         from types import SimpleNamespace
 
-        from matches.sim_helpers.follow_rule import trail_adjacency
+        from matches.sim_helpers.follow_rule import round_map
 
-        self.assertIsNone(trail_adjacency(None))
-        self.assertIsNone(trail_adjacency(SimpleNamespace(movement_ctx=None)))
+        self.assertIsNone(round_map(None))
+        self.assertIsNone(round_map(SimpleNamespace(movement_ctx=None)))
 
 
 class TestInertWithoutMap(unittest.TestCase):

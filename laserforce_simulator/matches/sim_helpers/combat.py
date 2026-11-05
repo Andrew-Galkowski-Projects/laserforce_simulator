@@ -14,7 +14,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-from .follow_rule import may_tag, start_trail, trail_adjacency
+from .downed_option import choose_resupply_trail, plan_is_live
+from .follow_rule import may_tag, round_map, start_trail
 from .round_context import RoundContext
 from .mechanics import (
     shot_cooldown,
@@ -341,7 +342,12 @@ def plan_action(
     choice = random.choices(_CHOICES, weights)[0]
     player.last_chosen_action = choice
 
-    if player.is_hiding and choice not in ("hide", "only_move", "resupply_ally"):
+    # MOVE-08: Stay hidden keeps its hide for the whole Down.
+    if (
+        player.is_hiding
+        and choice not in ("hide", "only_move", "resupply_ally")
+        and not plan_is_live(player, second)
+    ):
         player.is_hiding = False
         # MOVE-04 / ADR-0010: exiting Stationary (hide→non-hide) is a force
         # trigger — drop the committed goal so the next ``choose_goal_cell``
@@ -474,10 +480,12 @@ def _reset_resupplied(teammate, second: float, ctx: RoundContext) -> None:
 
     MECH-10: it also starts a Follow rule Trail, as a Down does (before the
     ``last_downed_time`` stamp), and stamps ``last_resupplied_at``.
+    MOVE-08: then the receiver may Make a trail (``choose_resupply_trail``).
     """
-    start_trail(teammate, second, trail_adjacency(ctx))
+    start_trail(teammate, second, round_map(ctx))
     teammate.last_downed_time = second
     teammate.last_resupplied_at = second
+    choose_resupply_trail(teammate, second, ctx)
     teammate.shields = teammate.max_shields
     if teammate.role == "scout" and teammate.special_active_until > second:
         teammate.special_active_until = second

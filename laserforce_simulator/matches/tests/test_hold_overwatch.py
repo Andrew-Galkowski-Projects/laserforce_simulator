@@ -63,7 +63,9 @@ def _ps(role, team_color="red", **kwargs):
     return PlayerState(**defaults)
 
 
-def _ctx(sight_data=None, adj=None, zone_data=None, spawn_cells=None):
+def _ctx(
+    sight_data=None, adj=None, zone_data=None, spawn_cells=None, feet_per_square=5.0
+):
     """Hand-built MapContext via the documented from_dict bridge."""
     return MapContext.from_dict(
         {
@@ -71,6 +73,7 @@ def _ctx(sight_data=None, adj=None, zone_data=None, spawn_cells=None):
             "adj": adj if adj is not None else {},
             "zone_data": zone_data,
             "spawn_cells": spawn_cells if spawn_cells is not None else {},
+            "feet_per_square": feet_per_square,
         }
     )
 
@@ -368,6 +371,9 @@ class TestOverwatchThroughIntermediateCell:
             adj=self.adj,
             zone_data=self.zone_data,
             spawn_cells={"red": (0, 3), "blue": (0, 0)},
+            # MOVE-08: 1 ft squares, so speed 100 (5 ft a tick) crosses the
+            # 3-square corridor in one Advance.
+            feet_per_square=1.0,
         )
 
     def _holder_and_mover(self):

@@ -1660,6 +1660,8 @@ class TestMove01PlayerStateMovementTrail(_FastRoundsMixin):
                 "spawn_cells": {"red": (0, 0), "blue": (0, 19)},
                 "zone_data": grid,
                 "sight_data": None,
+                # MOVE-08: 1 ft squares, so speed 50 moves on the first tick.
+                "feet_per_square": 1.0,
             }
         )
         player = PlayerState(

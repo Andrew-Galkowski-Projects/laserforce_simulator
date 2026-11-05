@@ -28,6 +28,7 @@ from ..sim_helpers.combat import (
     tick_missile_lock as _tick_missile_lock_shared,
 )
 from ..sim_helpers.down import record_down
+from ..sim_helpers.downed_option import plan_is_live
 from ..sim_helpers.event_log import EventLog
 from ..sim_helpers.follow_rule import may_tag, record_step
 from ..sim_helpers.map_loader import (
@@ -37,7 +38,7 @@ from ..sim_helpers.map_loader import (
 from ..sim_helpers.mechanics import shot_cooldown
 from ..sim_helpers.pathfinding import (
     astar_advance_cached,
-    cells_to_move,
+    squares_this_tick,
     choose_goal_cell,
 )
 from ..sim_helpers.pending_events import (
@@ -1382,7 +1383,7 @@ class BatchSimulator:
                     # is None) — keep the weighted _change_zone behaviour.
                     self._change_zone(actor, plan.get("zone"))
                 elif ptype == "hide":
-                    actor.is_hiding = True
+                    self._apply_hide(actor, second)
                 elif ptype == "capture_base":
                     self._capture_base(
                         actor,
@@ -1548,6 +1549,13 @@ class BatchSimulator:
         # and select tick-domain thresholds in the shared planning helpers.
         return plan_action(player, all_alive, tick, movement_ctx, time_domain="ticks")
 
+    @staticmethod
+    def _apply_hide(actor, second) -> None:
+        """A ``hide`` plan. MOVE-08: it does not freeze a Downed player on a
+        moving Downed option (Stay hidden is already hiding)."""
+        if not plan_is_live(actor, second):
+            actor.is_hiding = True
+
     def _advance_player(
         self,
         player,
@@ -1570,8 +1578,12 @@ class BatchSimulator:
         chosen = getattr(player, "last_chosen_action", "")
         # Stationary set: hiding, holding (MOVE-03 Overwatch — anchored to its
         # current cell watching its sightline), or anchored to a base capture
-        # this tick.
-        if (
+        # this tick. MOVE-08: while a Downed option is live only its own hide
+        # (Stay hidden) holds the player still; hold / capture_base rolls do not.
+        if plan_is_live(player, second):
+            if player.is_hiding:
+                return
+        elif (
             player.is_hiding
             or getattr(player, "is_holding", False)
             or chosen == "capture_base"
@@ -1600,7 +1612,7 @@ class BatchSimulator:
                 [start, *player._last_step_cells],
                 second,
                 all_alive,
-                movement_ctx.get_adjacency(),
+                movement_ctx,
             )
 
     # NOTE: ``_record_down`` is gone — lifted to
@@ -1615,14 +1627,16 @@ class BatchSimulator:
         if goal_cell is None or player.cell_row is None:
             return
         adj = movement_ctx["adj"]
-        zone_data = movement_ctx["zone_data"]
         current = (player.cell_row, player.cell_col)
         if current == goal_cell or current not in adj:
             return
-        # STAT-03 Phase 1: traverse speed-scaled cells per tick, not just one.
+        # MOVE-08: speed is feet a second on the map's scale, the fraction of
+        # a square carried tick to tick (replaces STAT-03's cells per tick).
         # MOVE-01: an only_move roll covers a single 2× step (multiplier=2) in
         # ONE advance call.
-        steps = cells_to_move(getattr(player, "speed", 50), zone_data) * multiplier
+        steps = squares_this_tick(player, movement_ctx, multiplier)
+        if steps == 0:
+            return
         # MOVE-02 (ADR-0008): re-step a goal-keyed cached A* route instead of
         # recomputing full A* every tick. choose_goal_cell still runs every
         # tick upstream (it does no A*); only the PATH is cached here. The 2×
@@ -1869,7 +1883,7 @@ class BatchSimulator:
                     ctx.events.elimination(
                         attacker, defender, int(second), action="missile"
                     )
-            record_down(defender, second, ctx)
+            record_down(defender, second, ctx, tagger=attacker)
             defender.counters.times_missiled += 1
 
             attacker.counters.points_scored += 500
@@ -2033,7 +2047,7 @@ class BatchSimulator:
                     continue
                 lives_taken = min(opp.final_lives, 3)
                 opp.final_lives -= lives_taken
-                record_down(opp, second, ctx)
+                record_down(opp, second, ctx, tagger=player)
                 opp.shields = opp.max_shields
                 if opp.role == "commander" and opp.special_active_until > second:
                     opp.special_active_until = 0

@@ -302,6 +302,9 @@ def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
     """
     for p in all_alive:
         setattr(p, "reacting_to_nuke", False)
+        # MOVE-08: the earliest detonation of a Nuke aimed at this player's
+        # team, read by the Downed option's nuke-cancel exception.
+        setattr(p, "nuke_detonates_at", None)
     if not pending_nukes:
         return
     awareness = {id(p): (p.game_awareness, p.player_awareness) for p in all_alive}
@@ -310,6 +313,9 @@ def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
         for p in all_alive:
             if p.team_color != target_color:
                 continue
+            soonest = getattr(p, "nuke_detonates_at", None)
+            if soonest is None or pending_nuke.complete_time < soonest:
+                setattr(p, "nuke_detonates_at", pending_nuke.complete_time)
             ga, pa = awareness[id(p)]
             if random.random() < (ga + pa) / 200.0:
                 setattr(p, "reacting_to_nuke", True)
