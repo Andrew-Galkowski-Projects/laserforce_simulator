@@ -2599,8 +2599,13 @@ class TestMove01OnlyMoveDoubleStep:
         tag_p.last_chosen_action = "tag_player"
 
         sim = BatchSimulator()
-        sim._advance_player(only_move_p, [only_move_p], 0, ctx, "")
-        sim._advance_player(tag_p, [tag_p], 0, ctx, "")
+        # A far goal: the default goal is a draw, and on about 15% of seeds it was
+        # near enough to stop the player short of the 2x step.
+        with patch(
+            "matches.simulation.entrypoints.choose_goal_cell", return_value=(0, 29)
+        ):
+            sim._advance_player(only_move_p, [only_move_p], 0, ctx, "")
+            sim._advance_player(tag_p, [tag_p], 0, ctx, "")
 
         assert only_move_p.cell_col == step * 2
         assert tag_p.cell_col == step

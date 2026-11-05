@@ -81,6 +81,30 @@ ASCII only (cp1252 console). The command writes no files; copy the output into `
 
 ---
 
+## round_probe.py
+
+Measures how players move and choose goals over seeded rounds: the numbers behind a simulation behaviour decision. A thin wrapper over `matches.round_probe` (`run_probe`).
+
+```bash
+python manage.py round_probe                  # seeds 1-12 on data/maps/syracuse.json, about 90 s
+python manage.py round_probe --seeds 24 --map-fixture <path>
+```
+
+Prints, per Role: time in each Mode, where goals come from (action, positioning, override), the share of ticks not Active (time after Elimination counts), squares to the Role's target (Commander, Heavy, Scout: the nearest enemy Medic or Ammo; Medic, Ammo: the own Heavy) and mean points. Then goal sharing: the mean of the rounds, min, max, rounds at 15% or more, and each seed's value. Single rounds vary widely (MECH-07: goal sharing from 9% to 24%), so read the spread before trusting a difference. `test_teammates_rarely_share_a_goal` pools all the ticks instead, so it reads slightly differently (14.5% against 14.6%).
+
+Six Players per team on the model's default stats, serial, no database writes (the fixture loads in a rolled-back transaction), and observing draws no RNG. Two copies at once on one SQLite database collide on the fixture load, so run them one at a time per database.
+
+**Comparing with a baseline:** a detached worktree at the commit to compare, with its own database. It needs a commit that has this command.
+
+```bash
+git worktree add --detach .claude/worktrees/<task>-baseline <commit>
+# copy laserforce_simulator/.env into it, run migrate there, then its manage.py round_probe
+```
+
+The main checkout's `db.sqlite3` may be behind on migrations, so use a worktree rather than the main checkout. Remove the worktree when done.
+
+---
+
 ## game_analysis.py
 
 Analyses events from a completed (DB-persisted) `GameRound` and prints per-player uptime breakdowns reconstructed from `player_downed` and resupply events.

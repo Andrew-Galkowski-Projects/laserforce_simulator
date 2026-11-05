@@ -149,3 +149,38 @@ class ShardDriftTests(TestCase):
         shards = {1: {"core/test_new.py::test_x": 4.0}}
         lines = ci_timings.shard_drift({}, shards, top=1)
         self.assertEqual(lines[0], "shard 1: 1 tests, predicted 0s, measured 4s (new)")
+
+
+class TestSummarySeconds(TestCase):
+    def test_reads_the_time_from_a_pytest_summary(self) -> None:
+        summary = "1102 passed, 2 skipped, 151 warnings in 306.27s (0:05:06)"
+        self.assertEqual(ci_timings.summary_seconds(summary), 306.27)
+
+    def test_a_short_run_has_no_clock_part(self) -> None:
+        self.assertEqual(ci_timings.summary_seconds("3 passed in 1.50s"), 1.5)
+
+    def test_no_time_is_none(self) -> None:
+        self.assertIsNone(ci_timings.summary_seconds("no pytest summary"))
+
+
+class TestBalanceWarning(TestCase):
+    def test_names_how_far_the_slowest_shard_is_over_the_mean(self) -> None:
+        # PR #547's first run, which should have prompted a refresh.
+        warning = ci_timings.balance_warning([127.23, 306.27, 102.11, 79.65])
+        assert warning is not None
+        self.assertIn("99% over the mean", warning)
+        self.assertIn("docs/agents/ci.md", warning)
+
+    def test_at_the_limit_is_quiet(self) -> None:
+        # Mean 100, slowest exactly 40% over.
+        self.assertIsNone(ci_timings.balance_warning([140.0, 60.0]))
+
+    def test_just_over_the_limit_warns(self) -> None:
+        self.assertIsNotNone(ci_timings.balance_warning([141.0, 59.0]))
+
+    def test_a_balanced_run_is_quiet(self) -> None:
+        self.assertIsNone(ci_timings.balance_warning([100.0, 101.0, 99.0, 100.0]))
+
+    def test_one_shard_or_none_has_nothing_to_compare(self) -> None:
+        self.assertIsNone(ci_timings.balance_warning([300.0]))
+        self.assertIsNone(ci_timings.balance_warning([]))
