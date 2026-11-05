@@ -610,6 +610,8 @@ MOVE-08 (Downed players move off) is **[DONE]**; see `PLAN-completed.md`.
 
 ### MOVE-06 · Goal-location noise to reduce balling-up
 
+Spec: #540 (MOVE-06 and MOVE-07 as one design)
+
 **Prio: Medium (found 2026-06-25).** Players **ball up** because role-aware goal
 selection converges too tightly on the same target cells. Add **noise** to
 `choose_goal_cell` (`sim_helpers/pathfinding.py`) so goal locations spread out — e.g.
@@ -626,6 +628,38 @@ all Scouts converge on one high-LOS area. Proposed shape: **scored candidate cel
 value minus distance cost minus a spacing penalty against teammates' goals), then a
 **weighted draw** instead of the argmax, with a player stat setting how sharp the draw is.
 Build the scoring so MECH-07's Modes plug in as alternative scoring functions.
+
+**Baseline probe (2026-11-04, 2 Syracuse rounds, 80 x 40 squares at 5 ft):** distinct goal
+cells per player per round Scout 33 / Medic 36 / Heavy 44 / Ammo 45 / Commander 49; share of
+ticks on the single most-used goal 25-30% (Medic 10%); **team-ticks with 2+ teammates on the
+same goal: red 57%, blue 29%**; mean distance to teammates 8-9 squares (Medic 16).
+
+**Grill round 1 (owner, 2026-11-04), MOVE-06 + MOVE-07 as one design:**
+1. **Scope:** goals + routes only; MOVE-07's action-choice sweep moves to MECH-07.
+2. **Varied goals:** the step-3 positioning goals (Scout high-LOS cells, Heavy strong spots,
+   Medic / Ammo cells the Heavy can see) and the enemy-base default. Goals that chase a
+   player (tag nearest enemy, the Commander's enemy-Medic hunt, resupply the neediest ally)
+   are unchanged.
+3. **Scoring (tunable, documented like the Downed option):** `score = value - 0.5 x
+   (walk_ft / 100) - 0.5 x crowding`. `value` (0..1): the cell's LOS rank for Scout / Ammo,
+   `1 - rank` for Medic, 1 for a Heavy strong spot. `crowding`: teammates whose cell or
+   committed goal is within 15 ft (3 squares). Take the top 8 and draw one weighted by
+   `exp(score / T)`.
+4. **Sharpness from positioning:** `T = 0.05 + 0.45 x (1 - positioning / 100)` (starts SM5-06).
+5. **Routes:** each player draws fixed per-cell cost noise at round start (0 to +50% a step);
+   A* finds a near-shortest, player-specific route; Path commitment unchanged. Pace stays
+   in SM5-08.
+6. **Judged by the probe on the same seeds:** team-ticks with 2+ teammates on one goal below
+   15%, more distinct goals, wider teammate spacing; `score_averages` reported, not a target.
+   Seeded outcomes change (CAL-01); no DB change.
+
+**Grill round 2 (owner, 2026-11-04):**
+7. **A drawn positioning goal is held until reached**, then drawn again; reactive overrides
+   (nuke, critical resource, the Downed option) and MOVE-04's Down / Stationary-exit rules
+   still interrupt it.
+8. **The enemy-base default becomes a candidate set:** every floor cell within 15 ft of the
+   enemy base, scored the same way with `value = 1`, so crowding spreads players out.
+9. **The teamwork bias is unchanged**, applied after the draw (its rework is MECH-07's).
 
 ### MOVE-07 · Varied pathing + action-choice sweep
 
