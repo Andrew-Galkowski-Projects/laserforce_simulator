@@ -143,7 +143,11 @@ class TestMove04GoalCommitment:
         cached_goal, from_action, expires_at = commitment
         assert cached_goal == (2, 2)
         assert from_action is False  # came from role-positioning (step 3), not action
-        assert expires_at == 0 + 4  # second + GOAL_RECOMPUTE_PERIOD_TICKS
+        # MOVE-06: a drawn positioning goal is held until reached, so it expires
+        # after the round (action goals keep second + GOAL_RECOMPUTE_PERIOD_TICKS).
+        from matches.sim_helpers.time_constants import TICKS_PER_ROUND
+
+        assert expires_at == TICKS_PER_ROUND + 1
 
     # ── (b) Within window: cache hit, steps 2-4 skipped ─────────────────────
 
@@ -205,11 +209,11 @@ class TestMove04GoalCommitment:
         scout = _make_player("red_scout", "red", "scout", cell_row=0, cell_col=0)
         ctx = _ctx(spawn_cells=spawn_cells, high_los_cells=[(2, 2)])
 
-        # Prime: expires at tick 4.
-        choose_goal_cell(
-            scout, [scout], spawn_cells, ctx, second=0, time_domain="ticks"
-        )
-        assert scout._committed_goal[2] == 4
+        # Prime: a 4-tick commitment. MOVE-06 holds a drawn positioning goal
+        # until reached, so the cadence case is primed by hand (an undrawn
+        # goal, the shape action goals and fallbacks commit).
+        scout._committed_goal = ((2, 2), False, 4)
+        scout._goal_was_drawn = False
 
         # Patch step 3 to return a NEW goal so we can prove recompute ran.
         role_calls = []

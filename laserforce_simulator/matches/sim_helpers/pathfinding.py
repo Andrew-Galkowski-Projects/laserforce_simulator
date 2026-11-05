@@ -26,11 +26,13 @@ _STALE_THRESHOLD = {
 # when time_domain == "ticks" (BatchSimulator).
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
+from .goal_scoring import draw_goal, enemy_base_cells
 from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
     STALENESS_FAST_TICKS,
     STALENESS_SLOW_TICKS,
     TICK_SECONDS,
+    TICKS_PER_ROUND,
 )
 
 _STALE_THRESHOLD_TICKS = {
@@ -103,11 +105,29 @@ def build_movement_adjacency(
     return adj
 
 
+#: MOVE-07: the most a player's route noise adds to one step's cost.
+ROUTE_NOISE_MAX: float = 0.5
+
+
+def route_noise(seed: int, cell: tuple[int, int]) -> float:
+    """MOVE-07: a fixed per-player, per-cell number in [0, 1).
+
+    An integer hash of ``(seed, row, col)``, so A* draws no RNG and the same
+    seed always gives the same route (the path cache stays valid).
+    """
+    h = (seed * 0x9E3779B1 + cell[0] * 0x85EBCA77 + cell[1] * 0xC2B2AE3D) & 0xFFFFFFFF
+    h ^= h >> 15
+    h = (h * 0x2C1B3C6D) & 0xFFFFFFFF
+    h ^= h >> 12
+    return (h & 0xFFFF) / 65536.0
+
+
 def astar_path(
     start: tuple[int, int],
     goal: tuple[int, int],
     adj: dict[tuple[int, int], list[tuple[int, int]]],
     elevation_data: dict | None = None,
+    route_seed: int | None = None,
 ) -> list[tuple[int, int]]:
     """Return the shortest path from start to goal, excluding start.
 
@@ -115,6 +135,11 @@ def astar_path(
     ending at ``goal``. Uses A* with a Manhattan-distance heuristic and
     optional elevation costs. Returns ``[]`` when start == goal, no path
     exists, or start is not in the adjacency graph.
+
+    MOVE-07: with a ``route_seed`` each step into a cell costs up to
+    ``ROUTE_NOISE_MAX`` more (``route_noise``), so the route is a
+    near-shortest one particular to that player. Every step still costs at
+    least 1, so the Manhattan heuristic stays admissible.
     """
     if start == goal or start not in adj:
         return []
@@ -141,6 +166,8 @@ def astar_path(
 
         for neighbor in adj.get(current, []):
             cost = g + _movement_cost(current, neighbor, elevation_data)
+            if route_seed is not None:
+                cost += ROUTE_NOISE_MAX * route_noise(route_seed, neighbor)
             if cost < g_score.get(neighbor, float("inf")):
                 g_score[neighbor] = cost
                 came_from[neighbor] = current
@@ -267,7 +294,13 @@ def astar_advance_cached(
     )
 
     if needs_recompute:
-        remaining = astar_path(current, goal, adj, elevation_data)
+        remaining = astar_path(
+            current,
+            goal,
+            adj,
+            elevation_data,
+            route_seed=getattr(player, "route_seed", None),
+        )
         if not remaining:
             # Unreachable goal: no negative caching — this recomputes again
             # next tick too. Goals are normally reachable cells, so the
@@ -349,38 +382,14 @@ def _nearest_cell(
     return (int(best[0]), int(best[1]))
 
 
-def _select_los_cell(
-    visible_keys,
-    cell_los_counts: dict,
-    from_row: int,
-    from_col: int,
-    *,
-    prefer_high: bool,
-) -> "tuple[int, int] | None":
-    """Pick a cell from ``visible_keys`` (``"r,c"`` strings) by LOS count.
-
-    ``prefer_high`` maximises the sight-line count (Ammo — exposed support),
-    else minimises it (Medic — sheltered). Ties are broken by the cell nearest
-    ``(from_row, from_col)`` then by ``(r, c)`` — a fully deterministic,
-    hash-independent ordering. ``visible_keys`` is a ``frozenset`` whose
-    ``str`` iteration order is PYTHONHASHSEED-randomised per process, so a
-    naive ``min``/``max`` tie-break makes serial and parallel workers diverge
-    (SIM-07/08 determinism; reached every tick under MOVE-01). The
-    nearest-bias also keeps support roles tracking the advancing Heavy rather
-    than teleporting to a far equal-LOS cell.
-    """
-    best: tuple[int, int] | None = None
-    best_key: tuple | None = None
-    for k in visible_keys:
-        los = cell_los_counts.get(k, 0)
-        r_s, c_s = k.split(",")
-        r, c = int(r_s), int(c_s)
-        dist = abs(r - from_row) + abs(c - from_col)
-        sort_key = (-los if prefer_high else los, dist, r, c)
-        if best_key is None or sort_key < best_key:
-            best_key = sort_key
-            best = (r, c)
-    return best
+def _cells_from_keys(keys) -> list[tuple[int, int]]:
+    """MOVE-06: ``"r,c"`` keys as sorted cells (a ``frozenset``'s order is
+    PYTHONHASHSEED-randomised, so sort for serial == parallel)."""
+    cells = []
+    for k in keys:
+        r, c = k.split(",")
+        cells.append((int(r), int(c)))
+    return sorted(cells)
 
 
 def _find_role(all_alive: list, team_color: str, role: str) -> Any:
@@ -667,10 +676,20 @@ def _goal_from_role(
     sight_data: dict = movement_ctx.sight_data or {}
 
     goal: tuple[int, int] | None = None
+    # MOVE-06: the positioning picks below are a scored draw (goal_scoring);
+    # a drawn goal is held until reached (choose_goal_cell's commitment).
+    player._goal_was_drawn = False
+
+    def drawn(candidates, value_of) -> tuple[int, int] | None:
+        pick = draw_goal(
+            player, [tuple(c) for c in candidates], value_of, all_alive, movement_ctx
+        )
+        player._goal_was_drawn = pick is not None
+        return pick
 
     if player.role == "scout":
         if high_los_cells:
-            goal = _nearest_cell(cell_row, cell_col, high_los_cells)
+            goal = drawn(high_los_cells, movement_ctx.los_rank)
 
     elif player.role == "heavy":
         max_lives = getattr(player, "max_lives", player.starting_lives)
@@ -680,7 +699,7 @@ def _goal_from_role(
             and player.final_shots > max_shots * 0.5
         )
         if healthy and strong_spots:
-            goal = _nearest_cell(cell_row, cell_col, strong_spots)
+            goal = drawn(strong_spots, lambda cell: 1.0)
         if goal is None:
             for support_role in ("medic", "ammo"):
                 ally = _find_role(all_alive, player.team_color, support_role)
@@ -694,12 +713,10 @@ def _goal_from_role(
             heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
             heavy_visible = sight_data.get(heavy_key, frozenset())
             if heavy_visible and cell_los_counts:
-                goal = _select_los_cell(
-                    heavy_visible,
-                    cell_los_counts,
-                    cell_row,
-                    cell_col,
-                    prefer_high=False,
+                # Medic: hidden cells the Heavy can see score higher.
+                goal = drawn(
+                    _cells_from_keys(heavy_visible),
+                    lambda cell: 1.0 - movement_ctx.los_rank(cell),
                 )
             if goal is None:
                 goal = (heavy.cell_row, heavy.cell_col)
@@ -710,13 +727,8 @@ def _goal_from_role(
             heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
             heavy_visible = sight_data.get(heavy_key, frozenset())
             if heavy_visible and cell_los_counts:
-                goal = _select_los_cell(
-                    heavy_visible,
-                    cell_los_counts,
-                    cell_row,
-                    cell_col,
-                    prefer_high=True,
-                )
+                # Ammo: open cells the Heavy can see score higher.
+                goal = drawn(_cells_from_keys(heavy_visible), movement_ctx.los_rank)
             if goal is None:
                 goal = (heavy.cell_row, heavy.cell_col)
 
@@ -761,14 +773,15 @@ def choose_goal_cell(
        - resupply_ally: Medic → neediest ally by lives; Ammo → neediest ally by shots.
        - hide: move to the safest adjacent cell (lowest LOS count).
     3. Role-specific positioning (for only_move, capture_base, use_special, or fallback):
-       - Scout: nearest high-LOS cell (top 25% of cells by sight-line count).
-       - Heavy: nearest strong-spot cell when healthy (>50% lives and shots); otherwise
-         seek nearest allied Medic or Ammo dynamically.
-       - Medic: nearest low-LOS cell within the allied Heavy's visible set.
-       - Ammo: nearest high-LOS cell within the allied Heavy's visible set.
+       - Scout: a drawn high-LOS cell (top 25% of cells by sight-line count).
+       - Heavy: a drawn strong-spot cell when healthy (>50% lives and shots); otherwise
+         seek the allied Medic or Ammo dynamically.
+       - Medic: a drawn cell in the allied Heavy's visible set, hidden ones first.
+       - Ammo: a drawn cell in the allied Heavy's visible set, open ones first.
        - Commander: enemy medic cell (priority target), else enemy base.
          MECH-06: uses player memory when map is active.
-    4. Default: enemy base cell.
+       MOVE-06: "drawn" is goal_scoring.draw_goal, held until reached.
+    4. Default: a drawn floor cell within 15 ft of the enemy base.
 
     MECH-06 additions:
     - teamwork bias applied in _goal_from_role (when teamwork > 50 and not nuke-reacting).
@@ -924,8 +937,14 @@ def choose_goal_cell(
         )
 
     # ── 4. Default: enemy base ───────────────────────────────────────────────
+    # MOVE-06: a scored draw over the floor cells near the enemy base, so
+    # players with no other goal spread out instead of stacking on one cell.
     if goal is None:
-        goal = default_goal
+        base_cells = enemy_base_cells(enemy_color, movement_ctx)
+        goal = draw_goal(player, base_cells, lambda cell: 1.0, all_alive, movement_ctx)
+        player._goal_was_drawn = goal is not None
+        if goal is None:
+            goal = default_goal
 
     # MOVE-04: commit the freshly chosen goal for the next
     # GOAL_RECOMPUTE_PERIOD_TICKS ticks (BatchSim / tick-domain only).
@@ -933,12 +952,14 @@ def choose_goal_cell(
     # False for step 3 (role positioning), step 4 (enemy-base default), or
     # any None-fallback. ``_record_down`` consults the flag to decide whether
     # a Down clears the commitment (action-driven goals drop; positioning
-    # goals survive).
+    # goals survive). MOVE-06: a drawn goal is held until reached (expiry
+    # after the round), not re-picked every GOAL_RECOMPUTE_PERIOD_TICKS.
     if time_domain == "ticks" and goal is not None:
+        held = not from_action and getattr(player, "_goal_was_drawn", False)
         player._committed_goal = (
             goal,
             from_action,
-            int(second) + GOAL_RECOMPUTE_PERIOD_TICKS,
+            TICKS_PER_ROUND + 1 if held else int(second) + GOAL_RECOMPUTE_PERIOD_TICKS,
         )
 
     return goal
