@@ -100,6 +100,11 @@ def _trail_is_open(player, tick: float) -> bool:
     )
 
 
+def open_trail(player, tick: float) -> Optional[Trail]:
+    """``player``'s Trail while it is open (until they are Active), else None."""
+    return player._trail if _trail_is_open(player, tick) else None
+
+
 def _widen(trail: Trail, index: int, movement_ctx: MapContext) -> None:
     """Add every cell within the half-width walk of ``trail.path[index]``.
 
