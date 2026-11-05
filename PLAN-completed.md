@@ -8985,4 +8985,99 @@ reaches 33%: Syracuse's long sight lines leave little cover within a square or t
 34. **Cover stays "no remembered enemy sees it"**; a fewer-watchers cover is a CAL-01 /
     MECH-07 tuning.
 
+### MOVE-06 · [DONE] Goal-location noise to reduce balling-up
+
+Spec: #540 (MOVE-06 and MOVE-07 as one design)
+
+**[DONE] Shipped (2026-11-04).** Shipped with MOVE-07 as one design (spec #540). Positioning goals
+(Scout high-sight cells, a healthy Heavy's strong spots, the Medic / Ammo cells the Heavy can see)
+and the enemy-base default are a scored top-8 draw in sim_helpers/goal_scoring.py: value minus
+walking distance minus crowding by teammates' cells and live goals, sharpened by the positioning
+stat (its first use). A drawn goal is held until reached, but action goals and the reactive
+overrides still interrupt it. The formula is in docs/agents/matches/sim-helpers.md. On Syracuse,
+team-ticks with 2+ teammates on one goal fell from 57% / 29% to 16% / 10%, distinct goals per player
+rose 2-4x, and teammates are 12-19 squares apart (from 8-9).
+
+**Prio: Medium (found 2026-06-25).** Players **ball up** because role-aware goal
+selection converges too tightly on the same target cells. Add **noise** to
+`choose_goal_cell` (`sim_helpers/pathfinding.py`) so goal locations spread out — e.g.
+sample among the top-N candidate cells rather than always taking the argmax, or
+perturb the chosen goal within a small radius. Reactive overrides (MECH-04
+nuke-reaction, critical-resource, `seek_medic`) stay deterministic; only the
+steady-state positioning layer gains jitter. **Consumes RNG** → shifts seeded
+outcomes; folds into the `CAL-01` re-baseline (no separate obligation).
+
+**Second in the simulation-behaviour order (owner, 2026-11-04), built with MOVE-07.** The owner
+wants goal positions much more varied, both within a role and in general. Cause: every role
+branch of `_goal_from_role` / `_goal_from_action` takes the single nearest best cell, so e.g.
+all Scouts converge on one high-LOS area. Proposed shape: **scored candidate cells** (cell
+value minus distance cost minus a spacing penalty against teammates' goals), then a
+**weighted draw** instead of the argmax, with a player stat setting how sharp the draw is.
+Build the scoring so MECH-07's Modes plug in as alternative scoring functions.
+
+**Baseline probe (2026-11-04, 2 Syracuse rounds, 80 x 40 squares at 5 ft):** distinct goal
+cells per player per round Scout 33 / Medic 36 / Heavy 44 / Ammo 45 / Commander 49; share of
+ticks on the single most-used goal 25-30% (Medic 10%); **team-ticks with 2+ teammates on the
+same goal: red 57%, blue 29%**; mean distance to teammates 8-9 squares (Medic 16).
+
+**Grill round 1 (owner, 2026-11-04), MOVE-06 + MOVE-07 as one design:**
+1. **Scope:** goals + routes only; MOVE-07's action-choice sweep moves to MECH-07.
+2. **Varied goals:** the step-3 positioning goals (Scout high-LOS cells, Heavy strong spots,
+   Medic / Ammo cells the Heavy can see) and the enemy-base default. Goals that chase a
+   player (tag nearest enemy, the Commander's enemy-Medic hunt, resupply the neediest ally)
+   are unchanged.
+3. **Scoring (tunable, documented like the Downed option):** `score = value - 0.5 x
+   (walk_ft / 100) - 0.5 x crowding`. `value` (0..1): the cell's LOS rank for Scout / Ammo,
+   `1 - rank` for Medic, 1 for a Heavy strong spot. `crowding`: teammates whose cell or
+   committed goal is within 15 ft (3 squares). Take the top 8 and draw one weighted by
+   `exp(score / T)`.
+4. **Sharpness from positioning:** `T = 0.05 + 0.45 x (1 - positioning / 100)` (starts SM5-06).
+5. **Routes:** each player draws fixed per-cell cost noise at round start (0 to +50% a step);
+   A* finds a near-shortest, player-specific route; Path commitment unchanged. Pace stays
+   in SM5-08.
+6. **Judged by the probe on the same seeds:** team-ticks with 2+ teammates on one goal below
+   15%, more distinct goals, wider teammate spacing; `score_averages` reported, not a target.
+   Seeded outcomes change (CAL-01); no DB change.
+
+**Grill round 2 (owner, 2026-11-04):**
+7. **A drawn positioning goal is held until reached**, then drawn again; reactive overrides
+   (nuke, critical resource, the Downed option) and MOVE-04's Down / Stationary-exit rules
+   still interrupt it.
+8. **The enemy-base default becomes a candidate set:** every floor cell within 15 ft of the
+   enemy base, scored the same way with `value = 1`, so crowding spreads players out.
+9. **The teamwork bias is unchanged**, applied after the draw (its rework is MECH-07's).
+
+**Review round (owner, 2026-11-04):**
+10. **Action goals interrupt a held positioning goal:** while a drawn goal is held, step 2
+    still runs each tick; a chase / resupply / hide goal wins on the 4-tick cadence and
+    the player draws a fresh positioning goal afterwards.
+
+### MOVE-07 · [DONE] Varied pathing + action-choice sweep
+
+**[DONE] Shipped (2026-11-04).** Shipped with MOVE-06 (spec #540). Each player draws one route seed
+per map round, and A* adds up to +50% to each step's cost from a deterministic hash of (seed, cell),
+so routes are near-shortest and differ per player with no random draw inside A* and the path cache
+unchanged. The action-choice sweep moved to MECH-07 (owner decision 1).
+
+**Prio: Medium (found 2026-10-23, ANG-06f grill).** Watching the playback map overlay, the
+routes look too standard: every player walks the textbook A* shortest path, so movement is
+predictable and samey. Two parts:
+
+- **Pathing variation.** Give routes human-looking variety instead of always the single shortest
+  A* route (`sim_helpers/pathfinding.py`, `astar_advance_cached`, **Path commitment**). Candidates:
+  pick among near-shortest routes, add per-player cost noise or role/stat-driven preferences
+  (cover-hugging, flanking, high ground), and vary the pace along a route. This differs from
+  `MOVE-06`, which spreads the *goal* cells; MOVE-07 varies the *route* to a goal.
+- **Full sweep of the action-choice logic.** Review the weighted **Action** selection end to end
+  (weights, role scripts, carry-over of hide / hold, how memory and comms feed in) for flat or
+  unrealistic behaviour, and fix what the sweep finds. This overlaps `MECH-07`'s action-selection
+  half and `MECH-14`; settle in this task's grill whether MOVE-07 absorbs them or stays a sweep
+  that feeds them.
+
+**Open for its own grill:** how much variation, and from which inputs (RNG noise vs player
+Stats); whether Path commitment still holds a route once it has been picked; how to judge
+"varied enough" (the playback map overlay plus the movement heatmap). **Consumes RNG** and
+shifts seeded outcomes, so it folds into the `CAL-01` re-baseline. The ANG-06f map overlay ships
+as **beta** partly so this work can change what it shows.
+
 ---
