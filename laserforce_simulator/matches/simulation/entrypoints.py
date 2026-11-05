@@ -132,10 +132,10 @@ def _roster_from_snapshot(side_list) -> list:
     """GEN-01: rebuild a ``list[(role, _PlayerData)]`` from a snapshot side.
 
     Each entry in ``side_list`` is a roster-snapshot dict
-    ``{"player_id", "name", "role", "stats": {<13 sim-stats>: int}}``. The
+    ``{"player_id", "name", "role", "stats": {<14 sim-stats>: int}}``. The
     snapshot already holds the boosted (post-``stat_for_simulation``) values,
     so ``_PlayerData.stat_for_simulation`` returning them verbatim re-bakes
-    IDENTICAL ``PlayerState``s — exact reproduction. The 13 ``"stats"`` keys
+    IDENTICAL ``PlayerState``s — exact reproduction. The 14 ``"stats"`` keys
     are exactly the keys ``_make_players`` reads (``_SIMULATION_STATS``), so
     no ``KeyError``. MOVE-06: a snapshot from before a stat joined
     ``_SIMULATION_STATS`` (``positioning``) gets that stat's default, 50, so

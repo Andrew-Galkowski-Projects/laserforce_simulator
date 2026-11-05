@@ -132,6 +132,26 @@ class MapContext:
         """Return the number of cells that can see *cell* (pre-computed LOS count)."""
         return self.cell_los_counts.get(f"{cell[0]},{cell[1]}", 0)
 
+    def walk_distances(
+        self, start: tuple[int, int], limit: int | None = None
+    ) -> dict[tuple[int, int], int]:
+        """Walking distance in squares from *start* to every cell reachable
+        over the 4-connected movement adjacency (within *limit* squares when
+        given). Shared by the Downed option and the goal draw."""
+        distances = {start: 0}
+        frontier = [start]
+        step = 0
+        while frontier and (limit is None or step < limit):
+            step += 1
+            nxt = []
+            for cell in frontier:
+                for neighbour in self.adj.get(cell, ()):
+                    if neighbour not in distances:
+                        distances[neighbour] = step
+                        nxt.append(neighbour)
+            frontier = nxt
+        return distances
+
     def los_rank(self, cell: tuple[int, int]) -> float:
         """MOVE-08: *cell*'s sight-line rank on the map, 0.0 .. 1.0.
 

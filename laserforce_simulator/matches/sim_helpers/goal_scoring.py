@@ -49,24 +49,9 @@ def temperature(player) -> float:
     return T_MIN + T_SPAN * (1 - getattr(player, "positioning", 50) / 100)
 
 
-def _walk_distances(start: Cell, adjacency: dict) -> dict[Cell, int]:
-    distances = {start: 0}
-    frontier = [start]
-    step = 0
-    while frontier:
-        step += 1
-        nxt = []
-        for cell in frontier:
-            for neighbour in adjacency.get(cell, ()):
-                if neighbour not in distances:
-                    distances[neighbour] = step
-                    nxt.append(neighbour)
-        frontier = nxt
-    return distances
-
-
-def _teammate_marks(player, all_alive: list) -> list[list[Cell]]:
-    """Per teammate, the cells that crowd: their cell and committed goal."""
+def _teammate_marks(player, all_alive: list, tick: Optional[float]) -> list[list[Cell]]:
+    """Per teammate, the cells that crowd: their cell and their committed goal
+    while it is live (not expired at ``tick``). A teammate counts once."""
     marks = []
     for mate in all_alive:
         if mate is player or mate.team_color != player.team_color:
@@ -75,7 +60,7 @@ def _teammate_marks(player, all_alive: list) -> list[list[Cell]]:
         if mate.cell_row is not None:
             cells.append((mate.cell_row, mate.cell_col))
         committed = getattr(mate, "_committed_goal", None)
-        if committed is not None:
+        if committed is not None and (tick is None or tick < committed[2]):
             cells.append(committed[0])
         if cells:
             marks.append(cells)
@@ -88,21 +73,21 @@ def score_candidates(
     value_of: Callable[[Cell], float],
     all_alive: list,
     movement_ctx: MapContext,
+    tick: Optional[float] = None,
 ) -> list[tuple[float, Cell]]:
     """``(score, cell)`` for every reachable candidate, best first (ties by
-    row, col)."""
+    row, col). ``tick`` drops teammates' expired commitments from crowding."""
     if player.cell_row is None:
         return []
     start = (player.cell_row, player.cell_col)
-    adjacency = movement_ctx.get_adjacency()
-    if start in adjacency:
-        distances = _walk_distances(start, adjacency)
+    if start in movement_ctx.get_adjacency():
+        distances = movement_ctx.walk_distances(start)
     else:
         # No movement graph at the player's cell (hand-built contexts):
         # straight-line squares, so a candidate is never dropped for it.
         distances = {c: abs(c[0] - start[0]) + abs(c[1] - start[1]) for c in candidates}
     radius = movement_ctx.squares(CROWD_RADIUS_FEET)
-    marks = _teammate_marks(player, all_alive)
+    marks = _teammate_marks(player, all_alive, tick)
     scored = []
     for cell in dict.fromkeys(candidates):
         if cell not in distances:
@@ -131,11 +116,13 @@ def draw_goal(
     value_of: Callable[[Cell], float],
     all_alive: list,
     movement_ctx: MapContext,
+    tick: Optional[float] = None,
 ) -> Optional[Cell]:
     """Draw one of the ``TOP_K`` best candidates; None when none is reachable."""
-    top = score_candidates(player, candidates, value_of, all_alive, movement_ctx)[
-        :TOP_K
-    ]
+    scored = score_candidates(
+        player, candidates, value_of, all_alive, movement_ctx, tick
+    )
+    top = scored[:TOP_K]
     if not top:
         return None
     t = temperature(player)
@@ -152,9 +139,8 @@ def draw_goal(
 def enemy_base_cells(enemy_color: str, movement_ctx: MapContext) -> list[Cell]:
     """Floor cells within ``BASE_RADIUS_FEET`` walk of the enemy base cell."""
     base = movement_ctx.get_spawn_cells().get(enemy_color)
-    adjacency = movement_ctx.get_adjacency()
-    if base is None or base not in adjacency:
+    if base is None or base not in movement_ctx.get_adjacency():
         return []
     radius = movement_ctx.squares(BASE_RADIUS_FEET)
-    distances = _walk_distances(base, adjacency)
+    distances = movement_ctx.walk_distances(base, radius)
     return sorted(c for c, d in distances.items() if d <= radius)

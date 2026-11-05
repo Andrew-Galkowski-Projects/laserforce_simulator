@@ -661,6 +661,11 @@ same goal: red 57%, blue 29%**; mean distance to teammates 8-9 squares (Medic 16
    enemy base, scored the same way with `value = 1`, so crowding spreads players out.
 9. **The teamwork bias is unchanged**, applied after the draw (its rework is MECH-07's).
 
+**Review round (owner, 2026-11-04):**
+10. **Action goals interrupt a held positioning goal:** while a drawn goal is held, step 2
+    still runs each tick; a chase / resupply / hide goal wins on the 4-tick cadence and
+    the player draws a fresh positioning goal afterwards.
+
 ### MOVE-07 · Varied pathing + action-choice sweep
 
 **Prio: Medium (found 2026-10-23, ANG-06f grill).** Watching the playback map overlay, the

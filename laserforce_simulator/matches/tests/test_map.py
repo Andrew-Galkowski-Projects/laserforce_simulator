@@ -2762,21 +2762,17 @@ class TestMove01BaselineZeroPlayerMovesAcrossMap:
                 red_roster, blue_roster, seed=42, flipped=False, movement_ctx=ctx
             )
 
-        red_spawn = (0, 0)
-        moved_roles = set()
-        for p in red_players:
-            if p.cell_row is None:
-                continue
-            dist = abs(p.cell_row - red_spawn[0]) + abs(p.cell_col - red_spawn[1])
-            if dist > 0:
-                moved_roles.add(p.role)
+        # MOVE-06: "Advanced" is any recorded move (movement_trail), not the
+        # final cell's distance from spawn: with drawn positioning goals and
+        # action goals interrupting them, a support player can advance and
+        # come back to a teammate at spawn, which the final cell would miss.
+        moved_roles = {p.role for p in red_players if p.movement_trail}
 
-        # MOVE-06: the Medic's goal is now a scored draw over the cells the
-        # Heavy can see, hidden ones first; on this open floor every cell ties
-        # on sight lines, so its own cell (0 ft away) can be its best support
-        # cell and it may hold there. That is the goal choice, not the
-        # MOVE-01 always-on Advance gate this test pins, so the Medic is not
-        # asserted; Commander and Ammo still have somewhere to go.
+        # The Medic is not asserted: its goal is a scored draw over the cells
+        # the Heavy can see, hidden ones first, and on this open floor every
+        # cell ties on sight lines, so its own cell (0 ft away) is its best
+        # support cell. That is the goal choice, not the MOVE-01 always-on
+        # Advance gate this test pins.
         for role in ("commander", "ammo"):
             assert role in moved_roles, (
                 f"{role} (baseline only_move weight 0) must still Advance across "

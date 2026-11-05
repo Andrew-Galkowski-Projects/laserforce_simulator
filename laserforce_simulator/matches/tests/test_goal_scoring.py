@@ -115,6 +115,22 @@ class TestScore(unittest.TestCase):
         ((score, _),) = score_candidates(me, [(10, 10)], _flat, [me, mate], OPEN)
         self.assertAlmostEqual(score, 1.0 - 0.5 * 50 / 100 - 0.5)
 
+    def test_expired_commitments_do_not_crowd(self) -> None:
+        me = _ps("red_scout_1", "red", (5, 5))
+        mate = _ps("red_scout_2", "red", (0, 39))
+        mate._committed_goal = ((10, 10), False, 20)
+        clear = 1.0 - 0.5 * 50 / 100
+
+        def score(tick):
+            ((s, _),) = score_candidates(me, [(10, 10)], _flat, [me, mate], OPEN, tick)
+            return s
+
+        self.assertAlmostEqual(score(19), clear - 0.5)  # live: crowds
+        self.assertAlmostEqual(score(20), clear)  # expired
+        mate.cell_row, mate.cell_col = (10, 10)  # standing on its own goal
+        mate._committed_goal = ((10, 10), False, 99)
+        self.assertAlmostEqual(score(19), clear - 0.5)  # a teammate counts once
+
     def test_enemies_do_not_crowd(self) -> None:
         me = _ps("red_scout_1", "red", (5, 5))
         enemy = _ps("blue_scout_1", "blue", (5, 7))
@@ -272,6 +288,36 @@ class TestGoalSelectionDraws(unittest.TestCase):
             self._goal(a, [a], mc, 11)
         self.assertEqual(len(draws), 1)
 
+    def test_an_action_goal_interrupts_a_held_goal(self) -> None:
+        """Decision 10: a held positioning goal yields to an action goal."""
+        from matches.sim_helpers.pathfinding import choose_goal_cell
+
+        mc, a, _ = self._scouts()
+        enemy = _ps("blue_scout_1", "blue", (1, 1))
+        with mock.patch.object(goal_scoring.random, "random", lambda: 0.0):
+            held = self._goal(a, [a], mc, 10)
+        chase = choose_goal_cell(
+            a, [a, enemy], mc.spawn_cells, mc, "tag_player", 11, "ticks"
+        )
+        self.assertNotEqual(chase, held)
+        self.assertEqual(chase, (1, 1))
+        self.assertTrue(a._committed_goal[1])  # now an action commitment
+
+    def test_a_teamwork_biased_goal_is_not_held(self) -> None:
+        from matches.sim_helpers import pathfinding
+
+        mc, a, _ = self._scouts()
+        with mock.patch.object(
+            goal_scoring.random, "random", lambda: 0.0
+        ), mock.patch.object(
+            pathfinding,
+            "_apply_teamwork_bias",
+            lambda player, goal, *rest: (0, 39),
+        ):
+            goal = self._goal(a, [a], mc, 10)
+        self.assertEqual(goal, (0, 39))
+        self.assertEqual(a._committed_goal[2], 10 + 4)
+
     def test_a_reactive_override_still_interrupts(self) -> None:
         mc, a, _ = self._scouts()
         medic = _ps("red_medic", "red", (0, 0))
@@ -372,6 +418,25 @@ class TestPositioningReachesTheEngine:
 
 def pre_max(players) -> int:
     return max(p.positioning for p in players)
+
+
+@pytest.mark.django_db
+class TestSerialEqualsParallelOnAMap:
+    """CODING_STANDARDS determinism: the new draws (route seeds, goal draws)
+    run only on map rounds, so serial == parallel is pinned on a map."""
+
+    def test_map_rounds_match_across_workers(self) -> None:
+        from matches.simulation import BatchSimulator
+        from matches.tests.conftest import make_team_with_slots
+        from matches.tests.test_batch_sim import _move01_make_map
+
+        red, _ = make_team_with_slots("SPRed")
+        blue, _ = make_team_with_slots("SPBlue")
+        arena = _move01_make_map("SerialParallelArena")
+        sim = BatchSimulator()
+        serial = sim.run(red, blue, n=4, master_seed=321, arena_map=arena)
+        parallel = sim.run(red, blue, n=4, master_seed=321, arena_map=arena, workers=2)
+        assert serial == parallel
 
 
 @pytest.mark.django_db

@@ -118,21 +118,6 @@ def overrides_stay_hidden(player, tick: float, all_alive: list) -> bool:
     )
 
 
-def _walk_distances(start: Cell, adjacency: dict, limit: int) -> dict[Cell, int]:
-    """Walking distance from ``start`` to every cell within ``limit`` steps."""
-    distances = {start: 0}
-    frontier = [start]
-    for step in range(1, limit + 1):
-        nxt = []
-        for cell in frontier:
-            for neighbour in adjacency.get(cell, ()):
-                if neighbour not in distances:
-                    distances[neighbour] = step
-                    nxt.append(neighbour)
-        frontier = nxt
-    return distances
-
-
 def _cell(player) -> Cell:
     return (player.cell_row, player.cell_col)
 
@@ -165,10 +150,8 @@ def _nearest_cover(
     watchers = _remembered_enemy_cells(player, tick)
     if not watchers:
         return None
-    distances = _walk_distances(
-        from_cell,
-        movement_ctx.get_adjacency(),
-        movement_ctx.squares(SHUFFLE_MAX_FEET),
+    distances = movement_ctx.walk_distances(
+        from_cell, movement_ctx.squares(SHUFFLE_MAX_FEET)
     )
     for cell in sorted(distances, key=lambda c: (distances[c], c)):
         if not any(movement_ctx.can_see(w, cell) for w in watchers):
@@ -180,14 +163,13 @@ def _turn_cell(spot: Cell, away_from: Optional[Cell], movement_ctx: MapContext) 
     """The cell ``TRAIL_FEET`` from ``spot`` by walking (the farthest
     within it when none is that far), farthest from ``away_from``: by walking,
     then straight line, then (row, col)."""
-    adjacency = movement_ctx.get_adjacency()
     trail = movement_ctx.squares(TRAIL_FEET)
-    distances = _walk_distances(spot, adjacency, trail)
+    distances = movement_ctx.walk_distances(spot, trail)
     reach = max(distances.values())
     candidates = [c for c, d in distances.items() if d == reach]
     if away_from is None:
         return min(candidates)
-    from_tagger = _walk_distances(away_from, adjacency, 10 * trail)
+    from_tagger = movement_ctx.walk_distances(away_from, 10 * trail)
     far = 10 * trail + 1
     return min(
         candidates,
@@ -203,9 +185,7 @@ def _within_tagger_range(
     cell: Cell, others: list[Cell], movement_ctx: MapContext
 ) -> bool:
     """True when any of ``others`` is within ``TAGGER_MIN_FEET`` by walking."""
-    distances = _walk_distances(
-        cell, movement_ctx.get_adjacency(), movement_ctx.squares(TAGGER_MIN_FEET)
-    )
+    distances = movement_ctx.walk_distances(cell, movement_ctx.squares(TAGGER_MIN_FEET))
     return any(o in distances for o in others)
 
 

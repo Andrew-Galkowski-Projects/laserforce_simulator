@@ -366,7 +366,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 
 ## goal_scoring.py
 
-**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals in `pathfinding._goal_from_role` (Scout: `high_los_cells`; healthy Heavy: `strong_spots`; Medic / Ammo: the cells in the Heavy's sight set, via `_cells_from_keys`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn`, and `choose_goal_cell` commits it with expiry `TICKS_PER_ROUND + 1`: **held until reached**. Reactive overrides, Stationary exits and the Downed option still clear it; action goals keep the 4-tick cadence. Goals that chase a player (nearest enemy, the Commander's enemy-Medic hunt, an unhealthy Heavy's support seek, the Medic / Ammo fallback to the Heavy's cell) are unchanged, and the teamwork bias still runs after the draw.
+**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals in `pathfinding._goal_from_role` (Scout: `high_los_cells`; healthy Heavy: `strong_spots`; Medic / Ammo: the cells in the Heavy's sight set, via `_cells_from_keys`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn` (reset when the teamwork bias swaps the cell), and `choose_goal_cell` commits it with expiry `pathfinding.HELD_GOAL_EXPIRY` (`TICKS_PER_ROUND + 1`): **held until reached**. While it is held, step 2 still runs each tick: **an action goal (chase, resupply, hide) interrupts it** (owner decision 10) and is committed on the 4-tick cadence, after which a fresh positioning goal is drawn. Reactive overrides, Stationary exits and the Downed option still clear it too. Goals that chase a player (nearest enemy, the Commander's enemy-Medic hunt, an unhealthy Heavy's support seek, the Medic / Ammo fallback to the Heavy's cell) are unchanged, and the teamwork bias still runs after the draw.
 
 ### Goal scoring formula (tunable)
 
@@ -379,10 +379,10 @@ T     = T_MIN (0.05) + T_SPAN (0.45) x (1 - positioning / 100)
 
 - `value` (0..1): `MapContext.los_rank` for Scout and Ammo (open is good), `1 - los_rank` for Medic (hidden is good), 1 for Heavy strong spots and the enemy-base set.
 - `walk_ft`: breadth-first walking distance x `feet_per_square`. Unreachable cells are dropped. With no movement graph at the player's cell (hand-built contexts), Manhattan squares are used instead.
-- `crowding`: teammates (not the player, not enemies) whose current cell or committed goal is within `squares(CROWD_RADIUS_FEET)` (15 ft, Chebyshev) of the candidate. A teammate counts once.
+- `crowding`: teammates (not the player, not enemies) whose current cell or **live** committed goal (not expired at the current tick) is within `squares(CROWD_RADIUS_FEET)` (15 ft, Chebyshev) of the candidate. A teammate counts once.
 - **The draw:** the `TOP_K` (8) best, ties by (row, col), drawn with weights `exp((score - best) / T)` from one `random.random()`. High positioning gives a sharp draw (near the best); low positioning gives a loose one.
 
-`score_candidates(player, candidates, value_of, all_alive, movement_ctx)` returns `(score, cell)` best first; `draw_goal(...)` returns the drawn cell or None; `temperature(player)`; `enemy_base_cells(enemy_color, movement_ctx)`. All constants sit at the top of `goal_scoring.py`. The `positioning` stat joined `_SIMULATION_STATS` for this (`PlayerState.positioning`, default 50). `_roster_from_snapshot` fills a stat missing from an older roster snapshot with 50, so pre-MOVE-06 rounds still re-simulate (on today's engine, so not identically).
+`score_candidates(player, candidates, value_of, all_alive, movement_ctx, tick=None)` returns `(score, cell)` best first; `draw_goal(...)` (same arguments) returns the drawn cell or None; `temperature(player)`; `enemy_base_cells(enemy_color, movement_ctx)`. All constants sit at the top of `goal_scoring.py`. The `positioning` stat joined `_SIMULATION_STATS` for this (`PlayerState.positioning`, default 50). `_roster_from_snapshot` fills a stat missing from an older roster snapshot with 50, so pre-MOVE-06 rounds still re-simulate (on today's engine, so not identically).
 
 Measured on Syracuse (2 seeded rounds, before → after): team-ticks with 2+ teammates on one goal red 57% / blue 29% → 9% / 11%; distinct goals per player per round Scout 33 → 120, Heavy 44 → 138; mean distance to teammates 8-9 → 12-15 squares.
 
@@ -504,6 +504,7 @@ The round report PDF (RV-03) and its chart section (RV-05). All three are pure (
 
 ### Domain-level accessors
 
+- `walk_distances(start, limit=None) -> dict[cell, int]` (MOVE-06) — breadth-first walking distance in squares over `adj`, within `limit` when given; shared by the Downed option and the goal draw.
 - `squares(feet) -> int` (MOVE-08) — `max(1, round(feet / feet_per_square))`: every rule distance (Follow rule, Downed option) is a feet constant turned into this map's squares, so the scale holds on any grid size.
 - `los_rank(cell) -> float` (MOVE-08) — the share of the other cells whose LOS count is lower (0 = most hidden, 1 = most open); the sorted counts are cached on the context. Feeds the Downed option's Stay hidden weight.
 - `can_see(from_cell, to_cell) -> bool` — frozenset lookup in `sight_data`.

@@ -163,11 +163,12 @@ class TestMove04GoalCommitment:
         scout = _make_player("red_scout", "red", "scout", cell_row=0, cell_col=0)
         ctx = _ctx(spawn_cells=spawn_cells, high_los_cells=[(2, 2)])
 
-        # Prime the cache.
-        goal0 = choose_goal_cell(
-            scout, [scout], spawn_cells, ctx, second=0, time_domain="ticks"
-        )
-        assert goal0 == (2, 2)
+        # Prime a 4-tick (cadence) commitment by hand. MOVE-06 decision 10: a
+        # drawn, held positioning goal deliberately runs step 2 each tick so an
+        # action goal can interrupt it (test_goal_scoring.py pins that case);
+        # this test keeps pinning the cadence window, where steps 2-4 are
+        # skipped entirely.
+        scout._committed_goal = ((2, 2), False, 4)
 
         # Now patch the step-2/3 helpers and expect a hit (no calls).
         action_calls = []

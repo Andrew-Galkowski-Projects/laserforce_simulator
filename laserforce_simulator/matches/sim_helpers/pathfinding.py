@@ -35,6 +35,10 @@ from .time_constants import (
     TICKS_PER_ROUND,
 )
 
+#: MOVE-06: the commitment expiry of a drawn positioning goal: after the round,
+#: so it is held until reached (action goals keep the 4-tick cadence).
+HELD_GOAL_EXPIRY: int = TICKS_PER_ROUND + 1
+
 _STALE_THRESHOLD_TICKS = {
     "heavy": STALENESS_SLOW_TICKS,
     "medic": STALENESS_SLOW_TICKS,
@@ -682,7 +686,12 @@ def _goal_from_role(
 
     def drawn(candidates, value_of) -> tuple[int, int] | None:
         pick = draw_goal(
-            player, [tuple(c) for c in candidates], value_of, all_alive, movement_ctx
+            player,
+            [tuple(c) for c in candidates],
+            value_of,
+            all_alive,
+            movement_ctx,
+            second,
         )
         player._goal_was_drawn = pick is not None
         return pick
@@ -745,9 +754,14 @@ def _goal_from_role(
 
     # MECH-06: teamwork bias — only when not in a nuke-reaction tick
     if not nuke_active and goal is not None:
-        goal = _apply_teamwork_bias(
+        biased = _apply_teamwork_bias(
             player, goal, all_alive, cell_row, cell_col, movement_ctx
         )
+        if biased != goal:
+            # MOVE-06: the bias's nearest teamwork cell was not drawn, so it
+            # keeps the 4-tick cadence instead of being held.
+            player._goal_was_drawn = False
+        goal = biased
 
     return goal
 
@@ -900,6 +914,21 @@ def choose_goal_cell(
     # overrides (steps 0/1/1b above) bypass this entirely and clear the
     # commitment as a side effect when they fire. The RBS path
     # (time_domain != "ticks") is unchanged.
+    def action_goal() -> tuple[int, int] | None:
+        return _goal_from_action(
+            player,
+            all_alive,
+            enemy_color,
+            cell_row,
+            cell_col,
+            intended_action,
+            movement_ctx,
+            second,
+            time_domain,
+        )
+
+    early_action: tuple[int, int] | None = None
+    action_checked = False
     if time_domain == "ticks":
         committed = player._committed_goal
         if (
@@ -907,20 +936,17 @@ def choose_goal_cell(
             and (cell_row, cell_col) != committed[0]
             and second < committed[2]
         ):
-            return committed[0]
+            if committed[2] != HELD_GOAL_EXPIRY:
+                return committed[0]
+            # MOVE-06 decision 10: a held (drawn) positioning goal yields to an
+            # action goal (chase, resupply, hide); otherwise it is kept.
+            early_action = action_goal()
+            action_checked = True
+            if early_action is None:
+                return committed[0]
 
     # ── 2. Action-driven movement ────────────────────────────────────────────
-    goal = _goal_from_action(
-        player,
-        all_alive,
-        enemy_color,
-        cell_row,
-        cell_col,
-        intended_action,
-        movement_ctx,
-        second,
-        time_domain,
-    )
+    goal = early_action if action_checked else action_goal()
     from_action = goal is not None
     if goal is None:
         # ── 3. Role-specific positioning ─────────────────────────────────────
@@ -941,7 +967,9 @@ def choose_goal_cell(
     # players with no other goal spread out instead of stacking on one cell.
     if goal is None:
         base_cells = enemy_base_cells(enemy_color, movement_ctx)
-        goal = draw_goal(player, base_cells, lambda cell: 1.0, all_alive, movement_ctx)
+        goal = draw_goal(
+            player, base_cells, lambda cell: 1.0, all_alive, movement_ctx, second
+        )
         player._goal_was_drawn = goal is not None
         if goal is None:
             goal = default_goal
@@ -959,7 +987,7 @@ def choose_goal_cell(
         player._committed_goal = (
             goal,
             from_action,
-            TICKS_PER_ROUND + 1 if held else int(second) + GOAL_RECOMPUTE_PERIOD_TICKS,
+            HELD_GOAL_EXPIRY if held else int(second) + GOAL_RECOMPUTE_PERIOD_TICKS,
         )
 
     return goal
