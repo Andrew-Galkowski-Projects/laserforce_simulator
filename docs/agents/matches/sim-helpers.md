@@ -92,7 +92,8 @@ EventLog candidate: the medic_reset and nuke_cancelled emits route through `ctx.
 - `start_trail(player, tick, movement_ctx)` — from `record_down` (every Down) and `combat._reset_resupplied` (the receiver of either Resupply branch), **before** `last_downed_time` is stamped. Not yet Active: the open Trail is kept (it grows to the later Active tick; Chases and bans carry over). Otherwise a fresh `Trail(start_tick=tick)` at the player's cell, which ends every ban on the old one. No-op with no map (`movement_ctx is None`) or no cell.
 - `record_step(player, step_cells, tick, all_alive, movement_ctx)` — from `BatchSimulator._advance_player` after `_move_player_in_memory`, only when the cell changed, with `[start, *player._last_step_cells]`. Grows the mover's own open Trail and, for each enemy with an open Trail, adds forward progress: for consecutive step cells inside the band, `max(0, index - previous index)` of their nearest path cells; a cell outside the band resets "previous", so distance outside never counts. Reaching `squares(FOLLOW_LIMIT_FEET)` sets `Chase.banned` / `banned_at`.
 - `may_tag(attacker, target, tick) -> bool` — False while the attacker holds a ban on the target's **current** Trail and `tick < target.last_downed_time + RESPAWN_TICKS + FOLLOW_GRACE_TICKS`. Read by `choose_tag_target` (before the draw), the `resolve_shot` Phase 1 gate (all four kinds: no Shot at all, like a non-Taggable target), `_collect_overwatch_attempts` (a barred mover draws no Overwatch, so the holder keeps its one shot a tick for a legal mover), the Missile candidate list in `plan_action`, and the `_complete_missile` gate. Nukes are exempt. Duck-typed players without the state (`PlayerRoundState`) are never barred.
-- `chased_tag_ids(attacker, all_alive, tick)` — the barred `tag_id_key`s, for goal selection: `_goal_from_action`'s `tag_player` / `missile_player` branch (memory via `_known_enemies_from_memory(exclude=...)`, then the perfect-knowledge list) and the Commander's enemy-Medic goal (`_enemy_medic_goal`, both call sites) skip them.
+- `chased_tag_ids(attacker, all_alive, tick)` — the barred `tag_id_key`s, for goal selection: `_goal_from_action`'s `tag_player` / `missile_player` branch (`modes.attack_tag_goal(exclude=...)`, memory via `_known_enemies_from_memory(exclude=...)`, then the perfect-knowledge list) and the Attack rule in `modes.mode_goal` skip them.
+- `open_trail(player, tick) -> Trail | None` (MECH-07) — the player's Trail while it is open, else None, for `modes.trail_costs`. A read only: it changes no Chase or Tag behaviour.
 - `round_map(ctx)` — the round's `MapContext` from a `RoundContext`, or None (no context / no map).
 
 State is transient on `PlayerState` (`_trail`, `_chases`), never flushed. A `Trail`'s `band` maps each covered cell to a `BandCell(distance, path_index)`. A combo Resupply calls `attempt_resupply` twice on one tick with the receiver's old `last_downed_time` restored in between, so the second call starts a fresh Trail rather than extending; it has the same start tick and one-cell path, so Chases keyed on it are unaffected. **Found by the MECH-10 probe:** Downed players move in only about 5% of their Downed ticks (pre-Down hide / hold / capture_base carry over, or the goal is already reached), so Trails average 2-3 cells and the rule rarely fires; MOVE-08's Downed option (below) answers it.
@@ -210,7 +211,7 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 |-------|------|---------|
 | `player_memory` | `dict[str, dict]` | `{tag_id: {"cell": (r,c), "timestamp": s, "role": role}}` — last-known cell per player from LOS observations and broadcasts |
 | `medic_hit_times` | `list[float]` | Tick timestamps of the two most recent hits received (medic-under-fire alert — 2 hits within `MEDIC_ALERT_WINDOW_TICKS`, 12 s) |
-| `score_broadcast_state` | `str \| None` | Outcome of the last score broadcast: `"losing"`, `"hide"`, `"seek_medic"`, or `None` |
+| `score_broadcast_state` | `dict` | The last score broadcast, `{"winning_team": "red" \| "blue" \| "tied", "timestamp": tick}`; `{}` before the first one |
 | `score_broadcast_next` | `float` | Simulation tick at which the next score broadcast fires (first at `SCORE_BROADCAST_PERIOD_TICKS = 360`, i.e. 180 s) |
 
 ### MECH-10 transient fields (no DB columns)
@@ -230,6 +231,18 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 | `nuke_detonates_at` | `int \| None` | Earliest detonation tick of a pending Nuke aimed at this player's team, set each tick by `_apply_nuke_reaction_flags` |
 | `resupply_rolled_at` | `float \| None` | Tick of the last resupply-trail roll (a combo Resupply rolls once) |
 | `move_carry` | `float` | Fraction of a square carried to the next tick's Advance (`squares_this_tick`) |
+
+### MECH-07 transient fields (no DB columns)
+
+Managed by `modes` on map rounds only.
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `mode` | `Mode` | The player's Mode; `__post_init__` sets it to `default_mode(role)` |
+| `mode_since` | `int` | Tick of the last switch (0 at the start); the dwell counts from it |
+| `mode_next_check` | `int` | Earliest tick of the next switch check |
+| `mode_ticks` | `dict[Mode, int]` | Ticks spent in each Mode; empty on a no-map round |
+| `mode_hold_until` | `int \| None` | Deadline of a Control hold on a reached goal; a Mode switch clears it |
 
 ### Role stat lookups
 
@@ -278,11 +291,13 @@ The caller (`combat.plan_action`) starts each player's tick from the baseline `[
 
 `resupply_efficiency` scales the `request_resupply` weight (index 7) for all roles — the weight is only non-zero when the player needs resources (has room to receive lives or shots). `resupply_synergy` scales the `resupply_ally` weight (index 5) for Medic and Ammo players — higher synergy pushes support players toward fulfilling requests. Both stats are fully wired as of MECH-01; the former TODO/skeleton blocks have been removed.
 
-`teamwork` and `communication` are fully wired as of MECH-06 — former skeleton TODO blocks removed. `teamwork` (>50) applies a bias in goal selection (see pathfinding.py `_apply_teamwork_bias`); `communication` is a per-tick broadcast probability handled in the simulator tick loop, not in `weights.py` directly.
+`teamwork` and `communication` are fully wired as of MECH-06 — former skeleton TODO blocks removed. `teamwork`'s only effect on goals is the Defense closeness term (see `modes.py`); `communication` is a per-tick broadcast probability handled in the simulator tick loop, not in `weights.py` directly.
 
 **`_apply_score_broadcast_weights(player, weights)`** (MECH-06) — adjusts the weight vector based on the player's current `score_broadcast_state`: `"losing"` → `tag_player` weight +10; `"hide"` → `hide` weight +20; `"seek_medic"` → movement override handled in `pathfinding.choose_goal_cell` (no weight change here). Called from each role's weight function when `score_broadcast_state` is set.
 
 **TIME-01:** the endgame-rush trigger (`ENDGAME_RUSH_TICKS`, was `second >= 840`) and the score-broadcast period (`SCORE_BROADCAST_PERIOD_TICKS`) are imported from `time_constants.py` and compared against the tick cursor — no inline second literals remain in `weights.py`.
+
+**MECH-07:** on map rounds `plan_action` passes the role weights through `modes.apply_mode_weights` before the stamina penalty and cooldown zeroing (see `modes.py`).
 
 `_commander_nuke_gate(sp, ga)` gates the Commander `use_special` weight based on the awareness-tier stacking table (MECH-03): ga<30→fire at sp>20; ga<50→fire at sp>40; ga<70→fire at sp>60; always fire at sp>80. When the gate is closed, weight stays 0 and the Commander stacks SP toward the next threshold. The `# MECH-06:` situational-override hook inside `_get_commander_weights` is now populated — MECH-06 memory checks can cause the gate to open early when conditions are favourable.
 
@@ -296,7 +311,7 @@ The caller (`combat.plan_action`) starts each player's tick from the baseline `[
 
 Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SIM-09). Used when `arena_map` is provided; 3-zone fallback is used otherwise.
 
-**MOVE-04 — Goal commitment ([ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md), GLOSSARY.md).** With MOVE-02's route cache in place, the residual per-tick map-mode cost is the goal-selection cascade itself (no A*, but `_goal_from_action` / `_goal_from_role` / teamwork-bias / memory / LOS-count scans run for every non-**Stationary** player every tick). MOVE-04 throttles only the **steady-state positioning** layer of `choose_goal_cell` (cascade steps 2/3/4 — `_goal_from_action`, `_goal_from_role`, enemy-base default) to a per-player `GOAL_RECOMPUTE_PERIOD_TICKS = 4` ticks (2 s) cadence; the **reactive** layer (step 0 MECH-04 nuke-reaction, step 1 critical-resource lives/shots ≤ 30%, step 1b score-broadcast `seek_medic`) **still fires every tick** so time-sensitive overrides are never delayed. The committed cell lives on the transient `PlayerState._committed_goal: Optional[tuple[(int,int), bool, int]] = None` (`(cell, from_action_driven, expires_at_tick)` — see player_state.py table above). **Force-recompute triggers** beyond cadence expiry: no prior commitment, Goal cell reached, exiting **Stationary** (hide/hold → not), a reactive override firing this tick, **Down**/respawn iff `from_action_driven` (positioning goals survive a Down because the player keeps **Advancing** through the **Respawn cooldown**). Phase is **expiry-based** per-player (`expires_at_tick = tick + N`), **not** a global `tick % N == 0` — load staggers naturally across the window without hashing. The route cache (**Path commitment**, MOVE-02) invalidates **iff** a Goal commitment recompute changes the Goal cell — re-picking the same cell leaves `_path_cache` untouched. Cadence + source marker consume **no RNG**, so the SIM-07/SIM-08 *internal* contract holds in form (same seed + Orientation + rosters + map ⇒ identical game, serial == parallel, faithful **Replay**); seeded games **differ from pre-MOVE-04** (staler goals deliberately shift pursuit/positioning) and the delta folds into the already-pending post-MOVE-01 Score Calibration re-baseline (no new obligation). See [ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md), GLOSSARY.md (**Goal commitment**, and the superseded "Goal cell is recomputed every tick" ambiguity).
+**MOVE-04 — Goal commitment ([ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md), GLOSSARY.md).** With MOVE-02's route cache in place, the residual per-tick map-mode cost is the goal-selection cascade itself (no A*, but `_goal_from_action` / `_goal_from_role` / memory / LOS-count scans run for every non-**Stationary** player every tick). MOVE-04 throttles only the **steady-state positioning** layer of `choose_goal_cell` (cascade steps 2/3/4 — `_goal_from_action`, `_goal_from_role`, enemy-base default) to a per-player `GOAL_RECOMPUTE_PERIOD_TICKS = 4` ticks (2 s) cadence; the **reactive** layer (step 0 MECH-04 nuke-reaction, step 1 critical-resource lives/shots ≤ 30%, step 1b score-broadcast `seek_medic`) **still fires every tick** so time-sensitive overrides are never delayed. The committed cell lives on the transient `PlayerState._committed_goal: Optional[tuple[(int,int), bool, int]] = None` (`(cell, from_action_driven, expires_at_tick)` — see player_state.py table above). **Force-recompute triggers** beyond cadence expiry: no prior commitment, Goal cell reached, exiting **Stationary** (hide/hold → not), a reactive override firing this tick, **Down**/respawn iff `from_action_driven` (positioning goals survive a Down because the player keeps **Advancing** through the **Respawn cooldown**). Phase is **expiry-based** per-player (`expires_at_tick = tick + N`), **not** a global `tick % N == 0` — load staggers naturally across the window without hashing. The route cache (**Path commitment**, MOVE-02) invalidates **iff** a Goal commitment recompute changes the Goal cell — re-picking the same cell leaves `_path_cache` untouched. Cadence + source marker consume **no RNG**, so the SIM-07/SIM-08 *internal* contract holds in form (same seed + Orientation + rosters + map ⇒ identical game, serial == parallel, faithful **Replay**); seeded games **differ from pre-MOVE-04** (staler goals deliberately shift pursuit/positioning) and the delta folds into the already-pending post-MOVE-01 Score Calibration re-baseline (no new obligation). See [ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md), GLOSSARY.md (**Goal commitment**, and the superseded "Goal cell is recomputed every tick" ambiguity).
 
 **MOVE-01 — movement decoupled from the weighted Action ([ADR-0007](../../../docs/adr/0007-movement-decoupled-from-action.md), GLOSSARY.md).** On the map path, every non-**Stationary** player **Advances** toward their **Goal cell** **every tick**, regardless of which Action the weighted roll picked — so `choose_goal_cell` is now consulted every tick (previously only on the `change_zone` roll, which left zero-weight Commander/Medic/Ammo frozen on spawn). **Stationary** = no Advance = `is_hiding` True OR chosen Action == `capture_base`. The renamed **`only_move`** Action (was `change_zone`) no longer gates movement — it devotes the tick entirely to repositioning by **doubling** that tick's Advance (`squares_this_tick(..., multiplier=2)` squares in one advance). Advance and A* consume **no RNG** (SIM-07/SIM-08 contract preserved in form).
 
@@ -306,51 +321,40 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 
 **`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every movement-passable cell. Uses module constant `_MOVEMENT_PASSABLE = {1, 2, 3}` (floor + legacy red/blue zones). High wall (0), low wall (4), and windowed wall (5) all block movement and are excluded entirely, so `cell in adj` doubles as a passability check.
 
-**`astar_path(start, goal, adj, elevation_data=None, route_seed=None)`** — core A* (Manhattan heuristic, optional elevation cost). Returns the ordered list of cells from `start` to `goal` **excluding `start`** (last element is `goal`); `[]` when `start == goal`, no path exists, or `start` is not in the adjacency graph. `astar_next_step` and `astar_advance` are thin wrappers over it. **MOVE-07 route noise:** with a `route_seed`, each step into a cell costs `ROUTE_NOISE_MAX` (0.5) x `route_noise(seed, cell)` more, where `route_noise` is a deterministic integer hash in [0, 1). So routes are near-shortest (every step costs at least 1; the heuristic stays admissible) and particular to each player. No RNG is drawn in A*. `BatchSimulator._simulate_round` gives every player on a map round one `PlayerState.route_seed = random.getrandbits(32)` at round start (red then blue), and `astar_advance_cached` passes it, so the goal-keyed cache stays valid.
+**`astar_path(start, goal, adj, elevation_data=None, route_seed=None, extra_costs=None)`** — core A* (Manhattan heuristic, optional elevation cost). Returns the ordered list of cells from `start` to `goal` **excluding `start`** (last element is `goal`); `[]` when `start == goal`, no path exists, or `start` is not in the adjacency graph. `astar_next_step` and `astar_advance` are thin wrappers over it. **MOVE-07 route noise:** with a `route_seed`, each step into a cell costs `ROUTE_NOISE_MAX` (0.5) x `route_noise(seed, cell)` more, where `route_noise` is a deterministic integer hash in [0, 1). So routes are near-shortest (every step costs at least 1; the heuristic stays admissible) and particular to each player. No RNG is drawn in A*. `BatchSimulator._simulate_round` gives every player on a map round one `PlayerState.route_seed = random.getrandbits(32)` at round start (red then blue), and `astar_advance_cached` passes it, so the goal-keyed cache stays valid. **MECH-07 extra costs:** `extra_costs` (a `Mapping[Cell, float]`) adds its cost to each step into a listed cell. It is a cost and never a block: with a parallel route the path takes it, and when those cells are the only way through the path still crosses. Omitted or empty, routes are unchanged for the same seed. Only `astar_advance_cached` passes it; `MapContext.walk_distances`, and so goal scoring's walk distances, ignore it.
 
 **`astar_next_step(start, goal, adj, elevation_data=None)`** — `astar_path(...)[0]` (or `start` when the path is empty). Behaviour unchanged from the pre-refactor implementation (regression-guarded by `test_map.py::TestAstarPathAndAdvance` + the legacy `TestMap02CellMovement` astar tests).
 
 **`astar_advance(start, goal, adj, steps, elevation_data=None)`** — returns the cell reached after walking up to `steps` cells along the A* path (stops at `goal`, no overshoot). Returns `start` when `steps <= 0`, no path, or non-navigable start. **Recomputes A* from `start` every call** (no caching). Retained alongside `astar_advance_cached` as the uncached primitive — used by `test_map.py::TestAstarPathAndAdvance` and the legacy `TestMap02CellMovement` astar tests; BatchSim itself uses `astar_advance_cached`.
 
-**`astar_advance_cached(player, current, goal, adj, steps, elevation_data=None)` (MOVE-02, [ADR-0008](../../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md))** — the path-commitment variant used by `BatchSimulator`. Manages `player._path_cache` (transient `Optional[tuple]` — a `(cached_goal, remaining_cells, anchor)` 3-tuple, where `remaining_cells` is the route still to walk, same shape `astar_path` returns: excludes `current`, ends at `goal`; `anchor` is the cell the previous re-step left the player on). Runs a full `astar_path` recompute **iff** any of: cache `None`/empty, live `goal` ≠ cached goal, live `current` ≠ `anchor` (off-route displacement — *enforces* the off-path invariant rather than relying on it; no mechanic does this today), or `remaining[0] ∉ adj` (next cell blocked — map adjacency is immutable per round so this never fires in production); the BatchSim caller separately clears `_path_cache = None` at every tag / follow-up / reaction / missile / nuke life-loss site via the shared `BatchSimulator._record_down(player, second)` helper (knocked off-path → falls into the "cache None" recompute branch). A legacy 2-tuple cache (no anchor) is tolerated for hand-built test caches (the anchor check is skipped). Otherwise it **re-steps the committed route**: pops up to `steps` cells, stops at `goal` (no overshoot — identical traversal semantics to `astar_advance`), and clears the cache to `None` once the route is consumed (player has reached `goal`; next tick's fresh `choose_goal_cell` drives recompute-or-idle). Cache exhaustion and an `only_move` 2× `steps` are **not** recompute triggers. Consumes **no RNG**, so the SIM-07/SIM-08 serial == parallel / faithful Replay contract still holds (the transient cache never crosses the parallel-worker process boundary; the round is re-simulated in-worker). Called by `BatchSimulator._move_player_in_memory` in place of `astar_advance`. **MOVE-03 ([ADR-0009](../../../docs/adr/0009-hold-overwatch.md)):** the cells popped this tick (the player's traversed cells for this Advance, between the start and end cell) are also recorded on the transient `player._last_step_cells` so the `BatchSimulator` Overwatch resolution step can test whether the traversal crossed any **Hold**ing player's **Line of sight** — MOVE-01 otherwise discards the intermediate route (`movement_trail` keeps only `(start, end, tick)`), so this committed-route exposure is what makes the "moved *through* LoS in one Advance" guarantee resolvable. Recording it is pure bookkeeping — still **no RNG**, contract unchanged.
+**`astar_advance_cached(player, current, goal, adj, steps, elevation_data=None, all_alive=None, tick=0.0)` (MOVE-02, [ADR-0008](../../../docs/adr/0008-path-commitment-via-goal-keyed-cache.md))** — the path-commitment variant used by `BatchSimulator`. Manages `player._path_cache` (transient `Optional[tuple]` — a `(cached_goal, remaining_cells, anchor)` 3-tuple, where `remaining_cells` is the route still to walk, same shape `astar_path` returns: excludes `current`, ends at `goal`; `anchor` is the cell the previous re-step left the player on). Runs a full `astar_path` recompute **iff** any of: cache `None`/empty, live `goal` ≠ cached goal, live `current` ≠ `anchor` (off-route displacement — *enforces* the off-path invariant rather than relying on it; no mechanic does this today), or `remaining[0] ∉ adj` (next cell blocked — map adjacency is immutable per round so this never fires in production); the BatchSim caller separately clears `_path_cache = None` at every tag / follow-up / reaction / missile / nuke life-loss site via the shared `BatchSimulator._record_down(player, second)` helper (knocked off-path → falls into the "cache None" recompute branch). A legacy 2-tuple cache (no anchor) is tolerated for hand-built test caches (the anchor check is skipped). Otherwise it **re-steps the committed route**: pops up to `steps` cells, stops at `goal` (no overshoot — identical traversal semantics to `astar_advance`), and clears the cache to `None` once the route is consumed (player has reached `goal`; next tick's fresh `choose_goal_cell` drives recompute-or-idle). Cache exhaustion and an `only_move` 2× `steps` are **not** recompute triggers. Consumes **no RNG**, so the SIM-07/SIM-08 serial == parallel / faithful Replay contract still holds (the transient cache never crosses the parallel-worker process boundary; the round is re-simulated in-worker). Called by `BatchSimulator._move_player_in_memory` in place of `astar_advance`. **MOVE-03 ([ADR-0009](../../../docs/adr/0009-hold-overwatch.md)):** the cells popped this tick (the player's traversed cells for this Advance, between the start and end cell) are also recorded on the transient `player._last_step_cells` so the `BatchSimulator` Overwatch resolution step can test whether the traversal crossed any **Hold**ing player's **Line of sight** — MOVE-01 otherwise discards the intermediate route (`movement_trail` keeps only `(start, end, tick)`), so this committed-route exposure is what makes the "moved *through* LoS in one Advance" guarantee resolvable. Recording it is pure bookkeeping — still **no RNG**, contract unchanged. **MECH-07 Trail avoidance:** a recompute passes `modes.trail_costs(player, all_alive, tick)` as `extra_costs`. A re-step never calls it, because this runs per tick per player. A Trail is not a recompute trigger: a route committed before the player saw the Down keeps going through the band. `BatchSimulator._advance_player` passes `all_alive` through `_move_player_in_memory`; with `all_alive=None` (hand-built tests) the route ignores Trails.
 
 **Player speed in feet (MOVE-08, replaces STAT-03's `max_movement_for_map` / `cells_to_move`).** `MAX_PLAYER_FEET_PER_SECOND = 10`. **`feet_per_second(player)`** — `10 x (0.5 + 0.5 x speed / 100)`: 5 ft/s at speed 0, 10 at 100 (1-2 squares a second on Syracuse's 5 ft squares; the old formula moved 1-10 squares a **tick**, 10-100 ft/s). **`squares_this_tick(player, movement_ctx, multiplier=1)`** — `feet_per_second x TICK_SECONDS / movement_ctx.feet_per_square x multiplier + player.move_carry`; the whole part moves and the fraction carries (`PlayerState.move_carry`), so a 1.5 squares-a-second player moves 0, 1, 1, 1 over four ticks, and a finer grid moves proportionally more squares. A 0-square tick skips the Advance. Called by `BatchSimulator._move_player_in_memory`. **MOVE-01:** an `only_move` tick passes `multiplier=2` (one single 2× step); every other non-**Stationary** Action Advances the normal distance. **MOVE-02:** the doubled `steps` is consumed along the **same** committed route via `astar_advance_cached` (the 2× is not a recompute trigger).
 
 **`_find_role(all_alive, team_color, role) -> Any`** — returns the first alive player on `team_color` with the given `role`, or `None`. Return type is `Any` (not `object`) because callers access duck-typed attributes (`cell_row`, `cell_col`, etc.).
 
 **`_goal_from_action(player, all_alive, enemy_color, cell_row, cell_col, intended_action, movement_ctx) -> tuple[int,int] | None`** — returns a goal cell driven by the player's previously chosen action, or `None`:
-- `tag_player` / `missile_player`: nearest enemy (Commander → enemy medic first).
-- `resupply_ally`: Medic → neediest ally by lives ratio; Ammo → neediest ally by shots ratio.
+- `tag_player` / `missile_player`: in Attack, `modes.attack_tag_goal` first (the nearest remembered enemy Medic or Ammo); then the nearest remembered enemy; then the nearest enemy's true cell (stays for MECH-13). A Commander in Control starts at the nearest remembered enemy.
+- `resupply_ally`: Medic → neediest ally by lives ratio; Ammo → neediest ally by shots ratio (a true-state read, and it stays one). **MECH-07:** in Defense, only when that ratio is at or below `modes.DEFENSE_RESUPPLY_SHARE` (75%). Above it this returns `None`, so `mode_goal` runs (or a held goal is kept). Other Modes go to the neediest ally at any ratio. Only the walk changes: rolling the `resupply_ally` Action plans a Resupply as before.
 - `hide`: adjacent cell with lowest LOS count.
 
-**`_goal_from_role(player, all_alive, enemy_color, cell_row, cell_col, movement_ctx) -> tuple[int,int] | None`** — returns a role-specific positioning goal, or `None`:
-- Scout → a drawn high-LOS cell (top 25% by LOS count). MOVE-06: every "drawn" pick is `goal_scoring.draw_goal` (see `goal_scoring.py` below), held until reached.
-- Heavy (healthy >50% lives and shots) → a drawn strong spot; otherwise → the allied Medic or Ammo.
-- Medic → a drawn cell in the allied Heavy's visible set, hidden ones scoring higher (sheltered position near Heavy).
-- Ammo → a drawn cell in the allied Heavy's visible set, open ones scoring higher (exposed support position near Heavy).
-- Commander → enemy medic cell.
+**`_goal_from_role(player, all_alive, enemy_color, movement_ctx, second, time_domain) -> tuple[int,int] | None`** — returns the positioning goal, or `None` for the enemy-base default, by calling `modes.mode_goal` (see `modes.py` below). Its draws are `goal_scoring.draw_goal` (see `goal_scoring.py` below), held until reached.
 
-**`_STALE_THRESHOLD`** — module-level dict mapping role strings to their memory staleness thresholds in **ticks** (TIME-01; sourced from `time_constants.py`): `Heavy/Medic/Ammo → 120` (60 s), `Scout/Commander → 30` (15 s).
+**`_stale_table(time_domain)`** — imported from `time_constants.py` (MECH-07, so `modes` need not import this module): the role-to-threshold table for the caller's time domain. Ticks (`_STALE_THRESHOLD_TICKS`): `Heavy/Medic/Ammo → 120` (60 s), `Scout/Commander → 30` (15 s). Seconds (`_STALE_THRESHOLD`): `60` and `15`.
 
 **`_cell_from_memory(player, tag_id, movement_ctx) -> tuple[int,int] | None`** — looks up `tag_id` in `player.player_memory`; returns the stored cell if the entry is fresh (within the role's staleness threshold), `None` if stale or absent. Stale slow-role entries (Heavy/Medic/Ammo) return the last-known cell anyway; stale fast-role entries return `None` to let callers fall through to role defaults.
 
 **`_known_enemies_from_memory(player, all_alive, movement_ctx) -> list`** — returns all enemy `PlayerState` objects whose last-known cell is fresh enough to use, substituting the memory cell for the player's actual cell in a lightweight proxy so callers don't need to distinguish real vs remembered positions. **MECH-10:** an `exclude` set of tag ids (the players this one Chased) is skipped.
 
-**`_enemy_medic_goal(player, all_alive, enemy_color, second, time_domain, chased)`** (MECH-10) — the Commander's enemy-Medic goal, memory first then perfect knowledge; None when that Medic is in `chased`. Shared by `_goal_from_action`'s Commander branch and `_goal_from_role`'s Commander positioning.
-
-**`_apply_teamwork_bias(player, candidates, movement_ctx) -> tuple[int,int] | None`** — when `player.teamwork > 50`, filters `candidates` (high-LOS cells) to those also within LOS of ≥1 alive ally; returns the nearest qualifying cell, or `None` when no ally-visible high-LOS cell exists (caller falls through to unbiased selection).
-
 **`_goal_from_action(player, all_alive, enemy_color, cell_row, cell_col, intended_action, movement_ctx) -> tuple[int,int] | None`** — unchanged signature; now uses `_known_enemies_from_memory` instead of direct `all_alive` iteration when selecting a tag/missile target so goal selection uses memory rather than perfect knowledge. **MECH-10:** the `tag_player` / `missile_player` branch skips every player in `follow_rule.chased_tag_ids(player, all_alive, second)`, in memory and in the perfect-knowledge fallback.
-
-**`_goal_from_role(player, all_alive, enemy_color, cell_row, cell_col, movement_ctx) -> tuple[int,int] | None`** — unchanged signature; internally calls `_apply_teamwork_bias` after identifying role-specific candidate cells (Scout, Heavy-healthy paths) before returning.
 
 **`choose_goal_cell(player, all_alive, spawn_cells, movement_ctx=None, intended_action="")`** — duck-typed goal selector consumed by `BatchSimulator` (MAP-05). **MOVE-01: now consulted every tick** a player is not **Stationary** (was only reached from the old `change_zone` branch), so the nuke / critical-resource / score-broadcast overrides below are live for all roles every tick. Priority order:
 1. **MECH-04 nuke-reaction override** (highest priority): when `player.reacting_to_nuke` is `True`, Medic/Ammo rush toward the neediest ally. Non-support players with lives ≤ 30% of max → allied Medic cell (survival mode); lives > 30% → seeks enemy Commander's last-known cell from `player_memory` (MECH-06 fills the former TODO hook) to attempt a tag-cancel; falls through to step 2 if memory is absent/stale.
 2. **Score-broadcast seek-medic override**: when `player.score_broadcast_state == "seek_medic"`, movement is overridden to the allied Medic's last-known cell from memory.
 3. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
 4. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
-5. Role-specific positioning via `_goal_from_role` (includes teamwork bias via `_apply_teamwork_bias`).
-6. Default: enemy base cell from `spawn_cells`.
+5. Positioning via `_goal_from_role`: `modes.mode_goal`.
+6. Default: a drawn floor cell near the enemy base, then the enemy base cell from `spawn_cells`.
 
 ### Elevation model (stub)
 
@@ -366,7 +370,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 
 ## goal_scoring.py
 
-**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals in `pathfinding._goal_from_role` (Scout: `high_los_cells`; healthy Heavy: `strong_spots`; Medic / Ammo: the cells in the Heavy's sight set, via `_cells_from_keys`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn` (reset when the teamwork bias swaps the cell), and `choose_goal_cell` commits it with expiry `pathfinding.HELD_GOAL_EXPIRY` (`TICKS_PER_ROUND + 1`): **held until reached**. While it is held, step 2 still runs each tick: **an action goal (chase, resupply, hide) interrupts it** (owner decision 10) and is committed on the 4-tick cadence, after which a fresh positioning goal is drawn. Reactive overrides, Stationary exits and the Downed option still clear it too. Goals that chase a player (nearest enemy, the Commander's enemy-Medic hunt, an unhealthy Heavy's support seek, the Medic / Ammo fallback to the Heavy's cell) are unchanged, and the teamwork bias still runs after the draw.
+**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals (`modes.mode_goal`'s rules; candidates from a sight set come through `MapContext.cells_visible_from`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn`, and `choose_goal_cell` commits it with expiry `time_constants.HELD_GOAL_EXPIRY` (`TICKS_PER_ROUND + 1`): **held until reached**. While it is held, step 2 still runs each tick: **an action goal (chase, resupply, hide) interrupts it** (owner decision 10) and is committed on the 4-tick cadence, after which a fresh positioning goal is drawn. Reactive overrides, Stationary exits and the Downed option still clear it too. Goals that chase a player (nearest enemy, a low-health Heavy's remembered support) are not drawn.
 
 ### Goal scoring formula (tunable)
 
@@ -377,8 +381,8 @@ score = VALUE_WEIGHT (1.0) x value
 T     = T_MIN (0.05) + T_SPAN (0.45) x (1 - positioning / 100)
 ```
 
-- `value` (0..1): `MapContext.los_rank` for Scout and Ammo (open is good), `1 - los_rank` for Medic (hidden is good), 1 for Heavy strong spots and the enemy-base set.
-- `walk_ft`: breadth-first walking distance x `feet_per_square`. Unreachable cells are dropped. With no movement graph at the player's cell (hand-built contexts), Manhattan squares are used instead.
+- `value` (0..1): from the caller's rule. `modes.mode_goal`'s values (see `modes.py` below); 1 for the enemy-base set.
+- `walk_ft`: breadth-first walking distance x `feet_per_square`. Unreachable cells are dropped. With no movement graph at the player's cell (hand-built contexts), Manhattan squares are used instead. MECH-07's Trail costs (`modes.trail_costs`) change routes only, so this distance ignores them.
 - `crowding`: teammates (not the player, not enemies) whose current cell or **live** committed goal (not expired at the current tick) is within `squares(CROWD_RADIUS_FEET)` (15 ft, Chebyshev) of the candidate. A teammate counts once.
 - **The draw:** the `TOP_K` (8) best, ties by (row, col), drawn with weights `exp((score - best) / T)` from one `random.random()`. High positioning gives a sharp draw (near the best); low positioning gives a loose one.
 
@@ -387,6 +391,73 @@ T     = T_MIN (0.05) + T_SPAN (0.45) x (1 - positioning / 100)
 Measured on Syracuse (2 seeded rounds, before → after): team-ticks with 2+ teammates on one goal red 57% / blue 29% → 9% / 11%; distinct goals per player per round Scout 33 → 120, Heavy 44 → 138; mean distance to teammates 8-9 → 12-15 squares.
 
 **Tests:** `matches/tests/test_goal_scoring.py` (scoring, crowding, top 8, temperature, the enemy-base set, held goals, route noise, the positioning stat and old snapshots, seeded Syracuse rounds with shared goals below 15%).
+
+## modes.py
+
+**MECH-07 Player Modes** (spec #542, GLOSSARY.md **Mode**). Pure and Django-free, in the style of `goal_scoring.py`. `pathfinding` imports it, so it must never import `pathfinding`: it reads staleness from `time_constants._stale_table`, sight sets from `MapContext.cells_visible_from` and Trails from `follow_rule.open_trail`. Map rounds only; a no-map round never calls `update_mode` or `apply_mode_weights`, and `mode_ticks` stays empty. Mode is not persisted and adds no `GameEvent`. All constants sit at the top of the module.
+
+`Mode` is a `StrEnum`: `ATTACK`, `DEFENSE`, `CONTROL`.
+
+**`default_mode(role)`** (Attack for an unknown role, as `PlayerState` tolerates one):
+
+| Role | Default | Alternative |
+|---|---|---|
+| Commander | Attack | Control |
+| Scout | Attack | Control |
+| Heavy | Control | Attack |
+| Medic | Defense | Control |
+| Ammo | Defense | Control |
+
+**`update_mode(player, tick)`** runs once per tick per alive player on map rounds, in `_simulate_round` straight after `random.shuffle(all_alive)` and before any `plan_action`:
+
+1. Add one to `mode_ticks[mode]`, so the Mode held when the tick began gets the tick.
+2. Return if `tick < mode_since + MODE_DWELL_TICKS` (60) or `tick < mode_next_check`. Otherwise set `mode_next_check = tick + MODE_CHECK_PERIOD_TICKS` (10).
+3. Work out the wanted Mode, first match wins:
+   1. Own lives or shots at or below `LOW_RESOURCE_SHARE` (50%) of max: Commander and Scout want Control.
+   2. A memory entry for the own team's Heavy (`{team}_heavy`), at most `HEAVY_DOWN_WINDOW_TICKS` (16, the length of a Down) old, shows it Downed: Commander wants Control, Scout wants Attack, Medic and Ammo want Control.
+   3. `score_broadcast_state["winning_team"]` is neither the own team nor `"tied"`, and a broadcast has happened: Heavy wants Attack.
+   4. Otherwise the role default.
+4. If the wanted Mode differs, draw one `random.random()` and switch when it is below `game_awareness / 100`. No draw when it matches, so this is the only new RNG and it runs in the seeded shuffle order.
+5. On a switch, set `mode_since = tick`, end any Control hold (`mode_hold_until = None`) and clear `_committed_goal` unless it is an action goal (`committed[1]` true).
+
+**Reading memory.** An entry counts while fresh, by the same role table and `age > threshold` test as `_cell_from_memory`; only the Heavy trigger uses its shorter window instead. A missing `status` (nuke and medic-alert entries) counts as `active`. The Heavy trigger reads both `downed` and `reset_window` as Downed. Goal rules drop any enemy or teammate who is not in `all_alive` or is on 0 lives, since memory has no eliminated status and `all_alive` is built at tick start. Attack targets exclude only `downed`, so a Medic in `reset_window` can still be hunted. Enemies are read in tag-id order, so the result does not depend on memory order. Scouts are `red_scout_1`, others `red_medic`: targets match on the entry's `role` field.
+
+**`mode_goal(player, all_alive, enemy_color, movement_ctx, tick, time_domain="ticks")`** replaces the role branch of `pathfinding._goal_from_role`, so the nuke, critical, Downed and score-broadcast overrides and action goals stay above it, and the enemy-base default stays below it (it returns None for that). Draws go through `goal_scoring.draw_goal`, the only RNG here. It sets `player._goal_was_drawn`, so a drawn goal is held until reached; a non-drawn one keeps the 4-tick cadence. First match wins:
+
+1. **Low-health Heavy, every Mode:** at or below `LOW_RESOURCE_SHARE` (50%) of lives or shots, the fresh remembered cell of the own Medic, then the own Ammo (not drawn; true cells are never read), passing over an eliminated one. With neither, the Mode rule below.
+2. **Attack:** targets per *Reading memory*, minus `follow_rule.chased_tag_ids`. Candidates are the union of `cells_visible_from(target cell)`, with value 1.0 for a cell that can see a Medic target and otherwise 0.7 for an Ammo target (`_ATTACK_TARGET_VALUES`). With no target, or no reachable candidate, draw `get_high_los_cells()` by `los_rank`.
+3. **Defense:** with the own Heavy's fresh remembered cell (the Heavy not eliminated), candidates are `cells_visible_from(it)`. With no such cell, or no reachable candidate, the Control rule below, Holding included. The Heavy's true cell is never read, and teamwork has no other effect on goals. No hold on the Defense rule itself: a player who reaches its goal draws again.
+
+```
+value = DEFENSE_BASE_WEIGHT (0.7) x base
+        + DEFENSE_CLOSENESS_WEIGHT (0.3) x (teamwork / 100) x closeness
+base      = 1 - los_rank for a Medic (hidden is good), los_rank for an Ammo (open is good)
+closeness = max(0, 1 - feet to the Heavy / DEFENSE_CLOSENESS_FEET (30))
+```
+
+`feet to the Heavy` is Chebyshev squares x `feet_per_square`.
+
+4. **Control:** candidates are `get_high_los_cells()`, or `get_strong_spots()` for a Heavy, falling back to high-LOS cells when the map has none. See **Holding** below.
+
+```
+value = min(CONTROL_VALUE_CAP (1.0),
+            los_rank
+            + CONTROL_BONUS (0.25) if the cell is in base_sight_data[enemy_color]
+                                   and not player.opposing_base_destroyed
+            + CONTROL_BONUS (0.25) if can_see(cell, c) for any fresh enemy cell c)
+```
+
+`base_in_range` must not be used for the base bonus: it returns 14 for either team's base, so it would reward a player's own base.
+
+**Holding.** A player on the Control rule who reaches a drawn goal returns their current cell from `mode_goal` for `CONTROL_HOLD_TICKS` (20), then draws again, which may pick the same cell. `choose_goal_cell` clears a reached goal and runs steps 2-4 again each tick, with action goals checked first, so reaching a goal is read from the commitment: `_committed_goal` on the player's cell, not an action goal, with expiry `HELD_GOAL_EXPIRY` (now in `time_constants`, because `modes` cannot import `pathfinding`). That starts `mode_hold_until = tick + 20`. The returned cell is not drawn, so it commits on the cadence and no full-map draw runs during the hold. The hold stands only while the commitment stays on the player's cell and is not an action goal, so an override or action goal ends it for good and the player is not frozen wherever that goal stopped. A Mode switch, a low-health Heavy's support seek and a Defense player's draw around a Heavy it now remembers end it too.
+
+**`attack_tag_goal(player, all_alive, enemy_color, tick, time_domain="ticks", exclude=None)`** returns the nearest Attack target's remembered cell (Manhattan, ties by (row, col)) or None, for `_goal_from_action`'s `tag_player` / `missile_player` branch when the player is in Attack. `exclude` takes the Follow rule's `chased`. It replaces `_enemy_medic_goal`.
+
+**`apply_mode_weights(player, weights)`** multiplies in place by `MODE_WEIGHT_MULTIPLIER` (1.25), rounded to int: Attack `tag_player`, Defense `resupply_ally`, Control `hold` and `capture_base`. A zero stays zero and a negative raw slot is left for `finalize_action_weights`. No RNG. `combat.plan_action` calls it straight after the role weight functions, before the stamina penalty and cooldown zeroing, only when `movement_ctx` is not None. The slot numbers mirror `combat._ACTION_IDX`, as `weights._HIDE_IDX` does.
+
+**`trail_costs(player, all_alive, tick, time_domain="ticks") -> dict[Cell, float]`** gives `TRAIL_COST` (+3.0) for each cell in the `band` of an open Trail (`follow_rule.open_trail`) whose owner is an enemy in `all_alive` with a fresh memory entry (keyed by the enemy's `tag_id_key`) showing `downed` or `reset_window`. An unseen enemy, a stale entry, an entry with no `status` and a teammate's Trail give nothing. Trails that overlap cost the same as one, so the seeded shuffle of `all_alive` cannot change the result. No RNG. Every player avoids equally. Its callers and the cache rule are under `astar_advance_cached` above. **Tests:** `matches/tests/test_mode_trail_costs.py` (the A* cost, each `trail_costs` filter, the cache rule, scoring ignoring the overlay, seeded Syracuse rounds).
+
+**Tests:** `matches/tests/test_modes.py` (defaults, dwell and cadence, each trigger row, the roll, commitments, the weight nudge and its place in `plan_action`, the tick-loop wiring on seeded Syracuse rounds, no-map rounds, each goal rule and fallback, Holding, `attack_tag_goal`, the Defense `resupply_ally` boundary, and `choose_goal_cell` with Modes).
 
 ## mechanics.py
 
@@ -472,7 +543,7 @@ Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The s
 | `GOAL_RECOMPUTE_PERIOD_TICKS` | `4` | MOVE-04 **Goal commitment** cadence (2 s) — steady-state `choose_goal_cell` recompute period; reactive overrides bypass this and run every tick. Phase is **expiry-based** per-player (`expires_at_tick = tick + N`), **not** a global `tick % N == 0`. See [ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md) |
 | staleness | `120` / `30` | MECH-06 memory staleness — Heavy/Medic/Ammo `120`, Scout/Commander `30` (60 s / 15 s) |
 
-(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `pathfinding.py` (`_STALE_THRESHOLD`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals.
+(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `pathfinding.py` and `modes.py` (`_stale_table`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals. **`_stale_table(time_domain)`** returns the role-to-threshold table: `_STALE_THRESHOLD_TICKS` for `"ticks"`, the seconds table `_STALE_THRESHOLD` otherwise (MECH-07 moved all three here from `pathfinding`).
 
 ---
 
@@ -508,6 +579,7 @@ The round report PDF (RV-03) and its chart section (RV-05). All three are pure (
 - `squares(feet) -> int` (MOVE-08) — `max(1, round(feet / feet_per_square))`: every rule distance (Follow rule, Downed option) is a feet constant turned into this map's squares, so the scale holds on any grid size.
 - `los_rank(cell) -> float` (MOVE-08) — the share of the other cells whose LOS count is lower (0 = most hidden, 1 = most open); the sorted counts are cached on the context. Feeds the Downed option's Stay hidden weight.
 - `can_see(from_cell, to_cell) -> bool` — frozenset lookup in `sight_data`.
+- `cells_visible_from(cell) -> list[cell]` (MECH-07) — the cell's sight set as sorted cells (a `frozenset`'s order is PYTHONHASHSEED-randomised, so sort for serial == parallel); `[]` with no `sight_data` or no sight lines. Feeds the Medic / Ammo goal candidates.
 - `elevation_at(r, c) -> float` — safe `elevation_grid` access, returns 0.0 on None/OOB.
 - `base_in_range(cell) -> int | None` — checks `base_sight_data`; returns 15/14/None.
 - `get_adjacency()`, `get_spawn_cells()`, `get_zone_data()`, `get_wall_meta()`, `get_los_count(cell)`, `get_high_los_cells()`, `get_strong_spots()`, `get_team_spawn_pools()`.

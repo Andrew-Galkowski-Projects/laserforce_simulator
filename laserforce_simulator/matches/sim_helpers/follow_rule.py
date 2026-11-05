@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, NamedTuple, Optional
 
 if TYPE_CHECKING:
     from .map_context import MapContext
+    from .player_state import PlayerState
     from .round_context import RoundContext
 
 from .time_constants import RESPAWN_TICKS
@@ -98,6 +99,11 @@ def _trail_is_open(player, tick: float) -> bool:
         and player.last_downed_time is not None
         and tick < _open_until(player)
     )
+
+
+def open_trail(player: PlayerState, tick: float) -> Optional[Trail]:
+    """``player``'s Trail while it is open (until they are Active), else None."""
+    return player._trail if _trail_is_open(player, tick) else None
 
 
 def _widen(trail: Trail, index: int, movement_ctx: MapContext) -> None:

@@ -126,6 +126,9 @@ class TestMap05RoleAwareGoal:
         assert goal == (2, 2)
 
     def test_heavy_goes_to_medic_when_lives_low(self):
+        # MECH-07: this is step 1's critical override (30% or less), which still
+        # reads the true cell until MECH-13. Between 30% and 50%, a Heavy uses
+        # remembered support cells: test_modes.TestLowHealthHeavy.
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -141,6 +144,7 @@ class TestMap05RoleAwareGoal:
         assert goal == (4, 4)
 
     def test_heavy_goes_to_ammo_when_shots_low(self):
+        # MECH-07: step 1's critical override again; see the test above.
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -161,6 +165,13 @@ class TestMap05RoleAwareGoal:
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
         medic = _make_player("red_medic", "red", "medic", cell_row=0, cell_col=0)
         heavy = _make_player("red_heavy", "red", "heavy", cell_row=2, cell_col=2)
+        # MECH-07c: the invariant holds for a Heavy the Medic remembers. The Defense
+        # rule reads memory, so this Medic has to have seen it.
+        medic.player_memory["red_heavy"] = {
+            "cell": (2, 2),
+            "timestamp": 0,
+            "role": "heavy",
+        }
         # Heavy can see (2,1) and (2,3)
         sight_data = {"2,2": frozenset({"2,1", "2,3"})}
         cell_los_counts = {"2,1": 1, "2,3": 10}
@@ -180,6 +191,12 @@ class TestMap05RoleAwareGoal:
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
         ammo = _make_player("red_ammo", "red", "ammo", cell_row=0, cell_col=0)
         heavy = _make_player("red_heavy", "red", "heavy", cell_row=2, cell_col=2)
+        # MECH-07c: as for the Medic above, the Defense rule reads memory.
+        ammo.player_memory["red_heavy"] = {
+            "cell": (2, 2),
+            "timestamp": 0,
+            "role": "heavy",
+        }
         sight_data = {"2,2": frozenset({"2,1", "2,3"})}
         cell_los_counts = {"2,1": 1, "2,3": 10}
         ctx = _base_ctx(
@@ -192,21 +209,52 @@ class TestMap05RoleAwareGoal:
         # Ammo picks highest-LOS cell in Heavy's visible set
         assert goal == (2, 3)
 
-    def test_medic_falls_back_to_heavy_cell_when_no_los_counts(self):
+    def test_medic_with_no_los_counts_still_draws_a_cell_the_heavy_sees(self):
+        # MECH-07c replaces the old fallback to the Heavy's own cell. With no counts
+        # every rank is 0, so the cells differ only by the walk: the Defense rule
+        # still positions the Medic, and never on the Heavy's true cell.
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
         medic = _make_player("red_medic", "red", "medic", cell_row=0, cell_col=0)
         heavy = _make_player("red_heavy", "red", "heavy", cell_row=3, cell_col=3)
+        medic.player_memory["red_heavy"] = {
+            "cell": (3, 3),
+            "timestamp": 0,
+            "role": "heavy",
+        }
         sight_data = {"3,3": frozenset({"3,2", "3,4"})}
         ctx = _base_ctx(
             sight_data=sight_data, cell_los_counts={}, spawn_cells=spawn_cells
         )
 
         goal = choose_goal_cell(medic, [medic, heavy], spawn_cells, ctx)
-        assert goal == (3, 3)
+        assert goal == (3, 2)
 
     def test_commander_seeks_enemy_medic_when_repositioning(self):
+        from matches.sim_helpers.pathfinding import choose_goal_cell
+
+        spawn_cells = {"red": (0, 0), "blue": (9, 9)}
+        commander = _make_player(
+            "red_commander", "red", "commander", cell_row=0, cell_col=0
+        )
+        enemy_medic = _make_player(
+            "blue_medic", "blue", "medic", cell_row=5, cell_col=5
+        )
+        # MECH-07: the Commander still hunts the Medic, now as an Attack goal: a
+        # cell that can see the Medic's remembered cell, not the Medic's own cell.
+        commander.player_memory["blue_medic"] = {
+            "cell": (5, 5),
+            "timestamp": 0,
+            "role": "medic",
+        }
+        ctx = _base_ctx(spawn_cells=spawn_cells, sight_data={"5,5": frozenset({"5,4"})})
+
+        goal = choose_goal_cell(commander, [commander, enemy_medic], spawn_cells, ctx)
+        assert goal == (5, 4)
+
+    def test_commander_does_not_seek_an_enemy_medic_it_never_saw(self):
+        # MECH-07: the true cell is not information the Commander has.
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -219,7 +267,7 @@ class TestMap05RoleAwareGoal:
         ctx = _base_ctx(spawn_cells=spawn_cells)
 
         goal = choose_goal_cell(commander, [commander, enemy_medic], spawn_cells, ctx)
-        assert goal == (5, 5)
+        assert goal == (9, 9)
 
     def test_commander_falls_back_to_enemy_base_when_no_enemy_medic(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
@@ -263,6 +311,13 @@ class TestMap05RoleAwareGoal:
             "blue_medic", "blue", "medic", cell_row=7, cell_col=7
         )
         ctx = _base_ctx(spawn_cells=spawn_cells)
+        # MECH-07: the invariant holds for a Medic the Commander knows about. In
+        # Attack, the Medic-first step reads memory instead of the true cell.
+        commander.player_memory["blue_medic"] = {
+            "cell": (7, 7),
+            "timestamp": 0,
+            "role": "medic",
+        }
 
         goal = choose_goal_cell(
             commander,
@@ -271,10 +326,36 @@ class TestMap05RoleAwareGoal:
             ctx,
             intended_action="tag_player",
         )
-        # Commander always targets enemy medic first regardless of distance
+        # A remembered Medic comes first regardless of distance
         assert goal == (7, 7)
 
+    def test_action_tag_commander_not_knowing_the_medic_takes_the_nearest_enemy(self):
+        # MECH-07: the Medic-first step reads memory only; nobody walks to a cell
+        # they never learned.
+        from matches.sim_helpers.pathfinding import choose_goal_cell
+
+        spawn_cells = {"red": (0, 0), "blue": (9, 9)}
+        commander = _make_player(
+            "red_commander", "red", "commander", cell_row=0, cell_col=0
+        )
+        enemy_near = _make_player("blue_heavy", "blue", "heavy", cell_row=1, cell_col=1)
+        enemy_medic = _make_player(
+            "blue_medic", "blue", "medic", cell_row=7, cell_col=7
+        )
+        ctx = _base_ctx(spawn_cells=spawn_cells)
+
+        goal = choose_goal_cell(
+            commander,
+            [commander, enemy_near, enemy_medic],
+            spawn_cells,
+            ctx,
+            intended_action="tag_player",
+        )
+        assert goal == (1, 1)
+
     def test_action_resupply_medic_goes_to_neediest_by_lives(self):
+        # MECH-07c: the ally is at 10% of the Medic's resource, below the 75% Defense
+        # needs before it walks over (test_modes.TestDefenseResupplyGoal).
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}

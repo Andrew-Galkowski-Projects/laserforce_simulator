@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from matches.sim_helpers.modes import Mode, default_mode
 from matches.sim_helpers.player_counters import PlayerCounters
 from matches.sim_helpers.role_constants import (
     MAX_LIVES as _MAX_LIVES,
@@ -204,6 +205,15 @@ class PlayerState:
     # ``choose_goal_cell`` holds it until reached.
     _goal_was_drawn: bool = False
 
+    # MECH-07 Mode state (transient — not persisted to DB), managed by ``modes``:
+    # the tick the current Mode started, the earliest tick of the next switch
+    # check, the ticks spent in each Mode, and the deadline of a Control hold on a
+    # reached goal. ``mode`` itself starts in ``default_mode(role)``. Map rounds only.
+    mode_since: int = 0
+    mode_next_check: int = 0
+    mode_ticks: dict[Mode, int] = field(default_factory=dict)
+    mode_hold_until: Optional[int] = None
+
     # uptime breakdown in ticks (accumulated +1 each tick)
     ticks_active: int = 0
     ticks_not_targetable: int = 0
@@ -216,8 +226,10 @@ class PlayerState:
     max_shields: int = field(init=False)
     shot_power: int = field(init=False)
     special_cost: int = field(init=False)
+    mode: Mode = field(init=False)
 
     def __post_init__(self) -> None:
+        self.mode = default_mode(self.role)
         self.max_lives = _MAX_LIVES.get(self.role, 15)
         self.max_shots = _MAX_SHOTS.get(self.role, 30)
         role_stats = _ROLE_STATS.get(self.role, {})
@@ -300,6 +312,6 @@ class PlayerState:
     # resupply_synergy: keeps support pairs together; scales double-resupply chance
 
     # ------ Stats wired in MECH-06 ------
-    # teamwork: scales ally-cover bias in _goal_from_role (pathfinding.py)
+    # teamwork: the Defense closeness term in modes.mode_goal (MECH-07)
     # communication: % chance to broadcast spotted enemy positions to nearby teammates
     # Global broadcasts: nuke activation, score delta every 3 min, medic-under-fire alert

@@ -5,18 +5,17 @@ Implementation added:
   - player_memory dict on PlayerState
   - medic_hit_times list on PlayerState
   - score_broadcast_state dict + score_broadcast_next on PlayerState
-  - _STALE_THRESHOLD in pathfinding.py: heavy/medic/ammo=60s, scout/commander=15s
+  - _STALE_THRESHOLD in time_constants.py: heavy/medic/ammo=60s, scout/commander=15s
   - _cell_from_memory helper in pathfinding.py
   - _known_enemies_from_memory helper in pathfinding.py
-  - _apply_teamwork_bias in pathfinding.py
   - _apply_score_broadcast_weights in weights.py
   - Communication broadcast per-tick in both simulators (_broadcast_communication)
   - Nuke activation broadcast (_apply_nuke_activation_broadcast)
   - Medic-under-fire alert (_check_medic_under_fire)
 
 Production code:
-  matches/sim_helpers/pathfinding.py   (_cell_from_memory, _known_enemies_from_memory,
-                                        _apply_teamwork_bias, _STALE_THRESHOLD)
+  matches/sim_helpers/time_constants.py (_STALE_THRESHOLD)
+  matches/sim_helpers/pathfinding.py   (_cell_from_memory, _known_enemies_from_memory)
   matches/sim_helpers/weights.py       (_apply_score_broadcast_weights)
   matches/sim_helpers/player_state.py  (player_memory, medic_hit_times,
                                         score_broadcast_state, score_broadcast_next)
@@ -25,17 +24,19 @@ Production code:
                                         _check_medic_under_fire)
 """
 
-import random
 import unittest
 from unittest.mock import patch
 
 from matches.sim_helpers.pathfinding import (
-    _STALE_THRESHOLD,
     _cell_from_memory,
     _known_enemies_from_memory,
-    _apply_teamwork_bias,
     choose_goal_cell,
 )
+
+# MECH-07a moved the staleness tables to time_constants so that modes need not
+# import pathfinding. The values these tests pin are the same, and _cell_from_memory
+# still reads them through _stale_table, so the invariant holds.
+from matches.sim_helpers.time_constants import _STALE_THRESHOLD
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.weights import _apply_score_broadcast_weights
@@ -368,118 +369,6 @@ class TestKnownEnemiesFromMemory(unittest.TestCase):
         cells = _known_enemies_from_memory(player, "red", 10.0)
         self.assertIn((9, 9), cells)
         self.assertNotIn((1, 1), cells)
-
-
-# ---------------------------------------------------------------------------
-# TestApplyTeamworkBias — unit tests for _apply_teamwork_bias
-# ---------------------------------------------------------------------------
-
-
-class TestApplyTeamworkBias(unittest.TestCase):
-    """Tests for pathfinding._apply_teamwork_bias."""
-
-    def _ctx_with_sight(self, sight_data: dict, high_los_cells: list) -> MapContext:
-        return MapContext.from_dict(
-            {
-                "adj": {},
-                "spawn_cells": {"red": (0, 0), "blue": (9, 9)},
-                "zone_data": None,
-                "sight_data": sight_data,
-                "base_sight_data": {},
-                "cell_los_counts": {},
-                "high_los_cells": high_los_cells,
-                "strong_spots": [],
-            }
-        )
-
-    def test_teamwork_le_50_returns_original_goal(self):
-        """When teamwork <= 50, no bias applied: original goal unchanged."""
-        player = _ps("scout", "red", teamwork=50, cell_row=0, cell_col=0)
-        ally = _ps("medic", "red", cell_row=5, cell_col=5)
-        ctx = self._ctx_with_sight({}, [])
-
-        goal = (7, 7)
-        result = _apply_teamwork_bias(player, goal, [ally], 0, 0, ctx)
-        self.assertEqual(result, goal)
-
-    def test_teamwork_0_returns_original_goal(self):
-        """teamwork=0 (well below threshold) never biases."""
-        player = _ps("scout", "red", teamwork=0, cell_row=0, cell_col=0)
-        ally = _ps("medic", "red", cell_row=5, cell_col=5)
-        ctx = self._ctx_with_sight({}, [(3, 3)])
-
-        goal = (7, 7)
-        result = _apply_teamwork_bias(player, goal, [ally], 0, 0, ctx)
-        self.assertEqual(result, goal)
-
-    def test_no_allies_alive_returns_original_goal(self):
-        """When no living allies with positions, bias is skipped."""
-        player = _ps("scout", "red", teamwork=100, cell_row=0, cell_col=0)
-        # No allies in all_alive except the player themselves
-        ctx = self._ctx_with_sight({}, [(3, 3)])
-
-        goal = (7, 7)
-        result = _apply_teamwork_bias(player, goal, [player], 0, 0, ctx)
-        self.assertEqual(result, goal)
-
-    def test_goal_already_in_ally_los_returns_original_goal(self):
-        """When goal is already visible from an ally, no bias needed — return goal."""
-        random.seed(42)
-        goal = (5, 5)
-        player = _ps("scout", "red", teamwork=100, cell_row=0, cell_col=0)
-        ally = _ps("medic", "red", cell_row=3, cell_col=3)
-
-        # ally at (3,3) can see (5,5)
-        sight_data = {"3,3": frozenset(["5,5", "4,4"])}
-        ctx = self._ctx_with_sight(sight_data, [(5, 5)])
-
-        result = _apply_teamwork_bias(player, goal, [ally], 0, 0, ctx)
-        self.assertEqual(result, goal, "Goal already in ally LOS: no bias should occur")
-
-    def test_teamwork_gt_50_with_teamwork_cell_can_return_different_goal(self):
-        """teamwork=100 with a valid teamwork cell may return that cell instead.
-
-        With random.seed(42), random.random() returns a value < 1.0 (certain),
-        so the teamwork cell should be chosen.
-        """
-        random.seed(0)  # seed so random.random() < 1.0 (probability = 1.0)
-        player = _ps("scout", "red", teamwork=100, cell_row=0, cell_col=0)
-        ally = _ps("medic", "red", cell_row=3, cell_col=3)
-
-        goal = (8, 8)  # not in ally LOS
-        # Ally at (3,3) can see (2,2) which is a high-LOS cell
-        sight_data = {"3,3": frozenset(["2,2"])}
-        ctx = self._ctx_with_sight(sight_data, [(2, 2)])
-
-        # With teamwork=100, prob=1.0, random.random() will always be < 1.0
-        with patch("matches.sim_helpers.pathfinding.random.random", return_value=0.0):
-            result = _apply_teamwork_bias(player, goal, [player, ally], 0, 0, ctx)
-        self.assertEqual(
-            result, (2, 2), "teamwork=100 should redirect to the teamwork cell"
-        )
-
-    def test_no_high_los_cells_returns_original_goal(self):
-        """When there are no high-LOS cells, the original goal is unchanged."""
-        player = _ps("scout", "red", teamwork=100, cell_row=0, cell_col=0)
-        ally = _ps("medic", "red", cell_row=3, cell_col=3)
-        sight_data = {"3,3": frozenset(["5,5"])}
-        ctx = self._ctx_with_sight(sight_data, [])  # no high-LOS cells
-
-        goal = (7, 7)
-        result = _apply_teamwork_bias(player, goal, [player, ally], 0, 0, ctx)
-        self.assertEqual(result, goal)
-
-    def test_none_goal_with_teamwork_can_still_bias(self):
-        """When goal is None, teamwork bias can return a teamwork cell."""
-        player = _ps("scout", "red", teamwork=100, cell_row=0, cell_col=0)
-        ally = _ps("medic", "red", cell_row=3, cell_col=3)
-
-        sight_data = {"3,3": frozenset(["2,2"])}
-        ctx = self._ctx_with_sight(sight_data, [(2, 2)])
-
-        with patch("matches.sim_helpers.pathfinding.random.random", return_value=0.0):
-            result = _apply_teamwork_bias(player, None, [player, ally], 0, 0, ctx)
-        self.assertEqual(result, (2, 2))
 
 
 # ---------------------------------------------------------------------------

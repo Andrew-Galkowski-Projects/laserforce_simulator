@@ -303,21 +303,6 @@ class TestGoalSelectionDraws(unittest.TestCase):
         self.assertEqual(chase, (1, 1))
         self.assertTrue(a._committed_goal[1])  # now an action commitment
 
-    def test_a_teamwork_biased_goal_is_not_held(self) -> None:
-        from matches.sim_helpers import pathfinding
-
-        mc, a, _ = self._scouts()
-        with mock.patch.object(
-            goal_scoring.random, "random", lambda: 0.0
-        ), mock.patch.object(
-            pathfinding,
-            "_apply_teamwork_bias",
-            lambda player, goal, *rest: (0, 39),
-        ):
-            goal = self._goal(a, [a], mc, 10)
-        self.assertEqual(goal, (0, 39))
-        self.assertEqual(a._committed_goal[2], 10 + 4)
-
     def test_a_reactive_override_still_interrupts(self) -> None:
         mc, a, _ = self._scouts()
         medic = _ps("red_medic", "red", (0, 0))
@@ -442,7 +427,12 @@ class TestSerialEqualsParallelOnAMap:
 @pytest.mark.django_db
 class TestSeededRoundsSpread:
     """Real seeded Syracuse rounds: 2+ teammates share one goal in fewer
-    than 15% of team-ticks (baseline 29-57%)."""
+    than 15% of team-ticks (baseline 29-57%).
+
+    Twelve rounds, because single rounds range from 9% to 24% (MECH-07): the same
+    limit over two seeds passed or failed on which seeds they were. The margin is
+    thin (14.5% at MECH-07), so an RNG change can move it; see PLAN.md decision 31.
+    """
 
     def test_teammates_rarely_share_a_goal(self, monkeypatch) -> None:
         import random
@@ -486,7 +476,7 @@ class TestSeededRoundsSpread:
         blue, _ = make_team_with_slots("GSBlue")
         syracuse = Path(__file__).resolve().parents[3] / "data/maps/syracuse.json"
         movement_ctx, _ = load_map_context(load_map_fixture(syracuse))
-        for seed in (1, 2):
+        for seed in range(1, 13):
             seed_box[0] = seed
             random.seed(seed)
             BatchSimulator()._simulate_round(

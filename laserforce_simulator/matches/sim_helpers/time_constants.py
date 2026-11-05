@@ -62,7 +62,7 @@ SCORE_BROADCAST_PERIOD_TICKS: int = 360
 #: (was second >= 360 -> 360 s).
 SCORE_BROADCAST_MIN_REMAINING_TICKS: int = 720
 
-# --- Memory staleness (MECH-06, pathfinding._STALE_THRESHOLD) -------------
+# --- Memory staleness (MECH-06) --------------------------------------------
 
 #: Staleness threshold for slow/stationary roles' memory entries
 #: (Heavy/Medic/Ammo; was 60 s).
@@ -71,6 +71,35 @@ STALENESS_SLOW_TICKS: int = 120
 #: Staleness threshold for mobile roles' memory entries
 #: (Scout/Commander; was 15 s).
 STALENESS_FAST_TICKS: int = 30
+
+#: Staleness thresholds in SECONDS by role of the REMEMBERED player, the default
+#: table for unit tests that pass seconds. Stationary support roles stay valid
+#: longer; mobile roles go stale quickly.
+_STALE_THRESHOLD: dict[str, int] = {
+    "heavy": 60,
+    "medic": 60,
+    "ammo": 60,
+    "scout": 15,
+    "commander": 15,
+}
+
+#: TIME-01: the same table in ticks, for ``time_domain == "ticks"`` (BatchSimulator).
+_STALE_THRESHOLD_TICKS: dict[str, int] = {
+    "heavy": STALENESS_SLOW_TICKS,
+    "medic": STALENESS_SLOW_TICKS,
+    "ammo": STALENESS_SLOW_TICKS,
+    "scout": STALENESS_FAST_TICKS,
+    "commander": STALENESS_FAST_TICKS,
+}
+
+
+def _stale_table(time_domain: str) -> dict[str, int]:
+    """Return the staleness threshold table for the caller's time domain.
+
+    MECH-07: lives here so ``modes`` can read it without importing ``pathfinding``.
+    """
+    return _STALE_THRESHOLD_TICKS if time_domain == "ticks" else _STALE_THRESHOLD
+
 
 # --- Medic-under-fire alert (MECH-06) -------------------------------------
 
@@ -83,3 +112,7 @@ MEDIC_UNDER_FIRE_WINDOW_TICKS: int = 24
 #: 2–4). Reactive overrides (steps 0/1/1b) bypass the throttle and run every
 #: tick. BatchSimulator only — RBS path is unchanged. (MOVE-04 / ADR-0010.)
 GOAL_RECOMPUTE_PERIOD_TICKS: int = 4
+
+#: MOVE-06: the commitment expiry of a drawn positioning goal: after the round,
+#: so it is held until reached (action goals keep the 4-tick cadence).
+HELD_GOAL_EXPIRY: int = TICKS_PER_ROUND + 1

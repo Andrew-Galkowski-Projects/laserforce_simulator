@@ -74,6 +74,21 @@ class MapContext:
         to_key = f"{to_cell[0]},{to_cell[1]}"
         return to_key in self.sight_data.get(from_key, frozenset())
 
+    def cells_visible_from(self, cell: tuple[int, int]) -> list[tuple[int, int]]:
+        """Return the cells in *cell*'s normal LOS set, sorted (a ``frozenset``'s
+        order is PYTHONHASHSEED-randomised, so sort for serial == parallel).
+
+        Empty when ``sight_data`` is absent or *cell* has no registered sight lines.
+        """
+        if self.sight_data is None:
+            return []
+        keys = self.sight_data.get(f"{cell[0]},{cell[1]}", frozenset())
+        cells = []
+        for key in keys:
+            r, c = key.split(",")
+            cells.append((int(r), int(c)))
+        return sorted(cells)
+
     def elevation_at(self, r: int, c: int) -> float:
         """Return the elevation of cell (r, c), defaulting to 0.0.
 

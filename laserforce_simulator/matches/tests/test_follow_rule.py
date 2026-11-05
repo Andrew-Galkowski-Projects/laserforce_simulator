@@ -353,7 +353,7 @@ class TestEngineRefusesBarredTags(_Barred):
         self.assertEqual(goal, (20, 30))
 
     def test_commander_skips_a_chased_medic(self) -> None:
-        from types import SimpleNamespace
+        from dataclasses import replace
 
         from matches.sim_helpers.pathfinding import _goal_from_action, _goal_from_role
 
@@ -372,20 +372,19 @@ class TestEngineRefusesBarredTags(_Barred):
         }
         far = _ps("blue_heavy", "blue", (20, 30))
         everyone.append(far)
-        ctx: Any = SimpleNamespace(
-            cell_los_counts={},
-            get_high_los_cells=lambda: [],
-            get_strong_spots=lambda: [],
-            sight_data={},
+        # MECH-07: the Attack rule draws cells that can see the Medic, so it needs a
+        # real map, and (12, 29) is the cell it would take if the Chase were ignored.
+        ctx = replace(
+            OPEN, sight_data={"12,30": frozenset({"12,29"})}, high_los_cells=[]
         )
         action_goal = _goal_from_action(
             cmdr, everyone, "blue", 12, 10, "tag_player", ctx, self.tick, "ticks"
         )
         role_goal = _goal_from_role(
-            cmdr, everyone, "blue", 12, 10, ctx, self.tick, time_domain="ticks"
+            cmdr, everyone, "blue", ctx, self.tick, time_domain="ticks"
         )
         self.assertNotEqual(action_goal, (12, 30))
-        self.assertNotEqual(role_goal, (12, 30))
+        self.assertIsNone(role_goal)
 
 
 class TestDownAndResupplyStartTrails(unittest.TestCase):

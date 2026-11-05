@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
+from .modes import apply_mode_weights
 from .round_context import RoundContext
 from .mechanics import (
     shot_cooldown,
@@ -271,8 +272,8 @@ def plan_action(
     # Copy the module constant — plan_action mutates the list in place.
     weights = list(BASELINE_ACTION_WEIGHTS)
 
-    # MECH-06 wired: teamwork bias in pathfinding._goal_from_role; communication
-    # broadcast in simulation.py tick loop; memory updated from LOS + global broadcasts.
+    # MECH-06 wired: communication broadcast in simulation.py tick loop; memory updated
+    # from LOS + global broadcasts. Teamwork reaches goals through modes.mode_goal.
 
     if time_domain == "ticks":
         from .time_constants import TICKS_PER_ROUND
@@ -301,6 +302,11 @@ def plan_action(
         weights = _get_commander_weights(
             player, _ACTION_IDX, weights, all_alive, second, time_domain
         )
+
+    # MECH-07: a Mode nudges its Actions on map rounds only. Before the stamina
+    # penalty and cooldown zeroing, so those still get the last word.
+    if movement_ctx is not None:
+        apply_mode_weights(player, weights)
 
     penalty_count = getattr(player, "stamina_penalty_count", 0)
     if penalty_count > 0:
