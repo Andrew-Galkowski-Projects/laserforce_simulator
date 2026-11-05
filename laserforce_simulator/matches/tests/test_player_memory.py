@@ -5,7 +5,7 @@ Implementation added:
   - player_memory dict on PlayerState
   - medic_hit_times list on PlayerState
   - score_broadcast_state dict + score_broadcast_next on PlayerState
-  - _STALE_THRESHOLD in pathfinding.py: heavy/medic/ammo=60s, scout/commander=15s
+  - _STALE_THRESHOLD in time_constants.py: heavy/medic/ammo=60s, scout/commander=15s
   - _cell_from_memory helper in pathfinding.py
   - _known_enemies_from_memory helper in pathfinding.py
   - _apply_teamwork_bias in pathfinding.py
@@ -15,8 +15,9 @@ Implementation added:
   - Medic-under-fire alert (_check_medic_under_fire)
 
 Production code:
+  matches/sim_helpers/time_constants.py (_STALE_THRESHOLD)
   matches/sim_helpers/pathfinding.py   (_cell_from_memory, _known_enemies_from_memory,
-                                        _apply_teamwork_bias, _STALE_THRESHOLD)
+                                        _apply_teamwork_bias)
   matches/sim_helpers/weights.py       (_apply_score_broadcast_weights)
   matches/sim_helpers/player_state.py  (player_memory, medic_hit_times,
                                         score_broadcast_state, score_broadcast_next)
@@ -30,12 +31,16 @@ import unittest
 from unittest.mock import patch
 
 from matches.sim_helpers.pathfinding import (
-    _STALE_THRESHOLD,
     _cell_from_memory,
     _known_enemies_from_memory,
     _apply_teamwork_bias,
     choose_goal_cell,
 )
+
+# MECH-07a moved the staleness tables to time_constants so that modes need not
+# import pathfinding. The values these tests pin are the same, and _cell_from_memory
+# still reads them through _stale_table, so the invariant holds.
+from matches.sim_helpers.time_constants import _STALE_THRESHOLD
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.weights import _apply_score_broadcast_weights

@@ -7,50 +7,19 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-# Staleness thresholds (SECONDS) by role of the REMEMBERED player.
-# Stationary support roles stay valid longer; mobile roles go stale quickly.
-# This is the DEFAULT (seconds) table: ResourceBasedSimulator stays
-# second-internal and byte-identical, and all existing unit tests pass
-# seconds, so they keep using these. The tick-native BatchSimulator passes
-# time_domain="ticks" to select _STALE_THRESHOLD_TICKS instead (TIME-01).
-_STALE_THRESHOLD = {
-    "heavy": 60,
-    "medic": 60,
-    "ammo": 60,
-    "scout": 15,
-    "commander": 15,
-}
-
-# TIME-01: tick-domain staleness thresholds (STALENESS_SLOW_TICKS=120 for
-# slow/stationary roles, STALENESS_FAST_TICKS=30 for mobile roles). Used only
-# when time_domain == "ticks" (BatchSimulator).
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
 from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
-    STALENESS_FAST_TICKS,
-    STALENESS_SLOW_TICKS,
     TICK_SECONDS,
     TICKS_PER_ROUND,
+    _stale_table,
 )
 
 #: MOVE-06: the commitment expiry of a drawn positioning goal: after the round,
 #: so it is held until reached (action goals keep the 4-tick cadence).
 HELD_GOAL_EXPIRY: int = TICKS_PER_ROUND + 1
-
-_STALE_THRESHOLD_TICKS = {
-    "heavy": STALENESS_SLOW_TICKS,
-    "medic": STALENESS_SLOW_TICKS,
-    "ammo": STALENESS_SLOW_TICKS,
-    "scout": STALENESS_FAST_TICKS,
-    "commander": STALENESS_FAST_TICKS,
-}
-
-
-def _stale_table(time_domain: str) -> dict:
-    """Return the staleness threshold table for the caller's time domain."""
-    return _STALE_THRESHOLD_TICKS if time_domain == "ticks" else _STALE_THRESHOLD
 
 
 def _elevation_at(r: int, c: int, elevation_data: dict | None = None) -> float:
@@ -386,16 +355,6 @@ def _nearest_cell(
     return (int(best[0]), int(best[1]))
 
 
-def _cells_from_keys(keys) -> list[tuple[int, int]]:
-    """MOVE-06: ``"r,c"`` keys as sorted cells (a ``frozenset``'s order is
-    PYTHONHASHSEED-randomised, so sort for serial == parallel)."""
-    cells = []
-    for k in keys:
-        r, c = k.split(",")
-        cells.append((int(r), int(c)))
-    return sorted(cells)
-
-
 def _find_role(all_alive: list, team_color: str, role: str) -> Any:
     return next(
         (
@@ -677,7 +636,6 @@ def _goal_from_role(
     cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
     high_los_cells: list = movement_ctx.get_high_los_cells()
     strong_spots: list = movement_ctx.get_strong_spots()
-    sight_data: dict = movement_ctx.sight_data or {}
 
     goal: tuple[int, int] | None = None
     # MOVE-06: the positioning picks below are a scored draw (goal_scoring);
@@ -719,12 +677,13 @@ def _goal_from_role(
     elif player.role == "medic":
         heavy = _find_role(all_alive, player.team_color, "heavy")
         if heavy and heavy.cell_row is not None:
-            heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
-            heavy_visible = sight_data.get(heavy_key, frozenset())
+            heavy_visible = movement_ctx.cells_visible_from(
+                (heavy.cell_row, heavy.cell_col)
+            )
             if heavy_visible and cell_los_counts:
                 # Medic: hidden cells the Heavy can see score higher.
                 goal = drawn(
-                    _cells_from_keys(heavy_visible),
+                    heavy_visible,
                     lambda cell: 1.0 - movement_ctx.los_rank(cell),
                 )
             if goal is None:
@@ -733,11 +692,12 @@ def _goal_from_role(
     elif player.role == "ammo":
         heavy = _find_role(all_alive, player.team_color, "heavy")
         if heavy and heavy.cell_row is not None:
-            heavy_key = f"{heavy.cell_row},{heavy.cell_col}"
-            heavy_visible = sight_data.get(heavy_key, frozenset())
+            heavy_visible = movement_ctx.cells_visible_from(
+                (heavy.cell_row, heavy.cell_col)
+            )
             if heavy_visible and cell_los_counts:
                 # Ammo: open cells the Heavy can see score higher.
-                goal = drawn(_cells_from_keys(heavy_visible), movement_ctx.los_rank)
+                goal = drawn(heavy_visible, movement_ctx.los_rank)
             if goal is None:
                 goal = (heavy.cell_row, heavy.cell_col)
 

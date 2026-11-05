@@ -2914,25 +2914,27 @@ class TestMove01CompactMovementEvent:
 # covered by ``TestMove01CompactMovementEvent`` above.
 
 
-class TestMove06CellsFromKeys:
+class TestMove06CellsVisibleFrom:
     """MOVE-06 replaced MOVE-01's `_select_los_cell` with the scored draw
     (`goal_scoring`, tested in test_goal_scoring.py). Its hash-independence
-    guarantee now lives in `_cells_from_keys`, which turns a Heavy's sight
-    set into the Medic / Ammo candidates (SIM-07/08: serial == parallel)."""
+    guarantee now lives in `MapContext.cells_visible_from`, which turns a Heavy's
+    sight set into the Medic / Ammo candidates (SIM-07/08: serial == parallel).
+
+    MECH-07a moved `pathfinding._cells_from_keys` into that method and these tests
+    with it: the invariant is unchanged, the same keys give the same sorted cells."""
+
+    def _ctx(self, keys: frozenset) -> MapContext:
+        return MapContext.from_dict({"sight_data": {"9,9": keys}})
 
     def test_sorted_and_hash_independent(self):
-        from matches.sim_helpers.pathfinding import _cells_from_keys
-
         results = set()
         for _ in range(25):
             keys = frozenset(f"{r},{c}" for r in range(6) for c in range(6))
-            results.add(tuple(_cells_from_keys(keys)))
+            results.add(tuple(self._ctx(keys).cells_visible_from((9, 9))))
         assert results == {tuple(sorted((r, c) for r in range(6) for c in range(6)))}
 
     def test_empty_gives_no_cells(self):
-        from matches.sim_helpers.pathfinding import _cells_from_keys
-
-        assert _cells_from_keys(frozenset()) == []
+        assert self._ctx(frozenset()).cells_visible_from((9, 9)) == []
 
 
 # ---------------------------------------------------------------------------

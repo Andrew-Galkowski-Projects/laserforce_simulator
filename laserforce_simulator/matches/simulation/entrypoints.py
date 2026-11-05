@@ -36,6 +36,7 @@ from ..sim_helpers.map_loader import (
     zone_from_cell,
 )
 from ..sim_helpers.mechanics import shot_cooldown
+from ..sim_helpers.modes import update_mode
 from ..sim_helpers.pathfinding import (
     astar_advance_cached,
     squares_this_tick,
@@ -1355,6 +1356,12 @@ class BatchSimulator:
             _apply_score_broadcast(all_alive, second)
 
             random.shuffle(all_alive)
+
+            # MECH-07: Mode switching, map rounds only. Its one roll runs in the
+            # shuffled order, so the seed fixes it.
+            if movement_ctx is not None:
+                for player in all_alive:
+                    update_mode(player, second)
 
             # MOVE-01: snapshot each player's previous-tick action BEFORE
             # planning overwrites last_chosen_action, so the always-on Advance

@@ -210,7 +210,7 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 |-------|------|---------|
 | `player_memory` | `dict[str, dict]` | `{tag_id: {"cell": (r,c), "timestamp": s, "role": role}}` — last-known cell per player from LOS observations and broadcasts |
 | `medic_hit_times` | `list[float]` | Tick timestamps of the two most recent hits received (medic-under-fire alert — 2 hits within `MEDIC_ALERT_WINDOW_TICKS`, 12 s) |
-| `score_broadcast_state` | `str \| None` | Outcome of the last score broadcast: `"losing"`, `"hide"`, `"seek_medic"`, or `None` |
+| `score_broadcast_state` | `dict` | The last score broadcast, `{"winning_team": "red" \| "blue" \| "tied", "timestamp": tick}`; `{}` before the first one |
 | `score_broadcast_next` | `float` | Simulation tick at which the next score broadcast fires (first at `SCORE_BROADCAST_PERIOD_TICKS = 360`, i.e. 180 s) |
 
 ### MECH-10 transient fields (no DB columns)
@@ -230,6 +230,18 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 | `nuke_detonates_at` | `int \| None` | Earliest detonation tick of a pending Nuke aimed at this player's team, set each tick by `_apply_nuke_reaction_flags` |
 | `resupply_rolled_at` | `float \| None` | Tick of the last resupply-trail roll (a combo Resupply rolls once) |
 | `move_carry` | `float` | Fraction of a square carried to the next tick's Advance (`squares_this_tick`) |
+
+### MECH-07 transient fields (no DB columns)
+
+Managed by `modes` on map rounds only.
+
+| Field | Type | Purpose |
+|-------|------|---------|
+| `mode` | `Mode` | The player's Mode; `__post_init__` sets it to `default_mode(role)` |
+| `mode_since` | `int` | Tick of the last switch (0 at the start); the dwell counts from it |
+| `mode_next_check` | `int` | Earliest tick of the next switch check |
+| `mode_ticks` | `dict[Mode, int]` | Ticks spent in each Mode; empty on a no-map round |
+| `mode_hold_until` | `int \| None` | Deadline of a Control hold on a reached goal |
 
 ### Role stat lookups
 
@@ -284,6 +296,8 @@ The caller (`combat.plan_action`) starts each player's tick from the baseline `[
 
 **TIME-01:** the endgame-rush trigger (`ENDGAME_RUSH_TICKS`, was `second >= 840`) and the score-broadcast period (`SCORE_BROADCAST_PERIOD_TICKS`) are imported from `time_constants.py` and compared against the tick cursor — no inline second literals remain in `weights.py`.
 
+**MECH-07:** on map rounds `plan_action` passes the role weights through `modes.apply_mode_weights` before the stamina penalty and cooldown zeroing (see `modes.py`).
+
 `_commander_nuke_gate(sp, ga)` gates the Commander `use_special` weight based on the awareness-tier stacking table (MECH-03): ga<30→fire at sp>20; ga<50→fire at sp>40; ga<70→fire at sp>60; always fire at sp>80. When the gate is closed, weight stays 0 and the Commander stacks SP toward the next threshold. The `# MECH-06:` situational-override hook inside `_get_commander_weights` is now populated — MECH-06 memory checks can cause the gate to open early when conditions are favourable.
 
 ### Known pre-existing test failure
@@ -330,7 +344,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 - Ammo → a drawn cell in the allied Heavy's visible set, open ones scoring higher (exposed support position near Heavy).
 - Commander → enemy medic cell.
 
-**`_STALE_THRESHOLD`** — module-level dict mapping role strings to their memory staleness thresholds in **ticks** (TIME-01; sourced from `time_constants.py`): `Heavy/Medic/Ammo → 120` (60 s), `Scout/Commander → 30` (15 s).
+**`_stale_table(time_domain)`** — imported from `time_constants.py` (MECH-07, so `modes` need not import this module): the role-to-threshold table for the caller's time domain. Ticks (`_STALE_THRESHOLD_TICKS`): `Heavy/Medic/Ammo → 120` (60 s), `Scout/Commander → 30` (15 s). Seconds (`_STALE_THRESHOLD`): `60` and `15`.
 
 **`_cell_from_memory(player, tag_id, movement_ctx) -> tuple[int,int] | None`** — looks up `tag_id` in `player.player_memory`; returns the stored cell if the entry is fresh (within the role's staleness threshold), `None` if stale or absent. Stale slow-role entries (Heavy/Medic/Ammo) return the last-known cell anyway; stale fast-role entries return `None` to let callers fall through to role defaults.
 
@@ -366,7 +380,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 
 ## goal_scoring.py
 
-**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals in `pathfinding._goal_from_role` (Scout: `high_los_cells`; healthy Heavy: `strong_spots`; Medic / Ammo: the cells in the Heavy's sight set, via `_cells_from_keys`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn` (reset when the teamwork bias swaps the cell), and `choose_goal_cell` commits it with expiry `pathfinding.HELD_GOAL_EXPIRY` (`TICKS_PER_ROUND + 1`): **held until reached**. While it is held, step 2 still runs each tick: **an action goal (chase, resupply, hide) interrupts it** (owner decision 10) and is committed on the 4-tick cadence, after which a fresh positioning goal is drawn. Reactive overrides, Stationary exits and the Downed option still clear it too. Goals that chase a player (nearest enemy, the Commander's enemy-Medic hunt, an unhealthy Heavy's support seek, the Medic / Ammo fallback to the Heavy's cell) are unchanged, and the teamwork bias still runs after the draw.
+**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals in `pathfinding._goal_from_role` (Scout: `high_los_cells`; healthy Heavy: `strong_spots`; Medic / Ammo: the cells in the Heavy's sight set, via `MapContext.cells_visible_from`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn` (reset when the teamwork bias swaps the cell), and `choose_goal_cell` commits it with expiry `pathfinding.HELD_GOAL_EXPIRY` (`TICKS_PER_ROUND + 1`): **held until reached**. While it is held, step 2 still runs each tick: **an action goal (chase, resupply, hide) interrupts it** (owner decision 10) and is committed on the 4-tick cadence, after which a fresh positioning goal is drawn. Reactive overrides, Stationary exits and the Downed option still clear it too. Goals that chase a player (nearest enemy, the Commander's enemy-Medic hunt, an unhealthy Heavy's support seek, the Medic / Ammo fallback to the Heavy's cell) are unchanged, and the teamwork bias still runs after the draw.
 
 ### Goal scoring formula (tunable)
 
@@ -387,6 +401,40 @@ T     = T_MIN (0.05) + T_SPAN (0.45) x (1 - positioning / 100)
 Measured on Syracuse (2 seeded rounds, before → after): team-ticks with 2+ teammates on one goal red 57% / blue 29% → 9% / 11%; distinct goals per player per round Scout 33 → 120, Heavy 44 → 138; mean distance to teammates 8-9 → 12-15 squares.
 
 **Tests:** `matches/tests/test_goal_scoring.py` (scoring, crowding, top 8, temperature, the enemy-base set, held goals, route noise, the positioning stat and old snapshots, seeded Syracuse rounds with shared goals below 15%).
+
+## modes.py
+
+**MECH-07 Player Modes** (spec #542, GLOSSARY.md **Mode**). Pure and Django-free, in the style of `goal_scoring.py`. `pathfinding` will import it, so it must never import `pathfinding`: it reads staleness from `time_constants._stale_table` and sight sets from `MapContext.cells_visible_from`. Map rounds only; a no-map round never calls `update_mode` or `apply_mode_weights`, and `mode_ticks` stays empty. Mode is not persisted and adds no `GameEvent`. All constants sit at the top of the module.
+
+`Mode` is a `StrEnum`: `ATTACK`, `DEFENSE`, `CONTROL`.
+
+**`default_mode(role)`** (Attack for an unknown role, as `PlayerState` tolerates one):
+
+| Role | Default | Alternative |
+|---|---|---|
+| Commander | Attack | Control |
+| Scout | Attack | Control |
+| Heavy | Control | Attack |
+| Medic | Defense | Control |
+| Ammo | Defense | Control |
+
+**`update_mode(player, tick)`** runs once per tick per alive player on map rounds, in `_simulate_round` straight after `random.shuffle(all_alive)` and before any `plan_action`:
+
+1. Add one to `mode_ticks[mode]`, so the Mode held when the tick began gets the tick.
+2. Return if `tick < mode_since + MODE_DWELL_TICKS` (60) or `tick < mode_next_check`. Otherwise set `mode_next_check = tick + MODE_CHECK_PERIOD_TICKS` (10).
+3. Work out the wanted Mode, first match wins:
+   1. Own lives or shots at or below `LOW_RESOURCE_SHARE` (50%) of max: Commander and Scout want Control.
+   2. A fresh memory entry for the own team's Heavy (`{team}_heavy`) shows it Downed: Commander wants Control, Scout wants Attack, Medic and Ammo want Control.
+   3. `score_broadcast_state["winning_team"]` is neither the own team nor `"tied"`, and a broadcast has happened: Heavy wants Attack.
+   4. Otherwise the role default.
+4. If the wanted Mode differs, draw one `random.random()` and switch when it is below `game_awareness / 100`. No draw when it matches, so this is the only new RNG and it runs in the seeded shuffle order.
+5. On a switch, set `mode_since = tick` and clear `_committed_goal` unless it is an action goal (`committed[1]` true).
+
+**Reading memory.** An entry counts while fresh, by the same role table and `age > threshold` test as `_cell_from_memory`. A missing `status` (nuke and medic-alert entries) counts as `active`. The Heavy trigger reads both `downed` and `reset_window` as Downed.
+
+**`apply_mode_weights(player, weights)`** multiplies in place by `MODE_WEIGHT_MULTIPLIER` (1.25), rounded to int: Attack `tag_player`, Defense `resupply_ally`, Control `hold` and `capture_base`. A zero stays zero and a negative raw slot is left for `finalize_action_weights`. No RNG. `combat.plan_action` calls it straight after the role weight functions, before the stamina penalty and cooldown zeroing, only when `movement_ctx` is not None. The slot numbers mirror `combat._ACTION_IDX`, as `weights._HIDE_IDX` does.
+
+**Tests:** `matches/tests/test_modes.py` (defaults, dwell and cadence, each trigger row, the roll, commitments, the weight nudge and its place in `plan_action`, the tick-loop wiring on seeded Syracuse rounds, no-map rounds).
 
 ## mechanics.py
 
@@ -472,7 +520,7 @@ Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The s
 | `GOAL_RECOMPUTE_PERIOD_TICKS` | `4` | MOVE-04 **Goal commitment** cadence (2 s) — steady-state `choose_goal_cell` recompute period; reactive overrides bypass this and run every tick. Phase is **expiry-based** per-player (`expires_at_tick = tick + N`), **not** a global `tick % N == 0`. See [ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md) |
 | staleness | `120` / `30` | MECH-06 memory staleness — Heavy/Medic/Ammo `120`, Scout/Commander `30` (60 s / 15 s) |
 
-(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `pathfinding.py` (`_STALE_THRESHOLD`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals.
+(Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `pathfinding.py` and `modes.py` (`_stale_table`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals. **`_stale_table(time_domain)`** returns the role-to-threshold table: `_STALE_THRESHOLD_TICKS` for `"ticks"`, the seconds table `_STALE_THRESHOLD` otherwise (MECH-07 moved all three here from `pathfinding`).
 
 ---
 
@@ -508,6 +556,7 @@ The round report PDF (RV-03) and its chart section (RV-05). All three are pure (
 - `squares(feet) -> int` (MOVE-08) — `max(1, round(feet / feet_per_square))`: every rule distance (Follow rule, Downed option) is a feet constant turned into this map's squares, so the scale holds on any grid size.
 - `los_rank(cell) -> float` (MOVE-08) — the share of the other cells whose LOS count is lower (0 = most hidden, 1 = most open); the sorted counts are cached on the context. Feeds the Downed option's Stay hidden weight.
 - `can_see(from_cell, to_cell) -> bool` — frozenset lookup in `sight_data`.
+- `cells_visible_from(cell) -> list[cell]` (MECH-07) — the cell's sight set as sorted cells (a `frozenset`'s order is PYTHONHASHSEED-randomised, so sort for serial == parallel); `[]` with no `sight_data` or no sight lines. Feeds the Medic / Ammo goal candidates.
 - `elevation_at(r, c) -> float` — safe `elevation_grid` access, returns 0.0 on None/OOB.
 - `base_in_range(cell) -> int | None` — checks `base_sight_data`; returns 15/14/None.
 - `get_adjacency()`, `get_spawn_cells()`, `get_zone_data()`, `get_wall_meta()`, `get_los_count(cell)`, `get_high_los_cells()`, `get_strong_spots()`, `get_team_spawn_pools()`.
