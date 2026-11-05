@@ -2762,16 +2762,18 @@ class TestMove01BaselineZeroPlayerMovesAcrossMap:
                 red_roster, blue_roster, seed=42, flipped=False, movement_ctx=ctx
             )
 
-        red_spawn = (0, 0)
-        moved_roles = set()
-        for p in red_players:
-            if p.cell_row is None:
-                continue
-            dist = abs(p.cell_row - red_spawn[0]) + abs(p.cell_col - red_spawn[1])
-            if dist > 0:
-                moved_roles.add(p.role)
+        # MOVE-06: "Advanced" is any recorded move (movement_trail), not the
+        # final cell's distance from spawn: with drawn positioning goals and
+        # action goals interrupting them, a support player can advance and
+        # come back to a teammate at spawn, which the final cell would miss.
+        moved_roles = {p.role for p in red_players if p.movement_trail}
 
-        for role in ("commander", "medic", "ammo"):
+        # The Medic is not asserted: its goal is a scored draw over the cells
+        # the Heavy can see, hidden ones first, and on this open floor every
+        # cell ties on sight lines, so its own cell (0 ft away) is its best
+        # support cell. That is the goal choice, not the MOVE-01 always-on
+        # Advance gate this test pins.
+        for role in ("commander", "ammo"):
             assert role in moved_roles, (
                 f"{role} (baseline only_move weight 0) must still Advance across "
                 f"the map every tick under MOVE-01; moved roles were {moved_roles}"
@@ -2912,56 +2914,25 @@ class TestMove01CompactMovementEvent:
 # covered by ``TestMove01CompactMovementEvent`` above.
 
 
-class TestMove01SelectLosCell:
-    """MOVE-01: `_select_los_cell` — deterministic LOS-biased cell pick.
+class TestMove06CellsFromKeys:
+    """MOVE-06 replaced MOVE-01's `_select_los_cell` with the scored draw
+    (`goal_scoring`, tested in test_goal_scoring.py). Its hash-independence
+    guarantee now lives in `_cells_from_keys`, which turns a Heavy's sight
+    set into the Medic / Ammo candidates (SIM-07/08: serial == parallel)."""
 
-    Closes the code-review WARNING: the helper underpins Medic (sheltered,
-    low LOS) and Ammo (exposed, high LOS) goal selection and must be fully
-    deterministic and hash-independent (SIM-07/08: serial == per-process
-    parallel). Pure unit, no DB."""
+    def test_sorted_and_hash_independent(self):
+        from matches.sim_helpers.pathfinding import _cells_from_keys
 
-    def test_medic_picks_lowest_los(self):
-        from matches.sim_helpers.pathfinding import _select_los_cell
-
-        keys = frozenset({"0,0", "0,1", "5,5"})
-        los = {"0,0": 9, "0,1": 9, "5,5": 2}
-        # prefer_high=False (Medic): minimise LOS → the 5,5 cell.
-        assert _select_los_cell(keys, los, 0, 0, prefer_high=False) == (5, 5)
-
-    def test_ammo_picks_highest_los(self):
-        from matches.sim_helpers.pathfinding import _select_los_cell
-
-        keys = frozenset({"0,0", "0,1", "5,5"})
-        los = {"0,0": 1, "0,1": 1, "5,5": 8}
-        # prefer_high=True (Ammo): maximise LOS → the 5,5 cell.
-        assert _select_los_cell(keys, los, 0, 0, prefer_high=True) == (5, 5)
-
-    def test_tie_broken_by_nearest_then_coords(self):
-        from matches.sim_helpers.pathfinding import _select_los_cell
-
-        # All equal LOS → tie-break must be the cell nearest (from_row,col).
-        keys = frozenset({"9,9", "1,0", "0,3"})
-        los = {"9,9": 4, "1,0": 4, "0,3": 4}
-        assert _select_los_cell(keys, los, 0, 0, prefer_high=False) == (1, 0)
-        assert _select_los_cell(keys, los, 0, 0, prefer_high=True) == (1, 0)
-
-    def test_deterministic_and_hash_independent(self):
-        from matches.sim_helpers.pathfinding import _select_los_cell
-
-        # Same elements, many rebuilt frozensets (insertion order varies, and
-        # str hashing is PYTHONHASHSEED-randomised) → identical result every
-        # call. Equidistant ties resolve by (r, c) ascending.
-        los = {f"{r},{c}": 3 for r in range(6) for c in range(6)}
         results = set()
         for _ in range(25):
             keys = frozenset(f"{r},{c}" for r in range(6) for c in range(6))
-            results.add(_select_los_cell(keys, los, 2, 2, prefer_high=False))
-        assert results == {(2, 2)}  # exactly at the origin → nearest, stable
+            results.add(tuple(_cells_from_keys(keys)))
+        assert results == {tuple(sorted((r, c) for r in range(6) for c in range(6)))}
 
-    def test_empty_returns_none(self):
-        from matches.sim_helpers.pathfinding import _select_los_cell
+    def test_empty_gives_no_cells(self):
+        from matches.sim_helpers.pathfinding import _cells_from_keys
 
-        assert _select_los_cell(frozenset(), {}, 0, 0, prefer_high=False) is None
+        assert _cells_from_keys(frozenset()) == []
 
 
 # ---------------------------------------------------------------------------

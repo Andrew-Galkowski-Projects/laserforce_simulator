@@ -124,6 +124,7 @@ _SIMULATION_STATS = (
     "communication",
     "resource_awareness",
     "speed",
+    "positioning",
 )
 
 
@@ -131,15 +132,24 @@ def _roster_from_snapshot(side_list) -> list:
     """GEN-01: rebuild a ``list[(role, _PlayerData)]`` from a snapshot side.
 
     Each entry in ``side_list`` is a roster-snapshot dict
-    ``{"player_id", "name", "role", "stats": {<13 sim-stats>: int}}``. The
+    ``{"player_id", "name", "role", "stats": {<14 sim-stats>: int}}``. The
     snapshot already holds the boosted (post-``stat_for_simulation``) values,
     so ``_PlayerData.stat_for_simulation`` returning them verbatim re-bakes
-    IDENTICAL ``PlayerState``s — exact reproduction. The 13 ``"stats"`` keys
+    IDENTICAL ``PlayerState``s — exact reproduction. The 14 ``"stats"`` keys
     are exactly the keys ``_make_players`` reads (``_SIMULATION_STATS``), so
-    no ``KeyError``.
+    no ``KeyError``. MOVE-06: a snapshot from before a stat joined
+    ``_SIMULATION_STATS`` (``positioning``) gets that stat's default, 50, so
+    an old round still re-simulates (on today's engine, so not identically).
     """
     return [
-        (entry["role"], _PlayerData(entry["player_id"], entry["name"], entry["stats"]))
+        (
+            entry["role"],
+            _PlayerData(
+                entry["player_id"],
+                entry["name"],
+                {s: entry["stats"].get(s, 50) for s in _SIMULATION_STATS},
+            ),
+        )
         for entry in side_list
     ]
 
@@ -1121,6 +1131,7 @@ class BatchSimulator:
                     "resource_awareness", role
                 ),
                 speed=player_model.stat_for_simulation("speed", role),
+                positioning=player_model.stat_for_simulation("positioning", role),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -1168,6 +1179,12 @@ class BatchSimulator:
         pending_followups: list[PendingFollowup] = []
         pending_reactions: list[PendingReaction] = []
         eliminated_at = SURVIVED_SENTINEL
+
+        # MOVE-07: one fixed route-noise seed per player for the round, drawn
+        # in roster order (red then blue) so serial == parallel. Map rounds only.
+        if movement_ctx is not None:
+            for p in red_players + blue_players:
+                p.route_seed = random.getrandbits(32)
 
         # RoundContext: the per-round mutable-state bundle threaded through
         # record_down and resolve_shot. Built once here; the all_alive list

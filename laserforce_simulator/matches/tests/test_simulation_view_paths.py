@@ -852,6 +852,7 @@ _GEN01_SNAPSHOT_STATS = {
     "communication",
     "resource_awareness",
     "speed",
+    "positioning",  # MOVE-06: joined _SIMULATION_STATS (the goal draw)
 }
 
 

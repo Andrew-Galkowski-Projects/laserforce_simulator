@@ -243,7 +243,7 @@ after LFstats's Replay tab, within ADR-0043.
   Under reduced motion the flash is gone entirely, while the static rainbow and glow stay.
 - **`PlaybackFeed`** lists events newest first; the first row is `is-current`. It has search, plus
   Misses and Movement toggles that start off.
-- **`PlaybackMap`** is **beta**: the owner is reworking movement in MOVE-07.
+- **`PlaybackMap`** is **beta**: movement was reworked by MOVE-08 (feet-based speed, the Downed option) and MOVE-06+07 (drawn goals, per-player routes), and MECH-07 (Modes) reworks it again.
   - It stays collapsed behind "Show map (beta)", and only its contract is tested.
   - On first open it fetches the processed image through `MapsService.processedImage`, and revokes
     the object URL on destroy.

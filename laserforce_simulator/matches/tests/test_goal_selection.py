@@ -78,9 +78,20 @@ def _base_ctx(
 
 
 class TestMap05RoleAwareGoal:
-    """Unit tests for choose_goal_cell: role-specific and action-driven paths."""
+    """Unit tests for choose_goal_cell: role-specific and action-driven paths.
 
-    def test_scout_navigates_to_nearest_high_los_cell(self):
+    MOVE-06: positioning goals are a scored draw (goal_scoring); the draw is
+    pinned to roll 0 here, which always takes the best-scored cell, so these
+    tests keep pinning "the nearest good cell scores best" deterministically.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _best_draw(self, monkeypatch):
+        from matches.sim_helpers import goal_scoring
+
+        monkeypatch.setattr(goal_scoring.random, "random", lambda: 0.0)
+
+    def test_scout_takes_the_best_scored_high_los_cell(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -102,7 +113,7 @@ class TestMap05RoleAwareGoal:
         goal = choose_goal_cell(scout, [scout], spawn_cells, ctx)
         assert goal == (9, 9)
 
-    def test_heavy_goes_to_nearest_strong_spot_when_healthy(self):
+    def test_heavy_takes_the_best_scored_strong_spot_when_healthy(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -144,7 +155,7 @@ class TestMap05RoleAwareGoal:
         goal = choose_goal_cell(heavy, [heavy, ammo], spawn_cells, ctx)
         assert goal == (5, 5)
 
-    def test_medic_navigates_to_low_los_cell_in_heavy_sight(self):
+    def test_medic_takes_the_best_scored_hidden_cell_in_heavy_sight(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -163,7 +174,7 @@ class TestMap05RoleAwareGoal:
         # Medic picks lowest-LOS cell in Heavy's visible set
         assert goal == (2, 1)
 
-    def test_ammo_navigates_to_high_los_cell_in_heavy_sight(self):
+    def test_ammo_takes_the_best_scored_open_cell_in_heavy_sight(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}

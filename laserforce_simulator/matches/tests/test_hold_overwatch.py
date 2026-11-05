@@ -248,6 +248,9 @@ class TestHoldIsStationary:
         """Control: a normal non-holding player does Advance toward its goal."""
         p = _ps("scout", cell_row=0, cell_col=0, speed=100)
         p.is_holding = False
+        # MOVE-06: on this 4-cell corridor the drawn enemy-base goal can be
+        # the player's own cell; commit the far end so the control has a goal.
+        p._committed_goal = ((0, 3), False, 999)
         self.sim._advance_player(p, [p], 5, self.ctx, "")
         moved = (p.cell_row, p.cell_col) != (0, 0)
         assert moved, "non-holding control should have advanced from (0,0)"
@@ -385,6 +388,9 @@ class TestOverwatchThroughIntermediateCell:
         # Hand-seed the path-commitment cache: 3-tuple (goal, remaining, anchor).
         # remaining = the route still to walk, head = next cell, ends at goal.
         mover._path_cache = ((0, 3), [(0, 1), (0, 2), (0, 3)], (0, 0))
+        # MOVE-06: the drawn enemy-base goal on this corridor need not be (0,3);
+        # commit (0,3) so the Advance consumes the seeded route.
+        mover._committed_goal = ((0, 3), False, 999)
         return holder, mover
 
     def test_neither_endpoint_is_in_holder_los(self):

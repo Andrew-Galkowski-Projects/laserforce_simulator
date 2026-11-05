@@ -40,6 +40,8 @@ class PlayerState:
     teamwork: int = 50
     communication: int = 50
     speed: int = 50  # 0-100, from Player model; 5-10 ft/s (MOVE-08)
+    # MOVE-06: sharpens the positioning-goal draw (goal_scoring.temperature).
+    positioning: int = 50
     final_missiles: int = 0
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model
@@ -194,6 +196,13 @@ class PlayerState:
     # MOVE-08: the fraction of a square carried to the next tick's Advance
     # (``pathfinding.squares_this_tick``).
     move_carry: float = 0.0
+
+    # MOVE-07: this player's fixed route-noise seed for the round (drawn at
+    # round start; ``pathfinding.route_noise``), None = plain shortest routes.
+    route_seed: Optional[int] = None
+    # MOVE-06: True when the current goal came from the scored draw, so
+    # ``choose_goal_cell`` holds it until reached.
+    _goal_was_drawn: bool = False
 
     # uptime breakdown in ticks (accumulated +1 each tick)
     ticks_active: int = 0

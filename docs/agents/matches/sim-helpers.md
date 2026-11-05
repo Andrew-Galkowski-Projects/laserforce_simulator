@@ -306,7 +306,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 
 **`build_movement_adjacency(zone_data)`** — builds a 4-connected adjacency dict `{cell: [neighbor, ...]}` for every movement-passable cell. Uses module constant `_MOVEMENT_PASSABLE = {1, 2, 3}` (floor + legacy red/blue zones). High wall (0), low wall (4), and windowed wall (5) all block movement and are excluded entirely, so `cell in adj` doubles as a passability check.
 
-**`astar_path(start, goal, adj, elevation_data=None)`** — core A* (Manhattan heuristic, optional elevation cost). Returns the ordered list of cells from `start` to `goal` **excluding `start`** (last element is `goal`); `[]` when `start == goal`, no path exists, or `start` is not in the adjacency graph. `astar_next_step` and `astar_advance` are thin wrappers over it.
+**`astar_path(start, goal, adj, elevation_data=None, route_seed=None)`** — core A* (Manhattan heuristic, optional elevation cost). Returns the ordered list of cells from `start` to `goal` **excluding `start`** (last element is `goal`); `[]` when `start == goal`, no path exists, or `start` is not in the adjacency graph. `astar_next_step` and `astar_advance` are thin wrappers over it. **MOVE-07 route noise:** with a `route_seed`, each step into a cell costs `ROUTE_NOISE_MAX` (0.5) x `route_noise(seed, cell)` more, where `route_noise` is a deterministic integer hash in [0, 1). So routes are near-shortest (every step costs at least 1; the heuristic stays admissible) and particular to each player. No RNG is drawn in A*. `BatchSimulator._simulate_round` gives every player on a map round one `PlayerState.route_seed = random.getrandbits(32)` at round start (red then blue), and `astar_advance_cached` passes it, so the goal-keyed cache stays valid.
 
 **`astar_next_step(start, goal, adj, elevation_data=None)`** — `astar_path(...)[0]` (or `start` when the path is empty). Behaviour unchanged from the pre-refactor implementation (regression-guarded by `test_map.py::TestAstarPathAndAdvance` + the legacy `TestMap02CellMovement` astar tests).
 
@@ -324,10 +324,10 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 - `hide`: adjacent cell with lowest LOS count.
 
 **`_goal_from_role(player, all_alive, enemy_color, cell_row, cell_col, movement_ctx) -> tuple[int,int] | None`** — returns a role-specific positioning goal, or `None`:
-- Scout → nearest high-LOS cell (top 25% by LOS count).
-- Heavy (healthy >50% lives and shots) → nearest strong spot; otherwise → nearest allied Medic or Ammo.
-- Medic → lowest-LOS cell within the allied Heavy's visible set (sheltered position near Heavy).
-- Ammo → highest-LOS cell within the allied Heavy's visible set (exposed support position near Heavy).
+- Scout → a drawn high-LOS cell (top 25% by LOS count). MOVE-06: every "drawn" pick is `goal_scoring.draw_goal` (see `goal_scoring.py` below), held until reached.
+- Heavy (healthy >50% lives and shots) → a drawn strong spot; otherwise → the allied Medic or Ammo.
+- Medic → a drawn cell in the allied Heavy's visible set, hidden ones scoring higher (sheltered position near Heavy).
+- Ammo → a drawn cell in the allied Heavy's visible set, open ones scoring higher (exposed support position near Heavy).
 - Commander → enemy medic cell.
 
 **`_STALE_THRESHOLD`** — module-level dict mapping role strings to their memory staleness thresholds in **ticks** (TIME-01; sourced from `time_constants.py`): `Heavy/Medic/Ammo → 120` (60 s), `Scout/Commander → 30` (15 s).
@@ -363,6 +363,30 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 `matches/tests/test_map.py::TestMap02CellMovement` covers adjacency building, A* correctness, elevation stubs, movement cost, goal-cell selection, and the batch-simulator code path.
 
 ---
+
+## goal_scoring.py
+
+**MOVE-06+07 scored positioning goals** (spec #540). The step-3 positioning goals in `pathfinding._goal_from_role` (Scout: `high_los_cells`; healthy Heavy: `strong_spots`; Medic / Ammo: the cells in the Heavy's sight set, via `_cells_from_keys`, which sorts the `frozenset` keys for serial == parallel) and the step-4 enemy-base default (`enemy_base_cells`: floor cells within `BASE_RADIUS_FEET` walk of the enemy base) are a **scored draw** instead of "the nearest best cell". A drawn goal sets `PlayerState._goal_was_drawn` (reset when the teamwork bias swaps the cell), and `choose_goal_cell` commits it with expiry `pathfinding.HELD_GOAL_EXPIRY` (`TICKS_PER_ROUND + 1`): **held until reached**. While it is held, step 2 still runs each tick: **an action goal (chase, resupply, hide) interrupts it** (owner decision 10) and is committed on the 4-tick cadence, after which a fresh positioning goal is drawn. Reactive overrides, Stationary exits and the Downed option still clear it too. Goals that chase a player (nearest enemy, the Commander's enemy-Medic hunt, an unhealthy Heavy's support seek, the Medic / Ammo fallback to the Heavy's cell) are unchanged, and the teamwork bias still runs after the draw.
+
+### Goal scoring formula (tunable)
+
+```
+score = VALUE_WEIGHT (1.0) x value
+        - DISTANCE_WEIGHT (0.5) x walk_ft / 100
+        - CROWDING_WEIGHT (0.5) x crowding
+T     = T_MIN (0.05) + T_SPAN (0.45) x (1 - positioning / 100)
+```
+
+- `value` (0..1): `MapContext.los_rank` for Scout and Ammo (open is good), `1 - los_rank` for Medic (hidden is good), 1 for Heavy strong spots and the enemy-base set.
+- `walk_ft`: breadth-first walking distance x `feet_per_square`. Unreachable cells are dropped. With no movement graph at the player's cell (hand-built contexts), Manhattan squares are used instead.
+- `crowding`: teammates (not the player, not enemies) whose current cell or **live** committed goal (not expired at the current tick) is within `squares(CROWD_RADIUS_FEET)` (15 ft, Chebyshev) of the candidate. A teammate counts once.
+- **The draw:** the `TOP_K` (8) best, ties by (row, col), drawn with weights `exp((score - best) / T)` from one `random.random()`. High positioning gives a sharp draw (near the best); low positioning gives a loose one.
+
+`score_candidates(player, candidates, value_of, all_alive, movement_ctx, tick=None)` returns `(score, cell)` best first; `draw_goal(...)` (same arguments) returns the drawn cell or None; `temperature(player)`; `enemy_base_cells(enemy_color, movement_ctx)`. All constants sit at the top of `goal_scoring.py`. The `positioning` stat joined `_SIMULATION_STATS` for this (`PlayerState.positioning`, default 50). `_roster_from_snapshot` fills a stat missing from an older roster snapshot with 50, so pre-MOVE-06 rounds still re-simulate (on today's engine, so not identically).
+
+Measured on Syracuse (2 seeded rounds, before → after): team-ticks with 2+ teammates on one goal red 57% / blue 29% → 9% / 11%; distinct goals per player per round Scout 33 → 120, Heavy 44 → 138; mean distance to teammates 8-9 → 12-15 squares.
+
+**Tests:** `matches/tests/test_goal_scoring.py` (scoring, crowding, top 8, temperature, the enemy-base set, held goals, route noise, the positioning stat and old snapshots, seeded Syracuse rounds with shared goals below 15%).
 
 ## mechanics.py
 
@@ -480,6 +504,7 @@ The round report PDF (RV-03) and its chart section (RV-05). All three are pure (
 
 ### Domain-level accessors
 
+- `walk_distances(start, limit=None) -> dict[cell, int]` (MOVE-06) — breadth-first walking distance in squares over `adj`, within `limit` when given; shared by the Downed option and the goal draw.
 - `squares(feet) -> int` (MOVE-08) — `max(1, round(feet / feet_per_square))`: every rule distance (Follow rule, Downed option) is a feet constant turned into this map's squares, so the scale holds on any grid size.
 - `los_rank(cell) -> float` (MOVE-08) — the share of the other cells whose LOS count is lower (0 = most hidden, 1 = most open); the sorted counts are cached on the context. Feeds the Downed option's Stay hidden weight.
 - `can_see(from_cell, to_cell) -> bool` — frozenset lookup in `sight_data`.
