@@ -72,6 +72,8 @@ WALL_BLOCKS = [
 RED_BASE_CELL = (10, 3)
 BLUE_BASE_CELL = (9, 26)
 BASE_SIGHT_RADIUS = 3
+#: How many times to simulate the mapped Round: a real one can fire no missile.
+MISSILE_ROUND_ATTEMPTS = 5
 
 
 def _zone_grid() -> list[list[int]]:
@@ -155,8 +157,33 @@ def create_browser_check_map() -> ArenaMap:
     return arena_map
 
 
-def mark_friendly_fire_missile(game_round: GameRound) -> None:
-    """Flag the Round's first missile hit (or first missile) as Friendly fire.
+def create_mapped_round(
+    red: Team, blue: Team, arena_map: ArenaMap, user: Any
+) -> GameRound:
+    """A full-fidelity Single Round on the map, simulated again while it fires no
+    missile, because the Missile log check needs a row.
+
+    The last attempt is kept either way: a short Round (the Tournament tests' 40
+    ticks) fires none, and that must not stop the rest of the seed.
+    """
+
+    def simulate() -> GameRound:
+        return BatchSimulator().ensure_fidelity(
+            create_sandbox_round(red, blue, arena_map=arena_map, user=user), "full"
+        )
+
+    game_round = simulate()
+    for _ in range(MISSILE_ROUND_ATTEMPTS - 1):
+        if game_round.events.filter(event_type="missiled").exists():
+            break
+        game_round.delete()
+        game_round = simulate()
+    return game_round
+
+
+def mark_friendly_fire_missile(game_round: GameRound) -> bool:
+    """Flag the Round's first missile hit (or first missile) as Friendly fire, and
+    return whether there was one to flag.
 
     A simulated Round rarely fires at a teammate, and the Missile log check
     needs one tinted row. Only the flag changes: actor and target stay as
@@ -164,9 +191,11 @@ def mark_friendly_fire_missile(game_round: GameRound) -> None:
     """
     missiles = game_round.events.filter(event_type="missiled").order_by("timestamp")
     event = missiles.filter(metadata__result="hit").first() or missiles.first()
-    if event is not None:
-        event.metadata = {**event.metadata, "friendly_fire": True}
-        event.save(update_fields=["metadata"])
+    if event is None:
+        return False
+    event.metadata = {**event.metadata, "friendly_fire": True}
+    event.save(update_fields=["metadata"])
+    return True
 
 
 def _deleted(queryset: QuerySet) -> int:
@@ -239,10 +268,12 @@ class Command(BaseCommand):
             create_sandbox_round(third, fourth, arena_map=None, user=a), "full"
         )
         arena_map = create_browser_check_map()
-        mapped_round = BatchSimulator().ensure_fidelity(
-            create_sandbox_round(third, fourth, arena_map=arena_map, user=a), "full"
-        )
-        mark_friendly_fire_missile(mapped_round)
+        mapped_round = create_mapped_round(third, fourth, arena_map, a)
+        if not mark_friendly_fire_missile(mapped_round):
+            self.stdout.write(
+                f"Warning: mapped Single Round {mapped_round.pk} fired no missile in "
+                f"{MISSILE_ROUND_ATTEMPTS} attempts, so the Missile log has no rows."
+            )
         unfinished = Match.objects.create(
             team_red=red,
             team_blue=fourth,

@@ -8,6 +8,7 @@ database live in the ``*CleanTests`` classes and seed per test.
 """
 
 from io import StringIO
+from typing import Any, Callable
 from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
@@ -17,6 +18,7 @@ from rest_framework.test import APIClient
 
 from core.map_test_fixtures import ClassTempMediaMixin, TempMediaMixin
 from core.models import ArenaMap
+from matches.management.commands.seed_browser_check import MISSILE_ROUND_ATTEMPTS
 from matches.models import (
     Conference,
     GameRound,
@@ -203,6 +205,79 @@ class SeedBrowserCheckMapTests(ClassTempMediaMixin, TestCase):
 
         self.assertEqual(response.status_code, 200, response.content)
         self.assertIsNotNone(response.json()["data"]["map"])
+
+
+def _mapped_rounds_lose_their_missiles(lose_them: Callable[[int], bool]) -> Any:
+    """Patch ``ensure_fidelity`` so the nth mapped Round fires no missile when
+    ``lose_them(n)``: a real Round does this too rarely to wait for."""
+    real = BatchSimulator.ensure_fidelity
+    mapped_rounds = 0
+
+    def ensure_fidelity(sim: BatchSimulator, game_round: GameRound, level: str) -> Any:
+        nonlocal mapped_rounds
+        upgraded = real(sim, game_round, level)
+        if game_round.arena_map_id is not None:
+            mapped_rounds += 1
+            if lose_them(mapped_rounds):
+                upgraded.events.filter(event_type="missiled").delete()
+        return upgraded
+
+    return patch.object(BatchSimulator, "ensure_fidelity", ensure_fidelity)
+
+
+class SeedBrowserCheckMissileRetryTests(TempMediaMixin, TestCase):
+    """The Missile log check needs a missile, and a real Round can fire none."""
+
+    def _mapped_rounds(self) -> Any:
+        return GameRound.objects.filter(arena_map__name=_MAP_NAME)
+
+    def test_a_round_with_no_missile_is_simulated_again(self) -> None:
+        attempts = []
+
+        def lose_them(n: int) -> bool:
+            attempts.append(n)
+            return n == 1
+
+        with _mapped_rounds_lose_their_missiles(lose_them):
+            _seed()
+
+        self.assertEqual(attempts, [1, 2])
+        game_round = self._mapped_rounds().get()
+        missiles = game_round.events.filter(event_type="missiled")
+        self.assertTrue(missiles.exists())
+        self.assertEqual(missiles.filter(metadata__friendly_fire=True).count(), 1)
+
+    def test_it_keeps_the_last_attempt_and_warns(self) -> None:
+        # A short Round fires no missile (the Tournament tests' 40 ticks), and the
+        # rest of the seed must still run.
+        attempts = []
+
+        def lose_them(n: int) -> bool:
+            attempts.append(n)
+            return True
+
+        with _mapped_rounds_lose_their_missiles(lose_them):
+            output = _seed()
+
+        self.assertEqual(attempts, list(range(1, MISSILE_ROUND_ATTEMPTS + 1)))
+        game_round = self._mapped_rounds().get()
+        self.assertIn(
+            f"Warning: mapped Single Round {game_round.pk} fired no missile", output
+        )
+        self.assertTrue(Match.objects.filter(is_completed=False).exists())
+
+    def test_no_warning_when_a_missile_was_fired(self) -> None:
+        with _mapped_rounds_lose_their_missiles(lambda n: n == 1):
+            output = _seed()
+
+        self.assertNotIn("Warning", output)
+
+    def test_the_last_attempt_can_still_succeed(self) -> None:
+        with _mapped_rounds_lose_their_missiles(lambda n: n < MISSILE_ROUND_ATTEMPTS):
+            _seed()
+
+        game_round = self._mapped_rounds().get()
+        self.assertTrue(game_round.events.filter(event_type="missiled").exists())
 
 
 class SeedBrowserCheckMapCleanTests(TempMediaMixin, TestCase):
