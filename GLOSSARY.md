@@ -308,14 +308,14 @@ _Avoid_: the old name `change_zone` (and reading it as "the action that makes yo
 The goal-directed **Cell** movement every non-**stationary** player performs **each tick**, toward their current **Goal cell**, a distance set by their **speed** **Stat**. Always-on and independent of the weighted **Action**; suppressed only while the player is **stationary**. Doubled on a tick whose Action is **only_move**.
 
 **Hold**:
-The **Action** of taking up **Overwatch**: the player anchors to its current **Cell** and watches its **Sight lines**. Like **hide**, Hold *carries over* — once rolled it stays in effect (the player remains in Overwatch) until the player rolls a non-Hold Action or is **Down**ed/respawned (a life loss force-clears it, knocked off position). A Hold**ing** player is **Stationary** (does not **Advance**).
+The **Action** of taking up **Overwatch**: the player anchors to its current **Cell** and watches its **Sight lines**. A Hold is a *commitment*: once rolled it lasts a fixed stretch with no further Action drawn, and it ends early when the player is **Down**ed, runs out of **Shots** or reacts to a **Nuke**. A Hold**ing** player is **Stationary** (does not **Advance**).
 _Avoid_: confusing **Hold** with **hide** — hide seeks a low-LOS cell to *avoid* being seen; Hold deliberately watches a sightline to *shoot* anyone who crosses it.
 
 **Overwatch**:
-The state of a **Hold**ing player: every tick, the moment any enemy enters (or **Advances** through) the holder's **Line of sight**, the holder fires an **Overwatch shot** at it pre-emptively. Persists for as long as **Hold** is carried over.
+The state of a **Hold**ing player: every tick, the moment any enemy enters (or **Advances** through) the holder's **Line of sight**, the holder fires an **Overwatch shot** at it pre-emptively. Persists for as long as the **Hold** lasts.
 
 **Stationary**:
-The state in which a player does **not Advance** this tick. True only while **hiding** (`hide` Action / hide carried over), while in **Overwatch** (`hold` Action / hold carried over — the holder is anchored to its sightline), or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
+The state in which a player does **not Advance** this tick. True only while **hiding** (`hide` Action / hide carried over), while in **Overwatch** (for the length of a **Hold** — the holder is anchored to its sightline), or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
 
 **Weight**:
 The per-action numeric likelihood, derived from role, situation, and **Stats**, that drives the random **Action** choice.
