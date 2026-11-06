@@ -19,6 +19,9 @@ from typing import Any
 #: = 1/6 ft a pixel), used for hand-built contexts.
 DEFAULT_FEET_PER_SQUARE: float = 5.0
 
+# Neutral base_types in priority order for capture/reset checks
+_NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
+
 
 def _main_floor(
     adj: dict[tuple[int, int], list[tuple[int, int]]],
@@ -140,7 +143,6 @@ class MapContext:
         if not self.base_sight_data:
             return None
         cell_key = f"{cell[0]},{cell[1]}"
-        _NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
         for neutral_type in _NEUTRAL_BASE_TYPES:
             if cell_key in self.base_sight_data.get(neutral_type, frozenset()):
                 return 15

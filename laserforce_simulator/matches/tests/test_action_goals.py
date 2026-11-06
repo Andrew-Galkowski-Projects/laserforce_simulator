@@ -366,7 +366,16 @@ class TestSearchOnSyracuse:
         ctx = _syracuse()
         base = ctx.spawn_cells[enemy]
         start = ctx.team_spawn_pools[team][0]
-        player = _player("commander", team, cell_row=start[0], cell_col=start[1])
+        # MECH-17c: a Commander with a Base left goes for that first, and searches once
+        # its Bases are taken. The search itself is the same for every Role.
+        player = _player(
+            "commander",
+            team,
+            cell_row=start[0],
+            cell_col=start[1],
+            neutral_base_destroyed=True,
+            opposing_base_destroyed=True,
+        )
         goal = _choose(player, [player], ctx, action="tag_player")
         assert goal in ctx.walk_distances(start)
         assert abs(goal[0] - base[0]) + abs(goal[1] - base[1]) <= abs(
@@ -380,12 +389,15 @@ class TestEngagementGuard:
     """A goal change must not quietly stop the game. The "empty rolls set no goal"
     prototype scored 35 planned Shots; the lowest seed before this task was 88.
 
-    Seeds 5-8 because they tell the two apart: 106.5 as built, 35.4 when an empty tag
-    roll sets no goal. Seeds 1-4 score 80.9 under that bug, which would pass.
+    Seeds 12, 16, 21 and 22 because they tell the two apart: 125.6 as built, 65.8 when
+    an empty tag roll sets no goal. They are picked for that. Since MECH-17c a
+    Commander's Base goal also walks it to the enemy, so over seeds 1-24 the bug no
+    longer lowers Commander Shots (95.2 as built, 97.9 with it), while Heavy (88.0 to
+    54.6) and Scout (83.8 to 45.7) fall. Re-run the mutation after any RNG change.
     """
 
     def test_commanders_keep_shooting_on_syracuse(self) -> None:
-        result = run_probe(_syracuse(), range(5, 9))
+        result = run_probe(_syracuse(), [12, 16, 21, 22])
         assert result.roles["commander"].tags_per_round >= 70
 
 

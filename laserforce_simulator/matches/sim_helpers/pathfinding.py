@@ -14,6 +14,7 @@ from .modes import (
     DEFENSE_RESUPPLY_SHARE,
     Mode,
     attack_tag_goal,
+    base_goal,
     mode_goal,
     trail_costs,
 )
@@ -599,6 +600,8 @@ def choose_goal_cell(
     role-aware. Priority order:
     1. Critical-resource override: seek medic (low lives) or ammo (low shots) for
        non-support roles — always trumps role/action logic.
+    1c. A Commander with 3+ Shots and a Base left: ``modes.base_goal``, held until
+       reached. It does not stop the Commander shooting.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
        - tag_player / missile_player: a drawn cell that sees, in Attack, the nearest
          remembered enemy Medic or Ammo, then the nearest remembered enemy. With none
@@ -744,6 +747,11 @@ def choose_goal_cell(
     early_action: tuple[int, int] | None = None
     action_checked = False
     if time_domain == "ticks":
+        # ── 1c. MECH-17: a Commander goes for its Bases, before any action goal.
+        base = base_goal(player, all_alive, enemy_color, movement_ctx, second)
+        if base is not None:
+            player._committed_goal = (base, False, HELD_GOAL_EXPIRY)
+            return base
         committed = player._committed_goal
         if (
             committed is not None

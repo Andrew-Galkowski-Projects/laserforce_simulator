@@ -243,6 +243,7 @@ Managed by `modes` on map rounds only.
 | `mode_next_check` | `int` | Earliest tick of the next switch check |
 | `mode_ticks` | `dict[Mode, int]` | Ticks spent in each Mode; empty on a no-map round |
 | `mode_hold_until` | `int \| None` | Deadline of a Control hold on a reached goal; a Mode switch clears it |
+| `base_in_reach` | `bool \| None` | MECH-17: set by `combat.plan_action` on map rounds, whether a capture can happen on this cell now. None on map-less rounds |
 
 ### Role stat lookups
 
@@ -352,6 +353,7 @@ Cell-aware movement helpers used by `BatchSimulator` (the sole simulator post-SI
 1. **MECH-04 nuke-reaction override** (highest priority): when `player.reacting_to_nuke` is `True`, Medic/Ammo rush toward the neediest ally. Non-support players with lives ≤ 30% of max → allied Medic cell (survival mode); lives > 30% → seeks enemy Commander's last-known cell from `player_memory` (MECH-06 fills the former TODO hook) to attempt a tag-cancel; falls through to step 2 if memory is absent/stale.
 2. **Score-broadcast seek-medic override**: when `player.score_broadcast_state == "seek_medic"`, movement is overridden to the allied Medic's last-known cell from memory.
 3. Critical-resource override (non-support): lives ≤ 30% → seek allied Medic; shots ≤ 30% → seek allied Ammo.
+3a. **MECH-17 Base goal** (tick domain): `modes.base_goal`, after those overrides and the Downed option and before the commitment and action goals, committed as a held goal (`(goal, False, HELD_GOAL_EXPIRY)`).
 4. Action-driven movement via `_goal_from_action` (uses `intended_action`, which is the action chosen on the previous tick).
 5. Positioning via `_goal_from_role`: `modes.mode_goal`.
 6. Default: a drawn floor cell near the enemy base, then the enemy base cell from `spawn_cells`.
@@ -444,10 +446,14 @@ value = min(CONTROL_VALUE_CAP (1.0),
             los_rank
             + CONTROL_BONUS (0.25) if the cell is in base_sight_data[enemy_color]
                                    and not player.opposing_base_destroyed
+            + CONTROL_BONUS (0.25) if the cell is in a neutral base's base_sight_data
+                                   and not player.neutral_base_destroyed
             + CONTROL_BONUS (0.25) if can_see(cell, c) for any fresh enemy cell c)
 ```
 
-`base_in_range` must not be used for the base bonus: it returns 14 for either team's base, so it would reward a player's own base.
+`base_in_range` must not be used for the base bonus: it returns 14 for either team's base, so it would reward a player's own base. The rule reads only the player's own capture flags.
+
+**`base_goal(player, all_alive, enemy_color, movement_ctx, tick) -> Cell | None`** (MECH-17) is a Commander's goal while it has `BASE_CAPTURE_SHOTS` (3) or more Shots and a Base left: a `draw_goal` over the range cells of its uncaptured neutral and enemy Bases, value 1.0. A held goal already on one of those cells stays until reached, with no new draw, so it ends when that Base is captured on the way. None for any other role (a Medic, Ammo, Heavy or Scout may still capture when in range), or with nothing reachable. `choose_goal_cell` runs it above the commitment and action goals; it does not stop the Commander shooting.
 
 **Holding.** A player on the Control rule who reaches a drawn goal returns their current cell from `mode_goal` for `CONTROL_HOLD_TICKS` (20), then draws again, which may pick the same cell. `choose_goal_cell` clears a reached goal and runs steps 2-4 again each tick, with action goals checked first, so reaching a goal is read from the commitment: `_committed_goal` on the player's cell, not an action goal, with expiry `HELD_GOAL_EXPIRY` (now in `time_constants`, because `modes` cannot import `pathfinding`). That starts `mode_hold_until = tick + 20`. The returned cell is not drawn, so it commits on the cadence and no full-map draw runs during the hold. The hold stands only while the commitment stays on the player's cell and is not an action goal, so an override or action goal ends it for good and the player is not frozen wherever that goal stopped. A Mode switch, a low-health Heavy's support seek and a Defense player's draw around a Heavy it now remembers end it too.
 
@@ -457,7 +463,7 @@ value = min(CONTROL_VALUE_CAP (1.0),
 
 **`trail_costs(player, all_alive, tick, time_domain="ticks") -> dict[Cell, float]`** gives `TRAIL_COST` (+3.0) for each cell in the `band` of an open Trail (`follow_rule.open_trail`) whose owner is an enemy in `all_alive` with a fresh memory entry (keyed by the enemy's `tag_id_key`) showing `downed` or `reset_window`, at most `RESPAWN_TICKS` (16) old. An unseen enemy, a stale or older entry, an entry with no `status` and a teammate's Trail give nothing. Trails that overlap cost the same as one, so the seeded shuffle of `all_alive` cannot change the result. No RNG. Every player avoids equally. Its callers and the cache rule are under `astar_advance_cached` above. **Tests:** `matches/tests/test_mode_trail_costs.py` (the A* cost, each `trail_costs` filter, the cache rule, scoring ignoring the overlay, seeded Syracuse rounds).
 
-**Tests:** `matches/tests/test_modes.py` (defaults, dwell and cadence, each trigger row, the roll, commitments, the weight nudge and its place in `plan_action`, the tick-loop wiring on seeded Syracuse rounds, no-map rounds, each goal rule and fallback, Holding, `attack_tag_goal`, the Defense `resupply_ally` boundary, and `choose_goal_cell` with Modes).
+**Tests:** `matches/tests/test_modes.py` (defaults, dwell and cadence, each trigger row, the roll, commitments, the weight nudge and its place in `plan_action`, the tick-loop wiring on seeded Syracuse rounds, no-map rounds, each goal rule and fallback, Holding, `attack_tag_goal`, the Defense `resupply_ally` boundary, and `choose_goal_cell` with Modes). `matches/tests/test_live_captures.py` (MECH-17: `base_in_reach`, the capture weight on and off a map, `base_goal`, its place in `choose_goal_cell`, the neutral Control bonus, the unchanged capture rules, map-less rounds, live captures on Syracuse, serial == parallel).
 
 ## mechanics.py
 
@@ -499,7 +505,7 @@ Shared combat resolution used by `BatchSimulator` (the sole simulator post-SIM-0
 
 ### Combat actions
 
-**`plan_action(player, all_alive, second, movement_ctx=None, *, save_player=None) -> list`** — Returns a list of planned action dicts for the player at this tick. Updates `player.last_chosen_action`; clears `is_hiding` (calling `save_player(player)` when provided). Used by `BatchSimulator`'s per-tick loop. **MECH-15:** the `capture_base` branch is gated on `player.is_active_at(second)` — a player in the **Respawn cooldown** (Downed, not yet active) **plans no base capture** (map path and 3-zone fallback alike), mirroring the `use_special` active-gate one branch down. Base capture was the one deliberate Action that previously leaked while down; the chokepoint `capture_base` and the round-end `award_bases` are unchanged. **SM5-02:** the `tag_player` and `resupply_ally` branches are gated the same way, and the check comes before `choose_tag_target` / `choose_resupply_target`, so a Downed player draws no target RNG (the Action roll itself still happens). **MECH-10:** the `missile_player` candidate list drops players the actor Chased (`follow_rule.may_tag`).
+**`plan_action(player, all_alive, second, movement_ctx=None, *, save_player=None) -> list`** — Returns a list of planned action dicts for the player at this tick. Updates `player.last_chosen_action`; clears `is_hiding` (calling `save_player(player)` when provided). Used by `BatchSimulator`'s per-tick loop. **MECH-15:** the `capture_base` branch is gated on `player.is_active_at(second)` — a player in the **Respawn cooldown** (Downed, not yet active) **plans no base capture** (map path and 3-zone fallback alike), mirroring the `use_special` active-gate one branch down. Base capture was the one deliberate Action that previously leaked while down; the chokepoint `capture_base` and the round-end `award_bases` are unchanged. **SM5-02:** the `tag_player` and `resupply_ally` branches are gated the same way, and the check comes before `choose_tag_target` / `choose_resupply_target`, so a Downed player draws no target RNG (the Action roll itself still happens). **MECH-10:** the `missile_player` candidate list drops players the actor Chased (`follow_rule.may_tag`). **MECH-17:** on a map round, before the weights run, it sets `player.base_in_reach`: Active, `_get_base_interaction` finds a Base, and 3+ Shots or an Ammo. `PlayerState.can_capture_base_in_current_zone` returns it when it is not None, else the zone logic, so on a map a capture weight appears only when a capture can happen, and a map-less round keeps the zone rule.
 
 EventLog candidate: all four combat helpers below dropped their `emit_event=None` callable kwarg and now take a required `ctx: RoundContext`. They call `ctx.events.*` verbs directly. The local `_actor_meta` / `_target_meta` / `_build_meta` copies that used to live here are gone — EventLog owns the metadata shape.
 
@@ -710,6 +716,8 @@ Map-loading helpers used by `BatchSimulator` (the sole simulator post-SIM-09 —
 **`load_map_context(arena_map) -> tuple[MapContext | None, int | None]`** — **primary entry point**. Returns `(map_context, zone_size)`; both are `None` when `arena_map is None` (3-zone fallback). Runs all ORM queries (zone config, base positions, sight lines, base sight lines, cell ranking, strong spots, spawn pools, elevation) and immediately constructs a `MapContext` — a single call replaces the legacy two-step `resolve_map_data → build_movement_ctx` pipeline. Raises `ValueError` for missing zone config, missing red/blue base, or missing sight lines (the `score_averages` command catches and re-raises as `CommandError`). Used by `BatchSimulator.simulate_match` / `simulate_single_round_detailed` / `run` / `save_games` and `score_averages`.
 
 **`reachable_spawn_pools(pools, spawn_cells, adj)`** (LFS-01) — `load_map_context` passes the spawn pools through it: a spawn cell outside the largest connected floor area becomes the main-floor cell nearest that team's base (Manhattan, then row, column) not already in the pool, so the pool keeps its size and order. Syracuse at 30px cut red's base corridor off from the floor, and the four red players spawned there never moved or engaged. A pool already on the main floor is returned unchanged, so maps without a pocketed spawn replay identically.
+
+**`reachable_base_sights(base_sights, adj) -> dict[str, frozenset[str]]`** (MECH-17) — `load_map_context` passes `base_sight_data` through it: a Base type with **no** range cell on the main floor gets the same number of main-floor cells nearest its range cells (Manhattan to the nearest, then row, then column). A type with any main-floor cell, an empty type, or no floor comes back unchanged. Syracuse's 6 red range cells sit in a pocket, so red's Base could not be captured live; blue and neutral are unchanged.
 
 **`resolve_map_data(arena_map) -> MapData`** — legacy shim, still returns the `MapData` dataclass. New code should use `load_map_context` instead; retained because some tests and analytic paths still construct a `MapData` explicitly.
 

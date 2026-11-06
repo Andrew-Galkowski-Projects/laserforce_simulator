@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
+from .map_context import _NEUTRAL_BASE_TYPES
 from .modes import apply_mode_weights
 from .round_context import RoundContext
 from .mechanics import (
@@ -36,9 +37,6 @@ from .weights import (
     check_stamina_penalty,
     finalize_action_weights,
 )
-
-# Neutral base_types in priority order for capture/reset checks
-_NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
 
 _AMMO_CHART = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5}
 _MEDIC_CHART = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
@@ -281,6 +279,14 @@ def plan_action(
         check_stamina_penalty(player, second, round_duration=TICKS_PER_ROUND)
     else:
         check_stamina_penalty(player, second)
+
+    # MECH-17: on a map the capture weights read whether a capture can happen here.
+    if movement_ctx is not None:
+        player.base_in_reach = (
+            player.is_active_at(second)
+            and _get_base_interaction(player, movement_ctx) is not None
+            and (player.final_shots >= 3 or player.role == "ammo")
+        )
 
     if player.role == "medic":
         weights = _get_medic_weights(

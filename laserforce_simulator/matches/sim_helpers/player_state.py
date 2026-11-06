@@ -74,6 +74,9 @@ class PlayerState:
     # base bookkeeping
     neutral_base_destroyed: bool = False
     opposing_base_destroyed: bool = False
+    # MECH-17: set by ``combat.plan_action`` on map rounds: whether a capture can
+    # happen on this cell right now. None on map-less rounds, which keep the zone logic.
+    base_in_reach: Optional[bool] = None
 
     # DB identity — populated by _make_players so _flush_to_db can resolve FKs
     player_id: int = 0
@@ -256,6 +259,8 @@ class PlayerState:
 
     @property
     def can_capture_base_in_current_zone(self) -> bool:
+        if self.base_in_reach is not None:
+            return self.base_in_reach
         if self.current_zone == 1 and not self.neutral_base_destroyed:
             return True
         if (
