@@ -650,7 +650,18 @@ estimated as average shots hit / average accuracy, as LFStats has no shots-fired
 | Medic | about 69 | 7.1 | 25% | 60.8% |
 
 The biggest gaps are support shots (Ammo about a third of real, Medic about a tenth) and time not Active.
-Check first that a planned Shot means a shot fired, and that the two not-Active definitions match.
+Check first that a planned Shot means a shot fired, and that the two not-Active definitions match: LFStats
+uptime may leave out time after Elimination, and the sim's number includes it.
+
+On the finished MECH-17 code (seeds 1-12): planned Shots Commander 102.8, Heavy 111.2, Scout 70.0, Ammo 45.0,
+Medic 5.3; not Active 50%, 60%, 70%, 60%, 80% in that order, to the nearest 10 as printed. Also check:
+
+- **Eliminations.** Sim over 24 rounds, real in brackets: Commander 27% (32%), Heavy 48% (39%), Scout 61% (42%),
+  Ammo 81% (43%), Medic 100% (72%). No hide rule tried brought Medics much below 100% without giving up
+  the Still target.
+- **Scout tags.** Hold baselines left a Scout's `only_move` above `tag_player`, so `only_move` takes the
+  decision-making boost. Setting it back to 50 gave 81 planned Shots, with Heavy Still at 41%.
+- **Commander misses from MECH-17:** Still 21.5 (target 20), squares 22.8 (target 21).
 
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
 documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout
@@ -765,6 +776,14 @@ bring players together; on Mode goals alone they end about 50 squares apart.
     Heavy 60, Scout 70. Decision 21's numbers came from the simulator's own baseline, and LFStats shows real
     players fire fewer (table under CAL-01). The final report also gives `tags_made`, the number that compares
     to LFStats' shots hit. Realism goes to CAL-01.
+24. Amends 19: a support is "needed" for hiding at or below 50% of its resource, in its own constant. The Defense
+    Resupply line stays 75%. At 75% a Medic could almost never hide.
+25. Accepted misses, with the numbers on #550: Commander Still, Commander squares and Medic Not Active, sent to CAL-01
+    with Medic eliminations.
+26. Amends 21: the engagement guard reads Scout planned Shots over seeds 1-4, at the Scout floor of 70. A Commander's
+    Base goal hides the bug on Commanders.
+27. Amends 5: a Hold lasts 7 ticks, with Hold baselines Commander 3, Heavy 4, Scout 3, Ammo 3, tuned by probe to meet
+    the Hold targets. Map-less rounds keep the old weights.
 
 ---
 

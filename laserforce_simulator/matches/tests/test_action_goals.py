@@ -387,18 +387,19 @@ class TestSearchOnSyracuse:
 @pytest.mark.django_db
 class TestEngagementGuard:
     """A goal change must not quietly stop the game. The "empty rolls set no goal"
-    prototype scored 35 planned Shots; the lowest seed before this task was 88.
+    prototype scored 35 Commander planned Shots.
 
-    Seeds 12, 16, 21 and 22 because they tell the two apart: 125.6 as built, 65.8 when
-    an empty tag roll sets no goal. They are picked for that. Since MECH-17c a
-    Commander's Base goal also walks it to the enemy, so over seeds 1-24 the bug no
-    longer lowers Commander Shots (95.2 as built, 97.9 with it), while Heavy (88.0 to
-    54.6) and Scout (83.8 to 45.7) fall. Re-run the mutation after any RNG change.
+    It reads Scouts because a Commander's Base goal walks it to the enemy whatever it
+    rolled, which hides this bug on Commanders over many seeds. The line is the Scout
+    floor (grill decision 23). The first four seeds score 79.2 as built and 69.9 when an
+    empty tag roll sets no goal, so that mutation goes red by a small margin; a direct
+    test of the rule is ``test_an_empty_tag_roll_sets_an_action_goal``. A later RNG change
+    may move the margin, so re-run the mutation rather than picking seeds.
     """
 
-    def test_commanders_keep_shooting_on_syracuse(self) -> None:
-        result = run_probe(_syracuse(), [12, 16, 21, 22])
-        assert result.roles["commander"].tags_per_round >= 70
+    def test_scouts_keep_shooting_on_syracuse(self) -> None:
+        result = run_probe(_syracuse(), [1, 2, 3, 4])
+        assert result.roles["scout"].tags_per_round >= 70
 
 
 # Walls, so a goal that sees a target differs from the target's own cell.

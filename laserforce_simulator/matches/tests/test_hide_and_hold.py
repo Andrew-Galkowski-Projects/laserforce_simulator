@@ -268,11 +268,25 @@ class TestHideAllowed:
     def test_an_ally_at_the_line_needs_it_and_one_above_does_not(self) -> None:
         medic = _on_goal(_placed("medic", HERE))
         ally = _player("heavy")
-        ally.final_lives = int(ally.max_lives * DEFENSE_RESUPPLY_SHARE)
-        assert ally.final_lives / ally.max_lives <= DEFENSE_RESUPPLY_SHARE
+        ally.final_lives = int(ally.max_lives * modes.HIDE_NEEDED_SHARE)
+        assert ally.final_lives / ally.max_lives <= modes.HIDE_NEEDED_SHARE
         assert not _hide_allowed(medic, [medic, ally], _grid_map())
         ally.final_lives += 1
-        assert ally.final_lives / ally.max_lives > DEFENSE_RESUPPLY_SHARE
+        assert ally.final_lives / ally.max_lives > modes.HIDE_NEEDED_SHARE
+        assert _hide_allowed(medic, [medic, ally], _grid_map())
+
+    def test_the_hide_line_is_half_and_the_defense_line_stays_three_quarters(
+        self,
+    ) -> None:
+        assert modes.HIDE_NEEDED_SHARE == 0.5
+        assert DEFENSE_RESUPPLY_SHARE == 0.75
+
+    def test_an_ally_between_the_lines_does_not_stop_a_hide(self) -> None:
+        # At 75% a Defense support would still walk to this ally, but a Medic that
+        # could never hide above 50% ended up eliminated in every round.
+        medic = _on_goal(_placed("medic", HERE))
+        ally = _player("heavy")
+        ally.final_lives = int(ally.max_lives * 0.6)
         assert _hide_allowed(medic, [medic, ally], _grid_map())
 
     def test_a_medic_reads_lives_and_an_ammo_reads_shots(self) -> None:

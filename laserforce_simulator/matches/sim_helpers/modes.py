@@ -84,6 +84,9 @@ DEFENSE_CLOSENESS_FEET: float = 30.0
 #: Defense: ``resupply_ally`` sets a goal only when the neediest ally is at or below
 #: this share of the resource the support restores.
 DEFENSE_RESUPPLY_SHARE: float = 0.75
+#: A support may not hide while an ally is at or below this share of what it restores.
+#: Lower than the Defense line: at 75% a Medic could almost never hide (MECH-17).
+HIDE_NEEDED_SHARE: float = 0.5
 
 _DEFAULT_MODE: dict[str, Mode] = {
     "commander": Mode.ATTACK,
@@ -259,7 +262,7 @@ def hide_allowed(
         p.team_color == player.team_color
         and p is not player
         and p.final_lives > 0
-        and _resupply_share(p, player.role) <= DEFENSE_RESUPPLY_SHARE
+        and _resupply_share(p, player.role) <= HIDE_NEEDED_SHARE
         for p in all_alive
     )
     if needed:
