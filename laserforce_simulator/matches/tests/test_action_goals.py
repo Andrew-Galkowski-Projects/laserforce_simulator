@@ -391,10 +391,11 @@ class TestEngagementGuard:
 
     It reads Scouts because a Commander's Base goal walks it to the enemy whatever it
     rolled, which hides this bug on Commanders over many seeds. The line is the Scout
-    floor (grill decision 23). The first four seeds score 79.2 as built and 69.9 when an
-    empty tag roll sets no goal, so that mutation goes red by a small margin; a direct
-    test of the rule is ``test_an_empty_tag_roll_sets_an_action_goal``. A later RNG change
-    may move the margin, so re-run the mutation rather than picking seeds.
+    floor (grill decision 23). The first four seeds score 79.2 as built, and
+    ``scripts/mutate.py`` shows them going red when an empty tag roll clears
+    ``last_chosen_action``. ``test_an_empty_tag_roll_sets_an_action_goal`` tests that rule
+    directly. A later RNG change may move the margin, so re-run the mutation rather than
+    picking seeds.
     """
 
     def test_scouts_keep_shooting_on_syracuse(self) -> None:

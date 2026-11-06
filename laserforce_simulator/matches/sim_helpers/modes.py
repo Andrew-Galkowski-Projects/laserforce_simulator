@@ -270,7 +270,10 @@ def hide_allowed(
     committed = player._committed_goal
     if committed is None or committed[0] == (player.cell_row, player.cell_col):
         return True
-    return known_threats(player, all_alive, movement_ctx, tick, time_domain) > 0
+    threats = player.known_threats
+    if threats is None:
+        threats = known_threats(player, all_alive, movement_ctx, tick, time_domain)
+    return threats > 0
 
 
 def _attack_targets(

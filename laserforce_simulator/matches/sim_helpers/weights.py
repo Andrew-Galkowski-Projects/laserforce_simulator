@@ -874,17 +874,15 @@ def _get_commander_weights(
         # have game_awareness set; this fallback guards legacy/test objects only.
         game_awareness = getattr(player, "game_awareness", 50)
         if _commander_nuke_gate(player.final_special, game_awareness):
-            enemies_in_zone = [
-                p
-                for p in all_alive
-                if p.team_color != player.team_color
-                and p.current_zone == player.current_zone
-                and p.is_active_at(second)
-            ]
             # MECH-17: on a map, the enemies the Commander knows can see it.
             threats = getattr(player, "known_threats", None)
             if threats is None:
-                threats = len(enemies_in_zone)
+                threats = sum(
+                    p.team_color != player.team_color
+                    and p.current_zone == player.current_zone
+                    and p.is_active_at(second)
+                    for p in all_alive
+                )
             raw = c["special_base"] - c["special_per_enemy"] * threats
             w[i["use_special"]] = int(raw * (player.special_usage / 50))
         # MECH-06: memory system can override the gate here when situational factors

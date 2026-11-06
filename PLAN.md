@@ -653,15 +653,16 @@ The biggest gaps are support shots (Ammo about a third of real, Medic about a te
 Check first that a planned Shot means a shot fired, and that the two not-Active definitions match: LFStats
 uptime may leave out time after Elimination, and the sim's number includes it.
 
-On the finished MECH-17 code (seeds 1-12): planned Shots Commander 102.8, Heavy 111.2, Scout 70.0, Ammo 45.0,
-Medic 5.3; not Active 50%, 60%, 70%, 60%, 80% in that order, to the nearest 10 as printed. Also check:
+On the finished MECH-17 code (seeds 1-12): planned Shots Commander 99.5, Heavy 107.5, Scout 69.6, Ammo 48.2,
+Medic 5.2; not Active 45.0%, 58.0%, 65.3%, 63.9%, 81.9%, in that order. Also check:
 
-- **Eliminations.** Sim over 24 rounds, real in brackets: Commander 27% (32%), Heavy 48% (39%), Scout 61% (42%),
+- **Eliminations.** Sim over 24 rounds, real in brackets: Commander 21% (32%), Heavy 46% (39%), Scout 56% (42%),
   Ammo 81% (43%), Medic 100% (72%). No hide rule tried brought Medics much below 100% without giving up
   the Still target.
 - **Scout tags.** Hold baselines left a Scout's `only_move` above `tag_player`, so `only_move` takes the
   decision-making boost. Setting it back to 50 gave 81 planned Shots, with Heavy Still at 41%.
-- **Commander misses from MECH-17:** Still 21.5 (target 20), squares 22.8 (target 21).
+- **Misses from MECH-17:** Commander Still 23.1 (target 20), Commander squares 23.3 (target 21), Scout tags 69.6
+  on seeds 1-12 and 71.5 on seeds 1-24 (floor 70).
 
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
 documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout

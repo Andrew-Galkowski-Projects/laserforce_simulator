@@ -17,7 +17,12 @@ if TYPE_CHECKING:
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
 from .map_context import _NEUTRAL_BASE_TYPES
-from .modes import apply_mode_weights, hide_allowed, known_threats
+from .modes import (
+    BASE_CAPTURE_SHOTS,
+    apply_mode_weights,
+    hide_allowed,
+    known_threats,
+)
 from .round_context import RoundContext
 from .time_constants import HOLD_TICKS
 from .mechanics import (
@@ -304,7 +309,7 @@ def plan_action(
         player.base_in_reach = (
             is_active
             and _get_base_interaction(player, movement_ctx) is not None
-            and (player.final_shots >= 3 or player.role == "ammo")
+            and (player.final_shots >= BASE_CAPTURE_SHOTS or player.role == "ammo")
         )
         player.known_threats = known_threats(
             player, all_alive, movement_ctx, second, time_domain
@@ -360,6 +365,13 @@ def plan_action(
             weights[_ACTION_IDX["hold"]] = 0
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1
+
+    # MECH-17: a Hold that could not stand would end next tick, and hold the player
+    # still until then.
+    if movement_ctx is not None and (
+        player.final_shots <= 0 or getattr(player, "reacting_to_nuke", False)
+    ):
+        weights[_ACTION_IDX["hold"]] = 0
 
     # MECH-17: a support who is needed, or has somewhere to be, gets no hide this roll
     # and leaves a hide it is in. It reads the player before the roll changes anything.
@@ -632,9 +644,9 @@ def capture_base(
         if not in_range:
             return False
 
-    if player.final_shots >= 3 or player.role == "ammo":
+    if player.final_shots >= BASE_CAPTURE_SHOTS or player.role == "ammo":
         if player.role != "ammo":
-            player.final_shots -= 3
+            player.final_shots -= BASE_CAPTURE_SHOTS
         player.last_tagged_id = base_id
         if base_id == 15:
             player.neutral_base_destroyed = True

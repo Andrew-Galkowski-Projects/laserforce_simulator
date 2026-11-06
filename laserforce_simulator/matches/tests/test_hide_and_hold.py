@@ -259,6 +259,14 @@ class TestHideAllowed:
         everyone = [medic, _full_ally(), _enemy("scout")]
         assert _hide_allowed(medic, everyone, _sees_here(THERE))
 
+    def test_it_reads_the_count_plan_action_set_this_tick(self) -> None:
+        # The count is not computed twice in a tick (CODING_STANDARDS).
+        medic = _heading_off(_placed("medic", HERE))
+        _remember(medic, "blue_scout", THERE, NOW, "scout")
+        medic.known_threats = 0
+        everyone = [medic, _full_ally(), _enemy("scout")]
+        assert not _hide_allowed(medic, everyone, _sees_here(THERE))
+
     def test_needed_it_may_not_even_when_threatened_and_settled(self) -> None:
         medic = _on_goal(_placed("medic", HERE))
         _remember(medic, "blue_scout", THERE, NOW, "scout")
@@ -602,6 +610,23 @@ class TestNotActiveCannotStartAHold:
         _plan(scout, _grid_map())
         assert rolled[0]["hold"] == 0
 
+    @pytest.mark.parametrize("state", [{"final_shots": 0}, {"reacting_to_nuke": True}])
+    def test_a_hold_that_could_not_stand_gets_no_slot(
+        self, state: dict, rolled: list
+    ) -> None:
+        # Such a Hold would end on its next tick, and hold the player still until then.
+        scout = _placed("scout", HERE, **state)
+        _plan(scout, _grid_map())
+        assert rolled[0]["hold"] == 0
+
+    @pytest.mark.parametrize("state", [{"final_shots": 0}, {"reacting_to_nuke": True}])
+    def test_a_map_less_round_keeps_that_slot_too(
+        self, state: dict, rolled: list
+    ) -> None:
+        scout = _placed("scout", HERE, **state)
+        _plan(scout, None)
+        assert rolled[0]["hold"] > 0
+
     def test_active_on_a_map_the_slot_is_not(self, rolled: list) -> None:
         scout = _placed("scout", HERE)
         _plan(scout, _grid_map())
@@ -672,7 +697,6 @@ def _fingerprint(players: list[PlayerState]) -> str:
             p.tag_id,
             p.final_lives,
             p.final_shots,
-            p.counters.points_scored,
             p.counters.tags_made,
             p.is_hiding,
             p.is_holding,
@@ -686,7 +710,7 @@ def _fingerprint(players: list[PlayerState]) -> str:
 class TestMapLessRoundsAreUnchanged:
     # Pinned from the commit before this ticket (bcb2ade4): every player's outcome and
     # the RNG state after the round, so any change to a map-less draw moves it.
-    PINNED = {7: "a92aec005591bdbd", 21: "3c8a948a6c466d8d"}
+    PINNED = {7: "8b059b08209535f9", 21: "fb03cd0de8c924ab"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

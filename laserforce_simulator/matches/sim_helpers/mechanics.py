@@ -5,6 +5,8 @@ satisfy the duck-type interface required by these functions.
 """
 
 import random
+from collections.abc import Callable
+from typing import Any
 
 from .follow_rule import may_tag
 
@@ -73,8 +75,13 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
 
 
 def choose_resupply_target(
-    player, all_alive, second, movement_ctx=None, *, los_filter=None
-):
+    player: Any,
+    all_alive: list,
+    second: float,
+    movement_ctx: Any = None,
+    *,
+    los_filter: Callable[[Any, list, Any], list] | None = None,
+) -> Any:
     """Return a teammate to resupply (lives or shots), or None.
 
     Prioritizes teammates with the greatest resource deficit, weighted by role.
