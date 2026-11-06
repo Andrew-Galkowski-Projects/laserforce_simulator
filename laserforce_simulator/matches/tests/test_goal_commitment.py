@@ -431,6 +431,13 @@ class TestMove04GoalCommitment:
         # Enemy at (3,3) so tag_player action drives the goal.
         enemy = _make_player("blue_scout", "blue", "scout", cell_row=3, cell_col=3)
         ctx = _ctx(spawn_cells=spawn_cells)
+        # MECH-17: tag goals read memory, not the enemy's true cell. No sight data here,
+        # so the goal is the target's cell; an action goal still sets from_action.
+        scout.player_memory["blue_scout"] = {
+            "cell": (3, 3),
+            "timestamp": 0,
+            "role": "scout",
+        }
 
         goal = choose_goal_cell(
             scout,

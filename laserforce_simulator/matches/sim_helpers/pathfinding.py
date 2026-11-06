@@ -13,7 +13,9 @@ from .goal_scoring import draw_goal, enemy_base_cells
 from .modes import (
     DEFENSE_RESUPPLY_SHARE,
     Mode,
+    _resupply_share,
     attack_tag_goal,
+    base_goal,
     mode_goal,
     trail_costs,
 )
@@ -461,13 +463,24 @@ def _find_enemy_commander_in_memory(
     return _cell_from_memory(player, commander_tag, second, time_domain)
 
 
-def _resupply_share(ally, supporter_role: str) -> float:
-    """How full *ally* is of what the supporter restores: a Medic lives, an Ammo shots."""
-    if supporter_role == "medic":
-        return ally.final_lives / max(
-            1, getattr(ally, "max_lives", ally.starting_lives)
-        )
-    return ally.final_shots / max(1, getattr(ally, "max_shots", ally.starting_shots))
+def _goal_seeing(
+    player,
+    target: tuple[int, int],
+    all_alive: list,
+    movement_ctx: "MapContext",
+    second: float,
+) -> tuple[int, int]:
+    """MECH-17: a drawn cell that can see *target*, else *target* itself when no such
+    cell is reachable (or the map has no sight data)."""
+    goal = draw_goal(
+        player,
+        movement_ctx.cells_visible_from(target),
+        lambda cell: 1.0,
+        all_alive,
+        movement_ctx,
+        second,
+    )
+    return target if goal is None else goal
 
 
 def _goal_from_action(
@@ -493,30 +506,25 @@ def _goal_from_action(
                 player, all_alive, enemy_color, second, time_domain, exclude=chased
             )
             if target:
-                return target
-        # MECH-06: use memory when entries exist; fall back to perfect knowledge otherwise
+                return _goal_seeing(player, target, all_alive, movement_ctx, second)
+        # MECH-06: use memory when entries exist.
         known_cells = _known_enemies_from_memory(
             player, enemy_color, second, time_domain, exclude=chased
         )
         if known_cells:
-            goal = _nearest_cell(cell_row, cell_col, known_cells)
-            if goal:
-                return goal
-        # Perfect-knowledge fallback when memory is empty or all stale
-        enemies = [
-            p
-            for p in all_alive
-            if p.team_color == enemy_color
-            and p.final_lives > 0
-            and p.cell_row is not None
-            and p.tag_id_key not in chased
-        ]
-        if enemies:
-            goal = _nearest_cell(
-                cell_row, cell_col, [(p.cell_row, p.cell_col) for p in enemies]
-            )
-            if goal:
-                return goal
+            target = _nearest_cell(cell_row, cell_col, known_cells)
+            if target:
+                return _goal_seeing(player, target, all_alive, movement_ctx, second)
+        # MECH-17: nothing remembered, so search toward the enemy base. No true enemy
+        # cell is read here.
+        return draw_goal(
+            player,
+            enemy_base_cells(enemy_color, movement_ctx),
+            lambda cell: 1.0,
+            all_alive,
+            movement_ctx,
+            second,
+        )
 
     elif intended_action == "resupply_ally":
         allies = [
@@ -537,7 +545,13 @@ def _goal_from_action(
                 and shares[id(target)] > DEFENSE_RESUPPLY_SHARE
             ):
                 return None
-            return (target.cell_row, target.cell_col)
+            return _goal_seeing(
+                player,
+                (target.cell_row, target.cell_col),
+                all_alive,
+                movement_ctx,
+                second,
+            )
 
     elif intended_action == "hide":
         adj: dict = movement_ctx.get_adjacency()
@@ -578,11 +592,14 @@ def choose_goal_cell(
     role-aware. Priority order:
     1. Critical-resource override: seek medic (low lives) or ammo (low shots) for
        non-support roles — always trumps role/action logic.
+    1c. A Commander with 3+ Shots and a Base left: ``modes.base_goal``, held until
+       reached. It does not stop the Commander shooting.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
-       - tag_player / missile_player: in Attack the nearest remembered enemy Medic or
-         Ammo, then the nearest remembered enemy, then the nearest enemy's true cell.
-       - resupply_ally: Medic → neediest ally by lives; Ammo → neediest ally by shots.
-         In Defense, only when that ally is at or below 75% of the resource.
+       - tag_player / missile_player: a drawn cell that sees, in Attack, the nearest
+         remembered enemy Medic or Ammo, then the nearest remembered enemy. With none
+         remembered, a drawn floor cell near the enemy base.
+       - resupply_ally: a drawn cell that sees the neediest ally (Medic: by lives; Ammo:
+         by shots). In Defense, only when that ally is at or below 75% of the resource.
        - hide: move to the safest adjacent cell (lowest LOS count).
     3. Positioning (for only_move, capture_base, use_special, or fallback), by the
        player's Mode: ``modes.mode_goal``, written out in
@@ -722,6 +739,11 @@ def choose_goal_cell(
     early_action: tuple[int, int] | None = None
     action_checked = False
     if time_domain == "ticks":
+        # ── 1c. MECH-17: a Commander goes for its Bases, before any action goal.
+        base = base_goal(player, all_alive, enemy_color, movement_ctx, second)
+        if base is not None:
+            player._committed_goal = (base, False, HELD_GOAL_EXPIRY)
+            return base
         committed = player._committed_goal
         if (
             committed is not None

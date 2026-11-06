@@ -57,10 +57,14 @@ class PlayerState:
     special_active_until: int = 0
     is_hiding: bool = False
     # MOVE-03: transient Overwatch flag (mirrors is_hiding). Set on a ``hold``
-    # roll, carried over until a non-Hold Action or a Down/respawn. No DB
+    # roll. On a map round it lasts until ``hold_until`` or an early end; on a
+    # map-less one it carries over until a non-Hold Action or a Down/respawn. No DB
     # column / no migration (PlayerRoundState has no such attr by default —
     # read everywhere via getattr(player, "is_holding", False)).
     is_holding: bool = False
+    # MECH-17: the tick a map-round Hold ends (roll + HOLD_TICKS). None on map-less
+    # rounds and when no Hold stands.
+    hold_until: Optional[int] = None
     # RV-02: Medic reset-chain counter (GLOSSARY.md "Medic reset chain").
     # Incremented in BatchSimulator._record_down (before stamping
     # last_downed_time) when the player is re-Downed before recovering
@@ -74,6 +78,12 @@ class PlayerState:
     # base bookkeeping
     neutral_base_destroyed: bool = False
     opposing_base_destroyed: bool = False
+    # MECH-17: set by ``combat.plan_action`` on map rounds: whether a capture can
+    # happen on this cell right now. None on map-less rounds, which keep the zone logic.
+    base_in_reach: Optional[bool] = None
+    # MECH-17: set by ``combat.plan_action`` on map rounds: ``modes.known_threats``.
+    # None on map-less rounds, which is how the weights tell the two apart.
+    known_threats: Optional[int] = None
 
     # DB identity — populated by _make_players so _flush_to_db can resolve FKs
     player_id: int = 0
@@ -256,6 +266,8 @@ class PlayerState:
 
     @property
     def can_capture_base_in_current_zone(self) -> bool:
+        if self.base_in_reach is not None:
+            return self.base_in_reach
         if self.current_zone == 1 and not self.neutral_base_destroyed:
             return True
         if (

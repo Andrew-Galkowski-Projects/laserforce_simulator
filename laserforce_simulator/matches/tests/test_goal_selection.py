@@ -289,6 +289,18 @@ class TestMap05RoleAwareGoal:
         enemy_near = _make_player("blue_scout", "blue", "scout", cell_row=2, cell_col=2)
         enemy_far = _make_player("blue_heavy", "blue", "heavy", cell_row=8, cell_col=8)
         ctx = _base_ctx(spawn_cells=spawn_cells)
+        # MECH-17: tag goals read memory. No sight data here, so the goal is the target's
+        # cell. The invariant is unchanged: the nearest of them is the target.
+        scout.player_memory["blue_scout"] = {
+            "cell": (2, 2),
+            "timestamp": 0,
+            "role": "scout",
+        }
+        scout.player_memory["blue_heavy"] = {
+            "cell": (8, 8),
+            "timestamp": 0,
+            "role": "heavy",
+        }
 
         goal = choose_goal_cell(
             scout,
@@ -343,6 +355,13 @@ class TestMap05RoleAwareGoal:
             "blue_medic", "blue", "medic", cell_row=7, cell_col=7
         )
         ctx = _base_ctx(spawn_cells=spawn_cells)
+        # MECH-17: the nearest enemy is read from memory too, so the Heavy is remembered.
+        # No sight data here, so the goal is its cell. The Medic stays unknown.
+        commander.player_memory["blue_heavy"] = {
+            "cell": (1, 1),
+            "timestamp": 0,
+            "role": "heavy",
+        }
 
         goal = choose_goal_cell(
             commander,

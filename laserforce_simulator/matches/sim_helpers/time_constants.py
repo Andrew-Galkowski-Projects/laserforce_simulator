@@ -116,3 +116,9 @@ GOAL_RECOMPUTE_PERIOD_TICKS: int = 4
 #: MOVE-06: the commitment expiry of a drawn positioning goal: after the round,
 #: so it is held until reached (action goals keep the 4-tick cadence).
 HELD_GOAL_EXPIRY: int = TICKS_PER_ROUND + 1
+
+# --- Hold (MECH-17) --------------------------------------------------------
+
+#: How long a ``hold`` roll commits the player to Overwatch on a map round: it draws
+#: no Action until then, unless the Hold ends early. Tunable by ``round_probe``.
+HOLD_TICKS: int = 7

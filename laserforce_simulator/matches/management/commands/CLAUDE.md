@@ -83,16 +83,25 @@ ASCII only (cp1252 console). The command writes no files; copy the output into `
 
 ## round_probe.py
 
-Measures how players move and choose goals over seeded rounds: the numbers behind a simulation behaviour decision. A thin wrapper over `matches.round_probe` (`run_probe`).
+Measures how players move, choose goals and use their Actions over seeded rounds: the numbers behind a simulation behaviour decision. A thin wrapper over `matches.round_probe` (`run_probe`).
 
 ```bash
 python manage.py round_probe                  # seeds 1-12 on data/maps/syracuse.json, about 90 s
 python manage.py round_probe --seeds 24 --map-fixture <path>
 ```
 
-Prints, per Role: time in each Mode, where goals come from (action, positioning, override), the share of ticks not Active (time after Elimination counts), squares to the Role's target (Commander, Heavy, Scout: the nearest enemy Medic or Ammo; Medic, Ammo: the own Heavy) and mean points. Then goal sharing: the mean of the rounds, min, max, rounds at 15% or more, and each seed's value. Single rounds vary widely (MECH-07: goal sharing from 9% to 24%), so read the spread before trusting a difference. `test_teammates_rarely_share_a_goal` pools all the ticks instead, so it reads slightly differently (14.5% against 14.6%).
+Prints, per Role, each measure as `mean (min-max)`: the mean pools every seed and the range is across the seeds (`ProbeResult.roles` and `by_seed`).
 
-Six Players per team on the model's default stats, serial, no database writes (the fixture loads in a rolled-back transaction), and observing draws no RNG. Two copies at once on one SQLite database collide on the fixture load, so run them one at a time per database.
+- Time in each Mode, where goals come from (action, positioning, override), the share of ticks not Active (time after Elimination counts), squares to the Role's target (Commander, Heavy, Scout: the nearest enemy Medic or Ammo; Medic, Ammo: the own Heavy) and mean points.
+- **Action %:** the share of the Role's Active rolls per Action. **Empty rolls %:** per Action, the share of that Action's Active rolls that planned nothing; a seed that never rolled the Action is left out of its range. Only Actions the Role rolled print.
+- **Still %:** Active ticks where the player is hiding, holding, or rolled `hide` or `capture_base`. The roll counts because the dispatch sets `is_hiding` after `plan_action` and before the Advance, so the player does not move on that tick.
+- **Hold %** and **Hold run, ticks:** Active ticks only. A run ends when the player stops holding; a tick not Active while still holding neither extends nor ends it.
+- **Tags per round (planned Shots)** and **Resupplies per round (planned):** per player-round, the `tag` and `resupply_*` plans. These are what the rolls asked for, not outcomes: a planned Shot may miss (a Commander plans about 126 and lands about 64 Tags, the `tags_made` counter), and `resupplies_given` also counts Resupply requests answered, so it reads higher (Medic 68.8 against 61.5).
+- **Live captures per round:** successful `capture_base` calls per player-round. The round-end award to survivors does not count.
+
+Then the team-wide lines: live captures per round for each team (`ProbeResult.team_captures_by_seed`), and goal sharing: the mean of the rounds, min, max, rounds at 15% or more, and each seed's value. Single rounds vary widely (MECH-07: goal sharing from 9% to 24%), so read the spread before trusting a difference. `test_teammates_rarely_share_a_goal` pools all the ticks instead, so it reads slightly differently (14.5% against 14.6%).
+
+Six Players per team on the model's default stats, serial, no database writes (the fixture loads in a rolled-back transaction), and observing draws no RNG: it wraps `plan_action`, `choose_goal_cell` and the capture in `entrypoints`, and `test_observing_draws_no_rng` checks the RNG ends where an unobserved round leaves it. Two copies at once on one SQLite database collide on the fixture load, so run them one at a time per database.
 
 **Comparing with a baseline:** a detached worktree at the commit to compare, with its own database. It needs a commit that has this command.
 

@@ -137,10 +137,12 @@ def draw_goal(
 
 
 def enemy_base_cells(enemy_color: str, movement_ctx: MapContext) -> list[Cell]:
-    """Floor cells within ``BASE_RADIUS_FEET`` walk of the enemy base cell."""
+    """Floor cells within ``BASE_RADIUS_FEET`` walk of the enemy base cell, or of the
+    main-floor cell nearest it: a base can sit in a wall or open on a cut-off pocket."""
     base = movement_ctx.get_spawn_cells().get(enemy_color)
-    if base is None or base not in movement_ctx.get_adjacency():
+    anchor = None if base is None else movement_ctx.on_main_floor(base)
+    if anchor is None:
         return []
     radius = movement_ctx.squares(BASE_RADIUS_FEET)
-    distances = movement_ctx.walk_distances(base, radius)
+    distances = movement_ctx.walk_distances(anchor, radius)
     return sorted(c for c, d in distances.items() if d <= radius)

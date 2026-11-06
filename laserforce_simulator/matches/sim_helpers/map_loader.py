@@ -19,6 +19,7 @@ depends on ``core``.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 from core.models import (
@@ -29,7 +30,7 @@ from core.models import (
     SightLineConfig,
 )
 
-from .map_context import MapContext
+from .map_context import MapContext, _main_floor
 from .pathfinding import build_movement_adjacency
 from .spawn_assigner import assign_spawn_cells
 
@@ -159,28 +160,6 @@ def resolve_map_data(arena_map) -> MapData:
     )
 
 
-def _main_floor(
-    adj: dict[tuple[int, int], list[tuple[int, int]]],
-) -> set[tuple[int, int]]:
-    """The largest 4-connected area of passable cells (empty when ``adj`` is)."""
-    best: set[tuple[int, int]] = set()
-    seen: set[tuple[int, int]] = set()
-    for start in adj:
-        if start in seen:
-            continue
-        area = {start}
-        stack = [start]
-        while stack:
-            for nxt in adj[stack.pop()]:
-                if nxt not in area:
-                    area.add(nxt)
-                    stack.append(nxt)
-        seen |= area
-        if len(area) > len(best):
-            best = area
-    return best
-
-
 def reachable_spawn_pools(
     pools: dict[str, list[tuple[int, int]]],
     spawn_cells: dict[str, tuple[int, int]],
@@ -211,6 +190,37 @@ def reachable_spawn_pools(
             )
         )
         result[color] = [cell if cell in floor else next(spares, cell) for cell in pool]
+    return result
+
+
+def reachable_base_sights(
+    base_sights: Mapping[str, Iterable[str]],
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+) -> dict[str, frozenset[str]]:
+    """``base_sights`` with every cut-off Base type repaired (MECH-17).
+
+    A Base whose range cells are all off the main floor can never be captured
+    (Syracuse's red range sits in a pocket). Such a type gets the same number of
+    main-floor cells nearest its range cells (Manhattan to the nearest, then row, then
+    column). A type with any main-floor cell, an empty type, or no floor comes back
+    unchanged.
+    """
+    floor = _main_floor(adj)
+    result: dict[str, frozenset[str]] = {}
+    for base_type, keys in base_sights.items():
+        sights = frozenset(keys)
+        cells = [tuple(map(int, key.split(","))) for key in sorted(sights)]
+        if not floor or not cells or any(cell in floor for cell in cells):
+            result[base_type] = sights
+            continue
+        nearest = sorted(
+            floor,
+            key=lambda f: (
+                min(abs(f[0] - c[0]) + abs(f[1] - c[1]) for c in cells),
+                f,
+            ),
+        )
+        result[base_type] = frozenset(f"{r},{c}" for r, c in nearest[: len(cells)])
     return result
 
 
@@ -298,7 +308,7 @@ def load_map_context(
         spawn_cells=md.spawn_cells,
         zone_data=md.zone_data,
         sight_data=md.sight_data,
-        base_sight_data=md.base_sight_data,
+        base_sight_data=reachable_base_sights(md.base_sight_data, adj),
         cell_los_counts=cell_los_counts,
         high_los_cells=high_los_cells,
         strong_spots=[tuple(rc) for rc in md.strong_spots],

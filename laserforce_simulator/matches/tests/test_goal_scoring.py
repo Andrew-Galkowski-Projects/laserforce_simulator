@@ -197,6 +197,28 @@ class TestEnemyBaseCells(unittest.TestCase):
     def test_no_base_gives_nothing(self) -> None:
         self.assertEqual(enemy_base_cells("green", OPEN), [])
 
+    def test_a_base_in_a_wall_walks_from_the_nearest_floor_cell(self) -> None:
+        # MECH-17: Syracuse's bases sit in the wall, so the set was empty there and the
+        # search (and the enemy-base default) had nowhere to go.
+        mc = _map(["." * 10, "." * 10, "." * 9 + "#"])  # the blue base is (2, 9)
+        cells = set(enemy_base_cells("blue", mc))
+        self.assertIn((1, 9), cells)  # the anchor: nearest, ties by row
+        self.assertIn((2, 8), cells)
+        self.assertNotIn((2, 9), cells)
+        self.assertNotIn((1, 5), cells)  # 4 squares from the anchor
+
+    def test_a_base_off_the_main_floor_walks_from_the_main_floor(self) -> None:
+        # MECH-17: Syracuse's red base opens on a pocket nobody else can reach.
+        mc = _map(["." * 12, "#" * 12, "..#########."])
+        mc.spawn_cells["blue"] = (2, 0)
+        cells = set(enemy_base_cells("blue", mc))
+        self.assertIn((0, 0), cells)
+        self.assertNotIn((2, 0), cells)
+        self.assertNotIn((2, 1), cells)
+
+    def test_with_no_floor_the_set_is_empty(self) -> None:
+        self.assertEqual(enemy_base_cells("blue", _map(["###"])), [])
+
 
 class TestRouteNoise(unittest.TestCase):
     def test_same_seed_same_route(self) -> None:
@@ -296,6 +318,13 @@ class TestGoalSelectionDraws(unittest.TestCase):
         enemy = _ps("blue_scout_1", "blue", (1, 1))
         with mock.patch.object(goal_scoring.random, "random", lambda: 0.0):
             held = self._goal(a, [a], mc, 10)
+        # MECH-17: tag goals read memory. This map has no sight data, so the goal is the
+        # remembered enemy's cell. An action goal still interrupts a held one.
+        a.player_memory[enemy.tag_id_key] = {
+            "cell": (1, 1),
+            "timestamp": 11,
+            "role": "scout",
+        }
         chase = choose_goal_cell(
             a, [a, enemy], mc.spawn_cells, mc, "tag_player", 11, "ticks"
         )

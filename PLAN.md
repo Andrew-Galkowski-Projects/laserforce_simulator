@@ -291,14 +291,7 @@ ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker front do
 template removal (ANG-08: the SPA is served at /, ADR-0047) and Django serving the SPA in every
 deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 
-**Current — simulation behaviour** (owner, 2026-11-04), in order, ahead of the SM5 talk
-follow-ups:
-
-```
-MECH-17          Action-choice sweep (MECH-07 decision 8)  <- NOW
-```
-
-**Next — SM5 talk follow-ups** (from LFS-02's proposal), in order:
+**Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
 SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)
@@ -312,7 +305,7 @@ items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are 
 Angular.
 
 - **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-16, MOVE-05, SIM-13, SIM-14,
-  CAL-01 (MECH-17 is scheduled above).
+  CAL-01.
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -636,6 +629,34 @@ pytest marker run in a non-blocking CI job.
 share of ticks a player is not Active: Scout 64.4%, Heavy 62.8%, Commander 55.6%, Ammo 52.7%,
 Medic 34.2%. That limits how far Modes can move players, so it is worth settling before Mode tuning.
 
+**Compare shots and time not Active with LFStats (owner, MECH-17, 2026-11-05).** Sim numbers are
+planned Shots on seeded Syracuse rounds with default stats, partway through MECH-17, so re-measure them.
+Real numbers are LFStats SM5, last 365 days, players with 10+ games at the position. Real shots fired is
+estimated as average shots hit / average accuracy, as LFStats has no shots-fired average.
+
+| Role | Real shots fired | Sim planned Shots | Real not Active | Sim not Active |
+|---|---|---|---|---|
+| Commander | about 83 | 93.3 | 50% | 55.8% |
+| Heavy | about 62 | 84.9 | 46% | 59.4% |
+| Scout | about 71 | 87.7 | 51% | 65.3% |
+| Ammo | about 93 | 33.0 | 39% | 61.1% |
+| Medic | about 69 | 7.1 | 25% | 60.8% |
+
+The biggest gaps are support shots (Ammo about a third of real, Medic about a tenth) and time not Active.
+Check first that a planned Shot means a shot fired, and that the two not-Active definitions match: LFStats
+uptime may leave out time after Elimination, and the sim's number includes it.
+
+On the finished MECH-17 code (seeds 1-12): planned Shots Commander 99.5, Heavy 107.5, Scout 69.6, Ammo 48.2,
+Medic 5.2; not Active 45.0%, 58.0%, 65.3%, 63.9%, 81.9%, in that order. Also check:
+
+- **Eliminations.** Sim over 24 rounds, real in brackets: Commander 21% (32%), Heavy 46% (39%), Scout 56% (42%),
+  Ammo 81% (43%), Medic 100% (72%). No hide rule tried brought Medics much below 100% without giving up
+  the Still target.
+- **Scout tags.** Hold baselines left a Scout's `only_move` above `tag_player`, so `only_move` takes the
+  decision-making boost. Setting it back to 50 gave 81 planned Shots, with Heavy Still at 41%.
+- **Misses from MECH-17:** Commander Still 23.1 (target 20), Commander squares 23.3 (target 21), Scout tags 69.6
+  on seeds 1-12 and 71.5 on seeds 1-24 (floor 70).
+
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
 documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout
 5,102 / Ammo 3,242 / Medic 2,282 — `docs/agents/matches/simulation-engine.md`). This is the long-pending
@@ -645,36 +666,11 @@ obligations for those. **Locked (grilled 2026-06-25):** **tune** the existing ac
 weights / hit-chance / movement constants to converge on the targets; keep the 19-stat
 model + role MVP/weight formulas as-is for now. The **deeper rework** the user wants
 scheduled later — revisiting action selection, movement selection, and goal selection
-themselves — shipped for goals and movement in `MECH-07`, and continues in `MECH-17` below for
-actions; do that only if calibration tuning alone cannot hit the targets.
+themselves — shipped for goals and movement in `MECH-07`, and for actions in `MECH-17`.
 
 MECH-07 (Role-aware action / movement / goal-selection rework) is **[DONE]**; see `PLAN-completed.md`.
 
-### MECH-17 · Action-choice sweep
-
-Moved out of MOVE-07 by MECH-07's decision 8, to run right after MECH-07. **Full sweep of the
-action-choice logic.** Review the weighted **Action** selection end to end (weights, role scripts,
-carry-over of hide / hold, how memory and comms feed in) for flat or unrealistic behaviour, and fix
-what the sweep finds. It overlaps `MECH-14`; settle in this task's grill whether it absorbs that
-task or stays a sweep that feeds it. MECH-07 added only the small per-Mode weight table.
-
-**Leads from MECH-07's probe (2026-11-05, decisions 29-30).** Over 12 rounds, positioning sets about
-25% of a Medic's goals and 28% of an Ammo's, against 48% and 50% from action goals, so Mode goals reach
-supports only part of the time; how Mode should shape action goals and `hide` is the first thing to
-look at. Commanders ended further from enemy
-Medics and Ammos than before (20.7 to 23.7 squares) after losing their true-state Medic hunt. One
-scratch variant limiting Defense candidates to 40 ft of the Heavy, combined with the Heavy trigger
-window, gave Ammo 11.7, Heavy 19.9 and Scout 20.2 squares over 12 rounds; that is 1-2 squares and may
-be noise, so it needs more rounds before anyone relies on it.
-
-**Left alone in MECH-07's review (owner, 2026-11-05):**
-- A Heavy that drops to 50% mid-walk finishes its held goal before heading to its Medic or Ammo, unless
-  an action goal takes over or it hits the 30% override. Decision 18 and held goals pull against each
-  other here; SM5-03 replaces the override.
-- Two reads still use the full staleness table, though a Down lasts 16 ticks. Attack skips a Medic or
-  Ammo seen `downed` for up to 120 ticks unless re-sighted (`modes._attack_targets`), which may help
-  explain the Attack distances (not measured). An old `downed` entry can also charge for a later Trail
-  the player never saw (`modes.trail_costs`). Changing them means re-probing goal sharing, now 14.5%.
+MECH-17 (Action-choice sweep) is **[DONE]**; see `PLAN-completed.md`.
 
 ---
 

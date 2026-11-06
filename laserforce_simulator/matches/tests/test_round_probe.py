@@ -1,4 +1,4 @@
-"""``round_probe``: how players move and choose goals over seeded rounds (MECH-07 retro)."""
+"""``round_probe``: how players move, choose goals and use Actions over seeded rounds."""
 
 from __future__ import annotations
 
@@ -13,8 +13,10 @@ from django.test import SimpleTestCase, TestCase
 
 from core.models import ArenaMap
 from matches.lfstats_calibration import load_map_fixture
+from matches.management.commands.round_probe import format_result
 from matches.round_probe import (
     ProbeResult,
+    _default_roster,
     _goal_source,
     _squares_to_target,
     goal_sharing_share,
@@ -22,6 +24,7 @@ from matches.round_probe import (
 )
 from matches.sim_helpers.map_loader import load_map_context
 from matches.sim_helpers.modes import Mode
+from matches.sim_helpers.player_state import PlayerState
 from matches.simulation import BatchSimulator, entrypoints
 from teams.models import Player, Team
 
@@ -153,6 +156,334 @@ class TestRunProbeTotals(SimpleTestCase):
         self.assertEqual(result.sharing_by_seed, {1: 1.0, 2: 0.0})
 
 
+def _tick(
+    action: str = "tag_player",
+    *,
+    plans: tuple[str, ...] = (),
+    active: bool = True,
+    hiding: bool = False,
+    holding: bool = False,
+) -> SimpleNamespace:
+    """One scripted ``plan_action`` result: what the player rolled and now shows."""
+    return SimpleNamespace(
+        action=action, plans=plans, active=active, hiding=hiding, holding=holding
+    )
+
+
+def _scripted(
+    *ticks: SimpleNamespace, role: str = "scout", team: str = "red", points: int = 0
+) -> SimpleNamespace:
+    """A finished player whose ``plan_action`` calls follow ``ticks``."""
+    return SimpleNamespace(
+        role=role,
+        team_color=team,
+        script=ticks,
+        is_active_at=lambda tick: ticks[tick].active,
+        is_hiding=False,
+        is_holding=False,
+        last_chosen_action="",
+        mode_ticks={},
+        counters=SimpleNamespace(points_scored=points),
+        ticks_active=sum(1 for step in ticks if step.active),
+    )
+
+
+def _probe_scripted(*rounds: list[SimpleNamespace]) -> ProbeResult:
+    """Run the probe over scripted rounds, seeds 1 up, one list of players each."""
+    remaining = iter(rounds)
+
+    def scripted_plan(player, all_alive, tick, movement_ctx=None, **kwargs):
+        step = player.script[tick]
+        player.last_chosen_action = step.action
+        player.is_hiding = step.hiding
+        player.is_holding = step.holding
+        return [{"type": plan, "actor": player} for plan in step.plans]
+
+    def fake_round(self, red, blue, movement_ctx=None):
+        players = next(remaining)
+        for tick in range(max((len(p.script) for p in players), default=0)):
+            for player in players:
+                if tick < len(player.script):
+                    entrypoints.plan_action(player, [], tick, None, time_domain="ticks")
+        return {}, players, []
+
+    with patch.object(entrypoints, "plan_action", scripted_plan):
+        with patch.object(BatchSimulator, "_simulate_round", fake_round):
+            return run_probe(None, range(1, len(rounds) + 1))
+
+
+class TestActionShares(SimpleTestCase):
+    def test_action_share_counts_active_rolls_only(self) -> None:
+        player = _scripted(
+            _tick("tag_player"),
+            _tick("tag_player"),
+            _tick("tag_player"),
+            _tick("hide"),
+            _tick("hide", active=False),
+            _tick("only_move", active=False),
+        )
+        share = _probe_scripted([player]).roles["scout"].action_share
+        self.assertEqual(share["tag_player"], 0.75)
+        self.assertEqual(share["hide"], 0.25)
+        self.assertEqual(share["only_move"], 0.0)
+
+    def test_every_action_has_a_share_so_the_shape_is_fixed(self) -> None:
+        share = _probe_scripted([_scripted(_tick("hold"))]).roles["scout"].action_share
+        self.assertEqual(
+            set(share),
+            {
+                "tag_player",
+                "only_move",
+                "hide",
+                "capture_base",
+                "use_special",
+                "resupply_ally",
+                "missile_player",
+                "request_resupply",
+                "hold",
+            },
+        )
+
+
+class TestEmptyRollShare(SimpleTestCase):
+    def test_it_is_a_share_of_that_actions_active_rolls(self) -> None:
+        player = _scripted(
+            _tick("tag_player", plans=("tag",)),
+            _tick("tag_player"),
+            _tick("tag_player"),
+            _tick("tag_player"),
+            _tick("hide", plans=("hide",)),
+            _tick("capture_base"),
+            # A Downed pack plans nothing; that is no empty Active roll.
+            _tick("hide", active=False),
+        )
+        share = _probe_scripted([player]).roles["scout"].empty_roll_share
+        self.assertEqual(share["tag_player"], 0.75)
+        self.assertEqual(share["hide"], 0.0)
+        self.assertEqual(share["capture_base"], 1.0)
+
+    def test_an_action_never_rolled_is_zero(self) -> None:
+        share = _probe_scripted([_scripted(_tick())]).roles["scout"].empty_roll_share
+        self.assertEqual(share["hold"], 0.0)
+
+
+class TestStillShare(SimpleTestCase):
+    def test_hiding_holding_and_a_capture_roll_count_as_still(self) -> None:
+        player = _scripted(
+            _tick("tag_player", hiding=True),
+            _tick("hold", holding=True),
+            _tick("capture_base"),
+            _tick("tag_player"),
+            _tick("only_move"),
+            _tick("only_move"),
+            _tick("only_move"),
+            _tick("only_move"),
+        )
+        self.assertEqual(_probe_scripted([player]).roles["scout"].still_share, 3 / 8)
+
+    def test_the_tick_of_a_hide_roll_is_still(self) -> None:
+        # The dispatch sets is_hiding after plan_action and before the Advance, so
+        # the player does not move on this tick though the flag still reads False.
+        player = _scripted(_tick("hide"), _tick("tag_player"))
+        self.assertEqual(_probe_scripted([player]).roles["scout"].still_share, 0.5)
+
+    def test_only_active_ticks_count_on_either_side_of_the_share(self) -> None:
+        player = _scripted(
+            _tick("hide", hiding=True),
+            _tick("tag_player"),
+            _tick("hide", active=False, hiding=True),
+            _tick("hold", active=False, holding=True),
+            _tick("capture_base", active=False),
+        )
+        self.assertEqual(_probe_scripted([player]).roles["scout"].still_share, 0.5)
+
+
+class TestHoldMeasures(SimpleTestCase):
+    def test_hold_share_is_the_active_ticks_holding(self) -> None:
+        player = _scripted(
+            _tick("hold", holding=True),
+            _tick("tag_player"),
+            _tick("tag_player"),
+            _tick("tag_player"),
+            # Time not Active is on neither side of the share.
+            _tick("hold", active=False, holding=True),
+        )
+        self.assertEqual(_probe_scripted([player]).roles["scout"].hold_share, 0.25)
+
+    def test_a_hold_run_ends_when_the_player_stops_holding(self) -> None:
+        player = _scripted(
+            _tick("hold", holding=True),
+            _tick("hold", holding=True),
+            _tick("hold", holding=True),
+            _tick("tag_player"),
+            _tick("hold", holding=True),
+        )
+        # Runs of 3 and 1; the last is still open when the round ends.
+        self.assertEqual(_probe_scripted([player]).roles["scout"].hold_run, 2.0)
+
+    def test_a_tick_not_active_neither_extends_nor_ends_a_hold_run(self) -> None:
+        player = _scripted(
+            _tick("hold", holding=True),
+            _tick("hold", active=False, holding=True),
+            _tick("hold", active=False, holding=True),
+            _tick("hold", holding=True),
+        )
+        self.assertEqual(_probe_scripted([player]).roles["scout"].hold_run, 2.0)
+
+    def test_holding_only_while_not_active_is_no_run(self) -> None:
+        player = _scripted(_tick("hold", active=False, holding=True), _tick())
+        self.assertEqual(_probe_scripted([player]).roles["scout"].hold_run, 0.0)
+
+    def test_each_players_run_is_their_own(self) -> None:
+        holder = _scripted(_tick("hold", holding=True), _tick("hold", holding=True))
+        other = _scripted(_tick(), _tick("hold", holding=True))
+        # A shared run would read 3, or split into pieces of 1.
+        self.assertEqual(_probe_scripted([holder, other]).roles["scout"].hold_run, 1.5)
+
+    def test_a_run_does_not_carry_into_the_next_round(self) -> None:
+        first = _scripted(_tick("hold", holding=True))
+        second = _scripted(_tick("hold", holding=True))
+        self.assertEqual(
+            _probe_scripted([first], [second]).roles["scout"].hold_run, 1.0
+        )
+
+
+class TestBySeed(SimpleTestCase):
+    def test_each_seed_measures_its_own_round_and_roles_pool_them(self) -> None:
+        low = _scripted(_tick("hold", holding=True), _tick(), points=100)
+        high = _scripted(
+            _tick("hold", holding=True),
+            _tick("hold", holding=True),
+            _tick("hold", holding=True),
+            _tick("hide"),
+            points=300,
+        )
+        result = _probe_scripted([low], [high])
+
+        first, second = result.by_seed[1]["scout"], result.by_seed[2]["scout"]
+        self.assertEqual((first.mean_points, second.mean_points), (100, 300))
+        self.assertEqual((first.hold_run, second.hold_run), (1.0, 3.0))
+        self.assertEqual((first.hold_share, second.hold_share), (0.5, 0.75))
+        self.assertEqual(first.action_share["hide"], 0.0)
+        self.assertEqual(second.action_share["hide"], 0.25)
+        pooled = result.roles["scout"]
+        self.assertEqual(pooled.mean_points, 200)
+        self.assertEqual(pooled.hold_run, 2.0)
+        self.assertEqual(pooled.hold_share, 4 / 6)
+
+    def test_a_run_open_at_the_end_of_a_round_stays_in_that_round(self) -> None:
+        result = _probe_scripted(
+            [_scripted(_tick("hold", holding=True))],
+            [_scripted(_tick())],
+        )
+        self.assertEqual(result.by_seed[1]["scout"].hold_run, 1.0)
+        self.assertEqual(result.by_seed[2]["scout"].hold_run, 0.0)
+
+
+class TestPerRoundCounts(SimpleTestCase):
+    def test_tags_per_round_counts_planned_tag_shots_per_player_round(self) -> None:
+        one = _scripted(
+            _tick("tag_player", plans=("tag",)),
+            # A Scout's special plans two Shots from one roll.
+            _tick("tag_player", plans=("tag", "tag")),
+            # An empty roll is no Shot.
+            _tick("tag_player"),
+        )
+        other = _scripted(_tick("tag_player", plans=("tag",)))
+        again = _scripted(_tick("hide", plans=("hide",)))
+        measures = _probe_scripted([one, other], [again]).roles["scout"]
+        self.assertEqual(measures.tags_per_round, 4 / 3)
+
+    def test_resupplies_per_round_counts_both_resupply_plans(self) -> None:
+        medic = _scripted(
+            _tick("resupply_ally", plans=("resupply_lives",)),
+            _tick("resupply_ally"),
+            role="medic",
+        )
+        ammo = _scripted(
+            _tick("resupply_ally", plans=("resupply_ammo",)),
+            _tick("resupply_ally", plans=("resupply_ammo",)),
+            role="ammo",
+        )
+        roles = _probe_scripted([medic, ammo]).roles
+        self.assertEqual(roles["medic"].resupplies_per_round, 1.0)
+        self.assertEqual(roles["ammo"].resupplies_per_round, 2.0)
+
+
+def _capturer(role: str, team: str, shots: int = 30) -> PlayerState:
+    return PlayerState(
+        tag_id=f"{team}-{role}",
+        name=f"{team} {role}",
+        team_color=team,
+        role=role,
+        accuracy=50,
+        survival=50,
+        starting_lives=10,
+        starting_shots=shots,
+        final_lives=10,
+        final_shots=shots,
+    )
+
+
+def _probe_captures(*rounds: list[tuple[PlayerState, int]]) -> ProbeResult:
+    """Each round is (player, base_id) capture attempts, then the round-end award."""
+    remaining = iter(rounds)
+
+    def fake_round(self, red, blue, movement_ctx=None):
+        attempts = next(remaining)
+        for player, base_id in attempts:
+            self._capture_base(player, base_id)
+        players = list({id(player): player for player, _ in attempts}.values())
+        for player in players:
+            self._award_bases(player)
+        return {}, players, []
+
+    with patch.object(BatchSimulator, "_simulate_round", fake_round):
+        return run_probe(None, range(1, len(rounds) + 1))
+
+
+class TestLiveCaptures(SimpleTestCase):
+    def test_captures_per_round_counts_each_live_capture_per_player_round(self) -> None:
+        commander = _capturer("commander", "red")
+        heavy = _capturer("heavy", "red")
+        roles = _probe_captures(
+            [(commander, 15), (commander, 14), (heavy, 15)],
+        ).roles
+        self.assertEqual(roles["commander"].captures_per_round, 2.0)
+        self.assertEqual(roles["heavy"].captures_per_round, 1.0)
+
+    def test_the_round_end_award_is_not_a_live_capture(self) -> None:
+        survivor = _capturer("commander", "red")
+        result = _probe_captures([(survivor, 15)])
+        # The award scored the opposing Base, which the player never captured.
+        self.assertTrue(survivor.opposing_base_destroyed)
+        self.assertEqual(result.roles["commander"].captures_per_round, 1.0)
+
+    def test_an_attempt_short_of_shots_is_no_capture(self) -> None:
+        short = _capturer("commander", "red", shots=2)
+        result = _probe_captures([(short, 15)])
+        self.assertEqual(result.roles["commander"].captures_per_round, 0.0)
+
+    def test_captures_are_kept_per_team_per_seed(self) -> None:
+        result = _probe_captures(
+            [
+                (_capturer("commander", "red"), 15),
+                (_capturer("heavy", "red"), 15),
+                (_capturer("commander", "blue"), 13),
+            ],
+            [(_capturer("commander", "red"), 15)],
+        )
+        self.assertEqual(
+            result.team_captures_by_seed,
+            {1: {"red": 2, "blue": 1}, 2: {"red": 1, "blue": 0}},
+        )
+
+    def test_it_puts_the_capture_spy_back(self) -> None:
+        before = entrypoints._capture_base_shared
+        _probe_captures([(_capturer("commander", "red"), 15)])
+        self.assertIs(entrypoints._capture_base_shared, before)
+
+
 class TestRunProbe(TestCase):
     result: ProbeResult
 
@@ -192,8 +523,133 @@ class TestRunProbe(TestCase):
     def test_the_same_seeds_give_the_same_result(self) -> None:
         self.assertEqual(run_probe(self.movement_ctx, [1, 2]), self.result)
 
-    def test_it_puts_the_goal_spy_back(self) -> None:
+    def test_it_puts_the_spies_back(self) -> None:
         self.assertEqual(entrypoints.choose_goal_cell.__name__, "choose_goal_cell")
+        self.assertEqual(entrypoints.plan_action.__name__, "plan_action")
+        self.assertEqual(entrypoints._capture_base_shared.__name__, "capture_base")
+
+    def test_observing_draws_no_rng(self) -> None:
+        # The round played by hand, unobserved, leaves the RNG where the probe does
+        # and scores the same points, so the probe saw the round the seed plays.
+        random.seed(1)
+        _, reds, blues = BatchSimulator()._simulate_round(
+            _default_roster("red"),
+            _default_roster("blue"),
+            movement_ctx=self.movement_ctx,
+        )
+        unobserved = random.getstate()
+        points = [p.counters.points_scored for p in reds + blues]
+
+        observed = run_probe(self.movement_ctx, [1])
+
+        self.assertEqual(random.getstate(), unobserved)
+        for role, measures in observed.roles.items():
+            with self.subTest(role=role):
+                scores = [
+                    score
+                    for player, score in zip(reds + blues, points)
+                    if player.role == role
+                ]
+                self.assertEqual(measures.mean_points, sum(scores) / len(scores))
+
+    def test_every_role_measures_its_actions(self) -> None:
+        # The real round feeds the Action measures, not just the scripted ones.
+        for role, measures in self.result.roles.items():
+            with self.subTest(role=role):
+                self.assertAlmostEqual(sum(measures.action_share.values()), 1.0)
+                self.assertGreater(measures.still_share, 0.0)
+                self.assertTrue(0.0 <= measures.hold_share <= 1.0)
+        self.assertGreater(self.result.roles["commander"].tags_per_round, 0.0)
+        self.assertGreater(self.result.roles["medic"].resupplies_per_round, 0.0)
+        self.assertGreater(self.result.roles["commander"].hold_run, 0.0)
+
+    def test_by_seed_holds_every_role_for_every_seed(self) -> None:
+        self.assertEqual(set(self.result.by_seed), {1, 2})
+        for seed, roles in self.result.by_seed.items():
+            with self.subTest(seed=seed):
+                self.assertEqual(set(roles), _ROLES)
+
+
+class TestFormatResult(SimpleTestCase):
+    def _lines(self) -> list[str]:
+        low = _scripted(_tick("hold", holding=True), _tick(), points=100)
+        low.mode_ticks = {Mode.ATTACK: 10}
+        high = _scripted(
+            _tick("hold", holding=True),
+            _tick("hold", holding=True),
+            _tick("hold", holding=True),
+            _tick("hide", plans=("hide",)),
+            points=300,
+        )
+        high.mode_ticks = {Mode.ATTACK: 10, Mode.CONTROL: 30}
+        return format_result(_probe_scripted([low], [high]))
+
+    def test_measures_print_the_pooled_mean_and_the_seed_range(self) -> None:
+        lines = self._lines()
+        self.assertIn("  Mean points: 200 (100-300)", lines)
+        self.assertIn("  Hold %: 66.7 (50.0-75.0)", lines)
+        self.assertIn("  Hold run, ticks: 2.0 (1.0-3.0)", lines)
+        self.assertIn("  Still %: 83.3 (50.0-100.0)", lines)
+
+    def test_existing_measures_print_the_range_too(self) -> None:
+        lines = self._lines()
+        self.assertIn("  Not Active %: 99.8 (99.8-99.9)", lines)
+        self.assertIn("  Squares to enemy Medic/Ammo: 0.0 (0.0-0.0)", lines)
+        self.assertIn(
+            "  Goals %: action 0.0 (0.0-0.0), positioning 0.0 (0.0-0.0), "
+            "override 0.0 (0.0-0.0)",
+            lines,
+        )
+
+    def test_a_mode_missing_from_a_seed_reads_zero_for_that_seed(self) -> None:
+        self.assertIn(
+            "  Mode %: attack 40.0 (25.0-100.0), control 60.0 (0.0-75.0)",
+            self._lines(),
+        )
+
+    def test_only_rolled_actions_print(self) -> None:
+        lines = self._lines()
+        self.assertIn(
+            "  Action %: tag_player 16.7 (0.0-50.0), hide 16.7 (0.0-25.0), "
+            "hold 66.7 (50.0-75.0)",
+            lines,
+        )
+        self.assertIn(
+            # A seed that never rolled the Action has no empty share to range over.
+            "  Empty rolls %: tag_player 100.0 (100.0-100.0), hide 0.0 (0.0-0.0), "
+            "hold 100.0 (100.0-100.0)",
+            lines,
+        )
+
+    def test_per_round_counts_name_what_they_count(self) -> None:
+        lines = self._lines()
+        self.assertIn("  Tags per round (planned Shots): 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Resupplies per round (planned): 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Live captures per round: 0.0 (0.0-0.0)", lines)
+
+    def test_live_captures_print_per_team(self) -> None:
+        result = _probe_captures(
+            [
+                (_capturer("commander", "red"), 15),
+                (_capturer("heavy", "red"), 15),
+                (_capturer("commander", "blue"), 13),
+            ],
+            [(_capturer("commander", "red"), 15)],
+        )
+        self.assertIn(
+            "Live captures per round: red 1.5 (1-2), blue 0.5 (0-1)",
+            format_result(result),
+        )
+
+    def test_a_role_missing_from_a_seed_is_left_out_of_its_range(self) -> None:
+        result = _probe_scripted(
+            [_scripted(_tick(), points=100)],
+            [
+                _scripted(_tick(), points=300),
+                _scripted(_tick(), role="medic", points=50),
+            ],
+        )
+        self.assertIn("  Mean points: 50 (50-50)", format_result(result))
 
 
 class TestRoundProbeCommand(TestCase):
@@ -208,7 +664,19 @@ class TestRoundProbeCommand(TestCase):
         call_command("round_probe", "--seeds", "1", stdout=out)
 
         output = out.getvalue()
-        for text in ("commander", "enemy Medic/Ammo", "own Heavy", "Goal sharing"):
+        for text in (
+            "commander",
+            "enemy Medic/Ammo",
+            "own Heavy",
+            "Goal sharing",
+            "Action %",
+            "Empty rolls %",
+            "Still %",
+            "Hold run, ticks",
+            "Tags per round",
+            "Resupplies per round",
+            "Live captures per round: red",
+        ):
             self.assertIn(text, output)
         self.assertTrue(output.isascii())
         self.assertEqual(ArenaMap.objects.count(), maps)

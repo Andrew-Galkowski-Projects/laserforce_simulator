@@ -16,8 +16,15 @@ if TYPE_CHECKING:
 
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
-from .modes import apply_mode_weights
+from .map_context import _NEUTRAL_BASE_TYPES
+from .modes import (
+    BASE_CAPTURE_SHOTS,
+    apply_mode_weights,
+    hide_allowed,
+    known_threats,
+)
 from .round_context import RoundContext
+from .time_constants import HOLD_TICKS
 from .mechanics import (
     shot_cooldown,
     choose_tag_target,
@@ -36,9 +43,6 @@ from .weights import (
     check_stamina_penalty,
     finalize_action_weights,
 )
-
-# Neutral base_types in priority order for capture/reset checks
-_NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
 
 _AMMO_CHART = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5}
 _MEDIC_CHART = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
@@ -76,6 +80,7 @@ _CHOICES = [
     "request_resupply",
     "hold",
 ]
+_SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +287,34 @@ def plan_action(
     else:
         check_stamina_penalty(player, second)
 
+    is_active = player.is_active_at(second)
+    # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
+    # tick spends no RNG; anything else ends it, and this tick then rolls as usual.
+    hold_until = getattr(player, "hold_until", None)
+    if hold_until is not None:
+        if (
+            second < hold_until
+            and is_active
+            and player.final_shots > 0
+            and not getattr(player, "reacting_to_nuke", False)
+        ):
+            player.last_chosen_action = "hold"
+            return [{"type": "hold", "actor": player}]
+        # The roll below clears ``is_holding`` and the commitment, or starts a new Hold.
+        player.hold_until = None
+
+    # MECH-17: what the weights read on a map: whether a capture can happen here, and
+    # how many enemies the player knows can see it.
+    if movement_ctx is not None:
+        player.base_in_reach = (
+            is_active
+            and _get_base_interaction(player, movement_ctx) is not None
+            and (player.final_shots >= BASE_CAPTURE_SHOTS or player.role == "ammo")
+        )
+        player.known_threats = known_threats(
+            player, all_alive, movement_ctx, second, time_domain
+        )
+
     if player.role == "medic":
         weights = _get_medic_weights(
             player, _ACTION_IDX, weights, all_alive, second, time_domain
@@ -324,12 +357,32 @@ def plan_action(
 
     # SM5-02: the role functions drain these while Downed, but the losing-side
     # score broadcast (+10 tag_player) runs after that drain, so zero them again.
-    is_active = player.is_active_at(second)
     if not is_active:
         weights[_ACTION_IDX["tag_player"]] = 0
         weights[_ACTION_IDX["resupply_ally"]] = 0
+        # MECH-17: a player who is not Active cannot start a Hold.
+        if movement_ctx is not None:
+            weights[_ACTION_IDX["hold"]] = 0
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1
+
+    # MECH-17: a Hold that could not stand would end next tick, and hold the player
+    # still until then.
+    if movement_ctx is not None and (
+        player.final_shots <= 0 or getattr(player, "reacting_to_nuke", False)
+    ):
+        weights[_ACTION_IDX["hold"]] = 0
+
+    # MECH-17: a support who is needed, or has somewhere to be, gets no hide this roll
+    # and leaves a hide it is in. It reads the player before the roll changes anything.
+    must_leave_hide = (
+        movement_ctx is not None
+        and is_active
+        and player.role in _SUPPORT_ROLES
+        and not hide_allowed(player, all_alive, movement_ctx, second, time_domain)
+    )
+    if must_leave_hide:
+        weights[_ACTION_IDX["hide"]] = 0
 
     weights = apply_decision_making_spread(
         weights, getattr(player, "decision_making", 50)
@@ -348,10 +401,21 @@ def plan_action(
     choice = random.choices(_CHOICES, weights)[0]
     player.last_chosen_action = choice
 
+    # MECH-17: on a map an only_move roll takes an Active non-support out of its hide.
+    moves_out_of_hide = (
+        movement_ctx is not None
+        and is_active
+        and player.role not in _SUPPORT_ROLES
+        and choice == "only_move"
+    )
     # MOVE-08: Stay hidden keeps its hide for the whole Down.
     if (
         player.is_hiding
-        and choice not in ("hide", "only_move", "resupply_ally")
+        and (
+            choice not in ("hide", "only_move", "resupply_ally")
+            or must_leave_hide
+            or moves_out_of_hide
+        )
         and not plan_is_live(player, second)
     ):
         player.is_hiding = False
@@ -364,12 +428,15 @@ def plan_action(
         if save_player is not None:
             save_player(player)
 
-    # MOVE-03: ``is_holding`` carry-over (mirrors is_hiding; transient — no DB
-    # column / no migration, like _path_cache / movement_trail). A ``hold`` roll
-    # keeps the player in Overwatch (Stationary) until it rolls a non-Hold
-    # Action; a Down/respawn force-clears it via _record_down. Consumes no RNG.
+    # MOVE-03: ``is_holding`` (mirrors is_hiding; transient — no DB column / no
+    # migration, like _path_cache / movement_trail). A ``hold`` roll keeps the player
+    # in Overwatch (Stationary): MECH-17, on a map until ``hold_until`` (the top of
+    # this function); map-less, until it rolls a non-Hold Action. A Down/respawn
+    # force-clears it via _record_down. Consumes no RNG.
     if choice == "hold":
         player.is_holding = True
+        if movement_ctx is not None:
+            player.hold_until = int(second) + HOLD_TICKS
     elif getattr(player, "is_holding", False):
         player.is_holding = False
         # MOVE-04 / ADR-0010: exiting Stationary (hold→non-hold) is a force
@@ -403,7 +470,14 @@ def plan_action(
     elif choice == "resupply_ally":
         if not is_active:
             return plans
-        teammate = choose_resupply_target(player, all_alive, second)
+        # MECH-17: line of sight on a map round; the zone rule on a map-less one.
+        teammate = choose_resupply_target(
+            player,
+            all_alive,
+            second,
+            movement_ctx,
+            los_filter=_get_los_targets if movement_ctx is not None else None,
+        )
         if teammate:
             rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
             plans.append({"type": rtype, "actor": player, "target": teammate})
@@ -570,9 +644,9 @@ def capture_base(
         if not in_range:
             return False
 
-    if player.final_shots >= 3 or player.role == "ammo":
+    if player.final_shots >= BASE_CAPTURE_SHOTS or player.role == "ammo":
         if player.role != "ammo":
-            player.final_shots -= 3
+            player.final_shots -= BASE_CAPTURE_SHOTS
         player.last_tagged_id = base_id
         if base_id == 15:
             player.neutral_base_destroyed = True

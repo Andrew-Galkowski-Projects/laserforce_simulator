@@ -492,6 +492,10 @@ class TestPlanActionWiring:
         assert no_map[_idx("tag_player")] == 80
         assert on_map[_idx("tag_player")] == 100
         no_map[_idx("tag_player")] = on_map[_idx("tag_player")]
+        # MECH-17: the hold baseline differs on a map (a Hold there is a commitment).
+        # The nudge still touches only the Mode's slots: every other slot is equal.
+        assert on_map[_idx("hold")] == 3
+        no_map[_idx("hold")] = on_map[_idx("hold")]
         assert on_map == no_map
 
     def test_a_no_map_round_never_calls_it(self) -> None:
@@ -1316,7 +1320,10 @@ class TestDefenseResupplyGoal:
             return real_choices(population, *args, **kwargs)
 
         monkeypatch.setattr(combat.random, "choices", roll_resupply)
-        plans = combat.plan_action(support, [support, ally], 100, _grid_map())
+        # MECH-17: a map round's Resupply needs line of sight, so the ally is in sight.
+        # The invariant is unchanged: the share only decides where the support walks.
+        ctx = _grid_map(sight={"0,0": {"0,1"}})
+        plans = combat.plan_action(support, [support, ally], 100, ctx)
         assert [(p["type"], p["target"]) for p in plans] == [(plan_type, ally)]
 
 
@@ -1359,11 +1366,17 @@ class TestTagActionGoal:
         cmdr.mode = Mode.CONTROL
         assert _choose(cmdr, everyone, ctx, action="tag_player") == (1, 1)
 
-    def test_with_no_memory_the_perfect_knowledge_fallback_stays(self) -> None:
-        # Decision 23: it stays for MECH-13.
+    def test_with_no_memory_the_player_searches_toward_the_enemy_base(self) -> None:
+        # MECH-17 replaces the perfect-knowledge fallback (MECH-07 decision 23). The
+        # invariant is that a tag roll still sets an action goal; it reads no true cell.
         cmdr, everyone, ctx = self._scene()
         cmdr.player_memory.clear()
-        assert _choose(cmdr, everyone, ctx, action="tag_player") == (11, 11)
+        everyone[1].cell_row, everyone[1].cell_col = 2, 2
+        everyone[2].cell_row, everyone[2].cell_col = 2, 3
+        assert _choose(cmdr, everyone, ctx, action="tag_player") in enemy_base_cells(
+            "blue", ctx
+        )
+        assert cmdr._committed_goal is not None and cmdr._committed_goal[1] is True
 
 
 @pytest.mark.usefixtures("best_draw")

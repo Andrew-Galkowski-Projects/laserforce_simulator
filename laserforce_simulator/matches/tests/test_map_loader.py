@@ -19,6 +19,7 @@ from matches.sim_helpers.map_loader import (
     build_movement_ctx,
     build_spawn_assignments,
     load_map_context,
+    reachable_base_sights,
     reachable_spawn_pools,
     resolve_map_data,
     zone_from_cell,
@@ -203,6 +204,99 @@ class TestReachableSpawnPools:
     def test_no_floor_leaves_pools_alone(self):
         pools = {"red": [(0, 0)]}
         assert reachable_spawn_pools(pools, {"red": (0, 0)}, {}) == pools
+
+
+class TestReachableBaseSights:
+    """A Base whose range cells are all cut off gets as many main-floor cells, the
+    nearest to its range cells (Manhattan to the nearest, then row, then column)."""
+
+    def test_a_cut_off_type_moves_to_the_nearest_main_floor_cells(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        # (0, 2) is 1 from (0, 1). Row breaks the tie among those 2 away.
+        assert reachable_base_sights({"red": ["0,0", "0,1"]}, adj) == {
+            "red": frozenset({"0,2", "0,3"})
+        }
+
+    def test_the_tie_goes_to_the_lower_row(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        # (0, 2) and (2, 0) are both 2 from (0, 0).
+        assert reachable_base_sights({"red": ["0,0"]}, adj) == {
+            "red": frozenset({"0,2"})
+        }
+
+    def test_the_column_breaks_a_tie_within_a_row(self):
+        adj = build_movement_adjacency(
+            [[1, 0, 1, 0, 1], [0, 0, 0, 0, 0], [1, 1, 1, 1, 1]]
+        )
+        # (2, 2) is nearest. (2, 1) and (2, 3) tie after it, and the column decides.
+        assert reachable_base_sights({"red": ["0,2", "1,2"]}, adj) == {
+            "red": frozenset({"2,1", "2,2"})
+        }
+
+    def test_a_type_with_any_main_floor_cell_is_unchanged(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        assert reachable_base_sights({"red": ["0,0", "2,0"]}, adj) == {
+            "red": frozenset({"0,0", "2,0"})
+        }
+
+    def test_an_empty_type_is_unchanged(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        assert reachable_base_sights({"red": []}, adj) == {"red": frozenset()}
+
+    def test_no_floor_leaves_it_alone(self):
+        assert reachable_base_sights({"red": ["0,0"]}, {}) == {
+            "red": frozenset({"0,0"})
+        }
+
+    def test_each_type_is_read_on_its_own(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        assert reachable_base_sights({"red": ["0,0"], "blue": ["2,0"]}, adj) == {
+            "red": frozenset({"0,2"}),
+            "blue": frozenset({"2,0"}),
+        }
+
+    def test_the_order_of_the_range_cells_does_not_matter(self):
+        adj = build_movement_adjacency(_POCKET_GRID)
+        assert reachable_base_sights(
+            {"red": ["0,1", "0,0"]}, adj
+        ) == reachable_base_sights({"red": ["0,0", "0,1"]}, adj)
+
+    def test_a_pocket_free_map_is_untouched(self):
+        adj = build_movement_adjacency([[1, 1], [1, 1]])
+        sights = {"red": frozenset({"0,0"}), "neutral_1": frozenset({"1,1"})}
+        assert reachable_base_sights(sights, adj) == sights
+
+
+@pytest.mark.django_db
+class TestSyracuseBaseRanges:
+    """Red's 6 base-range cells sit in a pocket cut off from the main floor."""
+
+    def _load(self):
+        from pathlib import Path
+
+        from core.models import ArenaMap
+        from matches.lfstats_calibration import load_map_fixture
+        from matches.sim_helpers.map_context import _main_floor
+
+        fixture = Path(__file__).resolve().parents[3] / "data/maps/syracuse.json"
+        arena_map: ArenaMap = load_map_fixture(fixture)
+        ctx = load_map_context(arena_map)[0]
+        return ctx, resolve_map_data(arena_map).base_sight_data, _main_floor(ctx.adj)
+
+    def test_reds_range_ends_on_the_main_floor_with_its_size_kept(self):
+        ctx, raw, floor = self._load()
+        keys = {f"{r},{c}" for r, c in floor}
+        assert len(raw["red"]) == 6
+        assert not raw["red"] & keys
+        assert len(ctx.base_sight_data["red"]) == 6
+        assert ctx.base_sight_data["red"] <= keys
+
+    def test_blue_and_neutral_come_back_unchanged(self):
+        ctx, raw, _ = self._load()
+        others = [key for key in raw if key != "red"]
+        assert "blue" in others
+        for base_type in others:
+            assert ctx.base_sight_data[base_type] == raw[base_type]
 
 
 @pytest.mark.django_db
