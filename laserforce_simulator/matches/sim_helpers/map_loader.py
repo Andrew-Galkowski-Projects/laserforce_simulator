@@ -29,7 +29,7 @@ from core.models import (
     SightLineConfig,
 )
 
-from .map_context import MapContext
+from .map_context import MapContext, _main_floor
 from .pathfinding import build_movement_adjacency
 from .spawn_assigner import assign_spawn_cells
 
@@ -157,28 +157,6 @@ def resolve_map_data(arena_map) -> MapData:
         spawn_pools=spawn_pools,
         elevation_grid=elevation_grid,
     )
-
-
-def _main_floor(
-    adj: dict[tuple[int, int], list[tuple[int, int]]],
-) -> set[tuple[int, int]]:
-    """The largest 4-connected area of passable cells (empty when ``adj`` is)."""
-    best: set[tuple[int, int]] = set()
-    seen: set[tuple[int, int]] = set()
-    for start in adj:
-        if start in seen:
-            continue
-        area = {start}
-        stack = [start]
-        while stack:
-            for nxt in adj[stack.pop()]:
-                if nxt not in area:
-                    area.add(nxt)
-                    stack.append(nxt)
-        seen |= area
-        if len(area) > len(best):
-            best = area
-    return best
 
 
 def reachable_spawn_pools(

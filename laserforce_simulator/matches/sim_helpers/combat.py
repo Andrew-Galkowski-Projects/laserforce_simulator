@@ -403,7 +403,14 @@ def plan_action(
     elif choice == "resupply_ally":
         if not is_active:
             return plans
-        teammate = choose_resupply_target(player, all_alive, second)
+        # MECH-17: line of sight on a map round; the zone rule on a map-less one.
+        teammate = choose_resupply_target(
+            player,
+            all_alive,
+            second,
+            movement_ctx,
+            los_filter=_get_los_targets if movement_ctx is not None else None,
+        )
         if teammate:
             rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
             plans.append({"type": rtype, "actor": player, "target": teammate})

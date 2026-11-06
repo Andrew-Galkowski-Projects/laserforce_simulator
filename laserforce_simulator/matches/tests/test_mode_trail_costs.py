@@ -150,18 +150,21 @@ class TestTrailCosts:
         player, enemy = _player("commander"), _downed()
         assert trail_costs(player, [player, enemy], NOW) == {}
 
-    def test_a_stale_memory_costs_nothing(self) -> None:
-        # A Scout entry goes stale after 30 ticks: 30 is fresh, 31 is not.
+    def test_an_old_sighting_costs_nothing(self) -> None:
+        # MECH-17: a sighting counts for one Down's length, 16 ticks, which is shorter
+        # than the 30-tick Scout freshness this used to pin. An old sighting still
+        # charges nothing; only the boundary moved.
         player, enemy = _player("commander"), _downed("scout")
-        _remember(player, enemy, timestamp=NOW - 30)
+        _remember(player, enemy, timestamp=NOW - RESPAWN_TICKS)
         assert trail_costs(player, [player, enemy], NOW) == BAND_COSTS
-        _remember(player, enemy, timestamp=NOW - 31)
+        _remember(player, enemy, timestamp=NOW - RESPAWN_TICKS - 1)
         assert trail_costs(player, [player, enemy], NOW) == {}
 
     def test_freshness_follows_the_time_domain(self) -> None:
-        # A Medic entry 90 old: inside the 120 ticks, past the 60 seconds.
-        player, enemy = _player("commander"), _downed("medic")
-        _remember(player, enemy, timestamp=NOW - 90)
+        # A Scout entry 16 old: inside the 30 ticks, past the 15 seconds. MECH-17: was a
+        # Medic entry 90 old, now past the Down window; freshness is still read.
+        player, enemy = _player("commander"), _downed("scout")
+        _remember(player, enemy, timestamp=NOW - RESPAWN_TICKS)
         assert trail_costs(player, [player, enemy], NOW, "ticks") == BAND_COSTS
         assert trail_costs(player, [player, enemy], NOW, "seconds") == {}
 

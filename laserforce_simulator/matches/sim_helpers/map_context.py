@@ -20,6 +20,28 @@ from typing import Any
 DEFAULT_FEET_PER_SQUARE: float = 5.0
 
 
+def _main_floor(
+    adj: dict[tuple[int, int], list[tuple[int, int]]],
+) -> set[tuple[int, int]]:
+    """The largest 4-connected area of passable cells (empty when ``adj`` is)."""
+    best: set[tuple[int, int]] = set()
+    seen: set[tuple[int, int]] = set()
+    for start in adj:
+        if start in seen:
+            continue
+        area = {start}
+        stack = [start]
+        while stack:
+            for nxt in adj[stack.pop()]:
+                if nxt not in area:
+                    area.add(nxt)
+                    stack.append(nxt)
+        seen |= area
+        if len(area) > len(best):
+            best = area
+    return best
+
+
 @dataclass
 class MapContext:
     """All precomputed map data needed during one simulation round.
@@ -166,6 +188,24 @@ class MapContext:
                         nxt.append(neighbour)
             frontier = nxt
         return distances
+
+    def on_main_floor(self, cell: tuple[int, int]) -> tuple[int, int] | None:
+        """*cell* when it is on the main floor, else the main-floor cell nearest it
+        (Manhattan, then row, then column), as ``reachable_spawn_pools`` picks. None
+        with no floor. Kept per cell: a search draw asks every few ticks."""
+        anchors = self.__dict__.setdefault("_main_floor_anchors", {})
+        if cell not in anchors:
+            floor = _main_floor(self.adj)
+            anchors[cell] = (
+                cell
+                if cell in floor
+                else min(
+                    floor,
+                    key=lambda c: (abs(c[0] - cell[0]) + abs(c[1] - cell[1]), c),
+                    default=None,
+                )
+            )
+        return anchors[cell]
 
     def los_rank(self, cell: tuple[int, int]) -> float:
         """MOVE-08: *cell*'s sight-line rank on the map, 0.0 .. 1.0.

@@ -72,22 +72,34 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
     return random.choices(targets, w)[0]
 
 
-def choose_resupply_target(player, all_alive, second):
+def choose_resupply_target(
+    player, all_alive, second, movement_ctx=None, *, los_filter=None
+):
     """Return a teammate to resupply (lives or shots), or None.
 
     Prioritizes teammates with the greatest resource deficit, weighted by role.
-    Returns None when all in-zone teammates are at full resources.
+    Returns None when all reachable teammates are at full resources.
+
+    los_filter: callable(actor, candidates, movement_ctx) -> filtered_candidates.
+    Falls back to same-zone filtering when not provided (a map-less round).
     """
+    if los_filter is None:
+        los_filter = lambda actor, candidates, ctx: [
+            c for c in candidates if c.current_zone == actor.current_zone
+        ]
     role_weights = {"commander": 5, "heavy": 8, "scout": 3, "medic": 1, "ammo": 6}
-    teammates = [
-        p
-        for p in all_alive
-        if p.team_color == player.team_color
-        and p.current_zone == player.current_zone
-        and p is not player
-        and p.final_lives > 0
-        and p.is_resupplyable_at(second)
-    ]
+    teammates = los_filter(
+        player,
+        [
+            p
+            for p in all_alive
+            if p.team_color == player.team_color
+            and p is not player
+            and p.final_lives > 0
+            and p.is_resupplyable_at(second)
+        ],
+        movement_ctx,
+    )
     if not teammates:
         return None
     all_full = True

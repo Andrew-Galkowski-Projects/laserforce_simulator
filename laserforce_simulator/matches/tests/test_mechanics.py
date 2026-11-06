@@ -212,6 +212,45 @@ class TestChooseResupplyTarget:
         result = choose_resupply_target(ammo, [ammo, scout], 0.0)
         assert result is None
 
+    def test_a_los_filter_replaces_the_zone_rule(self):
+        medic = self._medic(current_zone=0)
+        far = self._scout(current_zone=2, final_lives=1)
+        near = self._scout(current_zone=0, final_lives=1)
+        seen_ctx = []
+
+        def only_far(actor, candidates, ctx):
+            seen_ctx.append((actor, ctx))
+            return [c for c in candidates if c is far]
+
+        ctx = object()
+        for _ in range(10):
+            result = choose_resupply_target(
+                medic, [medic, far, near], 0.0, ctx, los_filter=only_far
+            )
+            assert result is far
+        assert seen_ctx[0] == (medic, ctx)
+
+    def test_a_los_filter_that_keeps_nobody_gives_none(self):
+        medic = self._medic(current_zone=0)
+        scout = self._scout(current_zone=0, final_lives=1)
+        result = choose_resupply_target(
+            medic, [medic, scout], 0.0, los_filter=lambda actor, candidates, ctx: []
+        )
+        assert result is None
+
+    def test_a_los_filter_sees_only_living_resupplyable_teammates(self):
+        medic = self._medic(current_zone=0)
+        enemy = self._scout(team_color="blue", final_lives=1)
+        down = self._scout(final_lives=0)
+        offered = []
+
+        def spy(actor, candidates, ctx):
+            offered.extend(candidates)
+            return candidates
+
+        choose_resupply_target(medic, [medic, enemy, down], 0.0, los_filter=spy)
+        assert offered == []
+
 
 # ---------------------------------------------------------------------------
 # choose_zone_change

@@ -46,7 +46,8 @@ _HEAVY_DOWNED_MODE: dict[str, Mode] = {
 }
 #: The memory statuses the Heavy trigger reads as Downed (spec decision 27).
 _DOWNED_STATUSES: tuple[str, ...] = ("downed", "reset_window")
-#: Row 2 reads a sighting for this long: after one Down's length, that Down is over.
+#: A sighting of a Down counts for this long: after one Down's length, that Down is
+#: over. Row 2 reads it, and so do Attack targets and Trail costs.
 HEAVY_DOWN_WINDOW_TICKS: int = RESPAWN_TICKS
 
 # ── Trail avoidance (spec decisions 10, 22) ──────────────────────────────
@@ -114,14 +115,15 @@ def _shows_downed(entry: dict) -> bool:
     return entry.get("status", "active") in _DOWNED_STATUSES
 
 
+def _down_could_be_on(entry: dict, tick: float) -> bool:
+    """True within one Down's length of the sighting: after that, that Down is over."""
+    return tick - entry.get("timestamp", 0) <= HEAVY_DOWN_WINDOW_TICKS
+
+
 def _own_heavy_seen_downed(player, tick: float) -> bool:
     """True while a remembered Down of the own Heavy could still be going on."""
     entry = player.player_memory.get(f"{player.team_color}_heavy")
-    return (
-        entry is not None
-        and tick - entry.get("timestamp", 0) <= HEAVY_DOWN_WINDOW_TICKS
-        and _shows_downed(entry)
-    )
+    return entry is not None and _down_could_be_on(entry, tick) and _shows_downed(entry)
 
 
 def _team_is_losing(player) -> bool:
@@ -218,15 +220,16 @@ def _attack_targets(
     time_domain: str,
     exclude: set[str],
 ) -> list[tuple[str, Cell]]:
-    """``(role, cell)`` of the Medics and Ammos worth hunting. Only ``downed`` is out:
-    a player in ``reset_window`` can still be hunted (spec decision 27)."""
+    """``(role, cell)`` of the Medics and Ammos worth hunting. Only ``downed`` is out,
+    and only for as long as a Down lasts: a player in ``reset_window`` can still be
+    hunted (spec decision 27)."""
     return [
         (entry["role"], _remembered_cell(entry))
         for tag, entry in _fresh_enemies(
             player, all_alive, enemy_color, tick, time_domain
         )
         if entry.get("role") in _ATTACK_TARGET_VALUES
-        and entry.get("status") != "downed"
+        and not (entry.get("status") == "downed" and _down_could_be_on(entry, tick))
         and tag not in exclude
     ]
 
@@ -495,8 +498,9 @@ def trail_costs(
     player: PlayerState, all_alive: list, tick: float, time_domain: str = "ticks"
 ) -> dict[Cell, float]:
     """The route cost of each cell in the open Trail of an enemy in *all_alive* the
-    player freshly remembers as Downed. Trails that overlap cost the same as one,
-    so the order of *all_alive* cannot change the result. No RNG."""
+    player freshly remembers as Downed, within one Down's length of that sighting.
+    Trails that overlap cost the same as one, so the order of *all_alive* cannot
+    change the result. No RNG."""
     costs: dict[Cell, float] = {}
     for other in all_alive:
         if other.team_color == player.team_color:
@@ -505,6 +509,10 @@ def trail_costs(
         if trail is None:
             continue
         entry = _fresh_entry(player, other.tag_id_key, tick, time_domain)
-        if entry is not None and _shows_downed(entry):
+        if (
+            entry is not None
+            and _shows_downed(entry)
+            and _down_could_be_on(entry, tick)
+        ):
             costs.update(dict.fromkeys(trail.band, TRAIL_COST))
     return costs

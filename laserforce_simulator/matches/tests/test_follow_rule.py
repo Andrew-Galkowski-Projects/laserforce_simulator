@@ -332,13 +332,19 @@ class TestEngineRefusesBarredTags(_Barred):
         self.assertIs(missiles[0]["target"], other)
 
     def test_tag_goal_skips_the_chased_player(self) -> None:
-        from types import SimpleNamespace
-
         from matches.sim_helpers.pathfinding import _goal_from_action
 
-        ctx: Any = SimpleNamespace(cell_los_counts={})
         far = _ps("blue_heavy", "blue", (20, 30))
         self.chaser.cell_row, self.chaser.cell_col = (12, 11)
+        # MECH-17: goals read memory only, so both are remembered, and the Chased
+        # player is the nearer. OPEN has no sight data, so the goal is the target's
+        # cell. The invariant is unchanged: a Chaser's Tag goal skips who they Chased.
+        for player, cell in ((self.downed, (12, 12)), (far, (20, 30))):
+            self.chaser.player_memory[player.tag_id_key] = {
+                "cell": cell,
+                "timestamp": self.tick,
+                "role": "heavy",
+            }
         goal = _goal_from_action(
             self.chaser,
             [self.downed, far, self.chaser],
@@ -346,7 +352,7 @@ class TestEngineRefusesBarredTags(_Barred):
             12,
             11,
             "tag_player",
-            ctx,
+            OPEN,
             self.tick,
             "ticks",
         )
