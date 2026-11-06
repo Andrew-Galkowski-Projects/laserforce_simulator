@@ -291,14 +291,7 @@ ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker front do
 template removal (ANG-08: the SPA is served at /, ADR-0047) and Django serving the SPA in every
 deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 
-**Current — simulation behaviour** (owner, 2026-11-04), in order, ahead of the SM5 talk
-follow-ups:
-
-```
-MECH-17          Action-choice sweep (MECH-07 decision 8)  <- NOW
-```
-
-**Next — SM5 talk follow-ups** (from LFS-02's proposal), in order:
+**Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
 
 ```
 SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)
@@ -312,7 +305,7 @@ items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are 
 Angular.
 
 - **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-16, MOVE-05, SIM-13, SIM-14,
-  CAL-01 (MECH-17 is scheduled above).
+  CAL-01.
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -673,118 +666,11 @@ obligations for those. **Locked (grilled 2026-06-25):** **tune** the existing ac
 weights / hit-chance / movement constants to converge on the targets; keep the 19-stat
 model + role MVP/weight formulas as-is for now. The **deeper rework** the user wants
 scheduled later — revisiting action selection, movement selection, and goal selection
-themselves — shipped for goals and movement in `MECH-07`, and continues in `MECH-17` below for
-actions; do that only if calibration tuning alone cannot hit the targets.
+themselves — shipped for goals and movement in `MECH-07`, and for actions in `MECH-17`.
 
 MECH-07 (Role-aware action / movement / goal-selection rework) is **[DONE]**; see `PLAN-completed.md`.
 
-### MECH-17 · Action-choice sweep
-
-Spec: #550
-
-Moved out of MOVE-07 by MECH-07's decision 8, to run right after MECH-07. **Full sweep of the
-action-choice logic.** Review the weighted **Action** selection end to end (weights, role scripts,
-carry-over of hide / hold, how memory and comms feed in) for flat or unrealistic behaviour, and fix
-what the sweep finds. It overlaps `MECH-14`; settle in this task's grill whether it absorbs that
-task or stays a sweep that feeds it. MECH-07 added only the small per-Mode weight table.
-
-**Leads from MECH-07's probe (2026-11-05, decisions 29-30).** Over 12 rounds, positioning sets about
-25% of a Medic's goals and 28% of an Ammo's, against 48% and 50% from action goals, so Mode goals reach
-supports only part of the time; how Mode should shape action goals and `hide` is the first thing to
-look at. Commanders ended further from enemy
-Medics and Ammos than before (20.7 to 23.7 squares) after losing their true-state Medic hunt. One
-scratch variant limiting Defense candidates to 40 ft of the Heavy, combined with the Heavy trigger
-window, gave Ammo 11.7, Heavy 19.9 and Scout 20.2 squares over 12 rounds; that is 1-2 squares and may
-be noise, so it needs more rounds before anyone relies on it.
-
-**Left alone in MECH-07's review (owner, 2026-11-05):**
-- A Heavy that drops to 50% mid-walk finishes its held goal before heading to its Medic or Ammo, unless
-  an action goal takes over or it hits the 30% override. Decision 18 and held goals pull against each
-  other here; SM5-03 replaces the override.
-- Two reads still use the full staleness table, though a Down lasts 16 ticks. Attack skips a Medic or
-  Ammo seen `downed` for up to 120 ticks unless re-sighted (`modes._attack_targets`), which may help
-  explain the Attack distances (not measured). An old `downed` entry can also charge for a later Trail
-  the player never saw (`modes.trail_costs`). Changing them means re-probing goal sharing, now 14.5%.
-
-**Baseline probe (2026-11-05, Syracuse fixture, default stats, seeds 1-12).** No live base capture in
-any round: bases score only through the round-end award. `capture_base` is 33% of a Commander's Active
-rolls and 12% of a Heavy's or Scout's, and each one holds the player still, because the weight reads the
-coarse `current_zone` while a capture needs a base-range cell. Red's 6 base-range cells sit in a pocket
-cut off from the floor. A Medic hides on 72% of its Active ticks, 17 ticks at a stretch. A Hold lasts
-1.05 to 1.13 ticks. Rolls planning nothing: tag 50-60%, missile 77-82%, resupply 77-90%. Scratch variants:
-gating the capture weight on real range took the Commander from 37.8% to 15.8% still and 24.0 to 20.6
-squares, but took Ammo from 3072 to 1723 points and goal sharing from 14.6% to 18.9%. Ending a hide on any
-resupply or move roll took the Medic's Not Active from 58.6% to 67.4% and its squares to the Heavy from
-17.1 to 20.1, so hiding is protecting it.
-
-**Grill decisions (owner, 2026-11-05, round 1):**
-1. Scope: a sweep of the existing logic. It feeds MECH-14 and builds no new behaviour. SM5-03 keeps the
-   30% retreat rule and resource bands, SM5-07 keeps nuke reactions, SM5-08 keeps pace (`only_move`), and
-   CAL-01 keeps score tuning and the Down rate, which this task only reports before and after.
-2. Live base captures are real on map rounds: the capture weight fires only in range of a base the player
-   can capture, and players get a way to walk to one. Map-less rounds keep their zone logic.
-3. Repair red's cut-off base on the Syracuse fixture here, after checking how the cells are made.
-4. Hiding becomes conditional: hide under threat or with nobody needing a Resupply, and leave a hide to
-   walk to an ally who needs one. Judge it on Medic Not Active % and squares to the Heavy together.
-5. A Hold becomes a real commitment of about 6 ticks, ending early on a Down, length tuned by probe.
-6. Actions with no valid target leave the draw, prototyped as a scratch variant first and adopted only if
-   the numbers hold; otherwise written down as a dropped lead.
-7. Action logic stops reading true enemy state (the tag goal's fallback, the nuke's enemies-in-zone count).
-   Ally reads stay until MECH-14.
-8. `modes._attack_targets` and `modes.trail_costs` use the 16-tick Down window; re-probe goal sharing.
-9. `round_probe` gains per-Role Action shares, empty-roll %, Still % and Hold run length. Targets over seeds
-   1-12 with per-seed spread: live captures above 0 for both teams; Commander Still 20% or less (37.8) and
-   squares to target 21 or less (24.0); Medic Still 40% or less (71.9), squares to the Heavy 14 or less
-   (17.1), Not Active no worse than 60% (58.6); Hold run 4 ticks or more (about 1.1); goal sharing mean 15%
-   or less (14.6, per seed 9.3-24.0).
-10. No new models or migrations (transient `PlayerState` fields only), no API or Account changes, seeded
-    outcomes change and CAL-01 absorbs them, new draws stay on the seeded RNG in the shuffle order, and the
-    stale role baseline table in `sim-helpers.md` gets fixed.
-
-**Prototypes behind round 2 (2026-11-05, each on the capture gate, same seeds).** Commander tags per round /
-Commander squares / Medic resupplies per round / Medic squares / goal sharing %: capture gate alone 158 /
-20.6 / 68.5 / 19.0 / 18.9; empty rolls set no goal 35 / 51.9 / 42.8 / 20.6 / 2.8; empty actions leave the
-draw 0 / 91.6 / 18.8 / 12.7 / 0.2; true-state tag fallback removed 138 / 30.0 / 60.1 / 18.1 / 15.8; Resupply
-needs line of sight 125 / 17.3 / 40.5 / 9.7 / 30.6. **Lead for CAL-01 and MECH-14:** tag-roll goals are what
-bring players together; on Mode goals alone they end about 50 squares apart.
-
-**Grill decisions (owner, 2026-11-05, round 2):**
-11. Decision 6 is dropped by its own rule: empty actions stay in the draw and keep setting action goals.
-12. Base routes: a Commander with 3+ shots heads for its nearest uncaptured base from the round's start until
-    it has taken both. Heavies and Scouts in Control get a value bonus on neutral base cells too. Medics and
-    Ammos never walk to a base but may capture if in range. The capture weight also needs 3+ shots for roles
-    that pay them.
-13. Capture rules stay: per player, per base, instant, 3 shots, 1001 points, and the round-end award.
-14. Amends 3: the repair goes in `map_loader`, beside `reachable_spawn_pools`. A base with no main-floor range
-    cell gets the same number of main-floor cells nearest to it.
-15. Reopens 7: with no remembered enemy, the tag goal walks to the existing default goal (a drawn floor cell
-    near the enemy base) instead of reading true cells. If that misses the Commander target, come back to the
-    owner. The nuke's enemy count moves to memory.
-16. Tag and resupply goals become a drawn cell that can see the target, not the target's cell. The 15% goal
-    sharing test stays. If it cannot be met, come back to the owner.
-17. A Resupply on a map round needs line of sight. Map-less rounds keep the zone rule.
-18. Amends 9: Medic Not Active limit is 70%, a guardrail flagged to CAL-01.
-19. Refines 4: threat = a fresh memory of an enemy that can see the player's cell. "Nobody needs me" allows a
-    hide only once a support reached its goal. A support leaves a hide when any ally is at or below 75% of its
-    resource; for other roles an `only_move` roll ends it.
-20. Refines 5: a Hold skips the Action draw, and ends at its length, on a Down, when out of shots or on a nuke
-    reaction. Hold weights drop so time in Hold stays near today's 5-11% of Active ticks.
-21. Adds to 9: `round_probe` also reports tags, resupplies and captures per round. Minimum tags: Commander 100
-    (baseline 126), Heavy 100 (138), Scout 80 (92), with a committed test on Commander tags.
-22. The changes interact and were measured one at a time, so every target is checked on the finished branch.
-    A miss goes back to the owner with the numbers, not retuned quietly.
-23. Amends 21: the minimum tags are collapse floors near real shots fired, not realism targets: Commander 80,
-    Heavy 60, Scout 70. Decision 21's numbers came from the simulator's own baseline, and LFStats shows real
-    players fire fewer (table under CAL-01). The final report also gives `tags_made`, the number that compares
-    to LFStats' shots hit. Realism goes to CAL-01.
-24. Amends 19: a support is "needed" for hiding at or below 50% of its resource, in its own constant. The Defense
-    Resupply line stays 75%. At 75% a Medic could almost never hide.
-25. Accepted misses, with the numbers on #550: Commander Still, Commander squares and Medic Not Active, sent to CAL-01
-    with Medic eliminations.
-26. Amends 21: the engagement guard reads Scout planned Shots over seeds 1-4, at the Scout floor of 70. A Commander's
-    Base goal hides the bug on Commanders.
-27. Amends 5: a Hold lasts 7 ticks, with Hold baselines Commander 3, Heavy 4, Scout 3, Ammo 3, tuned by probe to meet
-    the Hold targets. Map-less rounds keep the old weights.
+MECH-17 (Action-choice sweep) is **[DONE]**; see `PLAN-completed.md`.
 
 ---
 
