@@ -25,6 +25,7 @@ from matches.round_probe import (
 from matches.sim_helpers.map_loader import load_map_context
 from matches.sim_helpers.modes import Mode
 from matches.sim_helpers.player_state import PlayerState
+from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
 from matches.simulation import BatchSimulator, entrypoints
 from teams.models import Player, Team
 
@@ -99,8 +100,9 @@ class TestRunProbeTotals(SimpleTestCase):
             return SimpleNamespace(
                 role="scout",
                 mode_ticks={Mode.ATTACK: attack, Mode.CONTROL: 100 - attack},
-                counters=SimpleNamespace(points_scored=points),
+                counters=SimpleNamespace(points_scored=points, tags_made=0),
                 ticks_active=active,
+                was_eliminated_at=SURVIVED_SENTINEL,
             )
 
         seeds_played = []
@@ -171,7 +173,12 @@ def _tick(
 
 
 def _scripted(
-    *ticks: SimpleNamespace, role: str = "scout", team: str = "red", points: int = 0
+    *ticks: SimpleNamespace,
+    role: str = "scout",
+    team: str = "red",
+    points: int = 0,
+    tags_made: int = 0,
+    eliminated_at: int = SURVIVED_SENTINEL,
 ) -> SimpleNamespace:
     """A finished player whose ``plan_action`` calls follow ``ticks``."""
     return SimpleNamespace(
@@ -183,8 +190,9 @@ def _scripted(
         is_holding=False,
         last_chosen_action="",
         mode_ticks={},
-        counters=SimpleNamespace(points_scored=points),
+        counters=SimpleNamespace(points_scored=points, tags_made=tags_made),
         ticks_active=sum(1 for step in ticks if step.active),
+        was_eliminated_at=eliminated_at,
     )
 
 
@@ -570,6 +578,57 @@ class TestRunProbe(TestCase):
                 self.assertEqual(set(roles), _ROLES)
 
 
+class TestOutcomes(SimpleTestCase):
+    """What landed, beside what was planned: the numbers real play is compared with."""
+
+    def test_tags_made_is_per_player_round(self) -> None:
+        result = _probe_scripted(
+            [_scripted(_tick(), tags_made=30), _scripted(_tick(), tags_made=10)]
+        )
+        self.assertEqual(result.roles["scout"].tags_made_per_round, 20)
+
+    def test_eliminated_share_counts_the_player_rounds_that_ended_out(self) -> None:
+        result = _probe_scripted(
+            [
+                _scripted(_tick(), eliminated_at=600),
+                _scripted(_tick()),
+                _scripted(_tick(), eliminated_at=1000),
+                _scripted(_tick()),
+            ]
+        )
+        scout = result.roles["scout"]
+        self.assertEqual(scout.eliminated_share, 0.5)
+        self.assertEqual(scout.elimination_tick, 800)
+
+    def test_with_no_elimination_there_is_no_tick(self) -> None:
+        result = _probe_scripted([_scripted(_tick())])
+        self.assertEqual(result.roles["scout"].eliminated_share, 0.0)
+        self.assertIsNone(result.roles["scout"].elimination_tick)
+
+    def test_they_print_per_role(self) -> None:
+        lines = format_result(
+            _probe_scripted(
+                [_scripted(_tick(), tags_made=30, eliminated_at=600)],
+                [_scripted(_tick(), tags_made=10, eliminated_at=1000)],
+            )
+        )
+        self.assertIn("  Tags made per round: 20.0 +/- 10.0 (10.0-30.0)", lines)
+        self.assertIn("  Eliminated %: 100.0 +/- 0.0 (100.0-100.0)", lines)
+        self.assertIn("  Elimination tick: 800 +/- 200 (600-1000)", lines)
+
+    def test_a_seed_with_no_elimination_is_left_out_of_the_tick(self) -> None:
+        lines = format_result(
+            _probe_scripted(
+                [_scripted(_tick(), eliminated_at=600)], [_scripted(_tick())]
+            )
+        )
+        self.assertIn("  Elimination tick: 600 +/- 0 (600-600)", lines)
+
+    def test_a_role_nobody_eliminated_prints_none(self) -> None:
+        lines = format_result(_probe_scripted([_scripted(_tick())]))
+        self.assertIn("  Elimination tick: none", lines)
+
+
 class TestFormatResult(SimpleTestCase):
     def _lines(self) -> list[str]:
         low = _scripted(_tick("hold", holding=True), _tick(), points=100)
@@ -584,17 +643,37 @@ class TestFormatResult(SimpleTestCase):
         high.mode_ticks = {Mode.ATTACK: 10, Mode.CONTROL: 30}
         return format_result(_probe_scripted([low], [high]))
 
-    def test_measures_print_the_pooled_mean_and_the_seed_range(self) -> None:
+    def test_measures_print_the_pooled_mean_its_standard_error_and_the_range(
+        self,
+    ) -> None:
+        # The standard error is the seeds' sample deviation over the root of their count.
         lines = self._lines()
-        self.assertIn("  Mean points: 200 (100-300)", lines)
-        self.assertIn("  Hold %: 66.7 (50.0-75.0)", lines)
-        self.assertIn("  Hold run, ticks: 2.0 (1.0-3.0)", lines)
-        self.assertIn("  Still %: 83.3 (50.0-100.0)", lines)
+        self.assertIn("  Mean points: 200 +/- 100 (100-300)", lines)
+        self.assertIn("  Hold %: 66.7 +/- 12.5 (50.0-75.0)", lines)
+        self.assertIn("  Hold run, ticks: 2.0 +/- 1.0 (1.0-3.0)", lines)
+        self.assertIn("  Still %: 83.3 +/- 25.0 (50.0-100.0)", lines)
+
+    def test_one_seed_has_a_standard_error_of_nothing(self) -> None:
+        lines = format_result(_probe_scripted([_scripted(_tick(), points=100)]))
+        self.assertIn("  Mean points: 100 +/- 0 (100-100)", lines)
+
+    def test_goal_sharing_prints_its_standard_error(self) -> None:
+        result = ProbeResult(
+            roles={},
+            sharing_by_seed={1: 0.1, 2: 0.3},
+            by_seed={},
+            team_captures_by_seed={1: {"red": 0, "blue": 0}},
+        )
+        self.assertIn(
+            "Goal sharing %: mean 20.0 +/- 10.0, min 10.0, max 30.0, "
+            "1 of 2 rounds at 15 or more",
+            format_result(result),
+        )
 
     def test_existing_measures_print_the_range_too(self) -> None:
         lines = self._lines()
-        self.assertIn("  Not Active %: 99.8 (99.8-99.9)", lines)
-        self.assertIn("  Squares to enemy Medic/Ammo: 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Not Active %: 99.8 +/- 0.1 (99.8-99.9)", lines)
+        self.assertIn("  Squares to enemy Medic/Ammo: 0.0 +/- 0.0 (0.0-0.0)", lines)
         self.assertIn(
             "  Goals %: action 0.0 (0.0-0.0), positioning 0.0 (0.0-0.0), "
             "override 0.0 (0.0-0.0)",
@@ -623,9 +702,9 @@ class TestFormatResult(SimpleTestCase):
 
     def test_per_round_counts_name_what_they_count(self) -> None:
         lines = self._lines()
-        self.assertIn("  Tags per round (planned Shots): 0.0 (0.0-0.0)", lines)
-        self.assertIn("  Resupplies per round (planned): 0.0 (0.0-0.0)", lines)
-        self.assertIn("  Live captures per round: 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Tags per round (planned Shots): 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Resupplies per round (planned): 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Live captures per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
 
     def test_live_captures_print_per_team(self) -> None:
         result = _probe_captures(
@@ -649,7 +728,7 @@ class TestFormatResult(SimpleTestCase):
                 _scripted(_tick(), role="medic", points=50),
             ],
         )
-        self.assertIn("  Mean points: 50 (50-50)", format_result(result))
+        self.assertIn("  Mean points: 50 +/- 0 (50-50)", format_result(result))
 
 
 class TestRoundProbeCommand(TestCase):
@@ -674,6 +753,8 @@ class TestRoundProbeCommand(TestCase):
             "Still %",
             "Hold run, ticks",
             "Tags per round",
+            "Tags made per round",
+            "Eliminated %",
             "Resupplies per round",
             "Live captures per round: red",
         ):

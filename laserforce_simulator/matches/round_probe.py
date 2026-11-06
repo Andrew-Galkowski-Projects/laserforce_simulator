@@ -2,8 +2,8 @@
 
 The numbers behind a simulation behaviour decision, ``round_probe``'s engine: per
 Role the time in each Mode, where goals come from, the time not Active, the distance
-to the Role's target, mean points, and what the Role does with its Actions, plus goal
-sharing per seed. Each measure is pooled over the seeds and kept per seed. Serial and
+to the Role's target, mean points, what the Role does with its Actions, Tags made and
+Eliminations, plus goal sharing per seed. Each measure is pooled over the seeds and kept per seed. Serial and
 read-only: it observes ``plan_action`` and ``choose_goal_cell`` without drawing from
 the RNG, so a seed plays the same round as it would unobserved.
 """
@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from matches.sim_helpers.combat import _CHOICES
+from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
 from matches.simulation import BatchSimulator, entrypoints
 from matches.simulation.entrypoints import _SIMULATION_STATS, _PlayerData
 from teams.models import Player
@@ -51,8 +52,12 @@ class RoleMeasures:
     hold_share: float
     hold_run: float
     tags_per_round: float
+    tags_made_per_round: float
     resupplies_per_round: float
     captures_per_round: float
+    eliminated_share: float
+    # The mean tick of the player-rounds that ended Eliminated; None with none.
+    elimination_tick: float | None
 
 
 @dataclass(frozen=True)
@@ -81,8 +86,10 @@ class _RoleTally:
     hold_ticks: int = 0
     hold_runs: list[int] = field(default_factory=list)
     tag_plans: int = 0
+    tags_made: int = 0
     resupply_plans: int = 0
     captures: int = 0
+    elimination_ticks: list[int] = field(default_factory=list)
 
     def add(self, other: _RoleTally) -> None:
         self.modes.update(other.modes)
@@ -97,8 +104,10 @@ class _RoleTally:
         self.hold_ticks += other.hold_ticks
         self.hold_runs += other.hold_runs
         self.tag_plans += other.tag_plans
+        self.tags_made += other.tags_made
         self.resupply_plans += other.resupply_plans
         self.captures += other.captures
+        self.elimination_ticks += other.elimination_ticks
 
 
 def goal_sharing_share(goals_by_team_tick: Mapping) -> float:
@@ -175,8 +184,15 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
         hold_share=_ratio(tally.hold_ticks, active_rolls),
         hold_run=_ratio(sum(tally.hold_runs), len(tally.hold_runs)),
         tags_per_round=tally.tag_plans / tally.player_rounds,
+        tags_made_per_round=tally.tags_made / tally.player_rounds,
         resupplies_per_round=tally.resupply_plans / tally.player_rounds,
         captures_per_round=tally.captures / tally.player_rounds,
+        eliminated_share=len(tally.elimination_ticks) / tally.player_rounds,
+        elimination_tick=(
+            sum(tally.elimination_ticks) / len(tally.elimination_ticks)
+            if tally.elimination_ticks
+            else None
+        ),
     )
 
 
@@ -307,8 +323,11 @@ def run_probe(movement_ctx, seeds: Iterable[int]) -> ProbeResult:
                     {str(mode): n for mode, n in player.mode_ticks.items()}
                 )
                 tally.points.append(player.counters.points_scored)
+                tally.tags_made += player.counters.tags_made
                 tally.ticks_active += player.ticks_active
                 tally.player_rounds += 1
+                if player.was_eliminated_at < SURVIVED_SENTINEL:
+                    tally.elimination_ticks.append(player.was_eliminated_at)
             tallies_by_seed[seed] = tallies
     finally:
         entrypoints.choose_goal_cell = real_choose

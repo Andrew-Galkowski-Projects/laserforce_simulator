@@ -266,6 +266,61 @@ class RunAnyCommandTests(TestCase):
         self.assertEqual(outcome.failed, ["a.spec.ts > A > b"])
 
 
+class MeasureTests(TestCase):
+    """``--measure``: print what a command reports on the unchanged file and under each
+    mutation, for a seeded score a test's pass or fail would hide."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.target = self.root / "calc.py"
+        self.target.write_bytes(_CALC)
+        self.mutations = self.root / "mutations.json"
+        self.mutations.write_text(json.dumps([["plus to minus", "a + b", "a - b"]]))
+
+    def _main(self, *command: str) -> tuple[str, int]:
+        out = io.StringIO()
+        code = 0
+        with contextlib.chdir(self.root), contextlib.redirect_stdout(out):
+            try:
+                mutate.main(
+                    [str(self.target), str(self.mutations), "--measure", "--", *command]
+                )
+            except SystemExit as stop:
+                code = int(stop.code or 0)
+        return out.getvalue(), code
+
+    def test_it_prints_the_baseline_and_each_mutation_and_exits_0(self) -> None:
+        check = "import calc; print('score', calc.add(2, 3))"
+        printed, code = self._main(sys.executable, "-c", check)
+        self.assertEqual(code, 0)
+        self.assertIn("=== baseline\nscore 5", printed)
+        self.assertIn("=== plus to minus\nscore -1", printed)
+        self.assertNotIn("SURVIVED", printed)
+        self.assertEqual(self.target.read_bytes(), _CALC)
+
+    def test_a_command_failing_under_a_mutation_is_named_and_exits_1(self) -> None:
+        check = "import sys, calc; print('score'); sys.exit(calc.add(2, 3) != 5)"
+        printed, code = self._main(sys.executable, "-c", check)
+        self.assertEqual(code, 1)
+        self.assertIn("=== plus to minus (FAILED)\nscore", printed)
+
+    def test_a_command_failing_on_the_unchanged_file_exits_2(self) -> None:
+        printed, code = self._main(
+            sys.executable, "-c", "import sys; print('boom'); sys.exit(1)"
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("BASELINE FAILED", printed)
+        self.assertIn("boom", printed)
+
+    def test_a_missing_pattern_is_reported_and_exits_1(self) -> None:
+        self.mutations.write_text(json.dumps([["gone", "not in the file", "x"]]))
+        printed, code = self._main(sys.executable, "-c", "print('score')")
+        self.assertEqual(code, 1)
+        self.assertIn("=== gone (NOT FOUND)", printed)
+
+
 class FailedTestsTests(TestCase):
     def test_reads_vitest_fail_lines(self) -> None:
         output = (

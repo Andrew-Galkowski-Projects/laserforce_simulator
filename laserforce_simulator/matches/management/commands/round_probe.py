@@ -7,6 +7,8 @@ transaction, so nothing is written. Run it on two checkouts to compare them: see
 
 from __future__ import annotations
 
+from math import sqrt
+from statistics import stdev
 from typing import Any, Callable, Iterable
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
@@ -32,16 +34,39 @@ def _percent_spread(share: float, per_seed: Iterable[float]) -> str:
     return _spread(share * 100, [value * 100 for value in per_seed])
 
 
+def _standard_error(per_seed: list[float]) -> float:
+    """How far the mean of these seeds could move by chance; 0.0 with one seed."""
+    return stdev(per_seed) / sqrt(len(per_seed)) if len(per_seed) > 1 else 0.0
+
+
+def _margin_spread(mean: float, per_seed: list[float], form: str = ".1f") -> str:
+    """``mean +/- standard error (min-max)``, for a measure a target can read."""
+    return (
+        f"{mean:{form}} +/- {_standard_error(per_seed):{form}} "
+        f"({min(per_seed):{form}}-{max(per_seed):{form}})"
+    )
+
+
 def _role_lines(
     role: str, pooled: RoleMeasures, seeds: list[RoleMeasures]
 ) -> list[str]:
     """One Role's block. ``seeds`` holds its measures in each seed it played."""
 
     def number(read: Callable[[RoleMeasures], float], form: str = ".1f") -> str:
-        return _spread(read(pooled), [read(seed) for seed in seeds], form)
+        return _margin_spread(read(pooled), [read(seed) for seed in seeds], form)
 
     def percent(read: Callable[[RoleMeasures], float]) -> str:
-        return _percent_spread(read(pooled), [read(seed) for seed in seeds])
+        return _margin_spread(read(pooled) * 100, [read(seed) * 100 for seed in seeds])
+
+    # A seed nobody was Eliminated in has no tick to range over.
+    elimination_ticks = [
+        seed.elimination_tick for seed in seeds if seed.elimination_tick is not None
+    ]
+    elimination_tick = (
+        "none"
+        if pooled.elimination_tick is None
+        else _margin_spread(pooled.elimination_tick, elimination_ticks, ".0f")
+    )
 
     modes = ", ".join(
         f"{mode} "
@@ -86,9 +111,12 @@ def _role_lines(
         f"  Hold %: {percent(lambda m: m.hold_share)}",
         f"  Hold run, ticks: {number(lambda m: m.hold_run)}",
         f"  Tags per round (planned Shots): {number(lambda m: m.tags_per_round)}",
+        f"  Tags made per round: {number(lambda m: m.tags_made_per_round)}",
         f"  Resupplies per round (planned): "
         f"{number(lambda m: m.resupplies_per_round)}",
         f"  Live captures per round: {number(lambda m: m.captures_per_round)}",
+        f"  Eliminated %: {percent(lambda m: m.eliminated_share)}",
+        f"  Elimination tick: {elimination_tick}",
     ]
 
 
@@ -100,8 +128,9 @@ def _team_captures(result: ProbeResult, team: str) -> str:
 def format_result(result: ProbeResult) -> list[str]:
     """The probe's numbers as ASCII lines, one block per Role, then the team-wide ones.
 
-    Each measure reads ``mean (min-max)``: the mean pools every seed, the range is
-    across the seeds.
+    Each measure reads ``mean (min-max)``, or ``mean +/- standard error (min-max)`` for
+    one a target can read: the mean pools every seed, the range and the standard error
+    are across the seeds.
     """
     lines = []
     for role, pooled in result.roles.items():
@@ -113,7 +142,8 @@ def format_result(result: ProbeResult) -> list[str]:
     )
     shares = list(result.sharing_by_seed.values())
     lines.append(
-        f"Goal sharing %: mean {_percent(sum(shares) / len(shares))}, "
+        f"Goal sharing %: mean {_percent(sum(shares) / len(shares))} "
+        f"+/- {_percent(_standard_error(shares))}, "
         f"min {_percent(min(shares))}, max {_percent(max(shares))}, "
         f"{sum(1 for share in shares if share >= 0.15)} of {len(shares)} rounds "
         "at 15 or more"
