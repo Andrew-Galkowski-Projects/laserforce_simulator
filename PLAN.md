@@ -636,6 +636,22 @@ pytest marker run in a non-blocking CI job.
 share of ticks a player is not Active: Scout 64.4%, Heavy 62.8%, Commander 55.6%, Ammo 52.7%,
 Medic 34.2%. That limits how far Modes can move players, so it is worth settling before Mode tuning.
 
+**Compare shots and time not Active with LFStats (owner, MECH-17, 2026-11-05).** Sim numbers are
+planned Shots on seeded Syracuse rounds with default stats, partway through MECH-17, so re-measure them.
+Real numbers are LFStats SM5, last 365 days, players with 10+ games at the position. Real shots fired is
+estimated as average shots hit / average accuracy, as LFStats has no shots-fired average.
+
+| Role | Real shots fired | Sim planned Shots | Real not Active | Sim not Active |
+|---|---|---|---|---|
+| Commander | about 83 | 93.3 | 50% | 55.8% |
+| Heavy | about 62 | 84.9 | 46% | 59.4% |
+| Scout | about 71 | 87.7 | 51% | 65.3% |
+| Ammo | about 93 | 33.0 | 39% | 61.1% |
+| Medic | about 69 | 7.1 | 25% | 60.8% |
+
+The biggest gaps are support shots (Ammo about a third of real, Medic about a tenth) and time not Active.
+Check first that a planned Shot means a shot fired, and that the two not-Active definitions match.
+
 **Prio: Medium (found 2026-06-25).** Rebase the map-model average scores toward the
 documented **Score Calibration Targets** (Commander 9,952 / Heavy 6,482 / Scout
 5,102 / Ammo 3,242 / Medic 2,282 — `docs/agents/matches/simulation-engine.md`). This is the long-pending
@@ -745,6 +761,10 @@ bring players together; on Mode goals alone they end about 50 squares apart.
     (baseline 126), Heavy 100 (138), Scout 80 (92), with a committed test on Commander tags.
 22. The changes interact and were measured one at a time, so every target is checked on the finished branch.
     A miss goes back to the owner with the numbers, not retuned quietly.
+23. Amends 21: the minimum tags are collapse floors near real shots fired, not realism targets: Commander 80,
+    Heavy 60, Scout 70. Decision 21's numbers came from the simulator's own baseline, and LFStats shows real
+    players fire fewer (table under CAL-01). The final report also gives `tags_made`, the number that compares
+    to LFStats' shots hit. Realism goes to CAL-01.
 
 ---
 
