@@ -173,11 +173,22 @@ section that carries it. A decision with no section is a missing Implementation
 Decision: DESK-03's spec named the no-WebView2 fallback but not decision 2's
 "pywebview raises" case, and the ticket shipped an exit-1 box there.
 
-A criterion measured over seeded rounds states its number, its seeds and its per-seed
-spread, taken from a baseline `round_probe` before the spec is published
+A criterion measured over seeded rounds states its number, its seeds, its per-seed
+spread and its standard error, taken from a baseline `round_probe` before the spec is published
 (`matches/management/commands/CLAUDE.md`). MECH-07's decision 13 said "closer", and all
 four tickets were built before anyone saw that three distances missed, that goal sharing
 swings from 9% to 24% per round, or that players are not Active on 34-64% of ticks.
+
+A target on anything LFStats measures (shots, uptime, Eliminations, Resupplies) states the
+real value beside it, or says it is only a collapse floor. Read per-role averages from the
+`baseline` of `lfstats_player_stats` with a `position` breakdown (it needs some player's
+name; that player is left out of the baseline). MECH-17's tag targets came from the sim's own
+numbers, and three tickets read them as misses when real players fire fewer shots.
+
+Every new rule a target depends on gets one prototype run on the fixture map before the spec
+is published. MECH-17's search toward the enemy base was unmeasured and did nothing on
+Syracuse, whose base cells are in walls: two rounds in 12 planned no Shots from Commanders,
+Heavies or Scouts, and the ticket had to depart from the spec.
 
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
@@ -191,7 +202,9 @@ mutation runs costs about 160k tokens (ANG-06-10: one screen per ticket, 157k
 and 170k), so count screens before dividing. A ticket that adds API fields, a
 service and shared helpers before its screen costs about 230k (ANG-06-17a: 233k
 for one small screen). A link-wiring ticket that also changes the seed costs
-about 200k (ANG-06-18g: 217k across five screens' specs and the seed tests).
+about 200k (ANG-06-18g: 217k across five screens' specs and the seed tests). An
+engine ticket with probe runs and suite triage costs about 300k and an hour (MECH-17: 286k
+to 366k).
 Deletion and docs-sweep tickets: `special-tasks.md`. A
 task small enough for one session gets one ticket.
 Don't pad.
@@ -308,8 +321,7 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    failures and the count line) and, when `docker info` succeeds, on Postgres
    (`docker start lf-test-pg`, then `python scripts/run_suite.py --postgres`), plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
-   Run `run_suite.py` in the foreground (about 70 s on SQLite, 130 s on Postgres,
-   inside the 600 s limit): a background run can be stopped for low memory while
+   Run `run_suite.py` in the foreground, with a 600 s timeout: a background run can be stopped for low memory while
    the session waits (DESK-03 lost one).
    When `frontend/` changed, run `test:ci` as `port-and-frontend.md` *Verify* says.
    **Python-free diff:** when
@@ -337,7 +349,9 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    never, and nothing ran; make it unique. Each run is killed after `--timeout`
    seconds (300): `TIMEOUT` counts as caught; `BASELINE TIMED OUT` means the
    tests are too slow to mutate, so narrow them (LFS-01 sat 2 h on one mutant
-   that sent a test into a real search before the limit existed).
+   that sent a test into a real search before the limit existed). For a seeded
+   score, `--measure -- <command>` prints the numbers on the unchanged code and
+   under each mutation.
    Frontend code mutates as `port-and-frontend.md` *Verify* says.
 3. **Browser check** when anything a person sees changed, and an endpoint check
    for an API-only task: follow `browser-check.md`. A Desktop App change checks

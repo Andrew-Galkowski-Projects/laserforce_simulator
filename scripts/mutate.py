@@ -28,6 +28,18 @@ Usage::
 with ``NO_COLOR=1``. Failed tests are read from pytest's ``FAILED``, ``ERROR``
 (a fixture that failed for one test) and ``SUBFAIL`` (a failing ``subTest``)
 lines and Vitest's ``FAIL`` lines.
+
+``--measure`` is ``--run`` for a seeded score, where a test's pass or fail would hide
+the number. It gives no verdict: it prints the command's output on the unchanged file
+and under each mutation, and exits 1 when a mutated run fails or its pattern is missing
+or ambiguous, 2 when the unchanged run fails::
+
+    python scripts/mutate.py <target file> <mutations.json> --measure -- \\
+        python laserforce_simulator/manage.py round_probe --seeds 4
+
+Read a mutated score this way, through the real code path. A wrapper that patches the
+engine from a throwaway script can pair one tick's plans with another tick's Action
+(MECH-17's did, and reported a guard that still worked as broken).
 """
 
 from __future__ import annotations
@@ -53,6 +65,7 @@ class Outcome(NamedTuple):
     # "caught", "timeout", "survived", "broken", "not found" or "ambiguous"
     status: str
     failed: list[str]
+    output: str = ""
 
 
 # Vitest: `` FAIL  |<project>| <file> > <describe> > <test>``.
@@ -213,10 +226,34 @@ def mutate_with(
                 # A failed run that names no test is a build or collection error: the
                 # mutation never reached a test, so nothing caught it.
                 status = "caught" if failed else "broken"
-            outcomes.append(Outcome(mutation.name, status, failed))
+            outcomes.append(Outcome(mutation.name, status, failed, run.output))
     finally:
         _write(target, original)
     return outcomes
+
+
+def _print_ascii(text: str) -> None:
+    print(text.encode("ascii", "replace").decode("ascii"))
+
+
+def _measure(
+    target: Path, mutations: list[Mutation], command: list[str], timeout: float
+) -> None:
+    """Print ``command``'s output on the unchanged file and under each mutation."""
+    baseline = _run(command, Path.cwd(), timeout)
+    if baseline.returncode != 0:
+        _print_ascii(f"BASELINE FAILED\n{baseline.output}")
+        sys.exit(2)
+    _print_ascii(f"=== baseline\n{baseline.output}")
+    outcomes = mutate_with(target, mutations, command, Path.cwd(), timeout)
+    for outcome in outcomes:
+        # A run that exits 0 is "survived", which here only means it produced a score.
+        note = "" if outcome.status == "survived" else " (FAILED)"
+        if outcome.status in ("not found", "ambiguous"):
+            note = f" ({outcome.status.upper()})"
+        _print_ascii(f"=== {outcome.name}{note}\n{outcome.output}")
+    if any(outcome.status != "survived" for outcome in outcomes):
+        sys.exit(1)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -225,6 +262,11 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("mutations", type=Path, help="JSON list of [name, old, new]")
     parser.add_argument(
         "--run", action="store_true", help="the words after -- are the whole command"
+    )
+    parser.add_argument(
+        "--measure",
+        action="store_true",
+        help="like --run, but print each run's output and give no verdict",
     )
     parser.add_argument(
         "--timeout",
@@ -241,6 +283,9 @@ def main(argv: list[str] | None = None) -> None:
     mutations = [
         Mutation(*m) for m in json.loads(args.mutations.read_text(encoding="utf-8"))
     ]
+    if args.measure:
+        _measure(args.target, mutations, tail, args.timeout)
+        return
     command = tail if args.run else [sys.executable, "-m", "pytest", *tail]
     try:
         failures = baseline_failures(command, cwd=Path.cwd(), timeout=args.timeout)
