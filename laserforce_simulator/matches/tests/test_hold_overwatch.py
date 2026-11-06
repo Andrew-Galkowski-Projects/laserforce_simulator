@@ -13,9 +13,10 @@ Contract being asserted (from ADR-0009 + GLOSSARY.md + matches/CLAUDE.md):
 * A 9th Action slot ``hold`` is added at index 8 of the action-weight array and
   the ``_CHOICES`` list; ``plan_action`` returns ``[{"type":"hold","actor":p}]``
   for a forced ``hold`` roll.
-* ``is_holding`` is a transient bool (default-via-getattr False) that carries
-  over across consecutive ``hold`` rolls and is cleared the first tick a
-  non-``hold`` Action is rolled — mirroring ``is_hiding``.
+* ``is_holding`` is a transient bool (default-via-getattr False). On a map-less
+  round it carries over across consecutive ``hold`` rolls and is cleared the first
+  tick a non-``hold`` Action is rolled — mirroring ``is_hiding``. On a map round
+  MECH-17 makes it a commitment (``test_hide_and_hold.py``).
 * ``BatchSimulator._record_down`` force-clears ``is_holding`` (and still clears
   ``_path_cache``) — the structural life-loss clear from ADR-0009 decision 2.
 * A holding player is **Stationary**: ``BatchSimulator._advance_player`` does
@@ -149,7 +150,12 @@ class TestHoldActionSlot:
 
 
 class TestIsHoldingCarryOver:
-    """ADR-0009 decision 2: hold carries over until a non-hold roll or a Down."""
+    """ADR-0009 decision 2: hold carries over until a non-hold roll or a Down.
+
+    MECH-17: this is now the map-less rule (these pass ``movement_ctx=None``). On a map
+    the commitment takes over (``test_hide_and_hold.py``), so the invariant left is
+    that a Hold always ends in a roll or a Down and never outlives either on its own.
+    """
 
     def test_fresh_object_defaults_false_via_getattr(self):
         p = _ps("scout")

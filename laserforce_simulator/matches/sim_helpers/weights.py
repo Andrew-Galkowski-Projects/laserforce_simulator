@@ -26,9 +26,10 @@ _AMMO = dict(
     baseline_tag=-25,  # opening tag_player delta (70 -> 45)
     baseline_cz=-30,  # opening only_move delta (30 -> 0)
     baseline_resupply=+55,  # opening resupply_ally delta (0 -> 55)
-    # MOVE-03: +20 to hold, drawn from tag_player. Post-baseline tag = 70 - 25
-    # = 45; 45 - 20 = 25 (>= 0, OK).
-    baseline_hold=+20,  # hold weight (drawn from tag_player)
+    # MOVE-03: hold is drawn from tag_player. Post-baseline tag = 70 - 25 = 45;
+    # 45 - 3 = 42 on a map, 45 - 20 = 25 map-less (>= 0, OK).
+    baseline_hold=+3,  # hold weight on a map (MECH-17: a Hold lasts HOLD_TICKS)
+    map_less_baseline_hold=+20,  # hold weight on a map-less round
     baseline_hold_source="tag_player",  # source slot for the hold weight
     support_capture_gain=5,  # capture_base bump when a base is capturable
     support_capture_resupply_cost=5,  # resupply_ally cost paid for that bump
@@ -48,9 +49,10 @@ _AMMO = dict(
 _SCOUT = dict(
     baseline_tag=-30,  # opening tag_player delta (70 -> 40)
     baseline_cz=+30,  # opening only_move delta (30 -> 60)
-    # MOVE-03: +10 to hold, drawn from only_move. Post-baseline only_move =
-    # 30 + 30 = 60; 60 - 10 = 50 (>= 0, OK).
-    baseline_hold=+10,  # hold weight (drawn from only_move)
+    # MOVE-03: hold is drawn from only_move. Post-baseline only_move = 30 + 30 = 60;
+    # 60 - 3 = 57 on a map, 60 - 10 = 50 map-less (>= 0, OK).
+    baseline_hold=+3,  # hold weight on a map (MECH-17: a Hold lasts HOLD_TICKS)
+    map_less_baseline_hold=+10,  # hold weight on a map-less round
     baseline_hold_source="only_move",  # source slot for the hold weight
     critical_pct=0.3,  # lives/shots fraction that triggers seek-ally blocks
     base_capture_gain=20,  # capture_base bump when a base is capturable
@@ -75,9 +77,10 @@ _SCOUT = dict(
 _HEAVY = dict(
     baseline_cz=-5,  # opening only_move delta (30 -> 25)
     baseline_hide=+5,  # opening hide delta (0 -> 5)
-    # MOVE-03: +20 to hold, drawn from only_move. Post-baseline only_move =
-    # 30 - 5 = 25; 25 - 20 = 5 (>= 0, OK).
-    baseline_hold=+20,  # hold weight (drawn from only_move)
+    # MOVE-03: hold is drawn from only_move. Post-baseline only_move = 30 - 5 = 25;
+    # 25 - 4 = 21 on a map, 25 - 20 = 5 map-less (>= 0, OK).
+    baseline_hold=+4,  # hold weight on a map (MECH-17: a Hold lasts HOLD_TICKS)
+    map_less_baseline_hold=+20,  # hold weight on a map-less round
     baseline_hold_source="only_move",  # source slot for the hold weight
     critical_pct=0.3,  # lives/shots fraction that triggers seek-ally blocks
     missile_cz_cost=15,  # only_move cost while missiles remain
@@ -101,12 +104,13 @@ _HEAVY = dict(
     endgame_tag_cost=30,  # tag_player cost paid for that rush
 )
 
-_COMMANDER = dict(
+_COMMANDER: dict[str, Any] = dict(
     baseline_tag=+10,  # opening tag_player delta (70 -> 80)
     baseline_cz=-15,  # opening only_move delta (30 -> 15)
-    # MOVE-03: +10 to hold, drawn from only_move. Post-baseline only_move =
-    # 30 - 15 = 15; 15 - 10 = 5 (>= 0, OK).
-    baseline_hold=+10,  # hold weight (drawn from only_move)
+    # MOVE-03: hold is drawn from only_move. Post-baseline only_move = 30 - 15 = 15;
+    # 15 - 3 = 12 on a map, 15 - 10 = 5 map-less (>= 0, OK).
+    baseline_hold=+3,  # hold weight on a map (MECH-17: a Hold lasts HOLD_TICKS)
+    map_less_baseline_hold=+10,  # hold weight on a map-less round
     baseline_hold_source="only_move",  # source slot for the hold weight
     critical_pct=0.3,  # lives/shots fraction that triggers seek-ally blocks
     missile_cz_cost=15,  # only_move cost while missiles remain
@@ -129,7 +133,7 @@ _COMMANDER = dict(
     seek_no_ammo_tag=50,  # tag_player cut, no ammo ally (shots block)
     seek_no_ammo_hide=50,  # hide bump, no ammo ally (shots block)
     special_base=100,  # base use_special weight when the nuke gate opens
-    special_per_enemy=20,  # use_special reduction per enemy in zone
+    special_per_enemy=20,  # use_special cut per known threat (map-less: enemy in zone)
     endgame_capture_gain=30,  # capture_base bump in the endgame rush
     endgame_tag_cost=30,  # tag_player cost paid for that rush
 )
@@ -200,8 +204,8 @@ def _apply_role_baseline(w, c, i):
     w[i["resupply_ally"]] += c.get("baseline_resupply", 0)
 
 
-def _apply_hold_baseline(w: list, c: dict, i: dict) -> None:
-    """MOVE-03: shift ``baseline_hold`` weight into the ``hold`` slot (index 8).
+def _apply_hold_baseline(w: list, c: dict, i: dict, player: Any) -> None:
+    """MOVE-03: shift the role's hold baseline into the ``hold`` slot (index 8).
 
     The amount is drawn from ``baseline_hold_source`` (``tag_player`` for Ammo,
     ``only_move`` for Scout/Heavy/Commander; Medic is 0 so this is a no-op).
@@ -211,8 +215,13 @@ def _apply_hold_baseline(w: list, c: dict, i: dict) -> None:
     can still drive the source slot negative; ``plan_action`` clamps the final
     vector through ``finalize_action_weights`` (SIM-12) before the draw.
     Additive on the 9-slot array; consumes no RNG.
+
+    MECH-17: a map round reads ``baseline_hold``, because a Hold there lasts
+    ``HOLD_TICKS``. A map-less round (``known_threats`` is None) has no such
+    commitment and replays as it did, on ``map_less_baseline_hold``.
     """
-    amount = c.get("baseline_hold", 0)
+    on_a_map = getattr(player, "known_threats", None) is not None
+    amount = c.get("baseline_hold" if on_a_map else "map_less_baseline_hold", 0)
     if amount == 0:
         return
     # Legacy 7/8-slot callers (older unit tests build a pre-MOVE-03
@@ -476,7 +485,7 @@ def _get_medic_weights(
     w, c, i = weights, _MEDIC, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
-    _apply_hold_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i, player)
     _apply_support_base_capture(w, c, i, player)
 
     if player.final_lives <= c["low_lives_threshold"]:
@@ -528,8 +537,9 @@ def _get_ammo_weights(
     """Compute the Ammo action weights in place from ``_AMMO`` and return them.
 
     Baseline after role adjustment (before situational modifiers):
-    ``tag_player=25, only_move=0, resupply_ally=55, hold=20`` — the hold weight
-    is drawn from ``tag_player`` (45 - 20 = 25).
+    ``tag_player=42, only_move=0, resupply_ally=55, hold=3`` on a map round and
+    ``tag_player=25, hold=20`` on a map-less one — the hold weight is drawn from
+    ``tag_player`` (45 before it).
 
     Situational blocks, in application order (only the ones Ammo calls):
     baseline -> hold baseline -> support capture incentive -> low-lives
@@ -550,7 +560,7 @@ def _get_ammo_weights(
     w, c, i = weights, _AMMO, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
-    _apply_hold_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i, player)
     _apply_support_base_capture(w, c, i, player)
 
     if player.final_lives <= c["low_lives_threshold"]:
@@ -619,8 +629,9 @@ def _get_scout_weights(
     """Compute the Scout action weights in place from ``_SCOUT`` and return them.
 
     Baseline after role adjustment (before situational modifiers):
-    ``tag_player=40, only_move=50, hold=10`` — the hold weight is drawn from
-    ``only_move`` (60 - 10 = 50).
+    ``tag_player=40, only_move=57, hold=3`` on a map round and ``only_move=50,
+    hold=10`` on a map-less one — the hold weight is drawn from ``only_move`` (60
+    before it).
 
     Situational blocks, in application order (only the ones Scout calls):
     baseline -> hold baseline -> capture incentive (when a base is capturable)
@@ -641,7 +652,7 @@ def _get_scout_weights(
     w, c, i = weights, _SCOUT, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
-    _apply_hold_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i, player)
 
     if player.can_capture_base_in_current_zone:
         w[i["tag_player"]] -= c["base_capture_tag_cost"]
@@ -695,8 +706,9 @@ def _get_heavy_weights(
     """Compute the Heavy action weights in place from ``_HEAVY`` and return them.
 
     Baseline after role adjustment (before situational modifiers):
-    ``tag_player=70, only_move=5, hide=5, hold=20`` — the hold weight is drawn
-    from ``only_move`` (25 - 20 = 5).
+    ``tag_player=70, only_move=21, hide=5, hold=4`` on a map round and
+    ``only_move=5, hold=20`` on a map-less one — the hold weight is drawn from
+    ``only_move`` (25 before it).
 
     Situational blocks, in application order (only the ones Heavy calls):
     baseline -> hold baseline -> missile incentive (while missiles remain) ->
@@ -717,7 +729,7 @@ def _get_heavy_weights(
     w, c, i = weights, _HEAVY, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
-    _apply_hold_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i, player)
 
     if player.missiles_used < 5:
         w[i["only_move"]] -= c["missile_cz_cost"]
@@ -796,15 +808,17 @@ def _get_commander_weights(
     """Compute the Commander action weights in place from ``_COMMANDER``.
 
     Baseline after role adjustment (before situational modifiers):
-    ``tag_player=80, only_move=15, hold=10`` — the hold weight is drawn from
-    ``only_move`` (15 - 10 = 5).
+    ``tag_player=80, only_move=12, hold=3`` on a map round and ``only_move=5,
+    hold=10`` on a map-less one — the hold weight is drawn from ``only_move`` (15
+    before it).
 
     Situational blocks, in application order (only the ones Commander calls):
     baseline -> hold baseline -> missile incentive (while missiles remain) ->
     capture incentive (with an early-game capture/tag bonus before
     ``base_early_threshold``) -> lives-critical seek (medic, ammo fallback) ->
     shots-critical seek (ammo; ``no_resource``) -> nuke special (gated by
-    ``_commander_nuke_gate`` on SP/awareness; weight reduced per enemy in zone)
+    ``_commander_nuke_gate`` on SP/awareness; weight reduced per known threat on a
+    map, per enemy in zone on a map-less round)
     -> not-active (downed; drains ``tag_player``, watches for an allied medic)
     -> endgame rush -> request resupply (either resource) -> MECH-06 score
     broadcast.
@@ -820,7 +834,7 @@ def _get_commander_weights(
     w, c, i = weights, _COMMANDER, action_to_weight_index
 
     _apply_role_baseline(w, c, i)
-    _apply_hold_baseline(w, c, i)
+    _apply_hold_baseline(w, c, i, player)
 
     if player.missiles_used < 5:
         w[i["only_move"]] -= c["missile_cz_cost"]
@@ -867,7 +881,11 @@ def _get_commander_weights(
                 and p.current_zone == player.current_zone
                 and p.is_active_at(second)
             ]
-            raw = c["special_base"] - c["special_per_enemy"] * len(enemies_in_zone)
+            # MECH-17: on a map, the enemies the Commander knows can see it.
+            threats = getattr(player, "known_threats", None)
+            if threats is None:
+                threats = len(enemies_in_zone)
+            raw = c["special_base"] - c["special_per_enemy"] * threats
             w[i["use_special"]] = int(raw * (player.special_usage / 50))
         # MECH-06: memory system can override the gate here when situational factors
         # (enemy nuke incoming, allied medic/ammo separated, or multi-nuke window open)

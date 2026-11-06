@@ -33,7 +33,9 @@ shot** entry is amended to state the contrast.
 non-Hold Action *or* loses a life. The life-loss clear is structural: it hangs
 off the existing `BatchSimulator._record_down` helper (which already centralises
 `last_downed_time` + `_path_cache = None`), so "every life-loss site clears the
-hold" needs no per-site review.
+hold" needs no per-site review. *MECH-17 (spec #550) changed the carry-over on map
+rounds: a `hold` roll now commits the player for `HOLD_TICKS`, and map-less rounds
+keep this rule.*
 - *Rejected — per-tick only (Overwatch active only on the tick `hold` was
   rolled):* a holder would watch its sightline for ~1 tick at a time, making
   Overwatch a rare twitch rather than a posture and the "moved through LoS"

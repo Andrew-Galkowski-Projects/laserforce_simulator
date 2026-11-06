@@ -13,6 +13,7 @@ from .goal_scoring import draw_goal, enemy_base_cells
 from .modes import (
     DEFENSE_RESUPPLY_SHARE,
     Mode,
+    _resupply_share,
     attack_tag_goal,
     base_goal,
     mode_goal,
@@ -460,15 +461,6 @@ def _find_enemy_commander_in_memory(
     """Return last-known cell for enemy commander if in memory and not stale."""
     commander_tag = f"{enemy_color}_commander"
     return _cell_from_memory(player, commander_tag, second, time_domain)
-
-
-def _resupply_share(ally, supporter_role: str) -> float:
-    """How full *ally* is of what the supporter restores: a Medic lives, an Ammo shots."""
-    if supporter_role == "medic":
-        return ally.final_lives / max(
-            1, getattr(ally, "max_lives", ally.starting_lives)
-        )
-    return ally.final_shots / max(1, getattr(ally, "max_shots", ally.starting_shots))
 
 
 def _goal_seeing(

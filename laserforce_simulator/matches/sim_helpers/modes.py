@@ -215,6 +215,61 @@ def _fresh_enemies(
     ]
 
 
+def _enemy_color(player) -> str:
+    return "blue" if player.team_color == "red" else "red"
+
+
+def known_threats(
+    player: PlayerState,
+    all_alive: list,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str,
+) -> int:
+    """How many fresh remembered enemies have a remembered cell that can see the
+    player's cell (spec #550). Reads memory only; no true enemy cell and no RNG."""
+    here = cast(Cell, (player.cell_row, player.cell_col))
+    return sum(
+        movement_ctx.can_see(_remembered_cell(entry), here)
+        for _, entry in _fresh_enemies(
+            player, all_alive, _enemy_color(player), tick, time_domain
+        )
+    )
+
+
+def _resupply_share(ally, supporter_role: str) -> float:
+    """How full *ally* is of what the supporter restores: a Medic lives, an Ammo shots."""
+    if supporter_role == "medic":
+        return ally.final_lives / max(
+            1, getattr(ally, "max_lives", ally.starting_lives)
+        )
+    return ally.final_shots / max(1, getattr(ally, "max_shots", ally.starting_shots))
+
+
+def hide_allowed(
+    player: PlayerState,
+    all_alive: list,
+    movement_ctx: MapContext,
+    tick: float,
+    time_domain: str,
+) -> bool:
+    """Whether an Active Medic or Ammo may hide: ``not needed and (threatened or
+    settled)`` (spec #550). Ally reads stay true-state until MECH-14. No RNG."""
+    needed = any(
+        p.team_color == player.team_color
+        and p is not player
+        and p.final_lives > 0
+        and _resupply_share(p, player.role) <= DEFENSE_RESUPPLY_SHARE
+        for p in all_alive
+    )
+    if needed:
+        return False
+    committed = player._committed_goal
+    if committed is None or committed[0] == (player.cell_row, player.cell_col):
+        return True
+    return known_threats(player, all_alive, movement_ctx, tick, time_domain) > 0
+
+
 def _attack_targets(
     player,
     all_alive: list,

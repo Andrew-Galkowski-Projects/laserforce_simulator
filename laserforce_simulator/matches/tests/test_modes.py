@@ -492,6 +492,10 @@ class TestPlanActionWiring:
         assert no_map[_idx("tag_player")] == 80
         assert on_map[_idx("tag_player")] == 100
         no_map[_idx("tag_player")] = on_map[_idx("tag_player")]
+        # MECH-17: the hold baseline differs on a map (a Hold there is a commitment).
+        # The nudge still touches only the Mode's slots: every other slot is equal.
+        assert on_map[_idx("hold")] == 3
+        no_map[_idx("hold")] = on_map[_idx("hold")]
         assert on_map == no_map
 
     def test_a_no_map_round_never_calls_it(self) -> None:

@@ -47,8 +47,8 @@ def record_down(
       2. Stamp ``player.last_downed_time = tick``.
       3. Clear ``player._path_cache = None`` (MOVE-02 — knocked off
          committed route).
-      4. Clear ``player.is_holding = False`` (MOVE-03 — Down ends
-         Overwatch).
+      4. Clear ``player.is_holding = False`` and ``player.hold_until``
+         (MOVE-03, MECH-17 — Down ends Overwatch).
       5. Clear ``player._committed_goal = None`` iff the committed
          goal was action-driven (MOVE-04 — positioning goals survive
          a Down).
@@ -98,6 +98,7 @@ def record_down(
     player.last_downed_time = tick
     player._path_cache = None
     player.is_holding = False
+    player.hold_until = None
 
     # 5. _committed_goal clear is conditional on the action-driven flag
     if player._committed_goal is not None and player._committed_goal[1]:
