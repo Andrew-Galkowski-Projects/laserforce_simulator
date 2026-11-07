@@ -320,5 +320,17 @@ class TestCommittedTargets:
         train = json.loads(lfstats_calibrate.DEFAULT_TRAIN.read_text(encoding="utf-8"))
         test = json.loads(lfstats_calibrate.DEFAULT_TEST.read_text(encoding="utf-8"))
         committed = json.loads(targets_path.read_text(encoding="utf-8"))
-        assert committed == cal.targets_payload(train, test)
+        payload = cal.targets_payload(train, test)
+        assert committed["coverage"] == payload["coverage"]
+        assert committed["tolerance"] == payload["tolerance"]
+        assert len(committed["cells"]) == len(payload["cells"])
+        # The means are compared within float noise: Python 3.12's sum() uses
+        # compensated summation, so a file written on 3.11 differs in the last
+        # bits from the same cells computed on CI's 3.12.
+        for got, want in zip(committed["cells"], payload["cells"]):
+            assert got["real_mean"] == pytest.approx(want["real_mean"], rel=1e-9)
+            assert got["tolerance"] == pytest.approx(want["tolerance"], rel=1e-9)
+            exact = ("position", "metric", "kind", "n_scorecards")
+            assert {k: got[k] for k in exact} == {k: want[k] for k in exact}
+            assert set(got) == set(want)
         assert targets_path.name == "lfstats_cell_targets.json"
