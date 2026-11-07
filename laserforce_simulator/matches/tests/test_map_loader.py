@@ -269,7 +269,9 @@ class TestReachableBaseSights:
 
 @pytest.mark.django_db
 class TestSyracuseBaseRanges:
-    """Red's 6 base-range cells sit in a pocket cut off from the main floor."""
+    """At 30px red's 6 range cells sat in a pocket cut off from the main floor
+    (MECH-17); the owner's 20px configuration reaches every base from the floor,
+    so the repair must leave all three ranges exactly as configured."""
 
     def _load(self):
         from pathlib import Path
@@ -283,20 +285,18 @@ class TestSyracuseBaseRanges:
         ctx = load_map_context(arena_map)[0]
         return ctx, resolve_map_data(arena_map).base_sight_data, _main_floor(ctx.adj)
 
-    def test_reds_range_ends_on_the_main_floor_with_its_size_kept(self):
-        ctx, raw, floor = self._load()
+    def test_every_range_is_on_the_main_floor(self):
+        _, raw, floor = self._load()
         keys = {f"{r},{c}" for r, c in floor}
-        assert len(raw["red"]) == 6
-        assert not raw["red"] & keys
-        assert len(ctx.base_sight_data["red"]) == 6
-        assert ctx.base_sight_data["red"] <= keys
+        # The three placed Bases have a range; the unplaced neutral 2-4 rows are empty.
+        for base_type in ("red", "blue", "neutral_1"):
+            assert raw[base_type], base_type
+        for base_type, cells in raw.items():
+            assert cells <= keys, base_type
 
-    def test_blue_and_neutral_come_back_unchanged(self):
+    def test_the_repair_leaves_every_range_unchanged(self):
         ctx, raw, _ = self._load()
-        others = [key for key in raw if key != "red"]
-        assert "blue" in others
-        for base_type in others:
-            assert ctx.base_sight_data[base_type] == raw[base_type]
+        assert ctx.base_sight_data == raw
 
 
 @pytest.mark.django_db

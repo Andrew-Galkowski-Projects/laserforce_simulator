@@ -18,10 +18,11 @@ if TYPE_CHECKING:
     from .map_context import MapContext
     from .player_state import PlayerState
 
+from . import support_survival
 from .follow_rule import Cell, chased_tag_ids, open_trail
 from .goal_scoring import draw_goal
 from .map_context import _NEUTRAL_BASE_TYPES
-from .time_constants import HELD_GOAL_EXPIRY, RESPAWN_TICKS, _stale_table
+from .time_constants import HELD_GOAL_EXPIRY, RESPAWN_TICKS
 
 
 class Mode(StrEnum):
@@ -110,7 +111,7 @@ def _fresh_entry(
     entry = player.player_memory.get(tag_id)
     if entry is None:
         return None
-    table = _stale_table(time_domain)
+    table = support_survival.stale_table(time_domain)
     threshold = table.get(entry.get("role", "scout"), table["scout"])
     return None if tick - entry.get("timestamp", 0) > threshold else entry
 
@@ -257,7 +258,12 @@ def hide_allowed(
     time_domain: str,
 ) -> bool:
     """Whether an Active Medic or Ammo may hide: ``not needed and (threatened or
-    settled)`` (spec #550). Ally reads stay true-state until MECH-14. No RNG."""
+    settled)`` (spec #550). Ally reads stay true-state until MECH-14. No RNG.
+
+    Support-survival switches 3 (Medic) and 4 (Ammo): always, whatever the allies
+    need; a low ally comes to the support instead."""
+    if support_survival.hide_gate_open(player.role):
+        return True
     needed = any(
         p.team_color == player.team_color
         and p is not player
@@ -421,11 +427,13 @@ def _defense_value(
     player, heavy_cell: Cell, movement_ctx: MapContext
 ) -> Callable[[Cell], float]:
     """The Defense value rule: hidden cells for a Medic, open ones for an Ammo, and
-    the player's ``teamwork`` pulls them toward the Heavy."""
+    the player's ``teamwork`` pulls them toward the Heavy. Support-survival switch 2:
+    hidden cells for both."""
+    hidden_for_both = support_survival.HIDDEN_SUPPORT_CELLS
 
     def value_of(cell: Cell) -> float:
         rank = movement_ctx.los_rank(cell)
-        base = 1.0 - rank if player.role == "medic" else rank
+        base = 1.0 - rank if player.role == "medic" or hidden_for_both else rank
         squares = max(abs(cell[0] - heavy_cell[0]), abs(cell[1] - heavy_cell[1]))
         feet = squares * movement_ctx.feet_per_square
         closeness = max(0.0, 1.0 - feet / DEFENSE_CLOSENESS_FEET)
@@ -531,13 +539,19 @@ def _defense_goal(
     tick: float,
     time_domain: str,
 ) -> Cell | None:
-    """A cell that sees the remembered Heavy, or None to fall back on Control."""
+    """A cell that sees the remembered Heavy, or None to fall back on Control.
+    Support-survival switch 2: a cell within ``SUPPORT_CELL_REACH`` steps of one."""
     heavy_cell = _fresh_teammate_cell(player, "heavy", all_alive, tick, time_domain)
     if heavy_cell is None:
         return None
+    candidates = movement_ctx.cells_visible_from(heavy_cell)
+    if support_survival.HIDDEN_SUPPORT_CELLS:
+        candidates = _within_reach(
+            candidates, support_survival.SUPPORT_CELL_REACH, movement_ctx
+        )
     goal = _draw(
         player,
-        movement_ctx.cells_visible_from(heavy_cell),
+        candidates,
         _defense_value(player, heavy_cell, movement_ctx),
         all_alive,
         movement_ctx,
@@ -546,6 +560,25 @@ def _defense_goal(
     if goal is not None:
         player.mode_hold_until = None
     return goal
+
+
+def _within_reach(
+    cells: list[Cell], steps: int, movement_ctx: MapContext
+) -> list[Cell]:
+    """*cells* and every floor cell within *steps* moves of one, sorted: where a
+    support can stand and still step into sight of the Heavy."""
+    adj = movement_ctx.get_adjacency()
+    reached = set(cells)
+    frontier = list(cells)
+    for _ in range(steps):
+        nxt = []
+        for cell in frontier:
+            for neighbour in adj.get(cell, ()):
+                if neighbour not in reached:
+                    reached.add(neighbour)
+                    nxt.append(neighbour)
+        frontier = nxt
+    return sorted(reached)
 
 
 def _control_goal(

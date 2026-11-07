@@ -87,7 +87,7 @@ Action weights are in `matches/sim_helpers/weights.py` (the action-array slot at
 **MECH-06 player memory**: replaces perfect-knowledge enemy lookups in goal selection with a per-player memory dict. Key points:
 - `player_memory` on `PlayerState`: `{tag_id: {"cell": (r,c), "timestamp": s, "role": role}}` — transient dict, no DB column, cleared at round start.
 - Staleness thresholds by role of the remembered player: Heavy/Medic/Ammo = 60 s; Scout/Commander = 15 s. Stale slow-role entries → last-known cell still used; stale fast-role entries → fall through to role default.
-- `communication` stat: per-tick probability (0–100%) that a player broadcasts their current LOS snapshot to all alive allies within `sqrt(rows² + cols²) / 2` Euclidean cells.
+- `communication` stat: per-tick probability (0–100%) that a player broadcasts their current LOS snapshot to all alive allies within `sqrt(rows² + cols²) / 2` Euclidean cells. The chance comes from `support_survival.callout_chance`, which multiplies it by `teamwork / 100` under `TEAMWORK_CALLOUTS` (off by default; `docs/agents/matches/sim-helpers.md#support_survivalpy`).
 - `teamwork` stat: on goals, only the Defense closeness term (`modes.mode_goal`, MECH-07). It also lowers Resupply stress failures (`resupply_queue.py`).
 - Score broadcast every 180 s: losing team → aggression weight +10; winning + low lives + medic dead → hide weight +20; winning + low lives + medic alive + ≥360 s remaining → movement override to allied medic cell. Implemented in `_apply_score_broadcast_weights` in `weights.py`.
 - Nuke activation broadcast: when a Commander fires a nuke, all alive enemy players receive the Commander's current cell in their `player_memory`.

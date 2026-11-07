@@ -8,6 +8,7 @@ import random
 from collections.abc import Callable
 from typing import Any
 
+from . import support_survival
 from .follow_rule import may_tag
 
 
@@ -67,11 +68,36 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
     targets = los_filter(player, enemies, movement_ctx)
     if not targets or player.final_shots <= 0:
         return None
+    if support_survival.TARGET_PRIORITY:
+        targets = _priority_targets(targets, second)
+        w = [
+            support_survival._PRIORITY_ROLE_WEIGHTS.get(t.role, 1)
+            * (
+                support_survival.PRIORITY_ACTIVE_MULTIPLIER
+                if t.is_active_at(second)
+                else 1
+            )
+            for t in targets
+        ]
+        return random.choices(targets, w)[0]
     w = [
         role_weights.get(t.role, 1) + (10 if t.is_active_at(second) else 1)
         for t in targets
     ]
     return random.choices(targets, w)[0]
+
+
+def _priority_targets(targets: list, second: float) -> list:
+    """Support-survival switch 1: the targets worth a shot. A hiding enemy is passed
+    over while one in sight is not hiding, and an enemy Medic only while no other
+    enemy in sight is Active. Keeps *targets*' order; never empties it."""
+    in_the_open = [t for t in targets if not t.is_hiding]
+    if in_the_open:
+        targets = in_the_open
+    others_active = any(t.role != "medic" and t.is_active_at(second) for t in targets)
+    if others_active:
+        targets = [t for t in targets if t.role != "medic"]
+    return targets
 
 
 def choose_resupply_target(

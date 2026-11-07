@@ -31,7 +31,8 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
   - **Test set:** `data/lfstats_test_internationals_2026.json` holds the 165 Internationals 2026 games (each team's colour, score, result, and roster with position, score, MVP and mercenary flag) and every (player, position)'s Internationals averages.
   - **Training set:** `data/lfstats_train_2026-10-21.json` is the snapshot with those games subtracted from every row (average x games), plus window rows for Internationals players outside the 230.
   - **Built by:** `python scripts/lfstats_import/calibration_data.py data/lfstats_snapshot_2026-10-21.json data/lfstats_train_2026-10-21.json data/lfstats_test_internationals_2026.json <transcript.jsonl>`. It reads the LFstats calls the same way `extract.py` does, including results too large for the transcript, which Claude Code saves to `tool-results/` files.
-  - **Map:** `data/maps/syracuse.json` is the Syracuse Laser Tag configuration the Test set replays on. It uses 30px cells (auto-detected walls, 2,001 floor cells of 3,200) and red, blue and one neutral base at the image's base markers, as approved by the owner. Export a configured map with `python scripts/lfstats_import/export_map_fixture.py "<map name>" <zone size> <out.json>`.
+  - **Map:** `data/maps/syracuse.json` is the Syracuse Laser Tag configuration the Test set replays on. It uses 20px cells at `feet_per_pixel` 0.05, so a square is 1 ft (the owner measured 10 ft as about 10 squares on 2026-11-05; the earlier 30px / 5 ft fixture made the sim play an arena 3.3x too large in every feet-based rule), with auto-detected walls and red, blue and one neutral base at the image's base markers. The fixture carries the scale (`export_map_fixture` writes it, `load_map_fixture` reads it). Export a configured map with `python scripts/lfstats_import/export_map_fixture.py "<map name>" <zone size> <out.json>`.
+  - **Cell targets:** `data/lfstats_cell_targets.json` is the real side of every Test cell (position, metric, real mean, scorecards and the tolerance band), written by `python manage.py lfstats_calibrate --split targets --out data/lfstats_cell_targets.json` with no simulation. A sweep or a one-off run is measured against it; `test_lfstats_calibrate_command.py::TestCommittedTargets` keeps it equal to what the committed Training and Test files give.
   - **Baselines:** the snapshot's, not subtracted. Internationals is about 4% of the window's scorecards.
   - **Tests:** `laserforce_simulator/test_lfstats_calibration_data.py`.
 - **Teams:** grouped by home center (the center where the player plays most, from LFstats).
@@ -381,11 +382,12 @@ the default and can be dropped.
 
 ### Fixed along the way
 
-- **Spawns cut off from the floor.** On Syracuse at 30px the corridor by red's base becomes
-  two pockets that do not connect to the main floor, and 9 of red's 11 spawn cells were in
-  them. Four red players never moved or engaged, which made every earlier run on the map
-  invalid. `map_loader.reachable_spawn_pools` now moves such cells to the nearest main-floor
-  cell to the base. This also fixes app games on that map.
+- **Spawns cut off from the floor.** On Syracuse at the earlier 30px grid the corridor by
+  red's base became two pockets that did not connect to the main floor, and 9 of red's 11
+  spawn cells were in them. Four red players never moved or engaged, which made every earlier
+  run on the map invalid. `map_loader.reachable_spawn_pools` now moves such cells to the
+  nearest main-floor cell to the base. This also fixes app games on that map. The 20px fixture
+  has no pocket, so the rule leaves its pools unchanged.
 
 ### Findings (LFS-02 / CAL-01)
 
@@ -402,7 +404,8 @@ not close these gaps: they are in how the sim plays, not in the imported stats.
 - **Support players are too exposed.** Ammo times hit 36.8 vs 23.2 and medic 19.7 vs 10.2.
   `_goal_from_role` sends ammo to the highest-sight cell near the heavy, and medics may also
   stand where enemies can see them. Medic hit diff (0.46 vs 1.06) and MVP (13.1 vs 15.9)
-  follow from being hit about twice as often.
+  follow from being hit about twice as often. **Addressed in part by the support-survival
+  switches (below, 2026-11-06).**
 - **Resupplies are too frequent.** Ammo gives 70.1 vs 36.2, medic 55.5 vs 40.8. Check the
   resupply cooldown and the support `resupply_ally` weights. Ammo MVP (17.8 vs 14.8) is high
   because of it.
@@ -420,6 +423,49 @@ not close these gaps: they are in how the sim plays, not in the imported stats.
 - **Scout MVP misses the commander / heavy tag bonus.** The batch engine never fills
   `specific_tags`, so the scout's +0.2 per commander or heavy tag never scores. Scout MVP
   passes anyway (12.3 vs 13.8), but the cell is low.
+
+### Support survival (2026-11-06, Syracuse at 20 px / 1 ft)
+
+The map scale fix (20 px squares at 1 ft, from the 30 px / 5 ft fixture) moved the baseline from
+11/36 to 14/36 cells at 3 rounds (objective 0.171, winner agreement 54.7%). A sweep of 26
+single engine constants found none that beats 16/36; the structural gaps were the supports.
+Five switches in `matches/sim_helpers/support_survival.py` were then run in every combination
+on the Test set (1 round each, 34 runs, then the best four at 3 rounds), with the letters
+T (target priority), H (hidden support cells), M (the Medic holds position), A (the Ammo hides
+freely) and C (teamwork call-outs with 30-tick support memory).
+
+| Run (3 rounds) | Cells | Objective | Winner % | Margin error |
+|---|---|---|---|---|
+| baseline | 14/36 | 0.171 | 54.7 | 8298 |
+| combined constants (nuke gate 20 SP, ammo resupply 35, Downed stay 40, missile bump 30) | 15/36 | 0.146 | 55.5 | 8540 |
+| TMA | 15/36 | 0.144 | 59.4 | 7978 |
+| THMAC | 15/36 | 0.148 | 54.7 | 8497 |
+| THMAC + combined constants | 14/36 | 0.125 | 57.0 | 8753 |
+
+- **M and A together are the support fix.** Every 1-round stack with both landed at an
+  objective of 0.143 to 0.153; nothing without both beat 0.155. With TMA at 3 rounds, Medic
+  elimination went 1.00 -> 0.83 (real 0.66), Medic uptime 0.45 -> 0.63 (real 0.77), Medic
+  resupplies 27 -> 30 (real 41), Ammo elimination 0.89 -> 0.80 (real 0.45). Neither alone does it:
+  T alone did not save the Medic (the Ammo became the preferred target), M alone moved the Medic
+  but cost the team more.
+- **T helps a little on top** (Medic hit diff and resupplies) and never hurt. **H and C add
+  nothing once M and A are on** (THMAC vs TMA differs in one cell); H alone was the only switch
+  that made no cell worse.
+- **The cost is a quieter game.** Ammo resupplies given 36 -> 30 (real 36), Ammo times hit 26 ->
+  18 (real 23), Heavy elimination 0.48 -> 0.35 (real 0.43), nukes 0.78 -> 0.59 (real 2.8).
+- **Stacking the constants on all five** gives the best objective (0.125, nukes 1.34, Medic
+  uptime passing) but only 14 cells: the ammo resupply constant and the hiding Ammo both cut
+  resupplies given, together to 22.6 against a real 36.2. Drop that constant if the two are
+  combined.
+
+**Decision (owner, 2026-11-06):** T, H, M and A are the defaults; C stays off. The nuke gate
+(#558), Downed stay (#559) and missile (#560) constants are still to be re-run on top of them.
+
+The side-alternation strength test (`test_batch_sim.py::TestSim08SideAlternation`) fell to a coin
+flip once target priority changed the draws. Its "strong" team had survival 0 on the reading that
+low survival was hard to miss, but the hit roll is `70 + accuracy - survival`, so both sides hit
+at 70%. All three stats at 100 against 1 wins 100% of games with the switches on, so the test's
+matchup was corrected and target priority kept.
 
 ### SM5-02: a Downed pack is dark (2026-11-03)
 

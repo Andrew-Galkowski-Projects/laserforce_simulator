@@ -15,8 +15,9 @@ from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Any
 
-#: MOVE-08: Syracuse's square (30 px at ``core.models.DEFAULT_FEET_PER_PIXEL``
-#: = 1/6 ft a pixel), used for hand-built contexts.
+#: MOVE-08: the square of hand-built contexts and ``from_dict`` (30 px at
+#: ``core.models.DEFAULT_FEET_PER_PIXEL`` = 1/6 ft a pixel). Syracuse's real
+#: square is 1 ft (20 px at 0.05, from its fixture), not this.
 DEFAULT_FEET_PER_SQUARE: float = 5.0
 
 # Neutral base_types in priority order for capture/reset checks

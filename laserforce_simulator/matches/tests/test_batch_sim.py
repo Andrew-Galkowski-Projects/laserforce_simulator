@@ -1158,10 +1158,19 @@ class TestSim08SideAlternation:
         _, strong_team, strong_players = self._rosters("Sim08StrongR")
         _, weak_team, weak_players = self._rosters("Sim08WeakB")
 
-        # Strong: max accuracy/awareness, min survival (easy hits, hard to be
-        # missed against). Weak: the inverse.
-        self._bump_team_stats(strong_players, accuracy=100, survival=0, awareness=100)
-        self._bump_team_stats(weak_players, accuracy=0, survival=100, awareness=0)
+        # Strong: max accuracy, survival and awareness. Weak: all three at 1.
+        #
+        # Until 2026-11-06 the strong team had survival 0 and the weak team
+        # survival 100, on the reading that low survival meant "hard to be
+        # missed against". The hit roll is ``70 + attacker.accuracy -
+        # defender.survival`` (shot.py), so both teams actually hit at 70% and
+        # only awareness differed: a coin flip dressed as a strength gap
+        # (45-53% over seeds 1-3 once support_survival's target priority
+        # changed the draws; 58% before, on seed luck). With the stats below
+        # the strong team wins 100% of games on seeds 1, 2 and 3 (39,500 to
+        # 7,500 points), so the floor and the contrast guard measure a real gap.
+        self._bump_team_stats(strong_players, accuracy=100, survival=100, awareness=100)
+        self._bump_team_stats(weak_players, accuracy=1, survival=1, awareness=1)
 
         sim = BatchSimulator()
         # MOVE-03 (ADR-0009): the new `hold` Action adds seed-sensitive
