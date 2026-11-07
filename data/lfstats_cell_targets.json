@@ -1,0 +1,305 @@
+{
+ "coverage": {
+  "total": 165,
+  "used": 128,
+  "skipped_lineup": 1,
+  "skipped_thin": 36
+ },
+ "tolerance": {
+  "share": 0.15,
+  "floor": {
+   "count": 0.5,
+   "fraction": 0.05
+  }
+ },
+ "cells": [
+  {
+   "position": "commander",
+   "metric": "avg_accuracy",
+   "kind": "fraction",
+   "real_mean": 0.8408622214262029,
+   "n_scorecards": 256,
+   "tolerance": 0.12612933321393044
+  },
+  {
+   "position": "commander",
+   "metric": "avg_hit_diff",
+   "kind": "count",
+   "real_mean": 0.9766780324052143,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "commander",
+   "metric": "avg_times_hit",
+   "kind": "count",
+   "real_mean": 59.05041975206307,
+   "n_scorecards": 256,
+   "tolerance": 8.85756296280946
+  },
+  {
+   "position": "commander",
+   "metric": "avg_mvp",
+   "kind": "count",
+   "real_mean": 18.738467996437983,
+   "n_scorecards": 256,
+   "tolerance": 2.8107701994656975
+  },
+  {
+   "position": "commander",
+   "metric": "avg_uptime_pct",
+   "kind": "fraction",
+   "real_mean": 0.5417519310988689,
+   "n_scorecards": 256,
+   "tolerance": 0.08126278966483033
+  },
+  {
+   "position": "commander",
+   "metric": "elimination_rate",
+   "kind": "fraction",
+   "real_mean": 0.3797993373963201,
+   "n_scorecards": 256,
+   "tolerance": 0.05696990060944801
+  },
+  {
+   "position": "commander",
+   "metric": "avg_nukes_detonated",
+   "kind": "count",
+   "real_mean": 2.786806205199255,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "commander",
+   "metric": "avg_missiles_hit",
+   "kind": "count",
+   "real_mean": 2.465794038935203,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "heavy",
+   "metric": "avg_accuracy",
+   "kind": "fraction",
+   "real_mean": 0.8537456941265993,
+   "n_scorecards": 256,
+   "tolerance": 0.12806185411898988
+  },
+  {
+   "position": "heavy",
+   "metric": "avg_hit_diff",
+   "kind": "count",
+   "real_mean": 0.9691917293977275,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "heavy",
+   "metric": "avg_times_hit",
+   "kind": "count",
+   "real_mean": 47.78491728969345,
+   "n_scorecards": 256,
+   "tolerance": 7.167737593454018
+  },
+  {
+   "position": "heavy",
+   "metric": "avg_mvp",
+   "kind": "count",
+   "real_mean": 15.63534673233873,
+   "n_scorecards": 256,
+   "tolerance": 2.3453020098508093
+  },
+  {
+   "position": "heavy",
+   "metric": "avg_uptime_pct",
+   "kind": "fraction",
+   "real_mean": 0.5856213461972761,
+   "n_scorecards": 256,
+   "tolerance": 0.08784320192959141
+  },
+  {
+   "position": "heavy",
+   "metric": "elimination_rate",
+   "kind": "fraction",
+   "real_mean": 0.4293393565657192,
+   "n_scorecards": 256,
+   "tolerance": 0.06440090348485787
+  },
+  {
+   "position": "heavy",
+   "metric": "avg_missiles_hit",
+   "kind": "count",
+   "real_mean": 1.7605119804361036,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "scout",
+   "metric": "avg_accuracy",
+   "kind": "fraction",
+   "real_mean": 0.7415026726296069,
+   "n_scorecards": 512,
+   "tolerance": 0.11122540089444104
+  },
+  {
+   "position": "scout",
+   "metric": "avg_hit_diff",
+   "kind": "count",
+   "real_mean": 1.1172213613311344,
+   "n_scorecards": 512,
+   "tolerance": 0.5
+  },
+  {
+   "position": "scout",
+   "metric": "avg_times_hit",
+   "kind": "count",
+   "real_mean": 33.79755143180412,
+   "n_scorecards": 512,
+   "tolerance": 5.069632714770618
+  },
+  {
+   "position": "scout",
+   "metric": "avg_mvp",
+   "kind": "count",
+   "real_mean": 13.840262980144121,
+   "n_scorecards": 512,
+   "tolerance": 2.076039447021618
+  },
+  {
+   "position": "scout",
+   "metric": "avg_uptime_pct",
+   "kind": "fraction",
+   "real_mean": 0.5158547123111716,
+   "n_scorecards": 512,
+   "tolerance": 0.07737820684667575
+  },
+  {
+   "position": "scout",
+   "metric": "elimination_rate",
+   "kind": "fraction",
+   "real_mean": 0.44698151875257625,
+   "n_scorecards": 512,
+   "tolerance": 0.06704722781288644
+  },
+  {
+   "position": "scout",
+   "metric": "avg_rapid_fire",
+   "kind": "count",
+   "real_mean": 1.5691649794373113,
+   "n_scorecards": 512,
+   "tolerance": 0.5
+  },
+  {
+   "position": "ammo",
+   "metric": "avg_accuracy",
+   "kind": "fraction",
+   "real_mean": 0.7952097352004615,
+   "n_scorecards": 256,
+   "tolerance": 0.11928146028006921
+  },
+  {
+   "position": "ammo",
+   "metric": "avg_hit_diff",
+   "kind": "count",
+   "real_mean": 1.1004935820705029,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "ammo",
+   "metric": "avg_times_hit",
+   "kind": "count",
+   "real_mean": 23.229154772923156,
+   "n_scorecards": 256,
+   "tolerance": 3.4843732159384735
+  },
+  {
+   "position": "ammo",
+   "metric": "avg_mvp",
+   "kind": "count",
+   "real_mean": 14.79293929907562,
+   "n_scorecards": 256,
+   "tolerance": 2.2189408948613427
+  },
+  {
+   "position": "ammo",
+   "metric": "avg_uptime_pct",
+   "kind": "fraction",
+   "real_mean": 0.6098721579774188,
+   "n_scorecards": 256,
+   "tolerance": 0.09148082369661281
+  },
+  {
+   "position": "ammo",
+   "metric": "elimination_rate",
+   "kind": "fraction",
+   "real_mean": 0.4470508459065444,
+   "n_scorecards": 256,
+   "tolerance": 0.06705762688598166
+  },
+  {
+   "position": "ammo",
+   "metric": "avg_resupplies_given",
+   "kind": "count",
+   "real_mean": 36.22311655103474,
+   "n_scorecards": 256,
+   "tolerance": 5.433467482655211
+  },
+  {
+   "position": "medic",
+   "metric": "avg_accuracy",
+   "kind": "fraction",
+   "real_mean": 0.9016894898701934,
+   "n_scorecards": 256,
+   "tolerance": 0.135253423480529
+  },
+  {
+   "position": "medic",
+   "metric": "avg_hit_diff",
+   "kind": "count",
+   "real_mean": 1.0620718679831738,
+   "n_scorecards": 256,
+   "tolerance": 0.5
+  },
+  {
+   "position": "medic",
+   "metric": "avg_times_hit",
+   "kind": "count",
+   "real_mean": 10.178379142876992,
+   "n_scorecards": 256,
+   "tolerance": 1.5267568714315487
+  },
+  {
+   "position": "medic",
+   "metric": "avg_mvp",
+   "kind": "count",
+   "real_mean": 15.944822819683953,
+   "n_scorecards": 256,
+   "tolerance": 2.3917234229525928
+  },
+  {
+   "position": "medic",
+   "metric": "avg_uptime_pct",
+   "kind": "fraction",
+   "real_mean": 0.7649920080307651,
+   "n_scorecards": 256,
+   "tolerance": 0.11474880120461475
+  },
+  {
+   "position": "medic",
+   "metric": "elimination_rate",
+   "kind": "fraction",
+   "real_mean": 0.6603897694207302,
+   "n_scorecards": 256,
+   "tolerance": 0.09905846541310953
+  },
+  {
+   "position": "medic",
+   "metric": "avg_resupplies_given",
+   "kind": "count",
+   "real_mean": 40.82265955054852,
+   "n_scorecards": 256,
+   "tolerance": 6.123398932582278
+  }
+ ]
+}

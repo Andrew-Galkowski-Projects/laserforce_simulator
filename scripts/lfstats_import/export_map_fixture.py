@@ -45,6 +45,8 @@ def dump_map_fixture(arena_map: Any, zone_size: int) -> dict[str, Any]:
         "image": arena_map.image.name if arena_map.image else "",
         "img_width": arena_map.img_width,
         "img_height": arena_map.img_height,
+        # MOVE-08: the drawing scale; a square is zone_size x feet_per_pixel feet.
+        "feet_per_pixel": arena_map.feet_per_pixel,
         "zone_size": zone_size,
         "zone_data": zone.zone_data,
         "bases": [

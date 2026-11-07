@@ -22,6 +22,7 @@ import; ``__init__.py`` re-exports keep that import line working).
 import math as _math
 import random
 
+from ..sim_helpers import support_survival
 from ..sim_helpers.time_constants import (
     MEDIC_UNDER_FIRE_WINDOW_TICKS,
     SCORE_BROADCAST_PERIOD_TICKS,
@@ -114,7 +115,8 @@ def _broadcast_communication(
     entries for enemy players with all living allies within the communication range
     (Euclidean half-diagonal of the map).
     """
-    communication = getattr(actor, "communication", 0)
+    # Support-survival switch 5: the chance is also scaled by the caller's teamwork.
+    communication = support_survival.callout_chance(actor)
     if communication <= 0:
         return
     if random.random() * 100 >= communication:

@@ -138,18 +138,22 @@ class TestTagGoalSeesItsTarget:
 
 @pytest.mark.usefixtures("best_draw")
 class TestResupplyGoalSeesItsTarget:
+    """The Ammo's walk: since support_survival's switch 3 (2026-11-06) the Medic holds
+    its position and ``resupply_ally`` sets it no walking goal."""
+
     def test_the_neediest_ally_is_seen_not_stood_on(self, draws: list) -> None:
-        medic = _placed("medic", mode=Mode.CONTROL)
-        ally = _placed("scout", TARGET, final_lives=1)
-        goal = _choose(medic, [medic, ally], _sees_target(), action="resupply_ally")
+        ammo = _placed("ammo", mode=Mode.CONTROL)
+        ally = _placed("scout", TARGET, final_shots=1)
+        goal = _choose(ammo, [ammo, ally], _sees_target(), action="resupply_ally")
         assert goal == (5, 2)
+        # No LOS counts: every cell is as hidden as the next, so each is worth 1.0.
         _assert_a_full_value_draw_over(draws, VIEW)
 
     def test_with_no_reachable_cell_the_goal_is_the_allys_cell(self) -> None:
-        medic = _placed("medic", mode=Mode.CONTROL)
-        ally = _placed("scout", TARGET, final_lives=1)
+        ammo = _placed("ammo", mode=Mode.CONTROL)
+        ally = _placed("scout", TARGET, final_shots=1)
         ctx = _grid_map(sight={"5,5": {"50,50"}})
-        assert _choose(medic, [medic, ally], ctx, action="resupply_ally") == TARGET
+        assert _choose(ammo, [ammo, ally], ctx, action="resupply_ally") == TARGET
 
 
 @pytest.mark.usefixtures("best_draw")
@@ -344,14 +348,15 @@ class TestEmptyActionsKeepSettingGoals:
     def test_an_empty_resupply_roll_sets_an_action_goal(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        medic = _placed("medic", mode=Mode.CONTROL)
-        ally = _placed("scout", TARGET, final_lives=1)
+        # An Ammo: the Medic holds its position (support_survival switch 3).
+        ammo = _placed("ammo", mode=Mode.CONTROL)
+        ally = _placed("scout", TARGET, final_shots=1)
         ctx = _sees_target()
         self._roll(monkeypatch, "resupply_ally")
-        assert plan_action(medic, [medic, ally], 100, ctx, time_domain="ticks") == []
-        goal = _choose(medic, [medic, ally], ctx, action=medic.last_chosen_action)
+        assert plan_action(ammo, [ammo, ally], 100, ctx, time_domain="ticks") == []
+        goal = _choose(ammo, [ammo, ally], ctx, action=ammo.last_chosen_action)
         assert goal in VIEW
-        assert _set_an_action_goal(medic)
+        assert _set_an_action_goal(ammo)
 
 
 @pytest.mark.django_db
@@ -391,16 +396,19 @@ class TestEngagementGuard:
 
     It reads Scouts because a Commander's Base goal walks it to the enemy whatever it
     rolled, which hides this bug on Commanders over many seeds. The line is the Scout
-    floor (grill decision 23). The first four seeds score 79.2 as built and 53.5 when an
-    empty tag roll clears ``last_chosen_action``, while a Commander rises from 105.4 to
-    117.4. ``test_an_empty_tag_roll_sets_an_action_goal`` tests that rule directly. A later
-    RNG change may move the margin, so re-run ``scripts/mutate.py --measure`` rather than
+    floor (grill decision 23). On the 30 px / 5 ft Syracuse the first four seeds scored 79.2
+    as built and 53.5 when an empty tag roll clears ``last_chosen_action``, while a Commander
+    rose from 105.4 to 117.4. Re-measured 2026-11-06 on the 20 px / 1 ft map with the
+    support-survival switches on: 59.4 +/- 12.5 as built (56.5 +/- 4.4 over 12 seeds) and
+    41.4 +/- 2.3 with the bug, Commander 84.5 to 96.4; the floor sits between the two.
+    ``test_an_empty_tag_roll_sets_an_action_goal`` tests that rule directly. A later RNG
+    change may move the margin, so re-run ``scripts/mutate.py --measure`` rather than
     picking seeds.
     """
 
     def test_scouts_keep_shooting_on_syracuse(self) -> None:
         result = run_probe(_syracuse(), [1, 2, 3, 4])
-        assert result.roles["scout"].tags_per_round >= 70
+        assert result.roles["scout"].tags_per_round >= 50
 
 
 # Walls, so a goal that sees a target differs from the target's own cell.

@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 from core.models import (
+    DEFAULT_FEET_PER_PIXEL,
     ArenaMap,
     BaseSightLineConfig,
     HeavyStrongSpotsConfig,
@@ -85,6 +86,9 @@ def load_map_fixture(path: str | os.PathLike[str]) -> ArenaMap:
           "image": "maps/syracuse.png",       # optional ArenaMap.image path
           "img_width": 1200,                  # optional ArenaMap.img_width
           "img_height": 800,                  # optional ArenaMap.img_height
+          "feet_per_pixel": 0.05,             # optional ArenaMap.feet_per_pixel
+                                              #   (MOVE-08 scale; model default
+                                              #   when absent)
           "zone_size": 20,                    # MapZoneConfig.zone_size (px)
           "zone_data": {...},                 # MapZoneConfig.zone_data verbatim:
                                               #   {"zones": [[int]], "wall_meta",
@@ -118,6 +122,7 @@ def load_map_fixture(path: str | os.PathLike[str]) -> ArenaMap:
         image=data.get("image", ""),
         img_width=data.get("img_width"),
         img_height=data.get("img_height"),
+        feet_per_pixel=data.get("feet_per_pixel", DEFAULT_FEET_PER_PIXEL),
     )
     MapZoneConfig.objects.create(
         arena_map=arena_map,
@@ -322,6 +327,22 @@ class TestReport:
     cells: list[CellResult]
     match: MatchResult
     coverage: Coverage
+
+
+@dataclass(frozen=True)
+class CellTarget:
+    """The real side of one Test cell: what a run's ``sim_mean`` is measured against.
+
+    ``tolerance`` is the widest ``|sim - real|`` that still passes
+    (``within_tolerance``: 15% of the real mean, or the kind's floor).
+    """
+
+    position: str
+    metric: str
+    kind: str
+    real_mean: float
+    n_scorecards: int
+    tolerance: float
 
 
 def _key(ipl_id: str, position: str) -> str:
@@ -532,24 +553,7 @@ def run_test(
     """
     if rounds < 1:
         raise ValueError(f"rounds must be at least 1, got {rounds}")
-    used: list[dict] = []
-    skipped_lineup = skipped_thin = 0
-    for game in test["games"]:
-        sides = {team["colour"]: team for team in game["teams"]}
-        if sorted(sides) != sorted(COLOUR_SIDE) or len(game["teams"]) != 2:
-            skipped_lineup += 1
-            continue
-        if not all(_full_lineup(team["roster"]) for team in sides.values()):
-            skipped_lineup += 1
-            continue
-        if any(
-            _is_thin(train, entry)
-            for team in sides.values()
-            for entry in team["roster"]
-        ):
-            skipped_thin += 1
-            continue
-        used.append(sides)
+    used, coverage = _used_games(train, test)
 
     gen = random.Random(seed)
     tasks: list[tuple] = []
@@ -601,13 +605,118 @@ def run_test(
             winner_agreement=agree / games if games else 0.0,
             mean_margin_error=margin_error / games if games else 0.0,
         ),
-        coverage=Coverage(
-            total=len(test["games"]),
-            used=games,
-            skipped_lineup=skipped_lineup,
-            skipped_thin=skipped_thin,
-        ),
+        coverage=coverage,
     )
+
+
+def _used_games(train: dict, test: dict) -> tuple[list[dict], Coverage]:
+    """The Test games ``run_test`` replays, each as ``{colour: team}``, and the coverage.
+
+    A game is skipped as ``skipped_lineup`` when either side is not exactly
+    ``LINEUP`` or has a null ``ipl_id``, and otherwise as ``skipped_thin`` when
+    any player has fewer than ``TEST_MIN_POSITION_GAMES`` Training games (or
+    no Training row) at the position played.
+    """
+    used: list[dict] = []
+    skipped_lineup = skipped_thin = 0
+    for game in test["games"]:
+        sides = {team["colour"]: team for team in game["teams"]}
+        if sorted(sides) != sorted(COLOUR_SIDE) or len(game["teams"]) != 2:
+            skipped_lineup += 1
+            continue
+        if not all(_full_lineup(team["roster"]) for team in sides.values()):
+            skipped_lineup += 1
+            continue
+        if any(
+            _is_thin(train, entry)
+            for team in sides.values()
+            for entry in team["roster"]
+        ):
+            skipped_thin += 1
+            continue
+        used.append(sides)
+    coverage = Coverage(
+        total=len(test["games"]),
+        used=len(used),
+        skipped_lineup=skipped_lineup,
+        skipped_thin=skipped_thin,
+    )
+    return used, coverage
+
+
+def real_targets(train: dict, test: dict) -> list[CellTarget]:
+    """One ``CellTarget`` per Test cell, in ``run_test``'s order, with no simulation.
+
+    The games and scorecard weights are ``run_test``'s (``_used_games``), so
+    each ``real_mean`` is the ``real_mean`` a run reports for that cell. A
+    position nobody played has no cells.
+    """
+    used, _coverage = _used_games(train, test)
+    scorecards: dict[tuple[str, str], int] = {}
+    for sides in used:
+        for colour in COLOUR_SIDE:
+            for entry in sides[colour]["roster"]:
+                player_pos = (entry["ipl_id"], entry["position"])
+                scorecards[player_pos] = scorecards.get(player_pos, 0) + 1
+    targets: list[CellTarget] = []
+    for position in POSITIONS:
+        players = [player_pos for player_pos in scorecards if player_pos[1] == position]
+        if not players:
+            continue
+        n = sum(scorecards[player_pos] for player_pos in players)
+        for metric, kind, positions in METRICS:
+            if position not in positions:
+                continue
+            real_mean = (
+                sum(
+                    _real_average(test, player_pos, metric) * scorecards[player_pos]
+                    for player_pos in players
+                )
+                / n
+            )
+            targets.append(
+                CellTarget(
+                    position=position,
+                    metric=metric,
+                    kind=kind,
+                    real_mean=real_mean,
+                    n_scorecards=n,
+                    tolerance=max(
+                        TOLERANCE_SHARE * abs(real_mean), TOLERANCE_FLOOR[kind]
+                    ),
+                )
+            )
+    return targets
+
+
+def targets_payload(train: dict, test: dict) -> dict[str, Any]:
+    """``real_targets`` as the JSON document ``lfstats_calibrate --split targets`` writes.
+
+    ``coverage`` is ``run_test``'s game count by outcome, ``tolerance`` the gate
+    (``TOLERANCE_SHARE`` and ``TOLERANCE_FLOOR``), and ``cells`` the targets in
+    report order, each a plain dict of the ``CellTarget`` fields.
+    """
+    _used, coverage = _used_games(train, test)
+    return {
+        "coverage": {
+            "total": coverage.total,
+            "used": coverage.used,
+            "skipped_lineup": coverage.skipped_lineup,
+            "skipped_thin": coverage.skipped_thin,
+        },
+        "tolerance": {"share": TOLERANCE_SHARE, "floor": dict(TOLERANCE_FLOOR)},
+        "cells": [
+            {
+                "position": t.position,
+                "metric": t.metric,
+                "kind": t.kind,
+                "real_mean": t.real_mean,
+                "n_scorecards": t.n_scorecards,
+                "tolerance": t.tolerance,
+            }
+            for t in real_targets(train, test)
+        ],
+    }
 
 
 _METRIC_KIND: dict[str, str] = {metric: kind for metric, kind, _ps in METRICS}

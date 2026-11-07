@@ -1,6 +1,24 @@
 import re
 
+import pytest
+
+from matches.sim_helpers import support_survival
 from teams.models import Team, Player
+
+
+@pytest.fixture
+def switches_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The engine as MECH-07 / MECH-17 built it: support_survival's four default
+    switches (on since 2026-11-06) turned off, so a test of those rules measures them
+    directly. ``test_support_survival.py`` measures each switch on and off."""
+    for name in (
+        "TARGET_PRIORITY",
+        "HIDDEN_SUPPORT_CELLS",
+        "MEDIC_HOLDS_POSITION",
+        "AMMO_HIDES_FREELY",
+    ):
+        monkeypatch.setattr(support_survival, name, False)
+
 
 # RV-05: ReportLab writes every embedded RGB image as an XObject whose
 # dictionary carries ``/ColorSpace /DeviceRGB`` (the one shared soft mask for

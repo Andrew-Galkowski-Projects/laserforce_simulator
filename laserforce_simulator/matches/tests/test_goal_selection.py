@@ -185,7 +185,7 @@ class TestMap05RoleAwareGoal:
         # Medic picks lowest-LOS cell in Heavy's visible set
         assert goal == (2, 1)
 
-    def test_ammo_takes_the_best_scored_open_cell_in_heavy_sight(self):
+    def test_ammo_takes_the_best_scored_hidden_cell_in_heavy_sight(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
@@ -206,8 +206,10 @@ class TestMap05RoleAwareGoal:
         )
 
         goal = choose_goal_cell(ammo, [ammo, heavy], spawn_cells, ctx)
-        # Ammo picks highest-LOS cell in Heavy's visible set
-        assert goal == (2, 3)
+        # support_survival's hidden support cells (2026-11-06): the Ammo values
+        # cover like the Medic. The old open-cell preference is measured with
+        # the switch off in test_support_survival.
+        assert goal == (2, 1)
 
     def test_medic_with_no_los_counts_still_draws_a_cell_the_heavy_sees(self):
         # MECH-07c replaces the old fallback to the Heavy's own cell. With no counts
@@ -372,9 +374,11 @@ class TestMap05RoleAwareGoal:
         )
         assert goal == (1, 1)
 
-    def test_action_resupply_medic_goes_to_neediest_by_lives(self):
+    def test_action_resupply_medic_goes_to_neediest_by_lives(self, switches_off):
         # MECH-07c: the ally is at 10% of the Medic's resource, below the 75% Defense
-        # needs before it walks over (test_modes.TestDefenseResupplyGoal).
+        # needs before it walks over (test_modes.TestDefenseResupplyGoal). With the
+        # support-survival switches on (the default) the Medic holds its position
+        # and never walks: test_support_survival.
         from matches.sim_helpers.pathfinding import choose_goal_cell
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}

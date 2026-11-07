@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import heapq
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from .map_context import MapContext
 
+from . import support_survival
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
@@ -23,7 +24,6 @@ from .time_constants import (
     GOAL_RECOMPUTE_PERIOD_TICKS,
     HELD_GOAL_EXPIRY,
     TICK_SECONDS,
-    _stale_table,
 )
 
 
@@ -408,7 +408,7 @@ def _cell_from_memory(
     if entry is None:
         return None
     role = entry.get("role", "scout")  # default to stale-quickly if unknown
-    table = _stale_table(time_domain)
+    table = support_survival.stale_table(time_domain)
     threshold = table.get(role, table["scout"])
     age = second - entry.get("timestamp", 0)
     if age > threshold:
@@ -433,7 +433,7 @@ def _known_enemies_from_memory(
     memory = getattr(player, "player_memory", None)
     if not memory:
         return []
-    table = _stale_table(time_domain)
+    table = support_survival.stale_table(time_domain)
     cells = []
     for tag_id, entry in memory.items():
         # Only enemies
@@ -469,13 +469,15 @@ def _goal_seeing(
     all_alive: list,
     movement_ctx: "MapContext",
     second: float,
+    value_of: "Callable[[tuple[int, int]], float] | None" = None,
 ) -> tuple[int, int]:
     """MECH-17: a drawn cell that can see *target*, else *target* itself when no such
-    cell is reachable (or the map has no sight data)."""
+    cell is reachable (or the map has no sight data). *value_of* scores a candidate;
+    every one is worth 1.0 by default."""
     goal = draw_goal(
         player,
         movement_ctx.cells_visible_from(target),
-        lambda cell: 1.0,
+        value_of or (lambda cell: 1.0),
         all_alive,
         movement_ctx,
         second,
@@ -535,6 +537,10 @@ def _goal_from_action(
             and p.cell_row is not None
             and p is not player
         ]
+        # Support-survival switch 3: the Medic holds its position; a low ally
+        # comes to it (the critical-resource override in choose_goal_cell).
+        if player.role == "medic" and support_survival.MEDIC_HOLDS_POSITION:
+            return None
         if allies:
             shares = {id(p): _resupply_share(p, player.role) for p in allies}
             target = min(allies, key=lambda p: shares[id(p)])
@@ -545,12 +551,19 @@ def _goal_from_action(
                 and shares[id(target)] > DEFENSE_RESUPPLY_SHARE
             ):
                 return None
+            # Support-survival switch 4: the walk ends on a hidden cell.
+            hidden = (
+                (lambda cell: 1.0 - movement_ctx.los_rank(cell))
+                if support_survival.AMMO_HIDES_FREELY
+                else None
+            )
             return _goal_seeing(
                 player,
                 (target.cell_row, target.cell_col),
                 all_alive,
                 movement_ctx,
                 second,
+                hidden,
             )
 
     elif intended_action == "hide":

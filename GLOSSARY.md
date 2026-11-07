@@ -162,7 +162,7 @@ _Avoid_: "retreat" for all three (only two of them move)
 
 **Map scale**:
 How many real-world feet one square of a map's grid covers, from the map's drawing scale and its square size. Every distance and every player speed is set in feet and turned into squares by the Map scale, so a finer grid on the same map keeps the same real distances.
-_Avoid_: reading a square as a fixed distance (on Syracuse one square is about five feet)
+_Avoid_: reading a square as a fixed distance (on Syracuse's 20 px grid one square is one foot; the hand-built test grids use five)
 
 **Elimination**:
 A player losing their last **Life** and being out for the remainder of the round.

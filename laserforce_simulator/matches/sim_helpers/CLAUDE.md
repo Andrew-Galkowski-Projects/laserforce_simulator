@@ -18,6 +18,7 @@ Paths are relative to the repo root.
 - `PlayerState` fields, transient caches, uptime counters, baked stats — `docs/agents/matches/sim-helpers.md#player_statepy`
 - action weights, weight layout, role baselines, weight-safety rules — `docs/agents/matches/sim-helpers.md#weightspy`
 - movement, A*, path and goal commitment, goal selection, memory — `docs/agents/matches/sim-helpers.md#pathfindingpy`
+- Support-survival switches: target priority, hidden support cells, the Medic holding position, the Ammo hiding freely, teamwork call-outs (2026-11-06) — `docs/agents/matches/sim-helpers.md#support_survivalpy`
 - shot cooldown, tag / resupply target choice — `docs/agents/matches/sim-helpers.md#mechanicspy`
 - `plan_action`, line of sight, windowed walls, base capture, missile lock — `docs/agents/matches/sim-helpers.md#combatpy`
 - role stats, max lives / shots, special cost — `docs/agents/matches/sim-helpers.md#role_constantspy`

@@ -24,6 +24,8 @@ REPO_ROOT = Path(settings.BASE_DIR).parent
 DEFAULT_TRAIN = REPO_ROOT / "data" / "lfstats_train_2026-10-21.json"
 DEFAULT_TEST = REPO_ROOT / "data" / "lfstats_test_internationals_2026.json"
 DEFAULT_MAP_FIXTURE = REPO_ROOT / "data" / "maps" / "syracuse.json"
+# What ``--split targets`` writes with ``--out``: the real side of every Test cell.
+DEFAULT_TARGETS = REPO_ROOT / "data" / "lfstats_cell_targets.json"
 
 # The search's default grid: three values around each default constant.
 DEFAULT_GRID: dict[str, tuple[float, ...]] = {
@@ -48,10 +50,17 @@ class Command(BaseCommand):
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument(
             "--split",
-            choices=("train", "test", "search"),
+            choices=("train", "test", "search", "targets"),
             required=True,
             help="train: Training set report; test: replay the Test set; "
-            "search: tune the constants on the Training set",
+            "search: tune the constants on the Training set; "
+            "targets: print the real side of every Test cell (no simulation)",
+        )
+        parser.add_argument(
+            "--out",
+            default=None,
+            help="targets: also write the cells as JSON to this path "
+            f"(the committed file is {DEFAULT_TARGETS.relative_to(REPO_ROOT)})",
         )
         parser.add_argument(
             "--train",
@@ -113,6 +122,11 @@ class Command(BaseCommand):
             },
         )
         train = _load_json(options["train"], "Training file")
+        if split == "targets":
+            self._targets(
+                train, _load_json(options["test"], "Test file"), options["out"]
+            )
+            return
         test = _load_json(options["test"], "Test file") if split == "test" else None
         movement_ctx = _map_context(options["map_fixture"])
         run = {
@@ -194,6 +208,34 @@ class Command(BaseCommand):
                 )
         passed = sum(c.passed for c in cells)
         self.stdout.write(f"\nCells passed: {passed} / {len(cells)}\n")
+
+    def _targets(self, train: dict, test: dict, out: str | None) -> None:
+        """The real side of every Test cell, and the JSON file when ``out`` is given."""
+        payload = cal.targets_payload(train, test)
+        self.stdout.write(
+            "\nLFS-01 calibration: Test set targets (real means, no simulation)\n"
+        )
+        for position in cal.POSITIONS:
+            rows = [c for c in payload["cells"] if c["position"] == position]
+            if not rows:
+                continue
+            self.stdout.write(f"\n{position} (n={rows[0]['n_scorecards']})\n")
+            self.stdout.write(f"{'Metric':<22} {'Real':>10} {'Tolerance':>10}\n")
+            self.stdout.write("-" * 44 + "\n")
+            for c in rows:
+                self.stdout.write(
+                    f"{c['metric']:<22} {c['real_mean']:>10.3f} {c['tolerance']:>10.3f}\n"
+                )
+        cov = payload["coverage"]
+        self.stdout.write(
+            f"\nCoverage: {cov['used']} of {cov['total']} games used, "
+            f"{cov['skipped_lineup']} skipped (lineup), "
+            f"{cov['skipped_thin']} skipped (thin data, under "
+            f"{cal.TEST_MIN_POSITION_GAMES} Training games at the position)\n"
+        )
+        if out:
+            Path(out).write_text(json.dumps(payload, indent=1) + "\n", encoding="utf-8")
+            self.stdout.write(f"Wrote {out}\n")
 
     def _coverage(self, report: cal.TestReport) -> None:
         cov, match = report.coverage, report.match

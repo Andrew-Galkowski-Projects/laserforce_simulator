@@ -261,3 +261,64 @@ class TestErrors:
         with pytest.raises(CommandError, match="sight_data"):
             _run("--split", "test", "--rounds", "1", **dict(files, map_fixture=broken))
         assert _counts() == before
+
+
+@pytest.mark.django_db
+class TestTargetsSplit:
+    """``--split targets``: the real side of every Test cell, written for later runs."""
+
+    def test_prints_the_real_table_and_writes_the_payload(
+        self, files: dict[str, str], tmp_path: Path
+    ) -> None:
+        out_path = tmp_path / "targets.json"
+        before = _counts()
+        out = _run("--split", "targets", "--out", str(out_path), **files)
+        assert "commander (n=2)" in out
+        assert "Metric" in out and "Real" in out and "Tolerance" in out
+        assert "Sim" not in out
+        assert "Coverage: 1 of 3 games used, 1 skipped (lineup), 1 skipped" in out
+        assert f"Wrote {out_path}" in out
+        out.encode("ascii")
+        train = json.loads(Path(files["train"]).read_text(encoding="utf-8"))
+        test = json.loads(Path(files["test"]).read_text(encoding="utf-8"))
+        assert json.loads(out_path.read_text(encoding="utf-8")) == cal.targets_payload(
+            train, test
+        )
+        assert _counts() == before
+
+    def test_without_out_it_only_prints(
+        self, files: dict[str, str], tmp_path: Path
+    ) -> None:
+        out = _run("--split", "targets", **files)
+        assert "commander (n=2)" in out
+        assert "Wrote" not in out
+        assert {p.name for p in tmp_path.glob("*.json")} == {
+            "train.json",
+            "test.json",
+            "map.json",
+        }
+
+    def test_needs_no_map_fixture(self, files: dict[str, str], tmp_path: Path) -> None:
+        missing = str(tmp_path / "nowhere" / "syracuse.json")
+        out = _run("--split", "targets", **dict(files, map_fixture=missing))
+        assert "commander (n=2)" in out
+
+
+class TestCommittedTargets:
+    """``data/lfstats_cell_targets.json`` is what ``--split targets`` writes from the
+    committed Training and Test files, so a rebuilt data file shows up as a diff here.
+    It asserts agreement between two committed files, not any real number."""
+
+    def test_committed_targets_match_the_committed_data(self) -> None:
+        targets_path = lfstats_calibrate.DEFAULT_TARGETS
+        if not (
+            targets_path.is_file()
+            and lfstats_calibrate.DEFAULT_TRAIN.is_file()
+            and lfstats_calibrate.DEFAULT_TEST.is_file()
+        ):
+            pytest.skip("the committed LFstats data files are not checked out")
+        train = json.loads(lfstats_calibrate.DEFAULT_TRAIN.read_text(encoding="utf-8"))
+        test = json.loads(lfstats_calibrate.DEFAULT_TEST.read_text(encoding="utf-8"))
+        committed = json.loads(targets_path.read_text(encoding="utf-8"))
+        assert committed == cal.targets_payload(train, test)
+        assert targets_path.name == "lfstats_cell_targets.json"

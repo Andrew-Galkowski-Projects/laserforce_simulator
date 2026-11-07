@@ -1163,8 +1163,12 @@ class TestChooseGoalCellUsesModes:
         assert not hasattr(pathfinding, "_enemy_medic_goal")
 
 
-@pytest.mark.usefixtures("best_draw")
+@pytest.mark.usefixtures("best_draw", "switches_off")
 class TestSupportsThroughChooseGoalCell:
+    """MECH-07's Defense rule as built (``switches_off``: with support_survival's hidden
+    support cells, the default since 2026-11-06, both roles value cover within two steps
+    of a seeing cell; ``test_support_survival`` measures that)."""
+
     def _scene(self, role: str) -> tuple[PlayerState, list, MapContext]:
         support = _placed(role, teamwork=0)
         heavy = _placed("heavy", (2, 2))
@@ -1216,7 +1220,12 @@ class TestSupportsThroughChooseGoalCell:
 
 class TestDefenseResupplyGoal:
     """Decision 24: in Defense, ``resupply_ally`` sets a goal only at or below 75% of
-    the resource the support restores. The ally read stays true state."""
+    the resource the support restores. The ally read stays true state.
+
+    Measured with the support-survival switches off: since 2026-11-06 the Medic holds
+    its position and gets no resupply walk at all (``test_support_survival``)."""
+
+    pytestmark = pytest.mark.usefixtures("switches_off")
 
     def _goal(
         self, support: PlayerState, ally: PlayerState, ctx: MapContext | None = None
@@ -1537,6 +1546,11 @@ def _defense_scene(
 
 @pytest.mark.usefixtures("best_draw")
 class TestDefenseGoal:
+    """The Defense rule as built; the two-step reach and the Ammo's hidden value
+    (support_survival, default since 2026-11-06) are in ``test_support_survival``."""
+
+    pytestmark = pytest.mark.usefixtures("switches_off")
+
     def test_candidates_are_the_cells_that_see_the_remembered_heavy(
         self, draws: list
     ) -> None:
@@ -1613,6 +1627,8 @@ class TestDefenseGoal:
 
 @pytest.mark.usefixtures("best_draw")
 class TestDefenseFallsBackToControl:
+    pytestmark = pytest.mark.usefixtures("switches_off")
+
     def _control_cells(self, support: PlayerState, everyone: list, ctx: MapContext):
         """The goal, which on this map only the Control rule's (1, 1) can be."""
         return mode_goal(support, everyone, "blue", ctx, 100)

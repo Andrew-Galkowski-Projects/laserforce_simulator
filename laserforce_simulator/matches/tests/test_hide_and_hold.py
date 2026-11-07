@@ -237,7 +237,14 @@ def _heading_off(player: PlayerState) -> PlayerState:
 
 
 class TestHideAllowed:
-    """``not needed and (threatened or settled)``."""
+    """``not needed and (threatened or settled)``.
+
+    Measured with the support-survival switches off: on (the default since
+    2026-11-06), ``support_survival.hide_gate_open`` lets a Medic or Ammo hide
+    whatever its allies need, before these rules run (``test_support_survival``).
+    """
+
+    pytestmark = pytest.mark.usefixtures("switches_off")
 
     @pytest.mark.parametrize("role", ["medic", "ammo"])
     def test_settled_on_its_goal_and_not_needed_it_may_hide(self, role: str) -> None:
@@ -342,6 +349,10 @@ def test_resupply_share_lives_in_modes() -> None:
 
 
 class TestHideSlot:
+    """With the support-survival switches off (see ``TestHideAllowed``)."""
+
+    pytestmark = pytest.mark.usefixtures("switches_off")
+
     def test_not_allowed_the_medic_slot_is_zero(self, rolled: list) -> None:
         medic = _placed("medic", HERE, decision_making=0)
         _plan(medic, _grid_map(), _needy_ally())
@@ -388,6 +399,10 @@ class TestHideSlot:
 
 
 class TestLeavingAHide:
+    """With the support-survival switches off (see ``TestHideAllowed``)."""
+
+    pytestmark = pytest.mark.usefixtures("switches_off")
+
     def test_an_active_support_not_allowed_leaves_on_any_roll(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -710,7 +725,10 @@ def _fingerprint(players: list[PlayerState]) -> str:
 class TestMapLessRoundsAreUnchanged:
     # Pinned from the commit before this ticket (bcb2ade4): every player's outcome and
     # the RNG state after the round, so any change to a map-less draw moves it.
-    PINNED = {7: "8b059b08209535f9", 21: "fb03cd0de8c924ab"}
+    # Re-pinned 2026-11-06 when support_survival's target priority became the
+    # default: choose_tag_target draws differently on every round, map or not
+    # (the old values were 8b059b08209535f9 and fb03cd0de8c924ab).
+    PINNED = {7: "3e2b367fd8e4a387", 21: "1c0910ccaa48fd2b"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

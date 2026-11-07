@@ -148,6 +148,13 @@ along the way are in [`docs/lfstats-import.md`](docs/lfstats-import.md). The reb
 `scripts/lfstats_import/` and the data is `data/lfstats_snapshot_2026-10-21.json`. Scheduled
 directly after the Phase 8 Angular work (owner, 2026-10-21). LFS-01 shipped first (2026-11-03);
 mechanics changes from LFS-02 or CAL-01 call for re-running its `lfstats_calibrate` harness.
+Re-run on 2026-11-06 after the Syracuse scale fix (20 px squares at 1 ft, from 30 px / 5 ft):
+baseline 14/36 cells; the support-survival switches T, H, M, A (`sim_helpers/support_survival.py`)
+became the defaults at 15/36, objective 0.144; the real side of every cell is committed as
+`data/lfstats_cell_targets.json` (`lfstats_calibrate --split targets`). Results are in
+`docs/lfstats-import.md`. Follow-ups, each a constant the sweep found helpful that still has to be
+re-run on top of the switches: the Commander nuke gate at 20 SP (#558), the Downed option Stay
+weight 40 (#559), the missile bump 30 and where missiles die (#560).
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 

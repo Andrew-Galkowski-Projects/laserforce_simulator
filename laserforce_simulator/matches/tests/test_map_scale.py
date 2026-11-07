@@ -2,8 +2,8 @@
 
 Every distance is a feet constant turned into squares by the round's map
 (``MapContext.squares``), and player speed is feet per second, so the scale
-holds whatever the grid size. Syracuse: 30 px a square at 1/6 ft a pixel is
-5 ft a square.
+holds whatever the grid size. Syracuse: 20 px a square at 1/20 ft a pixel is
+1 ft a square (the fixture carries the scale).
 """
 
 from __future__ import annotations
@@ -117,12 +117,14 @@ class TestMapScaleFromTheMap:
 
         arena = load_map_fixture(SYRACUSE)
         ctx, zone_size = load_map_context(arena)
-        assert ctx is not None and zone_size == 30
-        assert arena.feet_per_pixel == pytest.approx(1 / 6)
-        assert ctx.feet_per_square == pytest.approx(5.0)
+        # Syracuse: 20 px squares at 1 ft per 20 px (owner-measured, 2026-11-05;
+        # the fixture carries the scale).
+        assert ctx is not None and zone_size == 20
+        assert arena.feet_per_pixel == pytest.approx(0.05)
+        assert ctx.feet_per_square == pytest.approx(1.0)
 
-        arena.feet_per_pixel = 1 / 3
+        arena.feet_per_pixel = 1 / 6
         arena.save()
         ctx, _ = load_map_context(arena)
         assert ctx is not None
-        assert ctx.feet_per_square == pytest.approx(10.0)
+        assert ctx.feet_per_square == pytest.approx(20 / 6)

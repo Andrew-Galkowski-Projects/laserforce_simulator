@@ -1,6 +1,8 @@
 from django.db import models
 
-#: MOVE-08: Syracuse's drawing scale (30 px a square = 5 ft, owner-measured).
+#: MOVE-08: the model default for a map whose scale nobody set. Syracuse's own
+#: scale is 0.05 (20 px a square = 1 ft, owner-measured 2026-11-05), carried by
+#: its fixture ``data/maps/syracuse.json``; the 1/6 here was its first estimate.
 DEFAULT_FEET_PER_PIXEL = 1 / 6
 
 

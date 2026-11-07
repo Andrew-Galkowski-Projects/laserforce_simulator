@@ -736,6 +736,93 @@ class TestRunTest:
         assert serial == parallel
 
 
+class TestRealTargets:
+    """The real side of every Test cell, with no simulation: what a run is measured against."""
+
+    def test_cells_cover_the_same_games_and_pairs_as_run_test(self) -> None:
+        train, test = _three_game_set()
+        targets = cal.real_targets(train, test)
+        expected = [
+            (p, mid) for p in ALL_POSITIONS for mid, _k, ps in cal.METRICS if p in ps
+        ]
+        assert [(t.position, t.metric) for t in targets] == expected
+        kinds = {mid: kind for mid, kind, _ps in cal.METRICS}
+        for target in targets:
+            # One used game: two scorecards a position, four for the scouts.
+            assert target.n_scorecards == (4 if target.position == "scout" else 2)
+            assert target.kind == kinds[target.metric]
+
+    def test_real_mean_is_scorecard_weighted_and_runs_no_round(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Fire's commander m plays all three games; Ice's are n, o, o:
+        # (3*0.9 + 0.6 + 2*0.3) / 6 = 0.65, as run_test's real_mean.
+        fire = _side("m")
+        games = [
+            _game("g1", fire, _side("n")),
+            _game("g2", fire, _side("o")),
+            _game("g3", fire, _side("o")),
+        ]
+        train, test = _data(games, m_commander0=0.9, n_commander0=0.6, o_commander0=0.3)
+
+        def no_rounds(tasks: list, workers: int) -> list:
+            raise AssertionError("real_targets must not simulate")
+
+        monkeypatch.setattr(cal, "_run_rounds", no_rounds)
+        target = next(
+            t
+            for t in cal.real_targets(train, test)
+            if (t.position, t.metric) == ("commander", "avg_accuracy")
+        )
+        assert target.n_scorecards == 6
+        assert target.real_mean == pytest.approx(0.65)
+
+    def test_tolerance_is_the_wider_of_the_share_and_the_floor(self) -> None:
+        train, test = _three_game_set()
+        by_pair = {(t.position, t.metric): t for t in cal.real_targets(train, test)}
+        for target in by_pair.values():
+            assert target.tolerance == pytest.approx(
+                max(
+                    cal.TOLERANCE_SHARE * abs(target.real_mean),
+                    cal.TOLERANCE_FLOOR[target.kind],
+                )
+            )
+        # 15% of 30 times hit is 4.5; 15% of one nuke is under the 0.5 floor.
+        assert by_pair[("heavy", "avg_times_hit")].tolerance == pytest.approx(4.5)
+        assert by_pair[("commander", "avg_nukes_detonated")].tolerance == pytest.approx(
+            0.5
+        )
+
+    def test_no_usable_game_gives_no_cells(self) -> None:
+        seven = _side("i") + [_entry("i-scout9", "scout")]
+        train, test = _data([_game("seven", seven, _side("j"))])
+        assert cal.real_targets(train, test) == []
+
+    def test_payload_carries_the_coverage_the_gate_and_the_cells_as_json(self) -> None:
+        train, test = _three_game_set()
+        payload = cal.targets_payload(train, test)
+        assert payload["coverage"] == {
+            "total": 3,
+            "used": 1,
+            "skipped_lineup": 1,
+            "skipped_thin": 1,
+        }
+        assert payload["tolerance"] == {
+            "share": cal.TOLERANCE_SHARE,
+            "floor": {"count": 0.5, "fraction": 0.05},
+        }
+        assert payload["cells"][0] == {
+            "position": "commander",
+            "metric": "avg_accuracy",
+            "kind": "fraction",
+            "real_mean": 0.6,
+            "n_scorecards": 2,
+            "tolerance": pytest.approx(0.09),
+        }
+        assert len(payload["cells"]) == len(cal.real_targets(train, test))
+        assert json.loads(json.dumps(payload)) == payload
+
+
 def _ordered(roster: list[dict]) -> list[dict]:
     order = {p: i for i, p in enumerate(ALL_POSITIONS)}
     return sorted(roster, key=lambda e: order[e["position"]])

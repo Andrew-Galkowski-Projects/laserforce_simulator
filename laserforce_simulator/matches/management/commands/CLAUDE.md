@@ -57,6 +57,11 @@ python manage.py lfstats_calibrate --split search --rounds 20 --seed 42 --worker
 - `train`: each Training (player, position) with at least `MIN_TRAIN_GAMES` (26) games there plays `--rounds` rounds at that Role as red, the other five red and all six blue built from the per-position baselines (field-average teams). Compared with the player's Training averages; prints the per-Role table and the objective.
 - `test`: replays each usable Internationals 2026 game `--rounds` times with its real lineup (Fire red, Ice blue). Skips a game whose lineup is not commander / heavy / two scouts / ammo / medic on both sides, or where a player has fewer than `TEST_MIN_POSITION_GAMES` (5) Training games at the position played. Prints the table, then the coverage line and the match level (winner agreement, mean margin error).
 - `search`: a coordinate search over the `ImportConstants` fields on the Training set only (never reads `--test`), starting from the defaults plus any constant flags. Its grid is `DEFAULT_GRID` in the command, three values around each default; `--search-fields accuracy_offset,preferred_role_boost` narrows it to those constants (an unknown name is a `CommandError`). Prints the table for the chosen constants, a Start / Chosen constants table, the objective, and the history (every candidate tried, by pass, with `yes` where it was kept).
+- `targets`: the real side of every Test cell with no simulation (`real_targets` / `targets_payload`): per Role, `Metric`, `Real` (the scorecard-weighted mean of the used games, exactly `test`'s `Real` column) and `Tolerance` (the widest `|sim - real|` that passes), then the coverage line. `--out <path>` also writes the JSON (`coverage`, `tolerance`, `cells`); the committed copy is `data/lfstats_cell_targets.json` (`DEFAULT_TARGETS`), which `test_lfstats_calibrate_command.py::TestCommittedTargets` keeps equal to the committed data. Needs no map fixture and no database.
+
+```bash
+python manage.py lfstats_calibrate --split targets --out data/lfstats_cell_targets.json
+```
 
 **Other flags:** `--train` / `--test` (default the committed `data/lfstats_train_2026-10-21.json` / `data/lfstats_test_internationals_2026.json`), `--map-fixture` (default `data/maps/syracuse.json`; a missing path is a `CommandError` naming it), `--rounds` (20), `--seed` (42), `--workers` (1), and one float flag per `ImportConstants` field: `--log-scale`, `--accuracy-offset`, `--accuracy-scale`, `--survival-times-hit-weight`, `--preferred-role-boost`.
 
@@ -77,7 +82,7 @@ python manage.py lfstats_calibrate --split search --rounds 20 --seed 42 --worker
 3. **`train`:** `Objective: <x>`, the mean over cells of `(err / max(|real|, floor)) ** 2`.
 4. **`search`:** the constants table, `Objective: <x>`, and the history table.
 
-ASCII only (cp1252 console). The command writes no files; copy the output into `docs/lfstats-import.md`.
+ASCII only (cp1252 console). The command writes no files except `targets` with `--out`; copy the output into `docs/lfstats-import.md`.
 
 ---
 
