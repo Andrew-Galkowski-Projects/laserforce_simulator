@@ -171,33 +171,173 @@ nuke in `record_down` (a missile Down used to leave it armed).
 
 ### CAL-02 · Tags and times tagged in line with the arena (owner, 2026-11-07)
 
+Spec: #563
+
 The owner, after the nuke work: bring tags and times tagged more in line between the sim and the
 actual game. The sim's Commander tags and is tagged far less than the real one, which is also where
 its SP income comes from (about 54 SP a Commander-round against 67 in the arena; a nuke costs 20),
 so the remaining nuke gap is this gap. Latest calibration (LFS-01 Test set, 3 rounds, 2026-11-07,
-`docs/lfstats-import.md`) and the counter (`times tagged` and `tags` per player-round):
+`docs/lfstats-import.md`) and the counter (`times tagged` and `tags` per player-round).
 
-| Role | Sim times hit | Real times hit | Sim hit diff | Real hit diff | Sim tags a round | Real tags a game (shots hit) |
+**Baseline (grill, 2026-11-08).** Real side from the 164 usable Internationals 2026 TDF event logs
+(zaps on enemies, codes 0205 / 0206; LFstats `shotsHit` is not a tag count: it also counts
+Resupplies and Base zaps, so the first table's "real tags" of 74 for the Ammo and 62 for the Medic
+were resupplies). Sim side: the 128 Test games with their real lineups, one round each, seed 42,
+on `origin/main` at 5d0821a7. Per player-round, sim / real:
+
+| Role | Tags made | Times tagged | Shots fired at enemies | Accuracy on enemies | Active share | Tags per Active minute |
 |---|---|---|---|---|---|---|
-| Commander | 29.7 | 59.1 | 1.87 | 0.98 | 42 | about 70 |
-| Heavy | 32.8 | 47.8 | 1.35 | 0.97 | 37 | about 53 |
-| Scout | 25.5 | 33.8 | 1.13 | 1.12 | 25 | about 53 |
-| Ammo | 15.4 | 23.2 | 0.75 | 1.10 | 11 | about 74 |
-| Medic | 15.7 | 10.2 | 0.16 | 1.06 | 2 | about 62 |
+| Commander | 42.0 / 54.5 | 28.9 / 58.8 | 56.6 / 70.3 | 0.74 / 0.83 | 0.63 / 0.58 | 4.5 / 6.9 |
+| Heavy | 35.7 / 43.5 | 32.6 / 47.8 | 46.9 / 55.4 | 0.76 / 0.84 | 0.56 / 0.64 | 4.2 / 5.0 |
+| Scout | 26.1 / 36.4 | 25.7 / 33.5 | 39.3 / 58.6 | 0.66 / 0.69 | 0.48 / 0.55 | 3.7 / 4.9 |
+| Ammo | 11.3 / 22.3 | 15.0 / 23.2 | 15.9 / 45.8 | 0.71 / 0.54 | 0.26 / 0.63 | 2.9 / 2.6 |
+| Medic | 2.1 / 8.6 | 15.5 / 10.2 | 2.8 / 18.3 | 0.77 / 0.59 | 0.33 / 0.73 | 0.4 / 0.9 |
 
-Real tags are LFstats SM5 shots hit (last 365 days, 10+ games at the position); real times hit and
-hit diff are the Test-set cells. Every role but the Medic is tagged too little and tags too little;
-the Medic is tagged too much and tags almost never. Things to settle, in order: (1) whether a
-planned Shot is a shot fired and how many land (the CAL-01 shots table under Phase 3 has the
-per-role shot counts); (2) the Commander's and Heavy's hit diff, which say the 3-hit roles win too many of their
-exchanges, against the TDF finding that 76% of real 3-hit Downs by a 1-hit player's three tags come
-without the 3-hit player tagging back (9.3 such Downs a game; `docs/lfstats-import.md`, "Real
-nukes"); (3) support tags, the Medic above all (`support_survival` hides them; the arena's Medic
-shoots 62 times a game and is hit 10); (4) engagement range and the time players spend with no
-target in sight (`round_probe`, the Action numbers). Measure with `lfstats_calibrate --split test`
-(the times-hit and hit-diff cells), the scratchpad-style counter (tags / times tagged / SP a round)
-and the TDF scripts for who-tagged-whom shapes (`docs/lfstats-import.md`, "Real nukes"). Keep the
-Still / squares targets of MECH-17 and the nuke numbers of CAL #558 while moving these.
+Who tags whom, per game both teams, sim / real: Scouts on Commanders 19 / 40 and on Heavies 24 / 39;
+every role on the Commander 56 / 115; Commanders on the Medic 13.6 / 7.7. Real shot cadence (gap
+between one player's shots): 2% of Heavy and 16% of Commander shots come within 0.5 s of the one
+before. Shot power matches the arena (Heavy 3, Commander 2, others 1). Facts settled in the grill:
+a planned Shot is one shot fired unless the resolver's gate drops it (about 10%); 66% of the
+Commander's Active `tag_player` rolls find no enemy in line of sight and 20% come with no shots
+left; misses are not the gap (12 of the Commander's 14.6 are the 50% roll against a hiding target).
+Two engine bugs found: **(A)** deferred Reaction and Follow-up shots never fire, because the tick
+loop rebinds its local `pending_reactions` / `pending_followups` lists each tick while
+`RoundContext` keeps the original (29 Reactions and 20 Follow-ups queued in one round, 0 resolved;
+only a rapid-fire Scout, whose cooldown rounds to 0 ticks, gets them); **(B)** `plan_action`'s
+cooldown gate compares a tick count with a cooldown in seconds, so a Heavy can fire every tick.
+
+**Decisions (owner, 2026-11-08):**
+
+1. The TDF table above is CAL-02's real side; "tags" means zaps on enemies, never LFstats `shotsHit`.
+2. Fix bug A first (drain and rebind through `ctx`, a regression test that a queued Reaction
+   resolves on its due tick), re-run the counter and the 36 calibrate cells, then judge the rest.
+3. Fix bug B: the gate compares ticks (Heavy 2, others 1, rapid-fire Scout 0); the Heavy fires less
+   until the engagement work recovers it.
+4. Finding the enemy: a player whose tag roll finds nobody heads for the nearest remembered enemy or
+   the cell they were last tagged from, not the enemy-base search; Scouts in Attack Mode rank the
+   enemy Commander and Heavy above the Medic. One prototype-then-ticket slice; drop the half that
+   does not move tags or times tagged on the counter. The MECH-17 Still / squares targets stay.
+5. The Medic: off the top of `_ATTACK_TARGET_VALUES`, and its `tag_player` weight from 5 to about
+   15. Both measured; the T, H, M, A switches stay as they are.
+6. Ammo survival (Active 26% vs 63%) is out of scope: its tags per Active minute already match.
+7. The Commander running out of shots (100 Active rolls a round with none left; the Ammo resupply
+   flow) is out of scope.
+8. Acceptance, on the counter (128 Test games, one round, seed 42): every tags-made and
+   times-tagged cell closes at least half its gap to the TDF value, no cell moves away from real,
+   the 36 calibrate cells stay at 14 or more, winner agreement stays at 55% or above, and the Scout
+   planned-Shots floor, the MECH-17 Still / squares numbers (within their standard error) and the
+   CAL #558 nuke numbers hold.
+9. Tools to commit: the TDF parser as `scripts/tdf_role_stats.py` writing
+   `data/tdf_role_targets_2026.json` (the logs are fetched by slug and stay out of the repo), and
+   the counter as a `--lineups test` mode of `round_probe` (the Test games' real lineups with
+   workers) adding times tagged, shots fired, Downs given / taken, who-tags-whom and shot cadence,
+   with a drift test keeping the JSON equal to the script's output. The parser is IMPORT-01's first slice.
+10. Glossary: **Times tagged**, **Shot cadence**, and **Tag** sharpened against LFstats `shotsHit`.
+11. Bugs A and B are fixed together, and one counter plus calibrate run on both is the baseline the
+    levers of decisions 4 and 5 are judged against.
+12. At every Hit the attacker's cell is written into the defender's memory (today only the
+    attacker's memory learns the defender), so "the cell they were last tagged from" exists.
+13. `_ATTACK_TARGET_VALUES` (today `medic 1.0, ammo 0.7`, so an attacker in Attack Mode never
+    walks toward an enemy Commander or Heavy) becomes one table for every attacker, proportional
+    to how real Commanders spread their zaps per enemy player: `commander 1.0, heavy 0.8,
+    scout 0.6, ammo 0.55, medic 0.3`, measured on the counter.
+
+14. (owner, 2026-11-08, after the ladder and the Round 5 review) CAL-02 keeps the parts that are
+    right on their own: bugs A and B, the defender learning the attacker (12), the Attack table (13),
+    the Medic tag weight 15 (5), the TDF parser and the `round_probe` Test-lineups mode (9). Its
+    acceptance (replacing 8) is the P4 tree's numbers as floors plus no regressions, stated plainly
+    as not reaching the arena's totals. Decisions 2, 3, 4, 10 and 11 stand; 6 and 7 stand as
+    out of scope here and go to CAL-03.
+15. Control Mode by goal and map context, not by a player's resources, is its own task, MECH-19,
+    grilled on the time-in-Mode numbers above and the Round 5 review.
+16. Support survival and goal-cell variety are CAL-03, tied to the owner's "more random goal cell
+    selection" idea (no roadmap item holds it yet; the owner will point to it or describe it).
+
+**Prototype ladder (2026-11-08, the counter: 128 Test games, one round each, seed 42; per
+player-round, Commander / Heavy / Scout / Ammo / Medic; every standard error under 1):**
+
+| Run | Tags made (real 54.5 / 43.5 / 36.4 / 22.3 / 8.6) | Times tagged (real 58.8 / 47.8 / 33.5 / 23.2 / 10.2) | Tags a round, both teams (real 403) |
+|---|---|---|---|
+| baseline | 42.0 / 35.7 / 26.1 / 11.3 / 2.1 | 28.9 / 32.6 / 25.7 / 14.9 / 15.5 | 287 |
+| P1 bugs A and B | 43.5 / 33.8 / 26.1 / 12.1 / 2.3 | 28.7 / 34.5 / 25.5 / 14.4 / 15.4 | 288 |
+| P2 + the defender learns the attacker | 44.2 / 34.2 / 27.4 / 13.6 / 2.8 | 31.3 / 35.7 / 26.0 / 15.2 / 15.3 | 299 |
+| P3 + the Attack table | 45.1 / 35.3 / 26.7 / 13.2 / 2.7 | 30.1 / 36.8 / 26.4 / 14.9 / 15.0 | 299 |
+| P4 + Medic tag weight 15 | 44.2 / 34.7 / 27.1 / 13.3 / 4.9 | 30.9 / 37.1 / 26.0 / 15.3 / 15.8 | 302 |
+| P6 = P4 + Control Mode at a quarter of lives or shots | 44.0 / 39.2 / 27.4 / 13.2 / 5.1 | 33.1 / 38.0 / 28.1 / 14.3 / 15.0 | 313 |
+| P7 = P4 + Scout tag weight 60 | 40.0 / 30.8 / 32.8 / 9.9 / 3.6 | 30.7 / 39.8 / 24.3 / 15.0 / 15.9 | 300 |
+| P9 = P4 + the coloured wall segments as low walls | 47.1 / 35.8 / 28.7 / 14.1 / 5.3 | 34.7 / 38.9 / 27.5 / 15.8 / 15.4 | 319 |
+| P10 = P4 + low walls + Control at a quarter | 46.2 / 39.4 / 27.2 / 14.8 / 5.1 | 36.0 / 38.4 / 27.8 / 15.0 / 15.1 | 320 |
+| P8 = P10 + the attackers' seek-ally hide bumps halved | 46.5 / 38.4 / 27.4 / 15.4 / 5.4 | 37.2 / 38.8 / 27.4 / 14.9 / 14.8 | 321 |
+| P11 = P10 + Scout tag weight 60 | 40.4 / 33.3 / 34.0 / 11.6 / 4.3 | 36.1 / 39.4 / 25.6 / 15.2 / 15.6 | 315 |
+
+**Owner rulings on the ladder (2026-11-08):** the coloured segments are **not** low walls (P8 to
+P11 and the low-wall fixture are out). Control Mode must not hang on a player's resources at all:
+it should follow the map context and the player's goal (a Scout whose goal is to assist the
+Commander and tag the Heavy controls the area the Heavy wants and trades there; one whose goal is
+the Medic is not in Control, and when low it goes back to resupply), so decision 2 of this round
+is open for its own discussion, with the time each position spends in Control measured first.
+Half the gap is not to be conceded until the owner has reviewed a round's pathing (event
+timeline, playback map, heatmap); the uniform goal-cell selection may be the real cause of the
+few engagements. Medic survival is the lives budget: the arena's games whose Medic dies as early as
+the sim's are to be compared with the sim, and the support-survival work becomes its own task
+tied to goal-cell selection.
+
+**Real games by the team's own Medic's Elimination minute (TDF, 328 team-games; per
+player-game Tags / times tagged):** Medic out by 5:00 (16 team-games): Commander 30.1 / 38.5,
+Heavy 21.0 / 32.9, Scout 13.7 / 20.8, Ammo 12.2 / 19.3, Medic 5.8 / 13.5. Medic out 5:00-8:00 (41):
+Commander 40.4 / 54.2, Heavy 34.9 / 42.3, Scout 25.3 / 28.1, Ammo 18.9 / 24.3, Medic 6.7 / 13.1.
+Medic out 8:00-12:00 (25): 60.4 / 63.7, 49.0 / 54.5, 40.8 / 38.9, 22.7 / 24.1, 9.2 / 10.2. Medic out
+after 12:00 (21): 71.4 / 77.4, 56.9 / 59.6, 51.5 / 44.1, 29.3 / 26.2, 10.8 / 8.9. Both Medics
+survive (225): 56.6 / 56.8, 44.8 / 46.5, 38.2 / 32.4, 22.9 / 21.9, 8.8 / 9.1. The sim's Medic dies
+at minute 6.4 on average, and in the arena's 5:00-8:00 games the real Tags (Commander 40, Heavy
+35, Scout 25) are the sim's (44, 35, 27): the tag deficit is the lives budget. Times tagged is not
+(54 against 31): a team whose Medic dies early is the losing team, tagged 190 times against 151
+Tags, where the sim's rounds lose both Medics alike.
+
+**Time in each Mode (Test set, 128 games, current engine; share of the ticks a player was on the
+floor):** Commander Attack 14% / Control 86%; Heavy Attack 33% / Control 67%; Scout Attack 26% /
+Control 74%; Ammo Control 30% / Defense 70%; Medic Control 30% / Defense 70%. A Commander or Scout
+drops into Control the moment lives or shots pass half (`modes.LOW_RESOURCE_SHARE`), which for the
+Commander's 60 shots is a few minutes in. The review round for the owner's pathing look is Round 5
+in the CAL-02 worktree database (full fidelity, Syracuse, seed 1, the browser-check Teams).
+
+What the ladder says: the bug fixes alone move little, because a 1-hit defender is Downed by the
+hit that would provoke its Reaction (about 2 Reactions a round for the Commander, under 1
+elsewhere). Redistributing tag weight (P7) is zero-sum: the round's total tags stay near 300. The
+two levers that raise total engagement are Control Mode at a quarter (MECH-07's
+`LOW_RESOURCE_SHARE` 0.5, which had the Commander in Control 86% of the round and the Scout 73%,
+and only Attack hunts) and the map's sight lines: 359 of the 1,725 interior wall cells sit under
+the drawing's coloured segments, which the confirmed grid holds as high walls; as low walls (zone
+4) the median cell sees 317 cells instead of 233. The sight-line compute itself has no reach cap
+(the quadtree radius is 88 squares on a 119-wide grid). The ceiling under everything is the
+floor count: on P10 an attacker's Active rolls see 4.0 enemies alive on average and 3 or fewer on
+a third of them, against 5.5 of 6 in the arena, because the sim Ammo is eliminated at minute 4.5
+on average and the Medic at 6.4, where real players leave at minute 11 (the Medic 8.4). Commanders
+and Heavies also fire nearly every shot in the pack (8.8 and 6.6 left of 60 and 40; a Resupply
+gives 5), so their shots are capped by Ammo flow, where the real Commander fires 70.
+
+### CAL-03 · Supports stay on the floor, and goal-cell variety (owner, 2026-11-08)
+
+The lives budget behind CAL-02. The sim Ammo is eliminated at minute 4.5 of 15 on average and
+the Medic at 6.4 (Active 26% and 33% of the round against 63% and 73% real); real players leave at
+minute 11 (the Medic 8.4), so a sim team faces 4.0 enemies on the floor averaged over its Active
+ticks against 5.5 of 6 in the arena, and the round's Tags stop near 300 against 403. The arena's
+own games say the Tags follow the Medic: in the 41 team-games whose Medic died between 5:00 and
+8:00 the real per-player Tags are the sim's (Commander 40, Heavy 35, Scout 25, Ammo 19), and in
+the 225 whose Medic survived they are 57, 45, 38, 23 (CAL-02's table above). Also from CAL-02:
+Commanders and Heavies fire nearly every shot in the pack (8.8 and 6.6 left of 60 and 40, a
+Resupply gives 5), so the Commander's 70 real shots need two more Resupplies than it gets; and the
+Commander stands with no shots on 100 Active rolls a round.
+
+The owner ties this to goal-cell selection: the sim's goal cells may be too uniform (every player
+drawing the same few cells for a Mode), which keeps teams apart and leaves supports where they are
+found. **Open for the grill:** where the "more random goal cell selection" idea lives (no roadmap
+item holds it; MOVE-06's goal-location noise and `positioning`'s sharpness are the nearest shipped
+pieces), what a support's day looks like in the arena (the TDF state rows give every Down and
+Resupply with a time), and whether the Medic's extra lives (20) are being spent on Downs or on
+nukes and missiles. Measure with the CAL-02 counter (Eliminations and their minute, enemies alive
+per Active roll, Resupplies given and received per role) against the TDF targets. Keep the T, H,
+M, A switches as the starting point; CAL-02's levers are in.
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 
@@ -346,8 +486,19 @@ LFS-02's proposal), in order:
 
 ```
 CAL-02          Tags and times tagged in line with the arena (owner, 2026-11-07)
+RV-06           Playback map: position icons, tag lines and bases (owner, 2026-11-08)
+RV-07           Playback map: shots, lives and special beside the moving icon (3-5 options to pick from)
+MOVE-10         A Downed player in view keeps moving
+MECH-18         Re-engage a known enemy the tick it comes back into sight
+MECH-09         Reset re-tag action/goal (refreshed with the 2026-11-08 review)
+CAL-03          Supports stay on the floor, and goal-cell variety (the lives budget behind CAL-02)
+MECH-19         Control Mode by goal and map context, not by resources
 SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)
 ```
+
+The five after CAL-02 came out of the owner's review of a CAL-02 round on the Playback map
+(2026-11-08). The two map tasks go first because every later behaviour task is judged on that
+map; the order of the three behaviour tasks is the owner's to change.
 
 **Later — Phase 3.6 Learned player AI:** AI-01..AI-06; MECH-07, which they build on, has shipped.
 
@@ -356,8 +507,8 @@ Mechanics items can run in parallel with Phase 8, because they don't touch the f
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-15, MOVE-05, SIM-13, SIM-14,
-  CAL-01.
+- **Phase 3 — Simulation Mechanics:** MECH-08, MECH-11..MECH-15, MOVE-05, SIM-13, SIM-14,
+  CAL-01 (MECH-09, MOVE-10 and MECH-18 are scheduled above).
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
 - **Phase 5.6 — Probability features:** PR-01, PR-02, PR-03.
@@ -492,6 +643,48 @@ simulation, no migration. Both build on the existing `game_round_events.html` in
 (M-1 JSON windowing, the SIM-05 playback engine, and the RES-02 `_overlay_plugin` Chart.js v4
 vertical-overlay pattern).
 
+### RV-06 · Playback map: position icons, tag lines and bases (owner, 2026-11-08)
+
+From the owner's review of a CAL-02 round on the Playback map (`frontend/src/app/matches/playback/`,
+ANG-06f): the markers are a Side-coloured ring with a three-letter role label (`roleLabel`) and a
+Scout's number badge, and nothing shows who tagged whom or where the bases are. Three changes, one
+task:
+
+1. **Position icons, not three-letter acronyms.** Each marker shows the player's position icon
+   (Commander, Heavy, Scout, Ammo, Medic) inside its Side-coloured ring; the Scout number badge
+   stays. The same icon set serves the scoreboard and the feed where a role is named.
+2. **Tag lines.** On a `tag` event (and a `miss`, lighter), a line is drawn from the tagging
+   player's marker to the tagged player's marker for a short window (about a second of playback,
+   fading), in the tagger's Side colour, so the owner can tell who is tagging whom as the map runs.
+   A Down ends with a stronger mark on the tagged player. Missile hits get the same line in the
+   missile colour.
+3. **Bases on the replay.** The red, blue and neutral bases are drawn at their configured pixel
+   positions (`MapBaseConfig`, through the map's zone-config API) with their type, and a
+   `base_capture` event draws a line from the capturing player to the base, so base tagging reads
+   off the map like player tagging.
+
+The data is already there: the `tag` / `miss` / `missiled` / `base_capture` events carry actor and
+target ids and cells, and `build_playback_map` carries the players and the map. No new persistence.
+UI changes need before / after screenshots in the PR body (`CLAUDE.md`, Git Workflow).
+
+### RV-07 · Playback map: shots, lives and special beside the moving icon (owner, 2026-11-08)
+
+The owner wants to read a player's state off the map as it moves: how full its shots and lives
+are (a scale from green at full to dark red at empty) and whether it holds enough SP for its
+special (the Commander's nuke at 20 SP, the Scout's rapid fire, the Ammo's and Medic's team
+resupply), beside the position icon of RV-06. The Playback snapshots already carry `lives`,
+`shots`, `sp`, `missiles`, `rapid_fire` and `nuking` per player per tick, and the role maxima and
+special costs are in `role_constants`, so this is a rendering task.
+
+**The task produces three to five display options** as a prototype (`mattpocock-skills:prototype`),
+each drawn on the same round for the owner to pick from, before anything ships: for example
+(a) two thin arcs around the ring, lives on the left and shots on the right, coloured by the
+green-to-dark-red scale, with a small star when the special is ready; (b) a two-segment bar under
+the icon; (c) the ring itself coloured by lives and a dot by shots, special as a pulsing outline;
+(d) a compact `L S` pair of tiny vertical gauges beside the icon; (e) the icon's fill by shots and
+its border by lives. The owner's pick is the spec; the rest are recorded with screenshots in the
+spec issue. Blocked by RV-06 (the icon the indicators sit beside).
+
 ### RV-04 · Highlight overlay on the playback timeline + chart toggle
 
 Surface the RV-02 **Highlight** list (`GameRound.highlights_json`) in two more places beyond the
@@ -538,6 +731,57 @@ families and the role-aware goal selection work (MAP-05). None are scheduled yet
 open question or design dependency that must be resolved before implementation. Items are ordered
 roughly by readiness.
 
+### MOVE-10 · A Downed player in view keeps moving (owner, 2026-11-08)
+
+From the owner's review of a CAL-02 round: "a decent portion of the time the downed player just
+sits there after getting tagged; they should be moving nearly all the time if they are in view of
+an opponent that is active while they are deactivated." Today MOVE-08's Downed option is rolled
+once at the Down and kept until Active: **Stay hidden** sits on the Down cell for the whole Down
+(the 50% hide miss is its only protection), **Shuffle to cover** moves at most 5 ft once, and only
+**Make a trail** keeps moving (10 ft out and back). The MECH-10 probe found Downed players move in
+about 5% of their Downed ticks. Rule to build: while a Downed player is Taggable (from 8 ticks
+after the Down) and an Active enemy it knows of (seen, remembered or the tagger) can see its cell,
+it moves every tick, away from that enemy toward the nearest cell no known enemy sees, re-chosen
+each tick as enemies move; Stay hidden is allowed only on a cell no known Active enemy can see.
+Measure with `round_probe` (share of Downed ticks moved, times tagged in the Reset window, the
+MECH-10 Trail length) and the CAL-02 counter (times tagged per role): a moving Downed player is
+tagged less in its Reset window and leaves a longer Trail for the Follow rule. Keep the MOVE-08
+formula's three options as the choice when no enemy sees the player.
+
+### MECH-18 · Re-engage a known enemy the tick it comes back into sight (owner, 2026-11-08)
+
+From the same review: "a player will trade, the losing player goes behind a wall, then when they
+come back out it still takes several ticks for the players, in each other's sights, who assumedly
+knew where each other were, to tag each other." They should be attempting to tag each other at
+once, most of the time. Today a Shot needs a `tag_player` roll to come up (the Commander rolls it
+on about half its Active ticks, the Scout on a fifth, after the decision-making spread), planning
+runs before the Advance (so a player who steps into view is shot at a tick later at the earliest),
+and only a Holding player's Overwatch fires the moment an enemy enters its line of sight. Rule to
+build: a **sighting**: when an enemy the player remembers (fresh memory, including the cell it was
+last tagged from, CAL-02 decision 12) comes into the player's line of sight, or the player comes
+into the enemy's, the player attempts a Shot that tick with a probability from `player_awareness`
+(so an aware player fires at once and a poor one still dithers), without waiting for the action
+roll; the shooter must be Active with a shot and the target Taggable, as for any Shot. Both players
+of a trade get the rule, so the one who steps out is shot as it shoots. Measure on the CAL-02
+counter: ticks from mutual sight to the first Shot (today several), tags and times tagged per role,
+and the shot cadence against the TDF bins; keep the MECH-17 Still / squares numbers.
+
+### MECH-19 · Control Mode by goal and map context, not by resources (owner, 2026-11-08)
+
+MECH-07's Modes switch a Commander or Scout into Control the moment its lives or shots pass half
+(`modes.LOW_RESOURCE_SHARE`), and only Attack hunts. On the Test set a Commander spends 86% of its
+floor time in Control, a Heavy 67%, a Scout 74% (Ammo and Medic 30%, the rest Defense). The owner:
+Control should not hang on a player's resources at all; it should follow the map context and the
+player's goal. A Scout whose goal is to assist the Commander and tag the enemy Heavy controls the
+area the Heavy wants to be in, tags the Heavy and trades there; a Scout whose goal is the enemy
+Medic is not in Control, and when it runs low it goes back to resupply rather than switching Mode.
+CAL-02's ladder measured Control at a quarter of resources (+4.5 Heavy Tags, +2 Commander times
+tagged a round) and the owner declined it as the wrong lever. **Open for the grill:** the goal
+vocabulary (assist the Commander, hunt the Heavy, hunt the Medic, hold an area, resupply), who
+assigns a goal and when it changes, what "the area the Heavy wants" is on the map (its Control
+cells, its strong spots), and how the Modes' weight nudges and goal rules map onto goals. Measure
+time in each Mode and the CAL-02 counter before and after.
+
 ### MECH-08 · Reset-timing miss penalty
 
 Players currently have no notion of *when* a downed enemy will turn back on, so they cannot mistime a
@@ -559,6 +803,18 @@ eligibility and the appropriate target filters. Pairs with MECH-08 (timing) and 
 
 **From LFS-02:** stubborn zone control. A player holding a spot keeps resetting the enemy there
 about 3 times before leaving, instead of moving on after one Down.
+
+**From the owner's CAL-02 review (2026-11-08):** "players nearly never get a reset then go and tag
+a downed player again if they know where they were." The rule to build: a player who Downed an
+enemy, or saw one Downed, and remembers the cell, keeps that cell in its sights (or moves to a cell
+that sees it) and tags the player again the tick it is Taggable (8 ticks after the Down), unless
+the Follow rule bars it (a Chaser cannot tag the player it chased) or the enemy has moved out of
+sight; MECH-02's `last_tagged_id` lock only stops a shot at a target that is not yet Taggable, so
+it does not stand in the way. The lives budget of CAL-02 (the arena's 3-hit roles take 26 and 20
+Downs a game against the sim's 13 and 13) says this is where the missing Downs are; measure on the
+CAL-02 counter (Downs given and taken per role, times tagged in the Reset window) and with
+`round_probe`. Pairs with MOVE-10, which makes the Downed player move away: the two together are
+the chase the arena's logs show (76% of a 1-hit player's three-tag Downs go unanswered).
 
 MECH-10 (Follow rule — a Chaser cannot tag the player they chased) is **[DONE]**; see `PLAN-completed.md`.
 

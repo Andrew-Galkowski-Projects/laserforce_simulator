@@ -139,7 +139,15 @@ A **Shot** that connects with a target (reduces **Shields**).
 
 **Tag**:
 A **Hit** that lands on a valid enemy and scores — the canonical scoring event.
-_Avoid_: using "tag" for any **Hit**, or for the act of firing (that is a **Shot**)
+_Avoid_: using "tag" for any **Hit**, or for the act of firing (that is a **Shot**); reading an LFstats "shots hit" as a Tag count (it also counts **Resupplies** and **Base** zaps, so a Medic's 62 shots hit are about 9 Tags)
+
+**Times tagged**:
+How many enemy **Tags** have landed on a player. A **Missile** hit is not one.
+_Avoid_: "times hit" for a count that includes Missiles
+
+**Shot cadence**:
+The time between one player's consecutive **Shots**, whatever they hit.
+_Avoid_: "fire rate" (a rate per minute hides the pauses between exchanges)
 
 **Down / Downed**:
 A **Hit** that takes the target's **Shields** to zero, costing them one **Life** and triggering the **Respawn cooldown**.
