@@ -598,6 +598,21 @@ class TestRunProbe(TestCase):
             with self.subTest(seed=seed):
                 self.assertEqual(set(roles), _ROLES)
 
+    def test_a_non_scout_role_reacts_on_seed_1(self) -> None:
+        # CAL-02a bug A: the round the probe plays on seed 1, taken from its
+        # players' counters. Before the fix only a rapid-fire Scout, whose
+        # cooldown rounds to 0 ticks, ever made a Reaction shot.
+        random.seed(1)
+        _, reds, blues = BatchSimulator()._simulate_round(
+            _default_roster("red"),
+            _default_roster("blue"),
+            movement_ctx=self.movement_ctx,
+        )
+        reactions = sum(
+            p.counters.reaction_shots for p in reds + blues if p.role != "scout"
+        )
+        self.assertGreater(reactions, 0)
+
 
 class TestOutcomes(SimpleTestCase):
     """What landed, beside what was planned: the numbers real play is compared with."""

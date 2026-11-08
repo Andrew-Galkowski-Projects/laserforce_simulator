@@ -62,6 +62,7 @@ from ..sim_helpers.shot import (
 from ..sim_helpers.spawn_assigner import assign_spawn_cells
 from ..sim_helpers.time_constants import (
     SURVIVED_SENTINEL,
+    TICK_SECONDS,
     TICKS_PER_ROUND,
 )
 
@@ -1261,8 +1262,14 @@ class BatchSimulator:
             # ``resolve_shot`` with ``kind=SHOT_KIND_REACTION``. The resolver
             # owns the validity gates, hit roll, mutations, Down cascade,
             # events, and reaction-never-re-reacts policy.
+            # CAL-02a bug A (2026-11-08): ``ctx.pending_reactions`` is this very
+            # list and the resolver appends to it, so it is filtered in place.
+            # Rebinding the name left every queued Reaction in an orphan list
+            # that never drained.
             due_rx = [rx for rx in pending_reactions if rx.fire_at <= second]
-            pending_reactions = [rx for rx in pending_reactions if rx.fire_at > second]
+            pending_reactions[:] = [
+                rx for rx in pending_reactions if rx.fire_at > second
+            ]
             for rx in due_rx:
                 resolve_shot(
                     rx.attacker,
@@ -1277,8 +1284,12 @@ class BatchSimulator:
             # ``kind=SHOT_KIND_FOLLOW_UP`` and the carried ``chain_depth``.
             # The resolver applies the chain cap (``_MAX_CHAIN_DEPTH``) and
             # the no-victim-reaction policy.
+            # CAL-02a bug A (2026-11-08): filtered in place, as the Reactions
+            # above; ``ctx.pending_followups`` is this list.
             due_fu = [fu for fu in pending_followups if fu.fire_at <= second]
-            pending_followups = [fu for fu in pending_followups if fu.fire_at > second]
+            pending_followups[:] = [
+                fu for fu in pending_followups if fu.fire_at > second
+            ]
             for fu in due_fu:
                 resolve_shot(
                     fu.attacker,
@@ -1772,8 +1783,11 @@ class BatchSimulator:
                     continue
                 # Shot-cooldown gate: free shot when cooldown is 0, else require
                 # the gap to have elapsed.
-                h_cd = shot_cooldown(h, second)
-                if not (h_cd == 0.0 or (second - h.last_shot_time) >= h_cd):
+                # CAL-02a bug B (2026-11-08): ``second`` and ``last_shot_time``
+                # are ticks here, so the seconds cooldown is converted to whole
+                # ticks before the comparison (Heavy 2, others 1, rapid Scout 0).
+                h_cd = int(round(shot_cooldown(h, second) / TICK_SECONDS))
+                if not (h_cd == 0 or (second - h.last_shot_time) >= h_cd):
                     continue
                 holder_cell = (h.cell_row, h.cell_col)
                 if any(movement_ctx.can_see(holder_cell, tc) for tc in check_cells):

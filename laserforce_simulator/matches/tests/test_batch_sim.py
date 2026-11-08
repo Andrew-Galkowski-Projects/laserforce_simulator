@@ -225,10 +225,13 @@ class TestLfs01aCancelledNukesCounted:
     in which ``own_specials_cancelled`` can never be written.
 
     Full-length on purpose: a nuke needs special points, which a 40-tick
-    round never accumulates. Seed 0 cancels one nuke (found by a probe).
+    round never accumulates. Seed 1 cancels one nuke (found by a probe).
+    CAL-02a (2026-11-08): seed 0 cancelled one until Reactions and Follow-ups
+    started to fire and the Heavy's cooldown became 2 ticks, which redraw the
+    map-less round; the invariant is unchanged, so the seed was re-pinned to 1.
     """
 
-    SEED = 0
+    SEED = 1
 
     def setup_method(self):
         red_team, _ = make_team_with_slots("NukeCntR")
@@ -304,8 +307,10 @@ class TestBatchSimulatorShotCooldown:
         return BatchSimulator()
 
     def test_plan_action_zeroes_tag_weight_when_fired_too_recently(self):
+        # CAL-02a bug B: ``_plan_action`` is tick-native, so the Commander's
+        # 0.5 s cooldown is 1 tick; it blocks a second Shot in the same tick.
         sim = self._sim()
-        p = _make_ps("commander", last_shot_time=5.0, final_shots=20)
+        p = _make_ps("commander", last_shot_time=5, final_shots=20)
         captured = []
 
         def capture(ch, wt):
@@ -313,7 +318,7 @@ class TestBatchSimulatorShotCooldown:
             return ["only_move"]
 
         with patch("random.choices", side_effect=capture):
-            sim._plan_action(p, [p], 5.3)
+            sim._plan_action(p, [p], 5)
 
         assert len(captured) == 1
         assert (
@@ -321,8 +326,10 @@ class TestBatchSimulatorShotCooldown:
         ), "tag_player weight must be zeroed when cooldown has not elapsed"
 
     def test_plan_action_allows_tag_after_cooldown_elapsed(self):
+        # CAL-02a bug B: the next tick is past the Commander's 1-tick cooldown
+        # (was tick 5.6 after a shot at 5.0, a seconds-era gap of 0.6 ticks).
         sim = self._sim()
-        p = _make_ps("commander", last_shot_time=5.0, final_shots=20)
+        p = _make_ps("commander", last_shot_time=5, final_shots=20)
         captured = []
 
         def capture(ch, wt):
@@ -330,7 +337,7 @@ class TestBatchSimulatorShotCooldown:
             return ["only_move"]
 
         with patch("random.choices", side_effect=capture):
-            sim._plan_action(p, [p], 5.6)
+            sim._plan_action(p, [p], 6)
 
         assert len(captured) == 1
         assert (
@@ -580,6 +587,113 @@ class TestBatchSimulatorReactions:
             )
 
         assert len(pending_rx) == 1
+
+
+# ---------------------------------------------------------------------------
+# CAL-02a bug A: the tick loop drains the queues the resolver fills
+# ---------------------------------------------------------------------------
+
+
+def _roster_player(team_color, role, **stats):
+    """One ``(role, _PlayerData)`` roster entry with every simulation stat set."""
+    from matches.simulation.entrypoints import _SIMULATION_STATS, _PlayerData
+
+    values = {name: 50 for name in _SIMULATION_STATS}
+    values["survival"] = 0
+    values.update(stats)
+    return (role, _PlayerData(f"{team_color}-{role}", f"{team_color} {role}", values))
+
+
+def _one_shot_round(sim, red_roster, blue_roster, shot_tick, ticks):
+    """Play a map-less round of ``ticks`` ticks in which the only planned Action
+    is the red player's Shot at the blue player on ``shot_tick``.
+
+    Every ``randint`` roll is 1, so the Shot hits, a defender with awareness
+    100 reacts and a defender with awareness 0 is followed up.
+    """
+
+    def plan_one_shot(self, player, all_alive, tick, movement_ctx=None):
+        if tick == shot_tick and player.team_color == "red":
+            target = next(p for p in all_alive if p.team_color == "blue")
+            return [{"type": "tag", "actor": player, "target": target}]
+        return []
+
+    with (
+        patch.object(BatchSimulator, "ROUND_TICKS", ticks),
+        patch.object(BatchSimulator, "_plan_action", plan_one_shot),
+        patch("random.randint", return_value=1),
+    ):
+        _, reds, blues = sim._simulate_round(red_roster, blue_roster)
+    return reds[0], blues[0]
+
+
+class TestQueuedShotsFire:
+    """A Reaction or Follow-up the resolver defers fires on its due tick.
+
+    CAL-02a bug A: the loop rebound its local pending lists every tick while
+    ``RoundContext`` kept the list the resolver appends to, so a queued shot
+    never resolved unless the shooter's cooldown rounded to 0 ticks.
+    """
+
+    def _reaction_round(self, ticks):
+        # A Scout Shot at tick 10 Hits a 3-shield Heavy (awareness 100), which
+        # queues its Reaction two ticks later, at tick 12.
+        return _one_shot_round(
+            BatchSimulator(),
+            [_roster_player("red", "scout", player_awareness=0)],
+            [_roster_player("blue", "heavy", player_awareness=100)],
+            shot_tick=10,
+            ticks=ticks,
+        )
+
+    def test_heavy_reaction_has_not_fired_before_its_due_tick(self):
+        _, heavy = self._reaction_round(ticks=12)
+        assert heavy.counters.reaction_shots == 0
+
+    def test_heavy_reaction_fires_on_its_due_tick(self):
+        scout, heavy = self._reaction_round(ticks=13)
+        assert heavy.counters.reaction_shots == 1
+        assert scout.counters.times_tagged == 1
+
+    def test_a_reaction_never_re_reacts(self):
+        # The Heavy's Reaction Hits the Scout; the Scout, awareness 100 too,
+        # would react to any other Shot kind, and does not.
+        scout, heavy = _one_shot_round(
+            BatchSimulator(),
+            [_roster_player("red", "scout", player_awareness=100)],
+            [_roster_player("blue", "heavy", player_awareness=100)],
+            shot_tick=10,
+            ticks=40,
+        )
+        assert heavy.counters.reaction_shots == 1
+        assert scout.counters.reaction_shots == 0
+
+    def _follow_up_round(self, ticks):
+        # A Scout Shot at tick 10 Hits a 3-shield Heavy (awareness 0) without
+        # Downing it, which queues the Scout's Follow-up (chain depth 1) one
+        # tick later, at tick 11.
+        return _one_shot_round(
+            BatchSimulator(),
+            [_roster_player("red", "scout", player_awareness=0)],
+            [_roster_player("blue", "heavy", player_awareness=0)],
+            shot_tick=10,
+            ticks=ticks,
+        )
+
+    def test_follow_up_has_not_fired_before_its_due_tick(self):
+        scout, _ = self._follow_up_round(ticks=11)
+        assert scout.counters.follow_up_shots == 0
+
+    def test_follow_up_fires_on_its_due_tick(self):
+        scout, heavy = self._follow_up_round(ticks=12)
+        assert scout.counters.follow_up_shots == 1
+        assert heavy.counters.times_tagged == 2
+
+    def test_follow_ups_never_chain_past_depth_two(self):
+        # Tick 11's Follow-up Hits without Downing (shield 3 -> 1), so a
+        # depth-2 Follow-up fires at tick 12; nothing chains after it.
+        scout, _ = self._follow_up_round(ticks=40)
+        assert scout.counters.follow_up_shots == 2
 
 
 # ---------------------------------------------------------------------------
