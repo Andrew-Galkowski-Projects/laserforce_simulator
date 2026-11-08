@@ -832,8 +832,12 @@ between 5:00 and 8:00 has the sim's Tags (CAL-03 carries the lives budget).
 | after 12:00 | 21 | 71.4 / 77.4 | 56.9 / 59.6 | 51.5 / 44.1 | 29.3 / 26.2 | 10.8 / 8.9 |
 | survives | 225 | 56.6 / 56.8 | 44.8 / 46.5 | 38.2 / 32.4 | 22.9 / 21.9 | 8.8 / 9.1 |
 
-The sim side (the baseline, the prototype ladder and the shipped tree, read off
-`round_probe --lineups test` against this file) follows with #567.
+The sim side is one command (#567): `python manage.py round_probe --lineups test --workers 8`
+plays the 128 used Test games' real lineups (one round each, seed 42, about 12 minutes) and
+prints every measure above beside this file's real value (`| real`), with the who-tags-whom and
+who-Downs-whom matrices and the shot cadence per role; see the command's section in
+`laserforce_simulator/matches/management/commands/CLAUDE.md`. The baseline, the prototype
+ladder and the shipped tree, read off it, follow.
 
 ### SM5-02: a Downed pack is dark (2026-11-03)
 
