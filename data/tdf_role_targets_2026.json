@@ -1,0 +1,1154 @@
+{
+ "games": {
+  "total": 165,
+  "used": 164,
+  "skipped": 1
+ },
+ "player_games": {
+  "commander": 328,
+  "heavy": 328,
+  "scout": 656,
+  "ammo": 328,
+  "medic": 328
+ },
+ "per_role": {
+  "commander": {
+   "tags": {
+    "mean": 54.5152,
+    "se": 1.0097,
+    "n": 328
+   },
+   "times_tagged": {
+    "mean": 57.4421,
+    "se": 1.1647,
+    "n": 328
+   },
+   "shots_hit_lfstats": {
+    "mean": 60.6128,
+    "se": 1.0799,
+    "n": 328
+   },
+   "times_zapped_lfstats": {
+    "mean": 58.8171,
+    "se": 1.1807,
+    "n": 328
+   },
+   "shots_fired": {
+    "mean": 70.2896,
+    "se": 1.2728,
+    "n": 328
+   },
+   "misses": {
+    "mean": 11.2409,
+    "se": 0.3161,
+    "n": 328
+   },
+   "base_zaps": {
+    "mean": 3.5976,
+    "se": 0.1013,
+    "n": 328
+   },
+   "team_zaps": {
+    "mean": 0.936,
+    "se": 0.0676,
+    "n": 328
+   },
+   "downs_given": {
+    "mean": 40.8841,
+    "se": 0.771,
+    "n": 328
+   },
+   "downs_taken": {
+    "mean": 26.5488,
+    "se": 0.5409,
+    "n": 328
+   },
+   "active_share": {
+    "mean": 0.5787,
+    "se": 0.0091,
+    "n": 328
+   },
+   "tags_per_active_min": {
+    "mean": 6.9128,
+    "se": 0.1606,
+    "n": 328
+   },
+   "eliminated": {
+    "mean": 0.2988,
+    "se": 0.0253,
+    "n": 328
+   },
+   "enemies_on_floor": {
+    "mean": 5.4747,
+    "se": 0.038,
+    "n": 328
+   },
+   "accuracy": {
+    "mean": 0.8303,
+    "se": 0.0033,
+    "n": 328
+   },
+   "elim_minute": {
+    "mean": 11.3673,
+    "se": 0.3583,
+    "n": 98
+   }
+  },
+  "heavy": {
+   "tags": {
+    "mean": 43.4787,
+    "se": 0.8292,
+    "n": 328
+   },
+   "times_tagged": {
+    "mean": 46.747,
+    "se": 0.9241,
+    "n": 328
+   },
+   "shots_hit_lfstats": {
+    "mean": 48.3537,
+    "se": 0.9371,
+    "n": 328
+   },
+   "times_zapped_lfstats": {
+    "mean": 47.8415,
+    "se": 0.9367,
+    "n": 328
+   },
+   "shots_fired": {
+    "mean": 55.3628,
+    "se": 1.063,
+    "n": 328
+   },
+   "misses": {
+    "mean": 7.9878,
+    "se": 0.2417,
+    "n": 328
+   },
+   "base_zaps": {
+    "mean": 2.628,
+    "se": 0.1281,
+    "n": 328
+   },
+   "team_zaps": {
+    "mean": 1.2683,
+    "se": 0.0817,
+    "n": 328
+   },
+   "downs_given": {
+    "mean": 43.4787,
+    "se": 0.8292,
+    "n": 328
+   },
+   "downs_taken": {
+    "mean": 20.4238,
+    "se": 0.412,
+    "n": 328
+   },
+   "active_share": {
+    "mean": 0.6404,
+    "se": 0.0086,
+    "n": 328
+   },
+   "tags_per_active_min": {
+    "mean": 4.9537,
+    "se": 0.1236,
+    "n": 328
+   },
+   "eliminated": {
+    "mean": 0.2226,
+    "se": 0.023,
+    "n": 328
+   },
+   "enemies_on_floor": {
+    "mean": 5.4747,
+    "se": 0.038,
+    "n": 328
+   },
+   "accuracy": {
+    "mean": 0.8437,
+    "se": 0.0038,
+    "n": 328
+   },
+   "elim_minute": {
+    "mean": 11.3868,
+    "se": 0.4446,
+    "n": 73
+   }
+  },
+  "scout": {
+   "tags": {
+    "mean": 36.4223,
+    "se": 0.6222,
+    "n": 656
+   },
+   "times_tagged": {
+    "mean": 32.5457,
+    "se": 0.453,
+    "n": 656
+   },
+   "shots_hit_lfstats": {
+    "mean": 44.1829,
+    "se": 0.6593,
+    "n": 656
+   },
+   "times_zapped_lfstats": {
+    "mean": 33.5107,
+    "se": 0.4632,
+    "n": 656
+   },
+   "shots_fired": {
+    "mean": 58.625,
+    "se": 0.939,
+    "n": 656
+   },
+   "misses": {
+    "mean": 16.2561,
+    "se": 0.4213,
+    "n": 656
+   },
+   "base_zaps": {
+    "mean": 4.8948,
+    "se": 0.0853,
+    "n": 656
+   },
+   "team_zaps": {
+    "mean": 1.0518,
+    "se": 0.0471,
+    "n": 656
+   },
+   "downs_given": {
+    "mean": 21.5457,
+    "se": 0.3748,
+    "n": 656
+   },
+   "downs_taken": {
+    "mean": 32.5457,
+    "se": 0.453,
+    "n": 656
+   },
+   "active_share": {
+    "mean": 0.5549,
+    "se": 0.0069,
+    "n": 656
+   },
+   "tags_per_active_min": {
+    "mean": 4.9204,
+    "se": 0.0991,
+    "n": 656
+   },
+   "eliminated": {
+    "mean": 0.3415,
+    "se": 0.0185,
+    "n": 656
+   },
+   "enemies_on_floor": {
+    "mean": 5.4747,
+    "se": 0.0269,
+    "n": 656
+   },
+   "accuracy": {
+    "mean": 0.6969,
+    "se": 0.0049,
+    "n": 656
+   },
+   "elim_minute": {
+    "mean": 11.1231,
+    "se": 0.2249,
+    "n": 224
+   }
+  },
+  "ammo": {
+   "tags": {
+    "mean": 22.2713,
+    "se": 0.5468,
+    "n": 328
+   },
+   "times_tagged": {
+    "mean": 22.5,
+    "se": 0.4847,
+    "n": 328
+   },
+   "shots_hit_lfstats": {
+    "mean": 64.6768,
+    "se": 1.1213,
+    "n": 328
+   },
+   "times_zapped_lfstats": {
+    "mean": 23.2134,
+    "se": 0.4947,
+    "n": 328
+   },
+   "shots_fired": {
+    "mean": 45.8384,
+    "se": 1.1981,
+    "n": 328
+   },
+   "misses": {
+    "mean": 19.0091,
+    "se": 0.8524,
+    "n": 328
+   },
+   "base_zaps": {
+    "mean": 3.9146,
+    "se": 0.0718,
+    "n": 328
+   },
+   "team_zaps": {
+    "mean": 0.6433,
+    "se": 0.0497,
+    "n": 328
+   },
+   "downs_given": {
+    "mean": 12.3323,
+    "se": 0.3249,
+    "n": 328
+   },
+   "downs_taken": {
+    "mean": 22.5,
+    "se": 0.4847,
+    "n": 328
+   },
+   "active_share": {
+    "mean": 0.6326,
+    "se": 0.0104,
+    "n": 328
+   },
+   "tags_per_active_min": {
+    "mean": 2.6367,
+    "se": 0.0787,
+    "n": 328
+   },
+   "eliminated": {
+    "mean": 0.3171,
+    "se": 0.0257,
+    "n": 328
+   },
+   "enemies_on_floor": {
+    "mean": 5.4747,
+    "se": 0.038,
+    "n": 328
+   },
+   "accuracy": {
+    "mean": 0.581,
+    "se": 0.0092,
+    "n": 328
+   },
+   "elim_minute": {
+    "mean": 10.9478,
+    "se": 0.3503,
+    "n": 104
+   }
+  },
+  "medic": {
+   "tags": {
+    "mean": 8.5732,
+    "se": 0.2821,
+    "n": 328
+   },
+   "times_tagged": {
+    "mean": 9.9024,
+    "se": 0.2376,
+    "n": 328
+   },
+   "shots_hit_lfstats": {
+    "mean": 54.5976,
+    "se": 0.9656,
+    "n": 328
+   },
+   "times_zapped_lfstats": {
+    "mean": 10.1463,
+    "se": 0.242,
+    "n": 328
+   },
+   "shots_fired": {
+    "mean": 18.2866,
+    "se": 0.4041,
+    "n": 328
+   },
+   "misses": {
+    "mean": 6.0427,
+    "se": 0.2261,
+    "n": 328
+   },
+   "base_zaps": {
+    "mean": 3.2652,
+    "se": 0.089,
+    "n": 328
+   },
+   "team_zaps": {
+    "mean": 0.4055,
+    "se": 0.0378,
+    "n": 328
+   },
+   "downs_given": {
+    "mean": 4.6799,
+    "se": 0.1816,
+    "n": 328
+   },
+   "downs_taken": {
+    "mean": 9.9024,
+    "se": 0.2376,
+    "n": 328
+   },
+   "active_share": {
+    "mean": 0.7313,
+    "se": 0.0132,
+    "n": 328
+   },
+   "tags_per_active_min": {
+    "mean": 0.9236,
+    "se": 0.0414,
+    "n": 328
+   },
+   "eliminated": {
+    "mean": 0.314,
+    "se": 0.0257,
+    "n": 328
+   },
+   "enemies_on_floor": {
+    "mean": 5.4747,
+    "se": 0.038,
+    "n": 328
+   },
+   "accuracy": {
+    "mean": 0.5843,
+    "se": 0.0114,
+    "n": 328
+   },
+   "elim_minute": {
+    "mean": 8.3976,
+    "se": 0.3213,
+    "n": 103
+   }
+  }
+ },
+ "who_tags_whom": {
+  "commander": {
+   "commander": 28.1646,
+   "heavy": 22.5366,
+   "scout": 34.7683,
+   "ammo": 15.9085,
+   "medic": 7.6524
+  },
+  "heavy": {
+   "commander": 22.9512,
+   "heavy": 16.628,
+   "scout": 33.0854,
+   "ammo": 9.9207,
+   "medic": 4.372
+  },
+  "scout": {
+   "commander": 40.1463,
+   "heavy": 39.3902,
+   "scout": 43.8171,
+   "ammo": 15.7561,
+   "medic": 6.5793
+  },
+  "ammo": {
+   "commander": 16.4512,
+   "heavy": 10.7012,
+   "scout": 13.7012,
+   "ammo": 2.7561,
+   "medic": 0.9329
+  },
+  "medic": {
+   "commander": 7.1707,
+   "heavy": 4.2378,
+   "scout": 4.811,
+   "ammo": 0.6585,
+   "medic": 0.2683
+  }
+ },
+ "who_downs_whom": {
+  "commander": {
+   "commander": 13.7317,
+   "heavy": 9.7073,
+   "scout": 34.7683,
+   "ammo": 15.9085,
+   "medic": 7.6524
+  },
+  "heavy": {
+   "commander": 22.9512,
+   "heavy": 16.628,
+   "scout": 33.0854,
+   "ammo": 9.9207,
+   "medic": 4.372
+  },
+  "scout": {
+   "commander": 9.9695,
+   "heavy": 10.061,
+   "scout": 43.8171,
+   "ammo": 15.7561,
+   "medic": 6.5793
+  },
+  "ammo": {
+   "commander": 4.2622,
+   "heavy": 3.0122,
+   "scout": 13.7012,
+   "ammo": 2.7561,
+   "medic": 0.9329
+  },
+  "medic": {
+   "commander": 2.1829,
+   "heavy": 1.439,
+   "scout": 4.811,
+   "ammo": 0.6585,
+   "medic": 0.2683
+  }
+ },
+ "cadence": {
+  "commander": {
+   "median": 4.537,
+   "bins": {
+    "<0.5": 0.1588,
+    "0.5-1": 0.0963,
+    "1-2": 0.1001,
+    "2-5": 0.1582,
+    "5-10": 0.1679,
+    "10-30": 0.2543,
+    "30-60": 0.0543,
+    "60+": 0.0102
+   },
+   "n": 22727
+  },
+  "heavy": {
+   "median": 7.668,
+   "bins": {
+    "<0.5": 0.0184,
+    "0.5-1": 0.1138,
+    "1-2": 0.1058,
+    "2-5": 0.1884,
+    "5-10": 0.1769,
+    "10-30": 0.311,
+    "30-60": 0.0731,
+    "60+": 0.0125
+   },
+   "n": 17831
+  },
+  "scout": {
+   "median": 3.6495,
+   "bins": {
+    "<0.5": 0.2708,
+    "0.5-1": 0.0821,
+    "1-2": 0.0709,
+    "2-5": 0.1169,
+    "5-10": 0.113,
+    "10-30": 0.2496,
+    "30-60": 0.0748,
+    "60+": 0.0219
+   },
+   "n": 37802
+  },
+  "ammo": {
+   "median": 3.139,
+   "bins": {
+    "<0.5": 0.3201,
+    "0.5-1": 0.0923,
+    "1-2": 0.0503,
+    "2-5": 0.0853,
+    "5-10": 0.0925,
+    "10-30": 0.2119,
+    "30-60": 0.0987,
+    "60+": 0.049
+   },
+   "n": 14707
+  },
+  "medic": {
+   "median": 11.3545,
+   "bins": {
+    "<0.5": 0.2354,
+    "0.5-1": 0.0688,
+    "1-2": 0.0328,
+    "2-5": 0.0663,
+    "5-10": 0.0741,
+    "10-30": 0.2316,
+    "30-60": 0.1471,
+    "60+": 0.1439
+   },
+   "n": 5670
+  }
+ },
+ "enemies_on_floor": {
+  "mean": 5.4747,
+  "se": 0.038,
+  "n": 328
+ },
+ "by_medic_elimination": {
+  "by_5": {
+   "team_games": 16,
+   "per_role": {
+    "commander": {
+     "tags": {
+      "mean": 30.125,
+      "se": 2.4253,
+      "n": 16
+     },
+     "times_tagged": {
+      "mean": 38.5,
+      "se": 2.7234,
+      "n": 16
+     },
+     "downs_given": {
+      "mean": 22.625,
+      "se": 2.0834,
+      "n": 16
+     },
+     "downs_taken": {
+      "mean": 17.5625,
+      "se": 1.0367,
+      "n": 16
+     }
+    },
+    "heavy": {
+     "tags": {
+      "mean": 21,
+      "se": 2.4614,
+      "n": 16
+     },
+     "times_tagged": {
+      "mean": 32.9375,
+      "se": 2.9784,
+      "n": 16
+     },
+     "downs_given": {
+      "mean": 21,
+      "se": 2.4614,
+      "n": 16
+     },
+     "downs_taken": {
+      "mean": 15.1875,
+      "se": 1.198,
+      "n": 16
+     }
+    },
+    "scout": {
+     "tags": {
+      "mean": 13.7188,
+      "se": 1.3185,
+      "n": 32
+     },
+     "times_tagged": {
+      "mean": 20.8438,
+      "se": 1.1378,
+      "n": 32
+     },
+     "downs_given": {
+      "mean": 8.3125,
+      "se": 0.8174,
+      "n": 32
+     },
+     "downs_taken": {
+      "mean": 20.8438,
+      "se": 1.1378,
+      "n": 32
+     }
+    },
+    "ammo": {
+     "tags": {
+      "mean": 12.1875,
+      "se": 1.8033,
+      "n": 16
+     },
+     "times_tagged": {
+      "mean": 19.3125,
+      "se": 1.1537,
+      "n": 16
+     },
+     "downs_given": {
+      "mean": 6.375,
+      "se": 0.9304,
+      "n": 16
+     },
+     "downs_taken": {
+      "mean": 19.3125,
+      "se": 1.1537,
+      "n": 16
+     }
+    },
+    "medic": {
+     "tags": {
+      "mean": 5.8125,
+      "se": 0.9799,
+      "n": 16
+     },
+     "times_tagged": {
+      "mean": 13.5,
+      "se": 0.6952,
+      "n": 16
+     },
+     "downs_given": {
+      "mean": 2.625,
+      "se": 0.5907,
+      "n": 16
+     },
+     "downs_taken": {
+      "mean": 13.5,
+      "se": 0.6952,
+      "n": 16
+     }
+    }
+   }
+  },
+  "5_to_8": {
+   "team_games": 41,
+   "per_role": {
+    "commander": {
+     "tags": {
+      "mean": 40.3659,
+      "se": 2.5401,
+      "n": 41
+     },
+     "times_tagged": {
+      "mean": 54.1951,
+      "se": 3.0181,
+      "n": 41
+     },
+     "downs_given": {
+      "mean": 30.1463,
+      "se": 1.9977,
+      "n": 41
+     },
+     "downs_taken": {
+      "mean": 24.8293,
+      "se": 1.3265,
+      "n": 41
+     }
+    },
+    "heavy": {
+     "tags": {
+      "mean": 34.878,
+      "se": 1.5943,
+      "n": 41
+     },
+     "times_tagged": {
+      "mean": 42.3171,
+      "se": 1.4928,
+      "n": 41
+     },
+     "downs_given": {
+      "mean": 34.878,
+      "se": 1.5943,
+      "n": 41
+     },
+     "downs_taken": {
+      "mean": 19,
+      "se": 0.725,
+      "n": 41
+     }
+    },
+    "scout": {
+     "tags": {
+      "mean": 25.2561,
+      "se": 1.2449,
+      "n": 82
+     },
+     "times_tagged": {
+      "mean": 28.1098,
+      "se": 0.9717,
+      "n": 82
+     },
+     "downs_given": {
+      "mean": 14.6098,
+      "se": 0.7925,
+      "n": 82
+     },
+     "downs_taken": {
+      "mean": 28.1098,
+      "se": 0.9717,
+      "n": 82
+     }
+    },
+    "ammo": {
+     "tags": {
+      "mean": 18.878,
+      "se": 1.3494,
+      "n": 41
+     },
+     "times_tagged": {
+      "mean": 24.2927,
+      "se": 0.8463,
+      "n": 41
+     },
+     "downs_given": {
+      "mean": 10.0244,
+      "se": 0.7321,
+      "n": 41
+     },
+     "downs_taken": {
+      "mean": 24.2927,
+      "se": 0.8463,
+      "n": 41
+     }
+    },
+    "medic": {
+     "tags": {
+      "mean": 6.6829,
+      "se": 0.6838,
+      "n": 41
+     },
+     "times_tagged": {
+      "mean": 13.122,
+      "se": 0.4251,
+      "n": 41
+     },
+     "downs_given": {
+      "mean": 3.561,
+      "se": 0.4348,
+      "n": 41
+     },
+     "downs_taken": {
+      "mean": 13.122,
+      "se": 0.4251,
+      "n": 41
+     }
+    }
+   }
+  },
+  "8_to_12": {
+   "team_games": 25,
+   "per_role": {
+    "commander": {
+     "tags": {
+      "mean": 60.36,
+      "se": 2.7999,
+      "n": 25
+     },
+     "times_tagged": {
+      "mean": 63.72,
+      "se": 3.2355,
+      "n": 25
+     },
+     "downs_given": {
+      "mean": 44.96,
+      "se": 2.1951,
+      "n": 25
+     },
+     "downs_taken": {
+      "mean": 29.56,
+      "se": 1.3965,
+      "n": 25
+     }
+    },
+    "heavy": {
+     "tags": {
+      "mean": 49.04,
+      "se": 2.5249,
+      "n": 25
+     },
+     "times_tagged": {
+      "mean": 54.52,
+      "se": 2.8619,
+      "n": 25
+     },
+     "downs_given": {
+      "mean": 49.04,
+      "se": 2.5249,
+      "n": 25
+     },
+     "downs_taken": {
+      "mean": 23.16,
+      "se": 1.0995,
+      "n": 25
+     }
+    },
+    "scout": {
+     "tags": {
+      "mean": 40.84,
+      "se": 2.0066,
+      "n": 50
+     },
+     "times_tagged": {
+      "mean": 38.86,
+      "se": 1.378,
+      "n": 50
+     },
+     "downs_given": {
+      "mean": 23.54,
+      "se": 1.0914,
+      "n": 50
+     },
+     "downs_taken": {
+      "mean": 38.86,
+      "se": 1.378,
+      "n": 50
+     }
+    },
+    "ammo": {
+     "tags": {
+      "mean": 22.68,
+      "se": 1.8081,
+      "n": 25
+     },
+     "times_tagged": {
+      "mean": 24.08,
+      "se": 1.7243,
+      "n": 25
+     },
+     "downs_given": {
+      "mean": 13.36,
+      "se": 1.1208,
+      "n": 25
+     },
+     "downs_taken": {
+      "mean": 24.08,
+      "se": 1.7243,
+      "n": 25
+     }
+    },
+    "medic": {
+     "tags": {
+      "mean": 9.2,
+      "se": 1.0017,
+      "n": 25
+     },
+     "times_tagged": {
+      "mean": 10.2,
+      "se": 0.6481,
+      "n": 25
+     },
+     "downs_given": {
+      "mean": 4.68,
+      "se": 0.6775,
+      "n": 25
+     },
+     "downs_taken": {
+      "mean": 10.2,
+      "se": 0.6481,
+      "n": 25
+     }
+    }
+   }
+  },
+  "after_12": {
+   "team_games": 21,
+   "per_role": {
+    "commander": {
+     "tags": {
+      "mean": 71.4286,
+      "se": 1.9488,
+      "n": 21
+     },
+     "times_tagged": {
+      "mean": 77.381,
+      "se": 3.1874,
+      "n": 21
+     },
+     "downs_given": {
+      "mean": 54.2381,
+      "se": 1.6546,
+      "n": 21
+     },
+     "downs_taken": {
+      "mean": 36,
+      "se": 1.6432,
+      "n": 21
+     }
+    },
+    "heavy": {
+     "tags": {
+      "mean": 56.8571,
+      "se": 2.0146,
+      "n": 21
+     },
+     "times_tagged": {
+      "mean": 59.619,
+      "se": 2.8531,
+      "n": 21
+     },
+     "downs_given": {
+      "mean": 56.8571,
+      "se": 2.0146,
+      "n": 21
+     },
+     "downs_taken": {
+      "mean": 25.1429,
+      "se": 1.1978,
+      "n": 21
+     }
+    },
+    "scout": {
+     "tags": {
+      "mean": 51.5238,
+      "se": 1.7247,
+      "n": 42
+     },
+     "times_tagged": {
+      "mean": 44.119,
+      "se": 1.4196,
+      "n": 42
+     },
+     "downs_given": {
+      "mean": 29.4524,
+      "se": 1.136,
+      "n": 42
+     },
+     "downs_taken": {
+      "mean": 44.119,
+      "se": 1.4196,
+      "n": 42
+     }
+    },
+    "ammo": {
+     "tags": {
+      "mean": 29.2857,
+      "se": 2.136,
+      "n": 21
+     },
+     "times_tagged": {
+      "mean": 26.2381,
+      "se": 1.3361,
+      "n": 21
+     },
+     "downs_given": {
+      "mean": 16.5238,
+      "se": 1.3068,
+      "n": 21
+     },
+     "downs_taken": {
+      "mean": 26.2381,
+      "se": 1.3361,
+      "n": 21
+     }
+    },
+    "medic": {
+     "tags": {
+      "mean": 10.7619,
+      "se": 1.028,
+      "n": 21
+     },
+     "times_tagged": {
+      "mean": 8.9048,
+      "se": 0.5296,
+      "n": 21
+     },
+     "downs_given": {
+      "mean": 6.2857,
+      "se": 0.7372,
+      "n": 21
+     },
+     "downs_taken": {
+      "mean": 8.9048,
+      "se": 0.5296,
+      "n": 21
+     }
+    }
+   }
+  },
+  "survives": {
+   "team_games": 225,
+   "per_role": {
+    "commander": {
+     "tags": {
+      "mean": 56.6,
+      "se": 1.1398,
+      "n": 225
+     },
+     "times_tagged": {
+      "mean": 56.8222,
+      "se": 1.4271,
+      "n": 225
+     },
+     "downs_given": {
+      "mean": 42.44,
+      "se": 0.861,
+      "n": 225
+     },
+     "downs_taken": {
+      "mean": 26.2844,
+      "se": 0.6666,
+      "n": 225
+     }
+    },
+    "heavy": {
+     "tags": {
+      "mean": 44.7778,
+      "se": 0.9612,
+      "n": 225
+     },
+     "times_tagged": {
+      "mean": 46.4711,
+      "se": 1.1668,
+      "n": 225
+     },
+     "downs_given": {
+      "mean": 44.7778,
+      "se": 0.9612,
+      "n": 225
+     },
+     "downs_taken": {
+      "mean": 20.3111,
+      "se": 0.5362,
+      "n": 225
+     }
+    },
+    "scout": {
+     "tags": {
+      "mean": 38.1711,
+      "se": 0.7059,
+      "n": 450
+     },
+     "times_tagged": {
+      "mean": 32.4044,
+      "se": 0.5398,
+      "n": 450
+     },
+     "downs_given": {
+      "mean": 22.7911,
+      "se": 0.4297,
+      "n": 450
+     },
+     "downs_taken": {
+      "mean": 32.4044,
+      "se": 0.5398,
+      "n": 450
+     }
+    },
+    "ammo": {
+     "tags": {
+      "mean": 22.9067,
+      "se": 0.6485,
+      "n": 225
+     },
+     "times_tagged": {
+      "mean": 21.8756,
+      "se": 0.6368,
+      "n": 225
+     },
+     "downs_given": {
+      "mean": 12.6711,
+      "se": 0.3872,
+      "n": 225
+     },
+     "downs_taken": {
+      "mean": 21.8756,
+      "se": 0.6368,
+      "n": 225
+     }
+    },
+    "medic": {
+     "tags": {
+      "mean": 8.84,
+      "se": 0.3478,
+      "n": 225
+     },
+     "times_tagged": {
+      "mean": 9.12,
+      "se": 0.2982,
+      "n": 225
+     },
+     "downs_given": {
+      "mean": 4.88,
+      "se": 0.2207,
+      "n": 225
+     },
+     "downs_taken": {
+      "mean": 9.12,
+      "se": 0.2982,
+      "n": 225
+     }
+    }
+   }
+  }
+ }
+}

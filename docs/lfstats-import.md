@@ -35,6 +35,7 @@ performance. Roadmap: [PLAN.md](../PLAN.md).
   - **Cell targets:** `data/lfstats_cell_targets.json` is the real side of every Test cell (position, metric, real mean, scorecards and the tolerance band), written by `python manage.py lfstats_calibrate --split targets --out data/lfstats_cell_targets.json` with no simulation. A sweep or a one-off run is measured against it; `test_lfstats_calibrate_command.py::TestCommittedTargets` keeps it equal to what the committed Training and Test files give.
   - **Baselines:** the snapshot's, not subtracted. Internationals is about 4% of the window's scorecards.
   - **Tests:** `laserforce_simulator/test_lfstats_calibration_data.py`.
+  - **TDF role targets (CAL-02):** `data/tdf_role_targets_2026.json` is the real per-role table of "Tags and times tagged" below (Tags, times tagged, shots fired, Downs, Active share, Eliminations, the who-tags-whom and who-Downs-whom matrices, shot cadence, enemies on the floor, the Medic-Elimination split), built from the Internationals 2026 TDF event logs by `python -I scripts/tdf_role_stats.py <logs dir> --out data/tdf_role_targets_2026.json [--fetch]`. The logs (165 files, 38 MB) stay out of the repo; `--fetch` downloads the Test file's missing `<slug>.tdf` from `https://lfstats-modern-archive.s3.us-west-1.amazonaws.com/<slug>.tdf`. `test_tdf_role_stats.py::test_committed_targets_match_the_logs` rebuilds the file when `TDF_LOGS_DIR` names the logs folder and skips otherwise.
 - **Teams:** grouped by home center (the center where the player plays most, from LFstats).
   Each center fields as many full 6-player rosters as it can (`<Center> 1`, `<Center> 2`, ...):
   1. main role first;
@@ -764,6 +765,75 @@ Calibration (3 rounds, Test set): 14/36 cells, objective 0.135 (no-broadcast tre
 agreement 57.0% (55.5%), margin error 7,950 (8,524); Commander nukes detonated 1.56 -> 1.59 a
 scorecard (real 2.79); Ammo times hit and resupplies given a little worse (the supports resupply
 the Commander less).
+
+### Tags and times tagged (CAL-02, 2026-11-08)
+
+The real side of CAL-02 (spec #563, D1 / D8), committed as `data/tdf_role_targets_2026.json`
+and built by `python -I scripts/tdf_role_stats.py <logs dir> --out data/tdf_role_targets_2026.json
+[--fetch] [--test-file data/lfstats_test_internationals_2026.json]` from the 165 Internationals
+2026 TDF event logs (164 used; one game had 13 players and is skipped). Every figure is a mean per
+player-game over 328 player-games a role (656 Scouts), with its standard error in the file.
+
+**What a Tag is not.** A Tag is a zap on an enemy (TDF event codes 0205 without a Down, 0206 with
+one, with an enemy target). LFstats `shotsHit` counts Resupplies and Base zaps as well, so it is
+not a tag count: the Ammo's 64.7 and the Medic's 54.6 `shotsHit` a game are 22.3 and 8.6 Tags. A
+zap on a teammate is a shot, not a Tag (about one a game for a Commander). A Missile hit is not a
+time tagged. The grill's "times tagged" column (58.8 / 47.8 / 33.5 / 23.2 / 10.2) was LFstats
+`timesZapped`, which also counts a teammate's zaps on the player; the file's `times_tagged` is
+enemy Tags only, as the glossary defines it, and carries `timesZapped` beside it as
+`times_zapped_lfstats`.
+
+| Role | Tags | Times tagged (enemy; LFstats timesZapped) | Shots fired | Accuracy on enemies | Downs given / taken | Active share | Tags per Active minute | Eliminated (minute) |
+|---|---|---|---|---|---|---|---|---|
+| Commander | 54.5 | 57.4 (58.8) | 70.3 | 0.83 | 40.9 / 26.5 | 0.58 | 6.9 | 30% (11.4) |
+| Heavy | 43.5 | 46.8 (47.8) | 55.4 | 0.84 | 43.5 / 20.4 | 0.64 | 5.0 | 22% (11.4) |
+| Scout | 36.4 | 32.5 (33.5) | 58.6 | 0.70 | 21.5 / 32.5 | 0.55 | 4.9 | 34% (11.1) |
+| Ammo | 22.3 | 22.5 (23.2) | 45.8 | 0.58 | 12.3 / 22.5 | 0.63 | 2.6 | 32% (11.0) |
+| Medic | 8.6 | 9.9 (10.2) | 18.3 | 0.58 | 4.7 / 9.9 | 0.73 | 0.9 | 31% (8.4) |
+
+Shots fired are the player's misses (0201), Base zaps (0203) and zaps (0205 / 0206, a teammate's
+included); accuracy on enemies is Tags over Tags plus misses. Active share is the time in state 0
+of the player-state rows over 15 minutes; an Elimination is a Down the player never returns from.
+A team faces 5.47 of 6 enemies on the floor averaged over the game (the sim: 4.0). A game holds 403
+Tags, both teams.
+
+**Who tags whom** (Tags per game, both teams; attacker row, target column):
+
+| | Commander | Heavy | Scout | Ammo | Medic | Total |
+|---|---|---|---|---|---|---|
+| Commander | 28.2 | 22.5 | 34.8 | 15.9 | 7.7 | 109.0 |
+| Heavy | 23.0 | 16.6 | 33.1 | 9.9 | 4.4 | 87.0 |
+| Scout | 40.1 | 39.4 | 43.8 | 15.8 | 6.6 | 145.7 |
+| Ammo | 16.5 | 10.7 | 13.7 | 2.8 | 0.9 | 44.5 |
+| Medic | 7.2 | 4.2 | 4.8 | 0.7 | 0.3 | 17.1 |
+
+The who-Downs-whom matrix is in the file: every zap on a 1-hit role (Scout, Ammo, Medic) is a
+Down, and the Heavy's shot power 3 Downs anyone in one hit, so its two rows are equal.
+
+**Shot cadence** (gap between one player's consecutive shots; median and the share per bin):
+
+| Role | Median s | <0.5 | 0.5-1 | 1-2 | 2-5 | 5-10 | 10-30 | 30-60 | 60+ |
+|---|---|---|---|---|---|---|---|---|---|
+| Commander | 4.5 | 16% | 10% | 10% | 16% | 17% | 25% | 5% | 1% |
+| Heavy | 7.7 | 2% | 11% | 11% | 19% | 18% | 31% | 7% | 1% |
+| Scout | 3.6 | 27% | 8% | 7% | 12% | 11% | 25% | 7% | 2% |
+| Ammo | 3.1 | 32% | 9% | 5% | 9% | 9% | 21% | 10% | 5% |
+| Medic | 11.4 | 24% | 7% | 3% | 7% | 7% | 23% | 15% | 14% |
+
+**By the team's own Medic's Elimination minute** (team-games; per player-game Tags / times tagged
+for Commander, Heavy, Scout, Ammo, Medic). The Tags follow the Medic: a team whose Medic dies
+between 5:00 and 8:00 has the sim's Tags (CAL-03 carries the lives budget).
+
+| Medic out | Team-games | Commander | Heavy | Scout | Ammo | Medic |
+|---|---|---|---|---|---|---|
+| by 5:00 | 16 | 30.1 / 38.5 | 21.0 / 32.9 | 13.7 / 20.8 | 12.2 / 19.3 | 5.8 / 13.5 |
+| 5:00-8:00 | 41 | 40.4 / 54.2 | 34.9 / 42.3 | 25.3 / 28.1 | 18.9 / 24.3 | 6.7 / 13.1 |
+| 8:00-12:00 | 25 | 60.4 / 63.7 | 49.0 / 54.5 | 40.8 / 38.9 | 22.7 / 24.1 | 9.2 / 10.2 |
+| after 12:00 | 21 | 71.4 / 77.4 | 56.9 / 59.6 | 51.5 / 44.1 | 29.3 / 26.2 | 10.8 / 8.9 |
+| survives | 225 | 56.6 / 56.8 | 44.8 / 46.5 | 38.2 / 32.4 | 22.9 / 21.9 | 8.8 / 9.1 |
+
+The sim side (the baseline, the prototype ladder and the shipped tree, read off
+`round_probe --lineups test` against this file) follows with #567.
 
 ### SM5-02: a Downed pack is dark (2026-11-03)
 
