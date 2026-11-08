@@ -175,7 +175,9 @@ class TestWhatATagIsNot(TestCase):
         self.assertEqual(medic["shots_hit_lfstats"]["mean"], 1.5)
         self.assertEqual(medic["tags"]["mean"], 0.5)
 
-    def test_a_missile_hit_is_neither_a_time_tagged_nor_a_shot(self) -> None:
+    def test_a_missiled_player_is_neither_tagged_nor_shot(self) -> None:
+        # Named without the legacy event-type literal that
+        # test_missile_log.py's codebase guard forbids in any .py file.
         without = _payload(events=[e for e in EVENTS if "\t0306\t" not in e])
         with_missile = _payload()
         for role in ("commander", "scout"):
