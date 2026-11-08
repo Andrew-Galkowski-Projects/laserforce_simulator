@@ -35,6 +35,7 @@ from ..sim_helpers.map_loader import (
     load_map_context,
     zone_from_cell,
 )
+from ..sim_helpers import nuke_arming
 from ..sim_helpers.mechanics import shot_cooldown
 from ..sim_helpers.modes import update_mode
 from ..sim_helpers.pathfinding import (
@@ -66,7 +67,6 @@ from ..sim_helpers.time_constants import (
 
 from . import persistence
 from .round_loop import (
-    _apply_nuke_activation_broadcast,
     _apply_nuke_reaction_flags,
     _apply_score_broadcast,
     _broadcast_communication,
@@ -1435,14 +1435,9 @@ class BatchSimulator:
                         pending_nukes.append(
                             PendingNuke(complete_time=scheduled[1], player=scheduled[2])
                         )
-                        # MECH-06: nuke activation broadcast — enemy team learns commander's cell
-                        enemy_color_nuke = (
-                            "blue" if actor.team_color == "red" else "red"
-                        )
-                        nuke_targets = [
-                            p for p in all_alive if p.team_color == enemy_color_nuke
-                        ]
-                        _apply_nuke_activation_broadcast(actor, nuke_targets, second)
+                        # The enemy team hears the activation through the MECH-04
+                        # reaction flags next tick; it is not told where the
+                        # Commander is (CAL #558, 2026-11-07).
                 elif ptype == "tag":
                     tag_attempts.append(
                         {
@@ -1926,7 +1921,8 @@ class BatchSimulator:
 
             attacker.counters.points_scored += 500
             attacker.counters.missile_points += 500
-            attacker.final_missiles -= 1
+            # The missile was consumed when the lock started (start_missile_lock);
+            # taking a second one here capped a 5-missile player at 3 landed (#560).
             attacker.counters.missiles_landed += 1
             if attacker.role != "heavy":
                 attacker.final_special = min(
@@ -1951,6 +1947,7 @@ class BatchSimulator:
         player.counters.specials_used += 1
         if player.role == "commander":
             player.final_special -= player.special_cost
+            nuke_arming.fuse_lit(player)  # spend the SP bank, roll the resupply slip
             # TIME-01: nuke fuse is 4-7 s -> 8-14 ticks (tick-native).
             countdown = random.randint(8, 14)
             player.special_active_until = second + countdown

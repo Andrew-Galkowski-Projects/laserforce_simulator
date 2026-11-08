@@ -19,6 +19,7 @@ Paths are relative to the repo root.
 - action weights, weight layout, role baselines, weight-safety rules — `docs/agents/matches/sim-helpers.md#weightspy`
 - movement, A*, path and goal commitment, goal selection, memory — `docs/agents/matches/sim-helpers.md#pathfindingpy`
 - Support-survival switches: target priority, hidden support cells, the Medic holding position, the Ammo hiding freely, teamwork call-outs (2026-11-06) — `docs/agents/matches/sim-helpers.md#support_survivalpy`
+- Nuke arming: the 20 SP gate, the Commander hides while the fuse runs, the distance and enemy-3-hit-down gates (switches, off), no resupply while arming, the per-nuke SP bank draw, the after-Down boost (CAL #558, 2026-11-06/07) — `docs/agents/matches/sim-helpers.md#nuke_armingpy`
 - shot cooldown, tag / resupply target choice — `docs/agents/matches/sim-helpers.md#mechanicspy`
 - `plan_action`, line of sight, windowed walls, base capture, missile lock — `docs/agents/matches/sim-helpers.md#combatpy`
 - role stats, max lives / shots, special cost — `docs/agents/matches/sim-helpers.md#role_constantspy`

@@ -249,6 +249,71 @@ class TestRes03FriendlyFireFlag:
         ), "same-team missile must set friendly_fire=True"
 
 
+class TestMissileCostsOneMissile:
+    """CAL #560: a landed missile costs exactly one missile.
+
+    ``start_missile_lock`` consumes the missile when the lock starts. The
+    completion used to take a second one, so a hit cost two and a miss one: a
+    player with five missiles could land at most three, and ``final_missiles``
+    went negative. Measured on the Test set, removing it raised Commander
+    missiles landed 1.08 -> 1.25 and Heavy 0.92 -> 1.17 a round.
+    """
+
+    @staticmethod
+    def _ps(team_color: str, role: str):
+        from matches.sim_helpers.player_state import PlayerState
+
+        return PlayerState(
+            tag_id=f"{team_color}_{role}",
+            name=f"{team_color} {role}",
+            team_color=team_color,
+            role=role,
+            accuracy=50,
+            survival=0,
+            player_awareness=50,
+            starting_lives=10,
+            starting_shots=20,
+            final_lives=10,
+            final_shots=20,
+            final_missiles=5,
+        )
+
+    def test_landed_missile_consumes_exactly_one(self) -> None:
+        from matches.sim_helpers.combat import start_missile_lock
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        attacker = self._ps("red", "commander")
+        defender = self._ps("blue", "scout")
+        ctx = RoundContext(events=EventLog(persist=True))
+
+        lock = start_missile_lock(attacker, defender, 10, None, ctx=ctx)
+        assert lock is not None
+        assert attacker.final_missiles == 4, "the lock start consumes the missile"
+
+        BatchSimulator()._complete_missile(attacker, defender, 13, ctx=ctx)
+
+        assert attacker.counters.missiles_landed == 1
+        assert attacker.final_missiles == 4, "the hit must not consume a second one"
+
+    def test_five_missiles_can_all_land(self) -> None:
+        from matches.sim_helpers.combat import start_missile_lock
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        attacker = self._ps("red", "heavy")
+        ctx = RoundContext(events=EventLog(persist=True))
+        sim = BatchSimulator()
+        for n in range(5):
+            defender = self._ps("blue", "scout")
+            tick = 10 * (n + 1)
+            assert start_missile_lock(attacker, defender, tick, None, ctx=ctx)
+            sim._complete_missile(attacker, defender, tick + 3, ctx=ctx)
+
+        assert attacker.counters.missiles_landed == 5
+        assert attacker.final_missiles == 0
+
+
 # ---------------------------------------------------------------------------
 # Section 3 — Tick semantics
 # ---------------------------------------------------------------------------

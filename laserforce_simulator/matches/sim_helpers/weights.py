@@ -1,5 +1,7 @@
 from typing import Any
 
+from . import nuke_arming
+
 # ---------------------------------------------------------------------------
 # Per-role constants — all tuning numbers in one place per role
 # ---------------------------------------------------------------------------
@@ -776,25 +778,20 @@ def _get_heavy_weights(
 
 
 def _commander_nuke_gate(sp: int, ga: int) -> bool:
-    """Return True when a Commander should consider firing a nuke.
+    """Return True when a Commander should consider firing a nuke: 20 SP or more.
 
-    Low-awareness Commanders fire at the minimum 20-SP threshold.
-    High-awareness Commanders stack until a higher threshold, enabling
-    back-to-back nukes. Thresholds:
-      ga < 30  → fire at sp > 20
-      ga < 50  → fire at sp > 40
-      ga < 70  → fire at sp > 60
-      ga >= 70 → fire at sp > 80 (regardless of ga)
+    CAL #558 (2026-11-06): the MECH-03 awareness tiers (ga < 50 waited for 40 SP,
+    ga < 70 for 60, higher for 80, so that a high-awareness Commander could stack
+    for back-to-back nukes) are retired. On the LFS-01 Test set every Commander
+    had 48 to 64 awareness, the gate was open on 0.2% of the ticks a Commander
+    held 20+ SP, 45 SP a round went unspent and 0.55 nukes a game detonated
+    against a real 2.79; at a flat 20 SP it is 1.43 (``docs/lfstats-import.md``).
+    The floor is the 20 SP cost itself since 2026-11-07 (a third of real nukes fire
+    at exactly 20); how much more a Commander banks for each nuke is the draw in
+    ``nuke_arming.banked_enough``, read through ``nuke_arming.may_arm``. ``ga`` is
+    kept in the signature for the callers and tests.
     """
-    if sp > 80:
-        return True
-    if sp > 60 and ga < 70:
-        return True
-    if sp > 40 and ga < 50:
-        return True
-    if sp > 20 and ga < 30:
-        return True
-    return False
+    return sp >= 20
 
 
 def _get_commander_weights(
@@ -873,7 +870,9 @@ def _get_commander_weights(
         # Default 50 = mid-awareness tier (fires at sp > 40). Players should always
         # have game_awareness set; this fallback guards legacy/test objects only.
         game_awareness = getattr(player, "game_awareness", 50)
-        if _commander_nuke_gate(player.final_special, game_awareness):
+        if _commander_nuke_gate(
+            player.final_special, game_awareness
+        ) and nuke_arming.may_arm(player, all_alive, second, time_domain):
             # MECH-17: on a map, the enemies the Commander knows can see it.
             threats = getattr(player, "known_threats", None)
             if threats is None:
@@ -885,6 +884,11 @@ def _get_commander_weights(
                 )
             raw = c["special_base"] - c["special_per_enemy"] * threats
             w[i["use_special"]] = int(raw * (player.special_usage / 50))
+            # CAL #558: real Commanders fire right after coming back from a Down.
+            if nuke_arming.just_back_from_down(player, second):
+                w[i["use_special"]] = int(
+                    w[i["use_special"]] * nuke_arming.AFTER_DOWN_BOOST
+                )
         # MECH-06: memory system can override the gate here when situational factors
         # (enemy nuke incoming, allied medic/ammo separated, or multi-nuke window open)
         # justify firing earlier or suppressing the nuke entirely.
@@ -896,6 +900,12 @@ def _get_commander_weights(
 
     # MECH-06: score broadcast behavioral bias
     _apply_score_broadcast_weights(w, i, player, all_alive, second)
+
+    # CAL #558: while the fuse runs, the Commander only hides (nuke_arming).
+    if nuke_arming.HIDE_WHILE_ARMING and nuke_arming.arming(player, second):
+        for idx in range(len(w)):
+            w[idx] = 0
+        w[i["hide"]] = nuke_arming.ARMING_HIDE_WEIGHT
 
     return weights
 

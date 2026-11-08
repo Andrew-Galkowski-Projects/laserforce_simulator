@@ -727,8 +727,16 @@ class TestMapLessRoundsAreUnchanged:
     # the RNG state after the round, so any change to a map-less draw moves it.
     # Re-pinned 2026-11-06 when support_survival's target priority became the
     # default: choose_tag_target draws differently on every round, map or not
-    # (the old values were 8b059b08209535f9 and fb03cd0de8c924ab).
-    PINNED = {7: "3e2b367fd8e4a387", 21: "1c0910ccaa48fd2b"}
+    # (the old values were 8b059b08209535f9 and fb03cd0de8c924ab). Re-pinned
+    # again the same day for CAL #558: the Commander nuke gate opens at 20 SP for
+    # every awareness and the Commander hides while the fuse runs, so a map-less
+    # Commander rolls use_special and hide where it rolled tag_player (the values
+    # before were 3e2b367fd8e4a387 and 1c0910ccaa48fd2b). Re-pinned 2026-11-07:
+    # each nuke draws its SP bank from the real table (nuke_arming.banked_enough)
+    # and rolls its resupply slip when the fuse starts (nuke_arming.fuse_lit), two
+    # more draws per nuke, and the nuke weight is doubled just after a Down (the
+    # values before were 41b1e498403fc1d7 and 5f99af49798143f2).
+    PINNED = {7: "95ffd6649674d1d3", 21: "e83dc90224030c38"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

@@ -10,7 +10,9 @@ Implementation added:
   - _known_enemies_from_memory helper in pathfinding.py
   - _apply_score_broadcast_weights in weights.py
   - Communication broadcast per-tick in both simulators (_broadcast_communication)
-  - Nuke activation broadcast (_apply_nuke_activation_broadcast)
+  - Nuke activation shares no cell (CAL #558, 2026-11-07: the old
+    _apply_nuke_activation_broadcast is gone; the enemy learns only that a
+    nuke is going off, through the MECH-04 reacting_to_nuke flag)
   - Medic-under-fire alert (_check_medic_under_fire)
 
 Production code:
@@ -20,7 +22,6 @@ Production code:
   matches/sim_helpers/player_state.py  (player_memory, medic_hit_times,
                                         score_broadcast_state, score_broadcast_next)
   matches/simulation.py                (_broadcast_communication,
-                                        _apply_nuke_activation_broadcast,
                                         _check_medic_under_fire)
 """
 
@@ -44,7 +45,6 @@ from matches.sim_helpers.weights import _apply_score_broadcast_weights
 from matches.simulation import (
     _broadcast_communication,
     _update_player_memory,
-    _apply_nuke_activation_broadcast,
     _check_medic_under_fire,
 )
 
@@ -469,84 +469,48 @@ class TestApplyScoreBroadcastWeights(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 
-class TestNukeActivationBroadcast(unittest.TestCase):
-    """Tests for simulation._apply_nuke_activation_broadcast."""
+class TestNukeActivationSharesNoCell(unittest.TestCase):
+    """CAL #558 (2026-11-07): a nuke's activation tells the enemy team that a nuke is
+    going off (the MECH-04 ``reacting_to_nuke`` flag), never where the Commander is.
 
-    def test_enemy_players_receive_commander_cell_in_memory(self):
-        """After nuke fires, the targeted team players learn the Commander's cell."""
-        commander = _ps("commander", "red", cell_row=5, cell_col=7)
+    The old ``_apply_nuke_activation_broadcast`` wrote the arming Commander's cell
+    into every enemy's memory, and every tag cancel in a 128-round sample came from
+    an enemy holding that entry. In the arena the activation is only a sound:
+    5% of real nukes are cancelled, 35% of the sim's were.
+    """
 
-        blue_scout = _ps("scout", "blue")
-        blue_heavy = _ps("heavy", "blue")
-        target_team = [blue_scout, blue_heavy]
+    def test_no_cell_sharing_broadcast_exists(self):
+        import matches.simulation as simulation
+        from matches.simulation import round_loop
 
-        _apply_nuke_activation_broadcast(commander, target_team, 120.0)
+        self.assertFalse(hasattr(simulation, "_apply_nuke_activation_broadcast"))
+        self.assertFalse(hasattr(round_loop, "_apply_nuke_activation_broadcast"))
 
-        cmd_tag = "red_commander"
-        self.assertIn(cmd_tag, blue_scout.player_memory)
-        self.assertEqual(blue_scout.player_memory[cmd_tag]["cell"], (5, 7))
+    def test_reaction_flags_leave_enemy_memory_untouched(self):
+        """The one activation-time effect, the reaction flag, writes no memory."""
+        from matches.sim_helpers.pending_events import PendingNuke
+        from matches.simulation import _apply_nuke_reaction_flags
 
-    def test_enemy_memory_contains_correct_timestamp(self):
-        """Memory entry's timestamp matches the second at which the nuke fired."""
-        commander = _ps("commander", "red", cell_row=5, cell_col=7)
-        blue_scout = _ps("scout", "blue")
-        _apply_nuke_activation_broadcast(commander, [blue_scout], 300.0)
+        commander = _ps("commander", "red", cell_row=5, cell_col=7, game_awareness=100)
+        blue_scout = _ps("scout", "blue", game_awareness=100, player_awareness=100)
+        pending = [PendingNuke(complete_time=110.0, player=commander)]
 
-        entry = blue_scout.player_memory["red_commander"]
-        self.assertEqual(entry["timestamp"], 300.0)
+        with patch("random.random", return_value=0.0):
+            _apply_nuke_reaction_flags([commander, blue_scout], pending)
 
-    def test_enemy_memory_entry_has_commander_role(self):
-        """Memory entry's role is 'commander'."""
-        commander = _ps("commander", "red", cell_row=5, cell_col=7)
-        blue_scout = _ps("scout", "blue")
-        _apply_nuke_activation_broadcast(commander, [blue_scout], 300.0)
-
-        entry = blue_scout.player_memory["red_commander"]
-        self.assertEqual(entry["role"], "commander")
-
-    def test_dead_enemy_players_are_not_updated(self):
-        """Players with final_lives=0 are skipped."""
-        commander = _ps("commander", "red", cell_row=5, cell_col=7)
-        blue_scout = _ps("scout", "blue", lives=0)
-        _apply_nuke_activation_broadcast(commander, [blue_scout], 300.0)
-
+        self.assertTrue(blue_scout.reacting_to_nuke)
         self.assertEqual(blue_scout.player_memory, {})
 
-    def test_commander_with_no_cell_skips_broadcast(self):
-        """Commander without a cell_row does nothing (graceful no-op)."""
-        commander = _ps("commander", "red")
-        # cell_row remains None by default
-        blue_scout = _ps("scout", "blue")
-        _apply_nuke_activation_broadcast(commander, [blue_scout], 300.0)
+    def test_reacting_enemy_without_a_sighting_has_no_commander_goal(self):
+        """A reacting enemy who never saw the Commander gets no Commander-cell goal."""
+        from matches.sim_helpers.pathfinding import _find_enemy_commander_in_memory
 
-        self.assertEqual(blue_scout.player_memory, {})
+        blue_heavy = _ps("heavy", "blue", cell_row=2, cell_col=2)
+        blue_heavy.reacting_to_nuke = True
 
-    def test_ally_players_are_not_updated(self):
-        """Ally players in the target_team list with wrong team are still updated.
-
-        _apply_nuke_activation_broadcast operates on whoever is in target_team_players;
-        the caller is responsible for passing only enemy-team players.  This test
-        verifies that if a red player is accidentally included they also get updated.
-        But typically allies should NOT be in target_team_players.
-        """
-        commander = _ps("commander", "red", cell_row=5, cell_col=7)
-        red_scout = _ps("scout", "red")  # ally accidentally in the list
-        _apply_nuke_activation_broadcast(commander, [red_scout], 300.0)
-
-        # The function doesn't filter by team; it updates everyone in the list.
-        # The test documents this behavior (caller is responsible for filtering).
-        self.assertIn("red_commander", red_scout.player_memory)
-
-    def test_broadcast_only_updates_enemy_team_when_called_correctly(self):
-        """When called with only enemy-team targets, only enemies are updated."""
-        commander = _ps("commander", "red", cell_row=5, cell_col=7)
-        red_ally = _ps("heavy", "red")  # NOT passed to the function
-        blue_enemy = _ps("scout", "blue")
-
-        _apply_nuke_activation_broadcast(commander, [blue_enemy], 300.0)
-
-        self.assertIn("red_commander", blue_enemy.player_memory)
-        self.assertEqual(red_ally.player_memory, {})
+        self.assertIsNone(
+            _find_enemy_commander_in_memory(blue_heavy, "red", 100.0, "ticks")
+        )
 
 
 # ---------------------------------------------------------------------------
