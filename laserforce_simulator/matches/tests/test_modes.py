@@ -758,20 +758,22 @@ class TestAttackGoal:
         assert mode_goal(scout, [scout], "blue", _grid_map(), 100) is None
         assert scout._goal_was_drawn is False
 
-    def test_a_cell_that_sees_the_medic_is_worth_more_than_one_that_sees_the_ammo(
+    def test_a_cell_that_sees_the_ammo_is_worth_more_than_one_that_sees_the_medic(
         self, draws: list
     ) -> None:
+        # CAL-02 D5: the Medic is worth 0.3 and the Ammo 0.55 (was 1.0 / 0.7), so
+        # the nearer Ammo-seeing cell (5, 5) is the goal, not the Medic's (3, 2).
         cmdr, everyone, ctx = _attack_scene()
-        assert mode_goal(cmdr, everyone, "blue", ctx, 100) == (3, 2)
+        assert mode_goal(cmdr, everyone, "blue", ctx, 100) == (5, 5)
         candidates, value_of = draws[-1]
         assert sorted(candidates) == [(3, 2), (5, 5), (8, 7)]
-        assert value_of((3, 2)) == 1.0
-        assert value_of((8, 7)) == 0.7
-        # Sees both: the Medic wins.
-        assert value_of((5, 5)) == 1.0
+        assert value_of((3, 2)) == 0.3
+        assert value_of((8, 7)) == 0.55
+        # Sees both: the Ammo wins.
+        assert value_of((5, 5)) == 0.55
         assert cmdr._goal_was_drawn is True
 
-    def test_a_cell_seeing_both_stays_a_medic_cell_whatever_the_tag_order(
+    def test_a_cell_seeing_both_stays_an_ammo_cell_whatever_the_tag_order(
         self, draws: list
     ) -> None:
         cmdr = _placed("commander")
@@ -780,7 +782,7 @@ class TestAttackGoal:
         _remember(cmdr, "blue_b", (8, 8), 100, "ammo")
         ctx = _grid_map(sight={"3,3": {"5,5"}, "8,8": {"5,5"}})
         mode_goal(cmdr, everyone, "blue", ctx, 100)
-        assert draws[-1][1]((5, 5)) == 1.0
+        assert draws[-1][1]((5, 5)) == 0.55
 
     def test_a_target_with_no_reachable_candidate_falls_back_to_high_los(self) -> None:
         cmdr = _placed("commander")
@@ -1144,9 +1146,10 @@ def _choose(
 @pytest.mark.usefixtures("best_draw")
 class TestChooseGoalCellUsesModes:
     def test_positioning_comes_from_the_mode_rule(self) -> None:
+        # CAL-02 D5: the Ammo-seeing cell (5, 5) outscores the Medic's (3, 2).
         cmdr, everyone, ctx = _attack_scene()
-        assert _choose(cmdr, everyone, ctx) == (3, 2)
-        assert cmdr._committed_goal == ((3, 2), False, HELD_GOAL_EXPIRY)
+        assert _choose(cmdr, everyone, ctx) == (5, 5)
+        assert cmdr._committed_goal == ((5, 5), False, HELD_GOAL_EXPIRY)
 
     def test_the_enemy_base_default_stays_below_it(self) -> None:
         scout = _placed("scout")
@@ -1347,16 +1350,26 @@ class TestTagActionGoal:
 
     @pytest.mark.parametrize("action", ["tag_player", "missile_player"])
     def test_attack_tries_the_nearest_target_first(self, action: str) -> None:
+        # CAL-02 D5: the Heavy is a target too, so the near one comes first (it
+        # was the far Medic while only Medics and Ammos were hunted).
         cmdr, everyone, ctx = self._scene()
+        assert _choose(cmdr, everyone, ctx, action=action) == (1, 1)
+        assert cmdr._committed_goal == ((1, 1), True, 100 + 4)
+
+    @pytest.mark.parametrize("action", ["tag_player", "missile_player"])
+    def test_attack_passes_a_downed_target_for_the_next(self, action: str) -> None:
+        """The Attack path skips the Downed near Heavy for the Medic; the nearest
+        enemy path (Control, below) would still take it."""
+        cmdr, everyone, ctx = self._scene()
+        cmdr.player_memory["blue_heavy"]["status"] = "downed"
         assert _choose(cmdr, everyone, ctx, action=action) == (7, 7)
-        assert cmdr._committed_goal == ((7, 7), True, 100 + 4)
 
     @pytest.mark.parametrize("role", ["commander", "scout", "heavy"])
     def test_any_attacking_role_does(self, role: str) -> None:
         _, everyone, ctx = self._scene()
         player = _placed(role, mode=Mode.ATTACK)
         player.player_memory = everyone[0].player_memory
-        assert _choose(player, everyone, ctx, action="tag_player") == (7, 7)
+        assert _choose(player, everyone, ctx, action="tag_player") == (1, 1)
 
     def test_a_chased_target_is_skipped_for_the_nearest_enemy(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1502,10 +1515,19 @@ class TestAttackTargets:
         assert self._candidates(cmdr, everyone, ctx) == AMMO_VIEW
         assert seen == [(cmdr, everyone, 100)]
 
-    def test_other_roles_are_not_targets(self) -> None:
+    @pytest.mark.parametrize("role", ["commander", "heavy", "scout", "ammo", "medic"])
+    def test_every_role_is_a_target(self, role: str) -> None:
+        """CAL-02 D5: Attack hunts every role, not only the Medic and Ammo."""
+        scout = _placed("scout")
+        enemy = _enemy(role, f"blue_{role}_1")
+        _remember(scout, f"blue_{role}_1", (3, 3), 100, role)
+        ctx = _grid_map(high_los=[(1, 1)], sight={"3,3": {"3,2"}})
+        assert self._candidates(scout, [scout, enemy], ctx) == [(3, 2)]
+
+    def test_an_unknown_role_is_not_a_target(self) -> None:
         scout = _placed("scout")
         enemy = _enemy("scout", "blue_scout_1")
-        _remember(scout, "blue_scout_1", (3, 3), 100, "scout")
+        _remember(scout, "blue_scout_1", (3, 3), 100, "referee")
         ctx = _grid_map(high_los=[(1, 1)], sight={"3,3": {"3,2"}})
         assert self._candidates(scout, [scout, enemy], ctx) == [(1, 1)]
 
@@ -1522,6 +1544,73 @@ class TestAttackTargets:
         enemy = _enemy("medic")
         ctx = _grid_map(high_los=[(1, 1)], sight={"11,11": {"10,11"}})
         assert self._candidates(scout, [scout, enemy], ctx) == [(1, 1)]
+
+
+def _hunt_scene() -> tuple[PlayerState, list[PlayerState], MapContext]:
+    """An Attack-Mode Scout who saw the enemy Commander at (3, 3) and the enemy
+    Medic at (8, 8), each visible from one cell of its own."""
+    scout = _placed("scout")
+    everyone = [scout, _enemy("commander"), _enemy("medic")]
+    _remember(scout, "blue_commander", (3, 3), 100, "commander")
+    _remember(scout, "blue_medic", (8, 8), 100, "medic")
+    ctx = _grid_map(high_los=[(1, 1)], sight={"3,3": {"3,2"}, "8,8": {"8,7"}})
+    return scout, everyone, ctx
+
+
+@pytest.mark.usefixtures("best_draw")
+class TestAttackHuntsEveryRole:
+    """CAL-02 D5 (spec #563): one Attack table for every attacker, Commander 1.0,
+    Heavy 0.8, Scout 0.6, Ammo 0.55, Medic 0.3, in the proportions real
+    Commanders spread their zaps per enemy player."""
+
+    def test_a_scout_heads_for_the_cell_that_sees_the_commander(
+        self, draws: list
+    ) -> None:
+        scout, everyone, ctx = _hunt_scene()
+        assert mode_goal(scout, everyone, "blue", ctx, 100) == (3, 2)
+        candidates, value_of = draws[-1]
+        assert sorted(candidates) == [(3, 2), (8, 7)]
+        assert value_of((3, 2)) == 1.0
+        assert value_of((8, 7)) == 0.3
+
+    def test_with_only_a_medic_remembered_it_still_heads_for_the_medic(self) -> None:
+        scout, everyone, ctx = _hunt_scene()
+        del scout.player_memory["blue_commander"]
+        assert mode_goal(scout, everyone, "blue", ctx, 100) == (8, 7)
+
+    def test_a_downed_commander_inside_its_window_is_not_hunted(self) -> None:
+        scout, everyone, ctx = _hunt_scene()
+        scout.player_memory["blue_commander"]["status"] = "downed"
+        assert mode_goal(scout, everyone, "blue", ctx, 100) == (8, 7)
+        # Once the Down is over (more than RESPAWN_TICKS ago) the hunt is back on.
+        scout.player_memory["blue_commander"]["timestamp"] = 100 - RESPAWN_TICKS - 1
+        assert mode_goal(scout, everyone, "blue", ctx, 100) == (3, 2)
+
+    @pytest.mark.parametrize(
+        "role, value",
+        [
+            ("commander", 1.0),
+            ("heavy", 0.8),
+            ("scout", 0.6),
+            ("ammo", 0.55),
+            ("medic", 0.3),
+        ],
+    )
+    def test_the_value_of_a_cell_that_sees_each_role(
+        self, draws: list, role: str, value: float
+    ) -> None:
+        scout = _placed("scout")
+        enemy = _enemy(role, f"blue_{role}_1")
+        _remember(scout, f"blue_{role}_1", (3, 3), 100, role)
+        ctx = _grid_map(high_los=[(1, 1)], sight={"3,3": {"3,2"}})
+        mode_goal(scout, [scout, enemy], "blue", ctx, 100)
+        assert draws[-1][1]((3, 2)) == value
+
+    def test_the_tag_goal_is_the_nearest_target_of_any_role(self) -> None:
+        scout, everyone, ctx = _hunt_scene()
+        assert attack_tag_goal(scout, everyone, "blue", 100) == (3, 3)
+        scout.cell_row, scout.cell_col = 9, 9
+        assert attack_tag_goal(scout, everyone, "blue", 100) == (8, 8)
 
 
 #: Ranks 0, 0.5 and 1. Seen from (5, 0) at 5 ft a square: 10 ft, 15 ft and 30 ft.

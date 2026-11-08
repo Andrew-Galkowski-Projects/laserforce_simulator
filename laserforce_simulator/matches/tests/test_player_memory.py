@@ -38,8 +38,11 @@ from matches.sim_helpers.pathfinding import (
 # import pathfinding. The values these tests pin are the same, and _cell_from_memory
 # still reads them through _stale_table, so the invariant holds.
 from matches.sim_helpers.time_constants import _STALE_THRESHOLD
+from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.round_context import RoundContext
+from matches.sim_helpers.shot import SHOT_KIND_INITIAL, resolve_shot
 from matches.sim_helpers.weights import _apply_score_broadcast_weights
 
 from matches.simulation import (
@@ -1106,6 +1109,80 @@ class TestUpdatePlayerMemory(unittest.TestCase):
             ally.player_memory,
             "Ally should NOT receive repeated sighting with no new info",
         )
+
+
+# ---------------------------------------------------------------------------
+# TestDefenderLearnsAttacker -- CAL-02 D4 (spec #563): the tagged player saw
+# the flash, so a Hit on a map writes the attacker into the defender's memory
+# and the defender rolls its own call-out.
+# ---------------------------------------------------------------------------
+
+
+def _hit(attacker: PlayerState, defender: PlayerState, ctx: RoundContext) -> None:
+    """Resolve one certain Hit: randint 1 is under every hit chance, and
+    random 0.0 means a hide never causes a miss."""
+    with patch("random.randint", return_value=1), patch(
+        "random.random", return_value=0.0
+    ):
+        resolve_shot(attacker, defender, 40, kind=SHOT_KIND_INITIAL, ctx=ctx)
+
+
+class TestDefenderLearnsAttacker(unittest.TestCase):
+    """A Hit writes the attacker into the defender's memory (D4)."""
+
+    def _scene(
+        self, movement_ctx: MapContext | None
+    ) -> tuple[PlayerState, PlayerState, PlayerState, RoundContext]:
+        attacker = _ps("scout", "red", cell_row=2, cell_col=2)
+        defender = _ps("heavy", "blue", cell_row=5, cell_col=5, communication=100)
+        defender.shields = defender.max_shields  # a Heavy takes 3 Hits
+        teammate = _ps("medic", "blue", cell_row=6, cell_col=6)
+        ctx = RoundContext(
+            events=EventLog(persist=False),
+            pending_nukes=[],
+            pending_followups=[],
+            pending_reactions=[],
+            all_alive=[attacker, defender, teammate],
+            movement_ctx=movement_ctx,
+        )
+        return attacker, defender, teammate, ctx
+
+    def test_on_a_map_the_defender_remembers_the_attacker(self):
+        attacker, defender, _, ctx = self._scene(_minimal_ctx())
+        _hit(attacker, defender, ctx)
+        entry = defender.player_memory.get("red_scout")
+        self.assertIsNotNone(entry, "the defender learns where the shot came from")
+        self.assertEqual(entry["cell"], (2, 2))
+        self.assertEqual(entry["role"], "scout")
+        self.assertEqual(entry["status"], "active")
+        self.assertEqual(entry["timestamp"], 40)
+
+    def test_the_defender_calls_the_attacker_out(self):
+        """The defender's own call-out reaches its teammate (communication 100,
+        the roll patched to succeed)."""
+        attacker, defender, teammate, ctx = self._scene(_minimal_ctx())
+        _hit(attacker, defender, ctx)
+        self.assertEqual(
+            teammate.player_memory.get("red_scout", {}).get("cell"), (2, 2)
+        )
+
+    def test_a_map_less_hit_writes_nothing(self):
+        attacker, defender, teammate, ctx = self._scene(None)
+        _hit(attacker, defender, ctx)
+        self.assertEqual(defender.counters.times_tagged, 1)
+        self.assertEqual(defender.player_memory, {})
+        self.assertEqual(teammate.player_memory, {})
+
+    def test_with_the_switch_off_nothing_is_written(self):
+        from matches.sim_helpers import engagement
+
+        attacker, defender, teammate, ctx = self._scene(_minimal_ctx())
+        with patch.object(engagement, "DEFENDER_LEARNS_ATTACKER", False):
+            _hit(attacker, defender, ctx)
+        self.assertEqual(defender.player_memory, {})
+        self.assertEqual(teammate.player_memory, {})
+        # The attacker's own memory write is not the switch's.
+        self.assertEqual(attacker.player_memory["blue_heavy"]["cell"], (5, 5))
 
 
 if __name__ == "__main__":

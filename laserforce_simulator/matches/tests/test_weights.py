@@ -119,29 +119,31 @@ class TestWeightFunctions:
     # --- Medic ---
 
     def test_medic_baseline(self):
-        """Medic favors resupply over tagging but can occasionally tag.
+        """Medic favors resupply over tagging but shoots back at an enemy in view.
 
         Medic has no hold source (baseline_hold=0) so idx 8 stays 0; at full
-        resources request_resupply (idx 7) is 0, so the vector and its sum match
-        the pre-MOVE-03 documented baseline padded with two trailing zeros.
+        resources request_resupply (idx 7) is 0. CAL-02 D6 (spec #563): the
+        opening tag_player weight is 15 (was 5), the other slots as before.
         """
         s = self._state(self.gr, self.players["medic"], "medic")
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [5, 0, 30, 0, 0, 65, 0, 0, 0]
+        assert w == [15, 0, 30, 0, 0, 65, 0, 0, 0]
 
     def test_medic_baseline_sum(self):
+        # CAL-02 D6: 110, the 10 extra on tag_player (was 100).
         s = self._state(self.gr, self.players["medic"], "medic")
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert sum(w) == 100
+        assert sum(w) == 110
 
     def test_medic_low_lives_maximises_resupply(self):
         """When medic has <=3 lives, hide and tagging both collapse and resupply maximises.
 
         Low lives still leaves shots at max, so request_resupply (idx 7) stays 0.
+        CAL-02 D6: the dumped tag weight is 15, so resupply ends at 65 + 30 + 15.
         """
         s = self._state(self.gr, self.players["medic"], "medic", final_lives=3)
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [0, 0, 0, 0, 0, 100, 0, 0, 0]
+        assert w == [0, 0, 0, 0, 0, 110, 0, 0, 0]
 
     def test_medic_can_capture_base_gets_small_boost(self):
         """In neutral zone, medic gets a small capture weight boost while resupply stays dominant."""
@@ -181,9 +183,9 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic, heavy], 0)
-        # SM5-02: the whole tag_player (5) and resupply_ally (65) drain into
-        # hide (30 + 70), not the old fixed 60 off resupply_ally.
-        assert w == [0, 0, 100, 0, 0, 0, 0, 0, 0]
+        # SM5-02: the whole tag_player (15 since CAL-02 D6) and resupply_ally (65)
+        # drain into hide (30 + 80), not the old fixed 60 off resupply_ally.
+        assert w == [0, 0, 110, 0, 0, 0, 0, 0, 0]
 
     def test_medic_not_active_no_heavy_changes_zone(self):
         """Downed medic with no nearby heavy moves to find protection."""
@@ -195,8 +197,9 @@ class TestWeightFunctions:
             last_downed_time=0,
         )
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
-        # SM5-02: tag_player (5) + resupply_ally (65) drain into only_move.
-        assert w == [0, 70, 30, 0, 0, 0, 0, 0, 0]
+        # SM5-02: tag_player (15 since CAL-02 D6) + resupply_ally (65) drain into
+        # only_move.
+        assert w == [0, 80, 30, 0, 0, 0, 0, 0, 0]
 
     def test_pooled_drain_ignores_a_negative_tag_weight(self):
         """A negative tag_player moves nothing and takes nothing from resupply_ally.

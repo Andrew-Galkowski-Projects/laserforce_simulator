@@ -37,6 +37,7 @@ from .follow_rule import may_tag
 from .mechanics import shot_cooldown
 from .pending_events import PendingFollowup, PendingReaction
 from .round_context import RoundContext
+from . import engagement
 from .time_constants import TICK_SECONDS
 
 # ---------------------------------------------------------------------------
@@ -327,6 +328,14 @@ def resolve_shot(
 
             _update_player_memory(attacker, [defender], tick)
             _broadcast_communication(attacker, ctx.all_alive, ctx.movement_ctx, tick)
+            if engagement.DEFENDER_LEARNS_ATTACKER:
+                # CAL-02 decision 12 (D4): the tagged player saw the flash, so
+                # it learns the attacker's cell and calls it out. Its draws come
+                # after the attacker's; a map-less round never reaches here.
+                _update_player_memory(defender, [attacker], tick)
+                _broadcast_communication(
+                    defender, ctx.all_alive, ctx.movement_ctx, tick
+                )
     else:
         # ── Phase 8. Miss ────────────────────────────────────────────
         attacker.counters.shots_missed += 1
