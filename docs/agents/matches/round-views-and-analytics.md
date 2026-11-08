@@ -203,8 +203,8 @@ computed this way.
   - **Values are read, never re-derived.** Score, lives, shots and SP come from the after-event
     values every event logs: `actor_*`, `sp`, `target_*`, and `special.targets[]`.
   - **Derived values:**
-    - `missiles`: −1 per `locking`, and −1 more per `missiled` hit. The second −1 mirrors the
-      engine's double spend (**MECH-16**); drop it in the same change that fixes MECH-16.
+    - `missiles`: −1 per `locking`. A hit costs nothing more: the engine spends the missile once,
+      at the lock (**MECH-16**, fixed 2026-11-06, with the matching −1 dropped here).
     - `eliminated`: from the target's `elimination` event.
     - `tags` / `misses`: counts of `tag` / `miss` events.
     - `downed_at`: set on a lives decrease (`record_down` is the engine's life-loss chokepoint) or

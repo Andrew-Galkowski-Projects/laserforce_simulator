@@ -467,6 +467,304 @@ low survival was hard to miss, but the hit roll is `70 + accuracy - survival`, s
 at 70%. All three stats at 100 against 1 wins 100% of games with the switches on, so the test's
 matchup was corrected and target priority kept.
 
+### Nukes and missiles (2026-11-06, CAL #558, #559, #560)
+
+The three constants the support-survival sweep found helpful, re-run on top of the THMA defaults
+(main `2579f221`, Syracuse at 20 px / 1 ft, Test set, `--rounds 3 --workers 12 --seed 42`, 128
+games). The driver mutates one constant in the working tree, runs `lfstats_calibrate --split test`
+and restores the file; the baseline is the unmodified tree.
+
+| Run (3 rounds) | Cells | Objective | Winner % | Margin error | Nukes | Cmd missiles | Heavy missiles |
+|---|---|---|---|---|---|---|---|
+| baseline (THMA) | 14/36 | 0.150 | 59.4 | 8458 | 0.55 | 1.03 | 0.95 |
+| nuke gate 20 SP (#558) | 13/36 | 0.140 | 54.7 | 8061 | 1.43 | 1.00 | 0.98 |
+| Downed Stay hidden 40 (#559) | 13/36 | 0.150 | 57.8 | 8873 | 0.50 | 0.98 | 0.94 |
+| missile bump 30 (#560) | 13/36 | 0.153 | 54.7 | 8772 | 0.50 | 0.94 | 0.79 |
+| all three | 13/36 | 0.137 | 53.1 | 8423 | 1.43 | 0.94 | 0.75 |
+| **shipped: gate 20 SP + hide while arming + MECH-16** (8 workers) | 14/36 | 0.129 | 55.5 | 8420 | 1.49 | 1.26 | 1.17 |
+
+Real: nukes 2.79, Commander missiles 2.47, Heavy missiles 1.76. The shipped row is the best
+objective measured on the Test set so far; against the THMA baseline it is better on nukes, Heavy
+missiles, Scout rapid fire and Medic times hit and worse on no cell. Most of its missile gain is
+MECH-16 (below); on the full set the hide adds little to detonations over the gate alone (1.43 ->
+1.49), less than the 12-round counter promised, so the cancel rate on the full set is still to be
+counted (the parallel counter run was cut short by the machine running out of memory).
+
+- **#558 holds.** The gate alone is the one constant that moves the objective (0.150 -> 0.140):
+  better on nukes detonated, Scout rapid fire and Medic times hit; worse on Ammo elimination
+  (0.81 -> 0.87) and Ammo resupplies given (29 -> 25), which is what more nukes do to supports.
+  The lost cell is noise-level (every per-cell move under 3% is).
+- **#559 and #560 do not hold on the switches.** Neither moved a cell beyond noise; the missile
+  bump made the Heavy's missiles worse (0.95 -> 0.79), as the earlier sweep had warned: rolling
+  `missile_player` more does not land more missiles. Both constants stay as they were.
+
+**Where nukes died** (a counter over 12 Test rounds, serial, the engine instrumented at
+`_commander_nuke_gate`, `plan_action`, the missile lock and `_complete_missile`; per
+Commander-round):
+
+| Engine | Fired | Cancelled by a tag | Detonated | SP unspent at the end |
+|---|---|---|---|---|
+| as on main | 0.83 | 0.21 | 0.62 | 44.8 |
+| nuke gate 20 SP | 2.58 | 1.29 | 1.29 | 11.4 |
+| gate 20 + hide while arming | 2.33 | 0.75 | 1.58 | 9.2 |
+| gate 20 + walk to cover before arming | 2.25 | 0.96 | 1.29 | 12.8 |
+| gate 20 + cover + hide | 2.12 | 0.79 | 1.33 | 9.9 |
+
+- Every Commander in the Test set has 48 to 64 game awareness, so the MECH-03 tiers made them
+  wait for 40 or 60 SP: the gate was open on 48 of 29,586 ticks a Commander held 20+ SP, and a
+  Commander ended a round holding 45 SP (two nukes' worth). A Commander earns about 55 SP a round
+  (49 tags, 2 a missile, 5 a capture), which at 20 SP a nuke is 2.8 nukes: the real figure. So the
+  SP economy is right and the gate was the sink.
+- Once the gate opens, half the nukes fired are cancelled by a tag during the 8 to 14 tick fuse:
+  the Commander keeps shooting (and drawing reactions) while arming, and the MECH-06 activation
+  broadcast sends every enemy toward its cell. Owner's direction: find a hidden spot or hide behind
+  teammates while nuking. Hiding for the whole fuse (`nuke_arming.HIDE_WHILE_ARMING`: Stationary,
+  missed 50%, passed over as a target, no missile lock) cut the cancels 1.29 -> 0.75 and raised
+  detonations to 1.58 at a cost of 7 Commander tags. Walking to a low-sight-line cell near a
+  teammate first fired fewer nukes and cancelled no fewer, alone or with the hide, so it was not
+  kept. The remaining cancels are the enemy rush; the broadcast itself was not changed.
+
+**Where missiles died** (same counter, per round, both players of the role; Commander / Heavy):
+
+| Stage | Commander | Heavy |
+|---|---|---|
+| `missile_player` rolls that planned a lock | 33.0 | 35.0 |
+| ... of which from a Downed player (plan made, lock refused) | 18.6 | 20.3 |
+| ... refused because the target was hiding | 6.5 | 6.7 |
+| locks started | 7.9 | 8.1 |
+| lost line of sight during the 3 ticks and failed the `special_usage` save | 2.7 | 2.8 |
+| completed the lock | 5.3 | 5.1 |
+| dodged at impact (survival roll) | 0.5 | 0.6 |
+| dropped at impact: attacker Downed during the lock | 1.3 | 1.3 |
+| dropped at impact: defender Downed during the lock (not Taggable) | 1.3 | 1.3 |
+| landed | 2.2 | 1.8 |
+
+- **MECH-16 was real and is fixed:** a hit spent the missile a second time (`_complete_missile`
+  after `start_missile_lock`), so five missiles landed at most three and `final_missiles` went to
+  -1. Removing it: locks 7.9 -> 8.9 / 8.1 -> 9.3 a round, landed 1.08 -> 1.25 (Commander) and
+  0.92 -> 1.17 (Heavy) a player-round. The playback mirror dropped its matching -1.
+- **A third of completed locks vanish at impact** with no event and no counter: `_complete_missile`
+  returns when the attacker is no longer Active or the defender no longer Taggable (either was
+  Downed during the three ticks). The missile log shows a `locking` row with no resolution. Not
+  changed here; it is the next missile sink, with the Downed player's missile rolls (a Downed
+  Commander still rolls `missile_player` 18 times a round for nothing).
+
+### Real nukes, from the TDF event logs (2026-11-06)
+
+LFstats serves each game's raw Laserforce TDF event log (`tdf_url` on `lfstats_game_detail`,
+`https://lfstats-modern-archive.s3.us-west-1.amazonaws.com/<slug>.tdf`; UTF-16, tab-separated;
+event codes 0205 zap without a Down, 0206 zap with a Down, 0404 activates nuke, 0405 detonates
+nuke; there is no cancel event, a cancel is an activation with no detonation before the player's
+next one). All 165 Internationals 2026 games were parsed (the analysis script lived in the session
+scratchpad; the figures below are the record). The sim column is the shipped branch over the 128
+usable Test games, one round each, both Commanders per round.
+
+| Per game, both teams | Real (TDF) | Sim (branch) |
+|---|---|---|
+| nukes activated | 5.93 | 4.56 |
+| nukes detonated | 5.61 | 2.97 |
+| nukes cancelled | 0.32 (5%) | 1.59 (35%) |
+| cancelled by a tag: heavy / commander / scout / ammo / medic | 23 / 12 / 8 / 3 / 0 of 46 | 75 / 34 / 13 / 1 / 0 of 123 |
+| cancelled by something other than an enemy tag | 6 of 53 (all enemy detonations) | 80 of 203 (see the correction below: the Commander's own supports, not enemy nukes) |
+| fuse | 3.5 s (two thirds), 6.0 s (one third) | 4 to 7 s (8 to 14 ticks, uniform) |
+| detonations where the Commander took any hit during the fuse | 20 of 925 (2%) | 190 hits on arming Commanders a round of 128 |
+| what cancels | a Down (28 of 46 first zaps were Downs; 15 of the 18 shield hits had a Down inside the window; 3 ambiguous) | a Down |
+
+- **Real Commanders arm untouched.** Only 5% of nukes are cancelled and 2% of detonations took
+  any hit on the way: Commanders fire from where nobody can shoot them, and the fuse is 3.5 s.
+  The sim Commander, even hiding, is shot at 3.3 times and hit 1.5 times a round while arming. The
+  cancel rule itself matches (a Down, in both); the exposure does not.
+- **Who cancels is the same shape in both:** 3-hit roles (Heavy, Commander) make three quarters of
+  the tag cancels in the arena (35 of 46) and nine tenths in the sim (109 of 123). The Heavy is
+  the main canceller in both. In the sim this is because a Heavy's shot power 3 Downs a Commander in
+  one hit, so it is the one role that can cancel inside the fuse without a run of tags.
+- **The sim Commander was tracked.** The MECH-06 activation broadcast wrote the arming Commander's
+  cell into every enemy's memory (every one of the 123 tag cancels came from an enemy who held it),
+  half the alive enemies are flagged `reacting_to_nuke` on a given arming tick (100.8 of 190.9
+  enemy-ticks), and MECH-04's goal override walks a reacting enemy to the enemy Commander's cell to
+  tag-cancel. Half the tag cancels (63 of 123) came from a reacting enemy. That broadcast was
+  removed on 2026-11-07 (next subsection). The arena has a
+  nuke-activation sound but no position; cancels there are opportunistic.
+- **The sim Commander's own supports cancel it** (corrected 2026-11-07; the first write-up blamed
+  overlapping nukes, which was "every cancel that was not an enemy tag", never measured). With
+  every Down and pack reset attributed on the no-broadcast tree (128 rounds): 86 cancels by an
+  enemy tag, 80 by the Commander's own Medic or Ammo resupplying it during the fuse (a Resupply
+  resets the pack and ends the Nuke, `combat._reset_resupplied`), 7 by an enemy detonation, 1 by a
+  missile. The TDF logs show the same rule and a team that knows it: 4 of 978 real activations were
+  resupplied inside the fuse, all 4 cancelled; an enemy detonation ended 6. Enemy activations
+  inside the same two ticks are 1% of nukes in both the arena and the sim, so overlap is not the
+  sim's problem.
+
+**A 1-hit role tagging a 3-hit role down** (a comparison point the owner asked for: a Commander or
+Heavy has 3 shields, a Scout, Ammo or Medic 1, so a 1-hit player needs three tags to Down a 3-hit
+one). For every Down of a 3-hit player, the zaps on them since their previous Down were read; a
+Down is "by one 1-hit player's three tags" when all of them came from that player, and "without
+tagging back" when the 3-hit player never zapped that player in between.
+
+| Per game, both teams | Real (TDF) | Sim (branch) |
+|---|---|---|
+| Downs of a 3-hit player | 95.7 | 57.2 |
+| ... with the final tag by a 1-hit player | 31.7 (33%) | 12.1 (21%) |
+| ... by one 1-hit player's three tags | 9.3 (10%) | 5.5 (10%) |
+| ... of those, without the 3-hit player tagging back | 7.1 (76%) | 4.2 (77%) |
+| ... shared between several taggers | 49.9 (52%) | 19.9 (35%) |
+
+The shape of the duel matches (three quarters of such runs go unanswered in both), the volume does
+not: the sim has 60% of the real Downs of Commanders and Heavies, and its 1-hit roles finish far
+fewer of them (21% against 33%), which is the Scout / Ammo / Medic times-hit and hit-diff gap seen
+from the other side.
+
+Two mechanics follow from this. The activation broadcast was removed the next day (below). The
+fuse (7 ticks, with a third at 12, against the uniform 8 to 14) was not changed on the branch.
+
+### The activation shares no cell (2026-11-07)
+
+The owner's call after the comparison above: the broadcast should only tell the enemy team that
+an opposing nuke is going off, not where the Commander is. `_apply_nuke_activation_broadcast`
+(round_loop.py, called at `use_special` in the tick loop) is gone; its unit tests became
+`test_player_memory.py::TestNukeActivationSharesNoCell`. What remains at activation is the
+MECH-04 `reacting_to_nuke` flag, which already carries "a nuke is going off" to the enemy team.
+A reacting enemy still walks to the Commander's cell, but only when their memory holds it from a
+sighting or a teammate's call-out (`pathfinding._find_enemy_commander_in_memory`), the way a real
+player would have to know.
+
+Same instrumented counter and the same 128 Test games, one round each, before and after:
+
+| Per round, both Commanders | Cell broadcast (branch, 2026-11-06) | No cell broadcast (2026-11-07) |
+|---|---|---|
+| nukes activated | 4.56 | 4.44 |
+| nukes detonated | 2.97 | 3.11 |
+| nukes cancelled | 1.59 (35%) | 1.36 (31%) |
+| ... by a tag | 0.96 | 0.67 |
+| ... not by an enemy tag (the own-team resupply, see "The Commander's own supports" below) | 0.63 | 0.69 |
+| tag cancels by heavy / commander / scout / ammo | 75 / 34 / 13 / 1 | 48 / 24 / 13 / 1 |
+| tag cancels by a reacting enemy | 63 of 123 | 37 of 86 |
+| shots at the arming Commander | 3.27 | 2.16 |
+| hits on the arming Commander | 1.48 | 1.02 |
+| Commander times tagged, a player-round | 31.9 | 28.4 |
+
+Tag cancels fell by 30% and the Heavy's and Commander's share of them fell most (75 to 48, 34 to
+24); the Scout's did not move (13), so the Scouts who cancel were already finding the Commander
+by sight. Every remaining tag cancel still comes from an enemy whose memory held the Commander's
+cell, which is now just the shot itself: a tag writes the target into the attacker's memory. The
+cancels that are not enemy tags did not move and are now half of all cancels; they turned out to
+be the Commander's own supports resupplying it mid-fuse (next subsection), not enemy nukes.
+
+Calibration (`lfstats_calibrate --split test --rounds 3 --seed 42`): 14/36 cells either way,
+objective 0.129 -> 0.134 (the Medic accuracy and MVP cells moved, within the run-to-run noise
+seen across the sweep), Commander `avg_nukes_detonated` 1.49 -> 1.56, winner agreement 55.5%
+both. Adopted as a realism decision, not a calibration win.
+
+### When Commanders fire, and the Commander's own supports (2026-11-07)
+
+The owner: "in real games commanders almost never drop immediately on 20; check when commanders
+drop in real games". Each real Commander's SP was rebuilt from its TDF events (+1 per zap on an
+opponent, +2 per missile, +5 per base destroyed, -20 per activation; the ledger dips a few SP
+below zero for a fifth of Commanders, so one small SP source is missing, and the shape below does
+not depend on it). The player-state rows (type 9: 3 down, 2 coming back, 0 active; a Down lasts
+8 s) give the Commander's own Down timing. 978 activations in 330 Commander-games; the sim column
+is the no-broadcast tree over the 128 Test games (569 activations), instrumented at the tick the
+fuse starts.
+
+| At activation | Real (TDF) | Sim |
+|---|---|---|
+| SP 20 / 21 / 22-24 / 25-29 / 30-39 / 40+ | 31% / 13% / 26% / 14% / 9% / 7% (mean 24.3, median 22) | 0% / 74% / 23% / 1% / 0% / 0% (the gate was `sp > 20`) |
+| wait since reaching 20 SP: 0-2 s / 2-5 / 5-15 / 15-30 / 30-60 / 60-120 / 120+ | 3% / 10% / 23% / 21% / 16% / 13% / 13% (median 23 s) | 19% / 19% / 34% / 18% / 6% / 2% / 2% |
+| time since the Commander's own Down began: 5-10 s / 10-20 / 20-40 / 40+ | 41% / 39% / 17% / 4% | 22% / 34% / 27% / 17% |
+| an enemy Commander or Heavy down at that moment | 70% (base rate at any moment of a game: 60%) | not measured |
+| first activation of a team | median 219 s (p25 164, p75 285) | mean 103 s |
+| nukes a Commander-game | 0: 1%, 1: 8%, 2: 23%, 3: 32%, 4: 33%, 5: 2% | 2.22 fired, 1.55 detonated |
+| an enemy activation inside the same two ticks | 1% | 1% |
+| resupplied by own team inside the fuse | 4 of 978, all 4 cancelled | 80 cancels of 173 |
+
+Real Commanders bank a little (a third fire at exactly 20, a third at 22 or more), wait a median
+23 s after reaching 20, and above all fire right after coming back from a Down: four fifths of
+real nukes start within about 12 s of reactivation. The "an enemy 3-hit is down" habit the owner
+sees in one teammate is only 10 points above the base rate across the field.
+
+Prototypes on the counter (128 Test rounds, one each; per round, both Commanders):
+
+| Variant | fired | cancelled | detonated | SP left a Commander |
+|---|---|---|---|---|
+| no cell broadcast (current tree) | 4.44 | 1.36 (31%) | 3.11 | 10.1 |
+| + supports never resupply an arming Commander (`is_resupplyable_at` False while arming) | 4.32 | 0.80 (19%) | 3.52 | 10.4 |
+| + per-nuke SP bank drawn from the real table, gate `>=` | 3.90 | 0.86 (22%) | 3.04 | 15.7 |
+| + fire only in the 10 s after coming back from a Down (hard gate) | 3.68 | 0.78 (21%) | 2.90 | 18.1 |
+| SP bank draw alone | 4.00 | 1.24 (31%) | 2.76 | 15.7 |
+| 20 cells from every remembered enemy (`MIN_CELLS_FROM_KNOWN_ENEMY`) | 3.98 | 1.14 (29%) | 2.82 | 16.7 |
+| 10 cells | 4.46 | 1.24 (28%) | 3.12 | 10.5 |
+| an enemy 3-hit down (`REQUIRE_ENEMY_3HIT_DOWN`) | 4.36 | 1.20 (28%) | 3.14 | 10.7 |
+| 20 cells + 3-hit down | 3.54 | 1.02 (29%) | 2.52 | 21.9 |
+| memory staleness halved (120 / 30 -> 60 / 15 ticks) | 4.42 | 1.38 (31%) | 3.04 | 10.2 |
+| per-tick 3% chance once eligible | 4.14 | 1.18 (29%) | 2.96 | 13.6 |
+
+Calibration (3 rounds, Test set) for the four switch variants: memory halved 15/36 obj 0.148,
+20 cells 15/36 obj 0.137, 3-hit down 14/36 obj 0.132, both 14/36 obj 0.140 (current tree 14/36
+obj 0.134); none moved the Commander nuke cell, and the 20-cell gate was closed on 97% of the
+ticks a Commander could have armed on Syracuse. The two gates ship as switches, off.
+
+What the numbers say: the supports are the sim's biggest cancel source and a pure behaviour gap
+(the real rule is the same, real teams avoid it), and the SP bank draw reproduces the real
+SP-at-activation shape and pushes the first nuke later (103 -> 123 s) at the cost of some unspent
+SP. The real "fire after coming back from a Down" signal is strong, but as a hard gate it leaves
+SP unspent and does not lower the cancel rate, because the sim Commander comes back next to the
+enemies who Downed it; a soft version (a weight boost in that window) is the candidate to measure
+next. The sim fires fewer nukes than the arena mostly through SP income (about 54 SP a Commander
+round against 67 in the arena): the Commander tags and is tagged far less than real.
+
+Also seen: a missile Down of an arming Commander called `record_down` but did not clear
+`special_active_until`, so that nuke still detonated (1 to 3 a round across the runs); the shot
+path cleared it. Real rule: any Down cancels. Fixed below.
+
+### The four rules shipped (2026-11-07)
+
+The owner: "go ahead with all 4 proposed", then "there should be some chance to resup during nuke
+arming, like 1-2%, based off real games". All four live in `sim_helpers/nuke_arming.py`
+(`docs/agents/matches/sim-helpers.md` has the switch table):
+
+1. **No support resupplies an arming Commander** (`NO_RESUPPLY_WHILE_ARMING`): an arming
+   Commander is not `is_resupplyable_at`, so the target choice passes it over and
+   `attempt_resupply` gives it nothing. Each nuke rolls once, when the fuse starts, whether its
+   supports may still resupply it (`RESUPPLY_WHILE_ARMING_CHANCE`, the owner's slip). The roll
+   is per nuke, not per attempt: the supports try about five times a nuke (21 refusals a round).
+2. **A per-nuke SP bank** (`SP_BANK_DRAW`): each nuke draws its threshold, 20 plus an entry of a
+   102-entry table with the real SP-at-activation shape, when the Commander first holds 20 SP,
+   and fires at or above it; the gate floor moved from `sp > 20` to `sp >= 20`.
+3. **An after-Down boost** (`AFTER_DOWN_BOOST` 2.0 inside the 20 ticks after reactivation):
+   the open `use_special` weight is doubled; it never opens a closed gate.
+4. **Every Down ends the nuke**: `record_down` zeroes an arming Commander's `special_active_until`,
+   so a missile Down cancels as a tag does.
+
+Counter, 128 Test rounds each (per round, both Commanders):
+
+| Tree | fired | cancelled | detonated | SP left | SP at activation 20 / 21 / 22-24 / 25-29 / 30-39 / 40+ | own Down began 5-10 s / 10-20 / 20-40 / 40+ before |
+|---|---|---|---|---|---|---|
+| before (no cell broadcast) | 4.44 | 1.36 (31%) | 3.11 | 10.1 | 0 / 74 / 23 / 1 / 0 / 0% | 22 / 34 / 27 / 17% |
+| rules 1, 2 and 4, boost off | 3.88 | 0.77 (20%) | 3.10 | 16.1 | 26 / 15 / 29 / 17 / 9 / 4% | 24 / 35 / 23 / 18% |
+| + boost 2.0 | 3.97 | 0.83 (21%) | 3.14 | 14.4 | 27 / 14 / 26 / 17 / 8 / 4% | 28 / 31 / 22 / 19% |
+| + boost 3.0 | 4.01 | 0.85 (21%) | 3.16 | 14.7 | | 27 / 31 / 21 / 20% |
+| + boost 2.0, slip flag 1.5% of nukes | 3.91 | 0.80 (20%) | 3.11 | 15.1 | 28 / 15 / 27 / 17 / 9 / 3% | 26 / 33 / 25 / 17% |
+| shipped: boost 2.0, slip flag 10% of nukes | 3.93 | 0.87 (22%) | 3.06 | 15.1 | | |
+| real (TDF) | 5.93 a game | 0.32 (5%) | 5.61 | | 31 / 13 / 26 / 14 / 9 / 7% | 41 / 39 / 17 / 4% |
+
+The slip: a flagged nuke is reached by a Resupply about one time in ten (a support has to be
+beside the Commander inside the 8 to 14 tick fuse), so the 1.5% flag ended no nuke in 500 and the
+10% flag ended 6 of 503 (1.2% of nukes, the owner's 1-2%; the arena's 0.4% would be a flag of
+about 3%). Of the shipped tree's 0.87 cancels a round, 0.72 are enemy tags (Heavy 0.40, Commander
+0.23, Scout 0.05, Ammo 0.01 in the 1.5% run), 0.08 the enemy nuke detonating first, 0.02 a
+missile Down (rule 4; these detonated before) and 0.05 the Commander's own supports (rule 1; 0.62
+a round before). The SP
+shape now matches the arena. The after-Down share moved a little (24% -> 28% at 2.0; 3.0 gave the
+same, so 2.0 ships); the real 41% is out of reach by weight alone because the sim Commander comes
+back from a Down without the SP for a nuke more often than the real one, which is the SP income
+gap (CAL-02 in `PLAN.md`). Fewer nukes are fired than before (4.44 -> 3.91) because the bank
+holds some SP back, and the same number detonate.
+
+Calibration (3 rounds, Test set): 14/36 cells, objective 0.135 (no-broadcast tree 0.134), winner
+agreement 57.0% (55.5%), margin error 7,950 (8,524); Commander nukes detonated 1.56 -> 1.59 a
+scorecard (real 2.79); Ammo times hit and resupplies given a little worse (the supports resupply
+the Commander less).
+
 ### SM5-02: a Downed pack is dark (2026-11-03)
 
 SM5-02 (spec #531) stopped a player who is not Active from firing or resupplying, and stopped

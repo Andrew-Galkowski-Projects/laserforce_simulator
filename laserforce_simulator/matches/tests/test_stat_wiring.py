@@ -313,10 +313,14 @@ class TestSpecialUsageMultiplier:
             final_lives=15,
             final_shots=30,
         )
+        # CAL #558 (2026-11-07): the gate opens at 20 SP and each nuke draws its own
+        # SP bank; pin both at the floor so this test sees the multiplier, not the draw.
+        cmd_50.nuke_sp_threshold = cmd_100.nuke_sp_threshold = 20
         w50 = _get_commander_weights(cmd_50, _ACTION_IDX, _fresh(), [cmd_50], 0)
         w100 = _get_commander_weights(cmd_100, _ACTION_IDX, _fresh(), [cmd_100], 0)
         us_idx = _ACTION_IDX["use_special"]
         # usage=100 → multiplier 2.0; usage=50 → multiplier 1.0
+        assert w50[us_idx] > 0
         assert w100[us_idx] == pytest.approx(w50[us_idx] * 2.0, abs=2.0)
 
     def test_commander_special_usage_0_zeroes_use_special(self):

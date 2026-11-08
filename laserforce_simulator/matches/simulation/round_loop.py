@@ -5,7 +5,7 @@ imports. The free functions here are called from
 ``BatchSimulator._simulate_round`` (in ``entrypoints.py``) at well-defined
 points in the per-tick loop:
 
-* memory observation + score / nuke broadcasts (MECH-06)
+* memory observation + score broadcast (MECH-06)
 * nuke-reaction flag application (MECH-04)
 * medic-under-fire alert (MECH-06)
 
@@ -229,31 +229,6 @@ def _apply_score_broadcast(
             player.score_broadcast_next = next_broadcast + period
 
 
-def _apply_nuke_activation_broadcast(
-    commander,
-    target_team_players: list,
-    second: float,
-) -> None:
-    """MECH-06: when a nuke is activated, all alive enemy-team players learn the
-    Commander's current cell via memory update.
-    """
-    if commander.cell_row is None:
-        return
-    cmd_tag = _str_tag_id(commander)
-    for p in target_team_players:
-        if p.final_lives <= 0:
-            continue
-        p_memory = getattr(p, "player_memory", None)
-        if p_memory is None:
-            p.player_memory = {}
-            p_memory = p.player_memory
-        p_memory[cmd_tag] = {
-            "cell": (commander.cell_row, commander.cell_col),
-            "timestamp": second,
-            "role": "commander",
-        }
-
-
 def _check_medic_under_fire(
     medic,
     all_alive: list,
@@ -297,6 +272,11 @@ def _check_medic_under_fire(
 
 def _apply_nuke_reaction_flags(all_alive: list, pending_nukes: list) -> None:
     """MECH-04: reset then set reacting_to_nuke for all alive players each tick.
+
+    This flag is all an activation tells the enemy team: a nuke is going off. It
+    says nothing about where the Commander is (CAL #558, 2026-11-07: the old
+    activation broadcast wrote the Commander's cell into every enemy's memory and
+    fed every tag cancel; the real activation is only a sound).
 
     Caches game_awareness and player_awareness once per player so repeated
     @property calls (which hit stat_for_simulation) don't multiply with the

@@ -1,10 +1,11 @@
 """The Down chokepoint — the single life-loss bookkeeping site.
 
 ``record_down(player, tick, ctx)`` is what every site that decrements a
-player's ``final_lives`` calls *after* the decrement. It owns five
+player's ``final_lives`` calls *after* the decrement. It owns six
 state mutations (last_downed_time, _path_cache, is_holding,
-_committed_goal-iff-action-driven, down_chain_count) plus two RV-02
-emit rules (medic_reset, nuke_cancelled).
+_committed_goal-iff-action-driven, down_chain_count, a Commander's
+arming ``special_active_until``) plus two RV-02 emit rules
+(medic_reset, nuke_cancelled).
 
 Lifted from ``BatchSimulator._record_down`` by the shot-resolver
 consolidation; the EventLog candidate replaced the per-call
@@ -52,7 +53,10 @@ def record_down(
       5. Clear ``player._committed_goal = None`` iff the committed
          goal was action-driven (MOVE-04 — positioning goals survive
          a Down).
-      6. RV-02 nuke_cancelled — if the player is a Commander, scan
+      6. Zero a Commander's ``special_active_until`` while its fuse runs
+         (CAL #558, 2026-11-07 — every Down, a missile's included, ends
+         the nuke; the drain then skips it).
+      7. RV-02 nuke_cancelled — if the player is a Commander, scan
          ``ctx.pending_nukes``; for each nuke whose ``player is`` this
          Commander and ``cancel_logged`` is False, emit one
          ``nuke_cancelled`` event via ``ctx.events.nuke_cancelled``, set
@@ -104,7 +108,15 @@ def record_down(
     if player._committed_goal is not None and player._committed_goal[1]:
         player._committed_goal = None
 
-    # 6. RV-02 nuke cancellation — only Commanders scan the queue
+    # 6. A Down ends a Commander's arming nuke (the arena's tag-cancel; the drain
+    # reads ``special_active_until >= complete_time``). The shot path and an enemy
+    # detonation cleared it themselves; a missile Down did not, so that nuke still
+    # detonated, 1 to 3 a round (CAL #558, 2026-11-07). A Scout's Rapid Fire is
+    # not a fuse and survives.
+    if player.role == "commander" and player.special_active_until > tick:
+        player.special_active_until = 0
+
+    # 7. RV-02 nuke cancellation — only Commanders scan the queue
     if player.role == "commander" and ctx is not None and ctx.pending_nukes:
         for n in ctx.pending_nukes:
             if n.player is player and not n.cancel_logged:

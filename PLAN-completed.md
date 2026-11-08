@@ -9325,4 +9325,21 @@ bring players together; on Mode goals alone they end about 50 squares apart.
 27. Amends 5: a Hold lasts 7 ticks, with Hold baselines Commander 3, Heavy 4, Scout 3, Ammo 3, tuned by probe to meet
     the Hold targets. Map-less rounds keep the old weights.
 
+### MECH-16 · [DONE] Missile spent twice on a hit (bug)
+
+**[DONE] Shipped (2026-11-06).** Fixed 2026-11-06 on the CAL #558-#560 branch: _complete_missile no
+longer spends the missile a second time (start_missile_lock is the one spend), round_playback
+dropped its matching -1, regression tests TestMissileCostsOneMissile in test_missile_log.py. Found
+by the #560 counter: five missiles landed at most three and final_missiles reached -1; fixed,
+Commander missiles landed 1.08 -> 1.25 and Heavy 0.92 -> 1.17 a round.
+
+**Prio: Medium (found 2026-10-23, ANG-06f probe).** A missile is spent at lock
+(`combat.start_missile_lock`) and spent **again** when it hits (`_complete_missile`:
+`attacker.final_missiles -= 1`, `entrypoints.py` ~L1838). Some players end a round with
+`final_missiles == -1`. Spend it once, at lock. Add a regression test that `final_missiles` never goes
+below 0 and equals starting missiles minus locks. **Changes seeded outcomes**, because a missile
+holder may lock again sooner, so it folds into the `CAL-01` re-baseline. ANG-06f's `round_playback`
+mirrors the double spend so its final-state invariant holds. When this lands, drop the extra −1 per
+`missiled` hit there too.
+
 ---

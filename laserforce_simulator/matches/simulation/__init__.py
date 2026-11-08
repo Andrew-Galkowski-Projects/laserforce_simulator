@@ -19,8 +19,7 @@ changes. The most important re-exports:
   entrypoints methods use.
 * ``_chunk_size_for`` / ``_precompute_roster`` — module-level helpers.
 * ``_check_medic_under_fire`` / ``_broadcast_communication`` /
-  ``_update_player_memory`` / ``_apply_nuke_activation_broadcast`` —
-  shot-resolver lazy-import targets.
+  ``_update_player_memory`` — shot-resolver lazy-import targets.
 * ``_get_los_targets`` / ``_get_base_interaction`` /
   ``_can_tag_through_windowed_wall`` / ``elevation_hit_modifier`` —
   combat-helper passthroughs exercised by ``test_map.py``.
@@ -44,11 +43,10 @@ from .entrypoints import (  # noqa: F401
     logger,
 )
 
-# Tick-loop free functions. ``sim_helpers/shot.py`` lazy-imports the four
-# below from ``matches.simulation``; the test suite also exercises some
+# Tick-loop free functions. ``sim_helpers/shot.py`` lazy-imports three of
+# these from ``matches.simulation``; the test suite also exercises some
 # directly.
 from .round_loop import (  # noqa: F401
-    _apply_nuke_activation_broadcast,
     _apply_nuke_reaction_flags,
     _apply_score_broadcast,
     _broadcast_communication,

@@ -202,10 +202,7 @@ def _apply_actor(
     elif etype == "miss":
         actor["misses"] += 1
     elif etype == "locking":
-        actor["missiles"] -= 1
-    elif etype == "missiled" and meta.get("result") == "hit":
-        # MECH-16: the engine spends a hit missile a second time. Drop
-        # this -1 in the same change that fixes MECH-16 (ADR-0044).
+        # The lock start is the one place a missile is spent (MECH-16).
         actor["missiles"] -= 1
     elif etype == "nuke_cancelled":
         _end_nuke(actor, fuses, ev.actor_id)

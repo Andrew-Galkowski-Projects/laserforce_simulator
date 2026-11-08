@@ -581,6 +581,10 @@ class _MockCommander:
 
         # special-active flag (scout-specific but referenced generically)
         self.special_active_until = 0
+        self.last_downed_time = None
+        # the per-nuke SP bank (nuke_arming.banked_enough): pinned at the floor so
+        # these tests see the gate, not the draw
+        self.nuke_sp_threshold = 20
 
     @property
     def missiles_used(self) -> int:
@@ -602,69 +606,32 @@ class _MockCommander:
 
 
 class TestCommanderNukeGate(unittest.TestCase):
-    """Tests for `_commander_nuke_gate(sp, ga) -> bool`."""
+    """`_commander_nuke_gate(sp, ga) -> bool`: every Commander may nuke at 20 SP or more.
 
-    # --- Low-awareness tier (ga < 30): fires at sp > 20 ---
+    CAL #558 (2026-11-06) retired the MECH-03 awareness tiers (40 / 60 / 80 SP for
+    higher awareness): on the Test set they left Commanders holding 45 SP unspent
+    at the end of a round and detonating 0.55 nukes a game against a real 2.79.
+    """
 
-    def test_low_ga_sp_above_threshold_fires(self):
-        """ga=25, sp=21 → True (fires at minimum threshold for low awareness)."""
-        self.assertTrue(_commander_nuke_gate(sp=21, ga=25))
+    def test_sp_above_20_fires_at_every_awareness(self):
+        for ga in (0, 25, 35, 65, 75, 100):
+            with self.subTest(ga=ga):
+                self.assertTrue(_commander_nuke_gate(sp=21, ga=ga))
 
-    def test_low_ga_sp_below_20_does_not_fire(self):
-        """ga=25, sp=15 → False (sp <= 20 cannot fire regardless of ga)."""
+    def test_sp_exactly_20_fires(self):
+        """The floor is the 20 SP cost itself (a third of real nukes fire at exactly
+        20); the per-nuke bank above it is `nuke_arming.banked_enough`."""
+        for ga in (25, 65, 100):
+            with self.subTest(ga=ga):
+                self.assertTrue(_commander_nuke_gate(sp=20, ga=ga))
+
+    def test_sp_below_20_does_not_fire(self):
         self.assertFalse(_commander_nuke_gate(sp=15, ga=25))
+        self.assertFalse(_commander_nuke_gate(sp=0, ga=100))
 
-    def test_low_ga_sp_exactly_20_does_not_fire(self):
-        """ga=25, sp=20 → False (threshold is strictly > 20, not >=)."""
-        self.assertFalse(_commander_nuke_gate(sp=20, ga=25))
-
-    # --- Medium-low awareness tier (30 <= ga < 50): fires at sp > 40 ---
-
-    def test_mid_low_ga_sp_21_does_not_fire(self):
-        """ga=35, sp=21 → False (ga >= 30 requires sp > 40 before firing)."""
-        self.assertFalse(_commander_nuke_gate(sp=21, ga=35))
-
-    def test_mid_low_ga_sp_above_40_fires(self):
-        """ga=35, sp=41 → True (sp > 40, ga < 50)."""
-        self.assertTrue(_commander_nuke_gate(sp=41, ga=35))
-
-    def test_mid_low_ga_sp_exactly_40_does_not_fire(self):
-        """ga=35, sp=40 → False (threshold is strictly > 40, not >=)."""
-        self.assertFalse(_commander_nuke_gate(sp=40, ga=35))
-
-    # --- Medium-high awareness tier (50 <= ga < 70): fires at sp > 60 ---
-
-    def test_mid_high_ga_sp_41_does_not_fire(self):
-        """ga=65, sp=41 → False (ga >= 50 requires sp > 60 before firing)."""
-        self.assertFalse(_commander_nuke_gate(sp=41, ga=65))
-
-    def test_mid_high_ga_sp_above_60_fires(self):
-        """ga=65, sp=61 → True (sp > 60, ga < 70)."""
-        self.assertTrue(_commander_nuke_gate(sp=61, ga=65))
-
-    # --- High-awareness tier (ga >= 70): fires only at sp > 80 ---
-
-    def test_high_ga_sp_61_does_not_fire(self):
-        """ga=75, sp=61 → False (ga >= 70 waits until sp > 80)."""
-        self.assertFalse(_commander_nuke_gate(sp=61, ga=75))
-
-    def test_high_ga_sp_exactly_80_does_not_fire(self):
-        """ga=75, sp=80 → False (threshold is strictly > 80, not >=)."""
-        self.assertFalse(_commander_nuke_gate(sp=80, ga=75))
-
-    def test_high_ga_sp_above_80_fires(self):
-        """ga=75, sp=81 → True (sp > 80 always fires)."""
-        self.assertTrue(_commander_nuke_gate(sp=81, ga=75))
-
-    # --- Max-awareness corner cases ---
-
-    def test_max_ga_sp_above_80_fires(self):
-        """ga=100, sp=81 → True (sp > 80 always fires regardless of ga)."""
+    def test_high_sp_still_fires(self):
         self.assertTrue(_commander_nuke_gate(sp=81, ga=100))
-
-    def test_max_ga_sp_61_does_not_fire(self):
-        """ga=100, sp=61 → False (ga=100 >= 70, waits until sp > 80)."""
-        self.assertFalse(_commander_nuke_gate(sp=61, ga=100))
+        self.assertTrue(_commander_nuke_gate(sp=41, ga=35))
 
 
 # ---------------------------------------------------------------------------
@@ -699,20 +666,28 @@ class TestCommanderNukeWeightGating(unittest.TestCase):
             "Low-awareness Commander at sp=25 should have use_special > 0",
         )
 
-    def test_high_ga_sp_below_max_threshold_use_special_zero(self):
-        """High-ga Commander (ga=80) with sp=25 should get use_special == 0.
+    def test_high_ga_sp_25_use_special_nonzero_too(self):
+        """CAL #558: a high-awareness Commander (ga=80) with sp=25 fires as well.
 
-        Gate: ga=80 >= 70, sp=25 is not > 80 → False → weight stays 0.
+        The awareness tiers no longer hold the weight at 0 below 80 SP.
         """
         player = _MockCommander(final_special=25, game_awareness=80)
         w = _get_commander_weights(
             player, _ACTION_IDX, self._fresh(), [player], second=0
         )
-        self.assertEqual(
+        self.assertGreater(
             w[_ACTION_IDX["use_special"]],
             0,
-            "High-awareness Commander at sp=25 should stack (use_special == 0)",
+            "High-awareness Commander at sp=25 should fire (use_special > 0)",
         )
+
+    def test_sp_below_cost_use_special_zero(self):
+        """Below the 20 SP cost there is nothing to fire."""
+        player = _MockCommander(final_special=19, game_awareness=20)
+        w = _get_commander_weights(
+            player, _ACTION_IDX, self._fresh(), [player], second=0
+        )
+        self.assertEqual(w[_ACTION_IDX["use_special"]], 0)
 
     def test_high_ga_sp_above_max_threshold_use_special_nonzero(self):
         """High-ga Commander (ga=80) with sp=85 should get use_special > 0.
@@ -727,6 +702,403 @@ class TestCommanderNukeWeightGating(unittest.TestCase):
             w[_ACTION_IDX["use_special"]],
             0,
             "High-awareness Commander at sp=85 (> 80) should fire (use_special > 0)",
+        )
+
+
+class TestHideWhileArming(unittest.TestCase):
+    """CAL #558: while the nuke fuse runs, the Commander only hides.
+
+    `nuke_arming.HIDE_WHILE_ARMING` (default on): `_get_commander_weights` hands
+    back a vector whose only positive slot is `hide`, so the Commander is
+    Stationary, missed half the time and passed over as a target. Switched off,
+    the vector is the ordinary one.
+    """
+
+    def _weights(self, player, second: int) -> list:
+        return _get_commander_weights(
+            player, _ACTION_IDX, list(_BASE), [player], second=second
+        )
+
+    def test_arming_commander_rolls_only_hide(self):
+        player = _MockCommander(final_special=5, game_awareness=50)
+        player.special_active_until = 110  # fuse runs to tick 110
+        w = self._weights(player, second=100)
+        self.assertGreater(w[_ACTION_IDX["hide"]], 0)
+        self.assertEqual(
+            [v for idx, v in enumerate(w) if idx != _ACTION_IDX["hide"]],
+            [0] * (len(w) - 1),
+            w,
+        )
+
+    def test_fuse_run_out_restores_the_ordinary_weights(self):
+        armed = _MockCommander(final_special=5, game_awareness=50)
+        armed.special_active_until = 110
+        plain = _MockCommander(final_special=5, game_awareness=50)
+        self.assertEqual(self._weights(armed, second=110), self._weights(plain, 110))
+        self.assertEqual(self._weights(armed, second=111), self._weights(plain, 111))
+
+    def test_switch_off_leaves_the_weights_alone(self):
+        from matches.sim_helpers import nuke_arming
+
+        armed = _MockCommander(final_special=5, game_awareness=50)
+        armed.special_active_until = 110
+        plain = _MockCommander(final_special=5, game_awareness=50)
+        with patch.object(nuke_arming, "HIDE_WHILE_ARMING", False):
+            self.assertEqual(self._weights(armed, 100), self._weights(plain, 100))
+
+    def test_arming_reads_the_fuse_and_the_role(self):
+        from matches.sim_helpers import nuke_arming
+
+        commander = _ps("commander", special_active_until=110)
+        self.assertTrue(nuke_arming.arming(commander, 100))
+        self.assertFalse(nuke_arming.arming(commander, 110))
+        self.assertFalse(
+            nuke_arming.arming(_ps("scout", special_active_until=1800), 100)
+        )
+        downed = _ps("commander", special_active_until=0)  # the tag-cancel zeroed it
+        self.assertFalse(nuke_arming.arming(downed, 100))
+
+
+class TestNukeArmingGates(unittest.TestCase):
+    """Two more arming gates on top of the 20 SP gate (2026-11-07): the Commander
+    waits until every remembered enemy is `MIN_CELLS_FROM_KNOWN_ENEMY` cells away,
+    and, under `REQUIRE_ENEMY_3HIT_DOWN`, until an enemy Commander or Heavy is
+    Downed or out. Both read through `nuke_arming.may_arm` in
+    `_get_commander_weights`.
+    """
+
+    def _weights(self, player, all_alive, second: int = 100) -> list:
+        return _get_commander_weights(
+            player,
+            _ACTION_IDX,
+            list(_BASE),
+            all_alive,
+            second=second,
+            time_domain="ticks",
+        )
+
+    # -- distance from known enemies ------------------------------------------
+
+    def test_far_from_known_enemies_reads_the_memory_distance(self):
+        from matches.sim_helpers import nuke_arming
+
+        cmd = _ps("commander", "red", cell_row=10, cell_col=10)
+        cmd.player_memory = {
+            "blue_heavy": {"cell": (10, 25), "timestamp": 100, "role": "heavy"}
+        }
+        with patch.object(nuke_arming, "MIN_CELLS_FROM_KNOWN_ENEMY", 20):
+            self.assertFalse(nuke_arming.far_from_known_enemies(cmd, 100, "ticks"))
+            cmd.player_memory["blue_heavy"]["cell"] = (10, 30)  # exactly 20 away
+            self.assertTrue(nuke_arming.far_from_known_enemies(cmd, 100, "ticks"))
+
+    def test_stale_and_allied_entries_do_not_block(self):
+        from matches.sim_helpers import nuke_arming
+
+        cmd = _ps("commander", "red", cell_row=10, cell_col=10)
+        cmd.player_memory = {
+            # a Heavy goes stale after 120 ticks
+            "blue_heavy": {"cell": (10, 11), "timestamp": 0, "role": "heavy"},
+            "red_scout": {"cell": (10, 12), "timestamp": 200, "role": "scout"},
+        }
+        with patch.object(nuke_arming, "MIN_CELLS_FROM_KNOWN_ENEMY", 20):
+            self.assertTrue(nuke_arming.far_from_known_enemies(cmd, 200, "ticks"))
+
+    def test_distance_gate_is_off_at_zero(self):
+        from matches.sim_helpers import nuke_arming
+
+        self.assertEqual(nuke_arming.MIN_CELLS_FROM_KNOWN_ENEMY, 0)
+        cmd = _ps("commander", "red", cell_row=10, cell_col=10)
+        cmd.player_memory = {
+            "blue_heavy": {"cell": (10, 11), "timestamp": 100, "role": "heavy"}
+        }
+        self.assertTrue(nuke_arming.far_from_known_enemies(cmd, 100, "ticks"))
+
+    def test_distance_gate_zeroes_use_special(self):
+        from matches.sim_helpers import nuke_arming
+
+        player = _MockCommander(final_special=25, game_awareness=50)
+        player.cell_row, player.cell_col = 10, 10
+        player.player_memory = {
+            "blue_scout": {"cell": (12, 12), "timestamp": 100, "role": "scout"}
+        }
+        self.assertGreater(
+            self._weights(player, [player])[_ACTION_IDX["use_special"]], 0
+        )
+        with patch.object(nuke_arming, "MIN_CELLS_FROM_KNOWN_ENEMY", 20):
+            self.assertEqual(
+                self._weights(player, [player])[_ACTION_IDX["use_special"]], 0
+            )
+
+    # -- an enemy 3-hit role is down ------------------------------------------
+
+    def test_an_enemy_3hit_is_down_reads_commander_and_heavy_only(self):
+        from matches.sim_helpers import nuke_arming
+
+        cmd = _ps("commander", "red")
+        heavy = _ps("heavy", "blue")
+        scout = _ps("scout", "blue")
+        self.assertFalse(
+            nuke_arming.an_enemy_3hit_is_down(cmd, [cmd, heavy, scout], 100)
+        )
+        scout.last_downed_time = 95  # a 1-hit Down does not count
+        self.assertFalse(
+            nuke_arming.an_enemy_3hit_is_down(cmd, [cmd, heavy, scout], 100)
+        )
+        heavy.last_downed_time = 95  # Downed, inside the 16-tick respawn
+        self.assertTrue(
+            nuke_arming.an_enemy_3hit_is_down(cmd, [cmd, heavy, scout], 100)
+        )
+        self.assertFalse(
+            nuke_arming.an_enemy_3hit_is_down(cmd, [cmd, heavy, scout], 120)
+        )
+        out = _ps("commander", "blue", lives=0)  # eliminated counts as down
+        self.assertTrue(nuke_arming.an_enemy_3hit_is_down(cmd, [cmd, heavy, out], 120))
+        ally = _ps("heavy", "red")
+        ally.last_downed_time = 118  # an allied Down does not count
+        self.assertFalse(
+            nuke_arming.an_enemy_3hit_is_down(cmd, [cmd, heavy, ally], 120)
+        )
+
+    def test_down_gate_zeroes_use_special_until_a_3hit_is_down(self):
+        from matches.sim_helpers import nuke_arming
+
+        player = _MockCommander(final_special=25, game_awareness=50)
+        heavy = _ps("heavy", "blue", current_zone=2)
+        self.assertFalse(nuke_arming.REQUIRE_ENEMY_3HIT_DOWN)
+        self.assertGreater(
+            self._weights(player, [player, heavy])[_ACTION_IDX["use_special"]], 0
+        )
+        with patch.object(nuke_arming, "REQUIRE_ENEMY_3HIT_DOWN", True):
+            self.assertEqual(
+                self._weights(player, [player, heavy])[_ACTION_IDX["use_special"]], 0
+            )
+            heavy.last_downed_time = 95
+            self.assertGreater(
+                self._weights(player, [player, heavy])[_ACTION_IDX["use_special"]], 0
+            )
+
+
+class TestNukeArmingRules(unittest.TestCase):
+    """The four rules shipped on 2026-11-07 from the TDF event-log study
+    (`docs/lfstats-import.md`, "When Commanders fire"): no support resupplies an
+    arming Commander, the Commander banks a per-nuke SP threshold drawn from the
+    real SP-at-activation table (the gate floor is 20), `use_special` is boosted
+    just after the Commander comes back from a Down, and every Down (a missile's
+    included) ends the nuke.
+    """
+
+    def _weights(self, player, all_alive, second: int = 100) -> list:
+        return _get_commander_weights(
+            player,
+            _ACTION_IDX,
+            list(_BASE),
+            all_alive,
+            second=second,
+            time_domain="ticks",
+        )
+
+    # -- no resupply while arming ----------------------------------------------
+
+    def test_an_arming_commander_cannot_be_resupplied(self):
+        from matches.sim_helpers import nuke_arming
+
+        self.assertTrue(nuke_arming.NO_RESUPPLY_WHILE_ARMING)
+        cmd = _ps("commander", special_active_until=110)
+        self.assertFalse(cmd.is_resupplyable_at(100))
+        self.assertTrue(cmd.is_resupplyable_at(110), "the fuse has run out")
+        scout = _ps("scout", special_active_until=1800)  # Rapid Fire is not a fuse
+        self.assertTrue(scout.is_resupplyable_at(100))
+        with patch.object(nuke_arming, "NO_RESUPPLY_WHILE_ARMING", False):
+            self.assertTrue(cmd.is_resupplyable_at(100))
+        cmd.nuke_resupplyable = True  # this nuke's slip roll came up
+        self.assertTrue(cmd.is_resupplyable_at(100))
+
+    def test_fuse_lit_rolls_the_resupply_slip_once_per_nuke(self):
+        """The owner (2026-11-07): "there should be some chance to resup during nuke
+        arming, like 1-2%, based off real games" (4 of 978 real activations)."""
+        from matches.sim_helpers import nuke_arming
+
+        # 0.10 of nukes flagged realizes 1.2% of nukes resupplied in the fuse: a
+        # support reaches a flagged nuke about one time in ten.
+        self.assertAlmostEqual(nuke_arming.RESUPPLY_WHILE_ARMING_CHANCE, 0.10)
+        cmd = _ps("commander")
+        cmd.nuke_sp_threshold = 25
+        with patch("random.random", return_value=0.0):
+            nuke_arming.fuse_lit(cmd)
+        self.assertTrue(cmd.nuke_resupplyable)
+        self.assertIsNone(cmd.nuke_sp_threshold, "the bank is spent too")
+        with patch("random.random", return_value=0.5):
+            nuke_arming.fuse_lit(cmd)
+        self.assertFalse(cmd.nuke_resupplyable)
+        with patch.object(nuke_arming, "RESUPPLY_WHILE_ARMING_CHANCE", 0.0), patch(
+            "random.random", return_value=0.0
+        ):
+            nuke_arming.fuse_lit(cmd)
+        self.assertFalse(cmd.nuke_resupplyable)
+
+    def test_choose_resupply_target_skips_an_arming_commander(self):
+        from matches.sim_helpers.mechanics import choose_resupply_target
+
+        medic = _ps("medic")
+        cmd = _ps("commander", lives=10, special_active_until=110)
+        self.assertIsNone(choose_resupply_target(medic, [medic, cmd], 100))
+        self.assertIs(choose_resupply_target(medic, [medic, cmd], 110), cmd)
+
+    def test_attempt_resupply_gives_an_arming_commander_nothing(self):
+        from matches.sim_helpers.combat import attempt_resupply
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        medic = _ps("medic")
+        cmd = _ps("commander", lives=10, special_active_until=110)
+        ctx = RoundContext(events=EventLog(persist=True))
+        attempt_resupply(medic, cmd, 100, ctx=ctx)
+        self.assertEqual(cmd.final_lives, 10)
+        self.assertEqual(cmd.special_active_until, 110, "the nuke is not reset")
+        self.assertEqual(medic.counters.resupplies_given, 0)
+        self.assertEqual(ctx.events.entries, [])
+
+    # -- the SP bank draw --------------------------------------------------------
+
+    def test_gate_floor_is_20_sp(self):
+        self.assertTrue(_commander_nuke_gate(sp=20, ga=50))
+        self.assertFalse(_commander_nuke_gate(sp=19, ga=50))
+
+    def test_sp_bank_table_matches_the_real_shape(self):
+        from matches.sim_helpers import nuke_arming
+
+        extra = nuke_arming.SP_BANK_EXTRA
+        n = len(extra)
+        share = lambda lo, hi: sum(lo <= e <= hi for e in extra) / n  # noqa: E731
+        self.assertAlmostEqual(share(0, 0), 0.31, delta=0.01)  # fire at exactly 20
+        self.assertAlmostEqual(share(1, 1), 0.13, delta=0.01)
+        self.assertAlmostEqual(share(2, 4), 0.26, delta=0.01)
+        self.assertAlmostEqual(share(5, 9), 0.14, delta=0.01)
+        self.assertAlmostEqual(share(10, 19), 0.09, delta=0.01)
+        self.assertAlmostEqual(share(20, 99), 0.07, delta=0.01)
+        self.assertEqual(min(extra), 0)
+        for _ in range(50):
+            self.assertGreaterEqual(nuke_arming.draw_sp_threshold(), 20)
+
+    def test_banked_enough_draws_once_per_nuke(self):
+        from matches.sim_helpers import nuke_arming
+
+        cmd = _ps("commander")
+        self.assertIsNone(cmd.nuke_sp_threshold)
+        with patch("random.choice", return_value=5):
+            cmd.final_special = 24
+            self.assertFalse(nuke_arming.banked_enough(cmd))
+        self.assertEqual(cmd.nuke_sp_threshold, 25)
+        with patch("random.choice", return_value=40):  # no redraw while banking
+            cmd.final_special = 25
+            self.assertTrue(nuke_arming.banked_enough(cmd))
+            self.assertEqual(cmd.nuke_sp_threshold, 25)
+            nuke_arming.bank_spent(cmd)  # the nuke fired: the next one draws anew
+            self.assertIsNone(cmd.nuke_sp_threshold)
+            self.assertFalse(nuke_arming.banked_enough(cmd))
+            self.assertEqual(cmd.nuke_sp_threshold, 60)
+        with patch.object(nuke_arming, "SP_BANK_DRAW", False):
+            self.assertTrue(nuke_arming.banked_enough(cmd))
+
+    def test_use_special_waits_for_the_drawn_bank(self):
+        from matches.sim_helpers import nuke_arming
+
+        player = _MockCommander(final_special=25, game_awareness=50)
+        player.nuke_sp_threshold = 30
+        self.assertEqual(self._weights(player, [player])[_ACTION_IDX["use_special"]], 0)
+        player.final_special = 30
+        self.assertGreater(
+            self._weights(player, [player])[_ACTION_IDX["use_special"]], 0
+        )
+        player.final_special = 25
+        with patch.object(nuke_arming, "SP_BANK_DRAW", False):
+            self.assertGreater(
+                self._weights(player, [player])[_ACTION_IDX["use_special"]], 0
+            )
+
+    def test_a_zero_draw_fires_at_exactly_20(self):
+        player = _MockCommander(final_special=20, game_awareness=50)
+        player.nuke_sp_threshold = 20
+        self.assertGreater(
+            self._weights(player, [player])[_ACTION_IDX["use_special"]], 0
+        )
+        player.final_special = 19
+        self.assertEqual(self._weights(player, [player])[_ACTION_IDX["use_special"]], 0)
+
+    def test_use_special_fires_the_nuke_and_spends_the_bank(self):
+        from matches.simulation import BatchSimulator
+
+        cmd = _ps("commander")
+        cmd.final_special = 25
+        cmd.nuke_sp_threshold = 22
+        with patch("random.random", return_value=0.0):  # the slip roll
+            result = BatchSimulator()._use_special(cmd, 100, [cmd])
+        self.assertEqual(result[0], "nuke")
+        self.assertEqual(cmd.final_special, 5)
+        self.assertIsNone(cmd.nuke_sp_threshold)
+        self.assertTrue(cmd.nuke_resupplyable)
+        self.assertTrue(cmd.is_resupplyable_at(101))
+
+    # -- the after-Down boost ----------------------------------------------------
+
+    def test_just_back_from_down_is_the_window_after_reactivation(self):
+        from matches.sim_helpers import nuke_arming
+
+        cmd = _ps("commander")
+        self.assertFalse(nuke_arming.just_back_from_down(cmd, 100))
+        cmd.last_downed_time = 100
+        with patch.object(nuke_arming, "AFTER_DOWN_BOOST_TICKS", 20):
+            self.assertFalse(nuke_arming.just_back_from_down(cmd, 110), "still Downed")
+            self.assertTrue(nuke_arming.just_back_from_down(cmd, 116), "reactivated")
+            self.assertTrue(nuke_arming.just_back_from_down(cmd, 135))
+            self.assertFalse(nuke_arming.just_back_from_down(cmd, 136))
+
+    def test_after_down_boost_multiplies_use_special(self):
+        from matches.sim_helpers import nuke_arming
+
+        player = _MockCommander(final_special=25, game_awareness=50)
+        player.nuke_sp_threshold = 20
+        plain = self._weights(player, [player], second=200)[_ACTION_IDX["use_special"]]
+        self.assertGreater(plain, 0)
+        player.last_downed_time = 100
+        with patch.object(nuke_arming, "AFTER_DOWN_BOOST", 2.0), patch.object(
+            nuke_arming, "AFTER_DOWN_BOOST_TICKS", 20
+        ):
+            boosted = self._weights(player, [player], second=120)
+            self.assertEqual(boosted[_ACTION_IDX["use_special"]], plain * 2)
+            later = self._weights(player, [player], second=200)
+            self.assertEqual(later[_ACTION_IDX["use_special"]], plain)
+            player.final_special = 19  # the boost never opens a closed gate
+            self.assertEqual(
+                self._weights(player, [player], second=120)[_ACTION_IDX["use_special"]],
+                0,
+            )
+
+    # -- every Down ends the nuke ------------------------------------------------
+
+    def test_record_down_ends_an_arming_nuke(self):
+        from matches.sim_helpers.down import record_down
+
+        cmd = _ps("commander", special_active_until=110)
+        record_down(cmd, 105, None)
+        self.assertEqual(cmd.special_active_until, 0)
+        scout = _ps("scout", special_active_until=1800)
+        record_down(scout, 105, None)
+        self.assertEqual(scout.special_active_until, 1800, "Rapid Fire survives a Down")
+
+    def test_a_missile_down_ends_the_nuke(self):
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+        from matches.simulation import BatchSimulator
+
+        heavy = _ps("heavy", "blue")
+        cmd = _ps("commander", "red", special_active_until=110)
+        ctx = RoundContext(events=EventLog(persist=True))
+        BatchSimulator()._complete_missile(heavy, cmd, 105, ctx=ctx)
+        self.assertEqual(cmd.final_lives, 28)
+        self.assertEqual(cmd.special_active_until, 0)
+        self.assertFalse(
+            _nuke_should_fire(PendingNuke(complete_time=110.0, player=cmd))
         )
 
 

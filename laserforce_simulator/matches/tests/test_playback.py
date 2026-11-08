@@ -292,9 +292,9 @@ class TestDerivedValues(_PlaybackCase):
         self.assertTrue(self.snapshots(self.hvy)[-1]["eliminated"])
         self.assertFalse(self.snapshots(self.cmd)[-1]["eliminated"])
 
-    def test_missiles_minus_one_on_lock_and_minus_one_more_on_a_hit(self) -> None:
-        """MECH-16: the engine spends a hit missile twice; a missed missile
-        costs only the lock."""
+    def test_missiles_minus_one_on_lock_only(self) -> None:
+        """MECH-16: a missile is spent at the lock; a hit or a miss costs
+        nothing more."""
         meta = {**_actor(15, 30, 0, 0), **_target(10, 20, 0)}
         self.event(60, "locking", self.cmd, self.hvy, metadata=meta)
         self.event(
@@ -306,7 +306,7 @@ class TestDerivedValues(_PlaybackCase):
         )
         self.assertEqual(
             [(s["tick"], s["missiles"]) for s in self.snapshots(self.cmd)],
-            [(0, 5), (60, 4), (64, 3), (70, 2)],
+            [(0, 5), (60, 4), (70, 3)],
         )
         # The target's missiles never move.
         self.assertEqual(self.snapshots(self.hvy)[-1]["missiles"], 5)

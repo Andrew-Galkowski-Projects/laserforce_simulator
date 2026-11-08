@@ -401,6 +401,9 @@ class TestEngagementGuard:
     rose from 105.4 to 117.4. Re-measured 2026-11-06 on the 20 px / 1 ft map with the
     support-survival switches on: 59.4 +/- 12.5 as built (56.5 +/- 4.4 over 12 seeds) and
     41.4 +/- 2.3 with the bug, Commander 84.5 to 96.4; the floor sits between the two.
+    Re-measured 2026-11-06 for CAL #558 (the 20 SP nuke gate and the Commander hiding
+    while the fuse runs: more nukes Down more Scouts): 47.7 +/- 3.4 as built and
+    33.1 +/- 6.5 with the bug, so the floor is 40.
     ``test_an_empty_tag_roll_sets_an_action_goal`` tests that rule directly. A later RNG
     change may move the margin, so re-run ``scripts/mutate.py --measure`` rather than
     picking seeds.
@@ -408,7 +411,7 @@ class TestEngagementGuard:
 
     def test_scouts_keep_shooting_on_syracuse(self) -> None:
         result = run_probe(_syracuse(), [1, 2, 3, 4])
-        assert result.roles["scout"].tags_per_round >= 50
+        assert result.roles["scout"].tags_per_round >= 40
 
 
 # Walls, so a goal that sees a target differs from the target's own cell.

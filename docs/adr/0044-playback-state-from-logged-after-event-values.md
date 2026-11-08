@@ -45,9 +45,9 @@ change that alters a player's state without logging it fails that test.
 ## Consequences
 
 - No combat rules are copied into TypeScript, and the Python copy is limited to the missile count.
-- The snapshot mirrors what the engine persisted, bugs included. Today a hit missile is spent
-  twice (MECH-16), so a player can show −1 missiles. When MECH-16 is fixed, `round_playback`
-  drops its matching −1 in the same change.
+- The snapshot mirrors what the engine persisted, bugs included. Until MECH-16 (fixed 2026-11-06)
+  a hit missile was spent twice, so a player could show −1 missiles, and `round_playback`
+  mirrored that second −1; both went in the same change.
 - MECH-15's planned tick-0 `game_start` event will seed the opening snapshot on the server, with
   no change to the client.
 - The One Week Live screen (`play_week_live.html`) still carries its own copy of the JS engine. Its

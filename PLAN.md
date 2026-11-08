@@ -152,9 +152,52 @@ Re-run on 2026-11-06 after the Syracuse scale fix (20 px squares at 1 ft, from 3
 baseline 14/36 cells; the support-survival switches T, H, M, A (`sim_helpers/support_survival.py`)
 became the defaults at 15/36, objective 0.144; the real side of every cell is committed as
 `data/lfstats_cell_targets.json` (`lfstats_calibrate --split targets`). Results are in
-`docs/lfstats-import.md`. Follow-ups, each a constant the sweep found helpful that still has to be
-re-run on top of the switches: the Commander nuke gate at 20 SP (#558), the Downed option Stay
-weight 40 (#559), the missile bump 30 and where missiles die (#560).
+`docs/lfstats-import.md`. The three follow-up constants were re-run on top of the switches on
+2026-11-06 (`docs/lfstats-import.md`, "Nukes and missiles"): the Commander nuke gate at 20 SP (#558)
+is the default, with the Commander hiding while the fuse runs (`sim_helpers/nuke_arming.py`) and,
+from 2026-11-07, the activation telling the enemy team only that a nuke is going off (the old
+broadcast of the Commander's cell is gone; "Real nukes" in `docs/lfstats-import.md`); the
+Downed option Stay weight 40 (#559) and the missile bump 30 (#560) moved no cell and stay as they
+were. Where missiles died was a double spend on a hit (MECH-16, fixed) and the lock's 3-tick
+exposure: a third of completed locks are dropped at impact because a participant was Downed.
+The TDF event logs of the 165 Internationals games (`docs/lfstats-import.md`, "When Commanders
+fire") then gave four more rules, all in `sim_helpers/nuke_arming.py` and shipped 2026-11-07: no
+support resupplies an arming Commander, bar a per-nuke slip that lands about 1% of nukes (the
+sim's own Medic and Ammo were 45% of its nuke cancels; in the arena 0.4% of nukes are resupplied
+in the fuse),
+each nuke draws its SP threshold from the real SP-at-activation table above a 20 SP floor, the
+nuke weight is boosted just after the Commander comes back from a Down, and every Down ends the
+nuke in `record_down` (a missile Down used to leave it armed).
+
+### CAL-02 · Tags and times tagged in line with the arena (owner, 2026-11-07)
+
+The owner, after the nuke work: bring tags and times tagged more in line between the sim and the
+actual game. The sim's Commander tags and is tagged far less than the real one, which is also where
+its SP income comes from (about 54 SP a Commander-round against 67 in the arena; a nuke costs 20),
+so the remaining nuke gap is this gap. Latest calibration (LFS-01 Test set, 3 rounds, 2026-11-07,
+`docs/lfstats-import.md`) and the counter (`times tagged` and `tags` per player-round):
+
+| Role | Sim times hit | Real times hit | Sim hit diff | Real hit diff | Sim tags a round | Real tags a game (shots hit) |
+|---|---|---|---|---|---|---|
+| Commander | 29.7 | 59.1 | 1.87 | 0.98 | 42 | about 70 |
+| Heavy | 32.8 | 47.8 | 1.35 | 0.97 | 37 | about 53 |
+| Scout | 25.5 | 33.8 | 1.13 | 1.12 | 25 | about 53 |
+| Ammo | 15.4 | 23.2 | 0.75 | 1.10 | 11 | about 74 |
+| Medic | 15.7 | 10.2 | 0.16 | 1.06 | 2 | about 62 |
+
+Real tags are LFstats SM5 shots hit (last 365 days, 10+ games at the position); real times hit and
+hit diff are the Test-set cells. Every role but the Medic is tagged too little and tags too little;
+the Medic is tagged too much and tags almost never. Things to settle, in order: (1) whether a
+planned Shot is a shot fired and how many land (the CAL-01 shots table under Phase 3 has the
+per-role shot counts); (2) the Commander's and Heavy's hit diff, which say the 3-hit roles win too many of their
+exchanges, against the TDF finding that 76% of real 3-hit Downs by a 1-hit player's three tags come
+without the 3-hit player tagging back (9.3 such Downs a game; `docs/lfstats-import.md`, "Real
+nukes"); (3) support tags, the Medic above all (`support_survival` hides them; the arena's Medic
+shoots 62 times a game and is hit 10); (4) engagement range and the time players spend with no
+target in sight (`round_probe`, the Action numbers). Measure with `lfstats_calibrate --split test`
+(the times-hit and hit-diff cells), the scratchpad-style counter (tags / times tagged / SP a round)
+and the TDF scripts for who-tagged-whom shapes (`docs/lfstats-import.md`, "Real nukes"). Keep the
+Still / squares targets of MECH-17 and the nuke numbers of CAL #558 while moving these.
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 
@@ -298,9 +341,11 @@ ADR-0043), the client layer (ANG-05), every screen (ANG-06), the Docker front do
 template removal (ANG-08: the SPA is served at /, ADR-0047) and Django serving the SPA in every
 deploy (ANG-10, ADR-0049). Phase 3.5 (LFS-01, LFS-02) followed it.
 
-**Current — SM5 talk follow-ups** (from LFS-02's proposal), in order:
+**Current — CAL-02 (tags and times tagged, Phase 3.5), then the SM5 talk follow-ups** (from
+LFS-02's proposal), in order:
 
 ```
+CAL-02          Tags and times tagged in line with the arena (owner, 2026-11-07)
 SM5-03..SM5-09  SM5 talk follow-ups (from LFS-02)
 ```
 
@@ -311,7 +356,7 @@ Mechanics items can run in parallel with Phase 8, because they don't touch the f
 items that add pages (RV-04, RES-05, HX-02) should wait for ANG-06, so they are built once, in
 Angular.
 
-- **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-16, MOVE-05, SIM-13, SIM-14,
+- **Phase 3 — Simulation Mechanics:** MECH-08, MECH-09, MECH-11..MECH-15, MOVE-05, SIM-13, SIM-14,
   CAL-01.
 - **Phase 4 — Analytics:** RV-04, RES-05, HX-02, HX-03, IMPORT-01.
 - **Other:** LG-06, LG-07b, SIM-04, STAT-03, STAT-PROXY-01.
@@ -577,16 +622,7 @@ round-playback and the LG-01i live-watch an authoritative opening state instead 
 reconstructing it. **Locked (grilled 2026-06-25):** persisted event, **not** a
 playback-only derivation. Pairs with the replay system but is logged for *all* rounds.
 
-### MECH-16 · Missile spent twice on a hit (bug)
-
-**Prio: Medium (found 2026-10-23, ANG-06f probe).** A missile is spent at lock
-(`combat.start_missile_lock`) and spent **again** when it hits (`_complete_missile`:
-`attacker.final_missiles -= 1`, `entrypoints.py` ~L1838). Some players end a round with
-`final_missiles == -1`. Spend it once, at lock. Add a regression test that `final_missiles` never goes
-below 0 and equals starting missiles minus locks. **Changes seeded outcomes**, because a missile
-holder may lock again sooner, so it folds into the `CAL-01` re-baseline. ANG-06f's `round_playback`
-mirrors the double spend so its final-state invariant holds. When this lands, drop the extra −1 per
-`missiled` hit there too.
+MECH-16 (Missile spent twice on a hit) is **[DONE]**; see `PLAN-completed.md`.
 
 ### MOVE-05 · Enforce cell occupancy (no two players end a tick on the same cell)
 

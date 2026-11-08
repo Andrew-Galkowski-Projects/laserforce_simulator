@@ -160,6 +160,15 @@ class PlayerState:
     # MECH-04: transient nuke-reaction flag — reset each tick, never persisted to DB
     reacting_to_nuke: bool = False
 
+    # CAL #558 (2026-11-07): the SP threshold drawn for the Commander's next nuke
+    # (``nuke_arming.banked_enough``); None until drawn, None again once it fires.
+    # Transient, never persisted to DB.
+    nuke_sp_threshold: Optional[int] = None
+    # CAL #558 (2026-11-07): this nuke's slip roll (``nuke_arming.fuse_lit``): True
+    # when the Commander's supports may still resupply it while the fuse runs.
+    # Transient, never persisted to DB.
+    nuke_resupplyable: bool = False
+
     # MECH-06: per-player memory — {tag_id: {"cell": (r,c), "timestamp": s, "role": role}}
     # Transient; never persisted to DB.
     player_memory: dict = field(default_factory=dict)
@@ -308,7 +317,10 @@ class PlayerState:
         return True
 
     def is_resupplyable_at(self, tick: int) -> bool:
-        return self.is_active_at(tick)
+        """Active, and not a Commander whose nuke fuse runs (``nuke_arming``)."""
+        from matches.sim_helpers import nuke_arming
+
+        return self.is_active_at(tick) and nuke_arming.resupplyable(self, tick)
 
     @property
     def stamina_hit_modifier(self) -> float:
@@ -326,4 +338,5 @@ class PlayerState:
     # ------ Stats wired in MECH-06 ------
     # teamwork: the Defense closeness term in modes.mode_goal (MECH-07)
     # communication: % chance to broadcast spotted enemy positions to nearby teammates
-    # Global broadcasts: nuke activation, score delta every 3 min, medic-under-fire alert
+    # Global broadcasts: score delta every 3 min, medic-under-fire alert (a nuke
+    # activation sets reacting_to_nuke only; it shares no cell, CAL #558)
