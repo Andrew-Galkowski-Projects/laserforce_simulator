@@ -162,6 +162,21 @@ const SAME_IN_BOTH_SCHEMES: readonly string[] = [
   '--lf-gauge-mid',
   '--lf-gauge-empty',
   '--lf-gauge-track',
+  ...Array.from({ length: 10 }, (_, i) => `--lf-special-lap-${i + 1}`),
+];
+
+/** The special bar's ten lap colours (RV-07b): green, orange, red, then ever darker reds. */
+const SPECIAL_LAP_VALUES = [
+  '#22a046',
+  '#f08c00',
+  '#d62828',
+  '#a51c1c',
+  '#7d1414',
+  '#5c0e0e',
+  '#430a0a',
+  '#320707',
+  '#260505',
+  '#1c0404',
 ];
 
 /** An sRGB channel (0..1) to linear light. */
@@ -366,6 +381,19 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
         expect(squash(root.getPropertyValue(name)), `${name} in ${scheme}`).toBe(
           squash(gauges[name]),
         );
+      }
+    }
+  });
+
+  it("paints the Playback map's special-bar laps (RV-07b) in the same colours in both schemes", () => {
+    const laps = SPECIAL_LAP_VALUES.map((value, i) => [`--lf-special-lap-${i + 1}`, value]);
+    const names = laps.map(([name]) => name);
+    expect(names.filter((name) => !(LF_TOKENS as readonly string[]).includes(name))).toEqual([]);
+    expect(names.filter((name) => !SAME_IN_BOTH_SCHEMES.includes(name))).toEqual([]);
+    for (const scheme of ['light', 'dark'] as const) {
+      const root = applyStylesheet(scheme);
+      for (const [name, value] of laps) {
+        expect(root.getPropertyValue(name).trim(), `${name} in ${scheme}`).toBe(value);
       }
     }
   });

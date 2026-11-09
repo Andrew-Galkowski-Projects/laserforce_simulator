@@ -94,6 +94,18 @@ export const LF_COLOUR_TOKENS = [
   '--lf-gauge-mid',
   '--lf-gauge-empty',
   '--lf-gauge-track',
+  // The Playback map's special bar (RV-07b): one colour per lap of SP, green, orange, red, then
+  // ever darker reds up to 99 SP; the same in light and dark, for the same reason.
+  '--lf-special-lap-1',
+  '--lf-special-lap-2',
+  '--lf-special-lap-3',
+  '--lf-special-lap-4',
+  '--lf-special-lap-5',
+  '--lf-special-lap-6',
+  '--lf-special-lap-7',
+  '--lf-special-lap-8',
+  '--lf-special-lap-9',
+  '--lf-special-lap-10',
   ...LF_MAP_TOKENS,
 ] as const;
 
