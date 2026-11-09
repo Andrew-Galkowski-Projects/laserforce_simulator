@@ -5,8 +5,8 @@ import {
   anySpecialRunning,
   fuseProgress,
   gaugeColour,
-  hexRgb,
   lapColour,
+  parseRgb,
   playerGauges,
 } from './playback-gauges';
 
@@ -249,13 +249,29 @@ describe('gaugeColour', () => {
   });
 });
 
-describe('hexRgb', () => {
+describe('parseRgb', () => {
   it('reads a #rrggbb token', () => {
-    expect(hexRgb('#1e9e3e')).toEqual([30, 158, 62]);
-    expect(hexRgb(' #7F1010 ')).toEqual([127, 16, 16]);
+    expect(parseRgb('#1e9e3e')).toEqual([30, 158, 62]);
+    expect(parseRgb(' #7F1010 ')).toEqual([127, 16, 16]);
   });
 
-  it('reads an unparseable value as black', () => {
-    expect(hexRgb('')).toEqual([0, 0, 0]);
+  it('reads a #rgb token', () => {
+    expect(parseRgb('#f80')).toEqual([255, 136, 0]);
+  });
+
+  it('reads a space-separated rgb() colour, with or without alpha', () => {
+    expect(parseRgb('rgb(30 158 62)')).toEqual([30, 158, 62]);
+    expect(parseRgb('rgb(30 158 62 / 0.5)')).toEqual([30, 158, 62]);
+  });
+
+  it('reads a comma-separated rgb() or rgba() colour', () => {
+    expect(parseRgb('rgb(30, 158, 62)')).toEqual([30, 158, 62]);
+    expect(parseRgb('rgba(30, 158, 62, 0.5)')).toEqual([30, 158, 62]);
+  });
+
+  it('returns null, not black, for a value it cannot read', () => {
+    expect(parseRgb('')).toBeNull();
+    expect(parseRgb('oklch(0.6 0.15 145)')).toBeNull();
+    expect(parseRgb('not-a-colour')).toBeNull();
   });
 });

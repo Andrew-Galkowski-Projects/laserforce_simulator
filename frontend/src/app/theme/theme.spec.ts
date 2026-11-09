@@ -163,6 +163,7 @@ const SAME_IN_BOTH_SCHEMES: readonly string[] = [
   '--lf-gauge-empty',
   '--lf-gauge-track',
   ...Array.from({ length: 10 }, (_, i) => `--lf-special-lap-${i + 1}`),
+  '--lf-special-stripe',
 ];
 
 /** The special bar's ten lap colours (RV-07b): green, orange, red, then ever darker reds. */
@@ -395,6 +396,15 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
       for (const [name, value] of laps) {
         expect(root.getPropertyValue(name).trim(), `${name} in ${scheme}`).toBe(value);
       }
+    }
+  });
+
+  it("paints the Playback map's running-special stripes (RV-07b) white in both schemes", () => {
+    const name = '--lf-special-stripe';
+    expect((LF_TOKENS as readonly string[]).includes(name)).toBe(true);
+    expect(SAME_IN_BOTH_SCHEMES.includes(name)).toBe(true);
+    for (const scheme of ['light', 'dark'] as const) {
+      expect(applyStylesheet(scheme).getPropertyValue(name).trim(), scheme).toBe('#ffffff');
     }
   });
 

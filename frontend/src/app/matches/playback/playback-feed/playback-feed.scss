@@ -95,14 +95,14 @@
     white-space: nowrap;
   }
 
-  // The names on their own line under the description, so neither is clipped.
+  // The names on their own line under the description; a long pair wraps the target onto a
+  // second line rather than clipping it.
   &__who {
     display: flex;
     grid-column: 3;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.3rem;
-    overflow: hidden;
-    white-space: nowrap;
+    gap: 0.1rem 0.3rem;
   }
 
   &__actor,
@@ -110,6 +110,7 @@
     display: inline-flex;
     align-items: center;
     gap: 0.25rem;
+    white-space: nowrap;
     color: var(--side-text);
     font-weight: 600;
   }

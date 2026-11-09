@@ -106,6 +106,8 @@ export const LF_COLOUR_TOKENS = [
   '--lf-special-lap-8',
   '--lf-special-lap-9',
   '--lf-special-lap-10',
+  // A running special's rolling stripes over its bar (RV-07b): white in light and dark.
+  '--lf-special-stripe',
   ...LF_MAP_TOKENS,
 ] as const;
 

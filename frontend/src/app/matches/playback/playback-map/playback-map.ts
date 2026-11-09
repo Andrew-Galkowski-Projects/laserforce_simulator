@@ -28,10 +28,11 @@ import {
   SpecialBar,
   anySpecialRunning,
   gaugeColour,
-  hexRgb,
   lapColour,
+  parseRgb,
   playerGauges,
 } from './playback-gauges';
+import { resolveColor } from '../../../shared/read-token';
 import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
 import {
   BaseMarker,
@@ -89,9 +90,19 @@ interface Palette {
   gaugeTrack: string;
   /** The special bar's lap colours (RV-07b), `--lf-special-lap-1` .. `-10`. */
   laps: readonly string[];
-  /** A running special's rolling stripes: the near-white base outline, light in both themes. */
+  /** A running special's rolling stripes: `--lf-special-stripe`, white in both themes. */
   stripe: string;
 }
+
+/**
+ * The gauge tokens' `_tokens.scss` values (the same in both schemes), painted when a token's
+ * value cannot be read as a colour, so the arcs never fall back to silent black.
+ */
+const GAUGE_DEFAULTS = {
+  '--lf-gauge-full': [30, 158, 62],
+  '--lf-gauge-mid': [227, 160, 8],
+  '--lf-gauge-empty': [127, 16, 16],
+} as const satisfies Record<string, Rgb>;
 
 /** How many `--lf-special-lap-*` tokens there are. */
 const SPECIAL_LAPS = 10;
@@ -111,13 +122,19 @@ export function readPalette(el: Element): Palette {
     resupply: token('--lf-ev-resupply'),
     baseNeutral: token('--lf-map-base-neutral'),
     baseOutline: token('--lf-map-base-outline'),
-    gaugeFull: hexRgb(token('--lf-gauge-full')),
-    gaugeMid: hexRgb(token('--lf-gauge-mid')),
-    gaugeEmpty: hexRgb(token('--lf-gauge-empty')),
+    gaugeFull: gaugeRgb('--lf-gauge-full'),
+    gaugeMid: gaugeRgb('--lf-gauge-mid'),
+    gaugeEmpty: gaugeRgb('--lf-gauge-empty'),
     gaugeTrack: token('--lf-gauge-track'),
     laps: Array.from({ length: SPECIAL_LAPS }, (_, i) => token(`--lf-special-lap-${i + 1}`)),
-    stripe: token('--lf-map-base-outline'),
+    stripe: token('--lf-special-stripe'),
   };
+
+  /** A gauge token as the browser computes it, as channels; its default when unreadable. */
+  function gaugeRgb(name: keyof typeof GAUGE_DEFAULTS): Rgb {
+    const value = token(name);
+    return (value && parseRgb(resolveColor(value, el))) || GAUGE_DEFAULTS[name];
+  }
 }
 
 /** Everything the map paints at one cursor. */

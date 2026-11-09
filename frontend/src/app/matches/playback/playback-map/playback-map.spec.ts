@@ -314,4 +314,41 @@ describe('readPalette', () => {
       el.remove();
     }
   });
+
+  /** `readPalette` on a canvas carrying `tokens`. */
+  function paletteWith(tokens: Record<string, string>): ReturnType<typeof readPalette> {
+    const el = document.createElement('canvas');
+    for (const [name, value] of Object.entries(tokens)) {
+      el.style.setProperty(name, value);
+    }
+    document.body.append(el);
+    try {
+      return readPalette(el);
+    } finally {
+      el.remove();
+    }
+  }
+
+  it('reads a gauge token written as rgb(), space- or comma-separated, as its channels', () => {
+    const palette = paletteWith({
+      '--lf-gauge-full': 'rgb(30 158 62)',
+      '--lf-gauge-mid': 'rgb(227, 160, 8)',
+    });
+    expect(palette.gaugeFull).toEqual([30, 158, 62]);
+    expect(palette.gaugeMid).toEqual([227, 160, 8]);
+  });
+
+  it("falls back to a gauge token's default, not black, when its value cannot be read", () => {
+    const palette = paletteWith({ '--lf-gauge-empty': 'not-a-colour' });
+    expect(palette.gaugeEmpty).toEqual([127, 16, 16]);
+    expect(paletteWith({}).gaugeFull).toEqual([30, 158, 62]);
+  });
+
+  it("paints a running special's stripes with --lf-special-stripe", () => {
+    const palette = paletteWith({
+      '--lf-special-stripe': '#ffffff',
+      '--lf-map-base-outline': 'rgb(1 2 3)',
+    });
+    expect(palette.stripe).toBe('#ffffff');
+  });
 });

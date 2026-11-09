@@ -33,15 +33,16 @@ export interface SpecialBar {
 /** The most SP a player can bank. */
 export const MAX_SP = 99;
 
+/** The special bar from `snap` (the snapshot at `tick`); `snapshots` and `tick` time the fuse. */
 function specialBar(
   cost: number | null,
+  snap: PlaybackSnapshot | null,
   snapshots: readonly PlaybackSnapshot[],
   tick: number,
 ): SpecialBar | null {
   if (cost === null) {
     return null;
   }
-  const snap = snapshotAt(snapshots, tick);
   const sp = Math.min(snap?.sp ?? 0, MAX_SP);
   const state = running(snap);
   return {
@@ -71,7 +72,7 @@ export function playerGauges(
     lives: level(snap?.lives ?? 0, player.max_lives),
     shots: level(snap?.shots ?? 0, player.max_shots),
     missiles: player.max_missiles > 0 ? (snap?.missiles ?? 0) : null,
-    special: specialBar(player.special_cost, snapshots, tick),
+    special: specialBar(player.special_cost, snap, snapshots, tick),
   };
 }
 
@@ -148,8 +149,21 @@ export function gaugeColour(level: number, full: Rgb, mid: Rgb, empty: Rgb): str
   return level >= 0.5 ? mix(mid, full, (level - 0.5) * 2) : mix(empty, mid, level * 2);
 }
 
-/** A `#rrggbb` token as channels; anything else reads as black. */
-export function hexRgb(hex: string): Rgb {
-  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex.trim());
-  return m ? [parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16)] : [0, 0, 0];
+/**
+ * A colour's channels from `#rgb`, `#rrggbb`, `rgb(r g b / a)` or `rgb(r, g, b)` / `rgba(...)`
+ * (the forms a browser computes a colour to; pass anything else through `resolveColor` first).
+ * `null` for any other value, so a caller never paints silent black.
+ */
+export function parseRgb(css: string): Rgb | null {
+  const value = css.trim();
+  const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+  if (hex) {
+    const six = hex[1].length === 3 ? [...hex[1]].map((d) => d + d).join('') : hex[1];
+    const channel = (i: number): number => parseInt(six.slice(i, i + 2), 16);
+    return [channel(0), channel(2), channel(4)];
+  }
+  const fn = /^rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)\s*(?:[,/]\s*[\d.]+%?\s*)?\)$/i.exec(
+    value,
+  );
+  return fn ? [Math.round(+fn[1]), Math.round(+fn[2]), Math.round(+fn[3])] : null;
 }

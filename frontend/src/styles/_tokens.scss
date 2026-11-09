@@ -100,6 +100,8 @@
   --lf-special-lap-8: #320707;
   --lf-special-lap-9: #260505;
   --lf-special-lap-10: #1c0404;
+  // A running special's rolling stripes over its bar.
+  --lf-special-stripe: #ffffff;
 
   // Fonts and shape (shared by both modes). JetBrains Mono is self-hosted (`@fontsource`).
   --lf-font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
@@ -195,5 +197,6 @@
     --lf-special-lap-8: #320707;
     --lf-special-lap-9: #260505;
     --lf-special-lap-10: #1c0404;
+    --lf-special-stripe: #ffffff;
   }
 }

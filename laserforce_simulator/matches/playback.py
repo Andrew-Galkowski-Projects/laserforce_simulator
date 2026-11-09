@@ -109,7 +109,7 @@ def build_playback_map(game_round: GameRound) -> dict | None:
             # No cell position recorded — defensive; skip on a map round.
             continue
         out_moves = [[ts, polyline] for ts, _start, polyline in moves]
-        role = (ps.role or "").lower()
+        role = ps.role.lower()
         players.append(
             {
                 "id": ps.player_id,
