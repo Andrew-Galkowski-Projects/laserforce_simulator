@@ -47,6 +47,8 @@ from .weights import (
 
 _AMMO_CHART = {"commander": 5, "heavy": 5, "scout": 10, "medic": 5}
 _MEDIC_CHART = {"commander": 4, "heavy": 3, "scout": 5, "ammo": 3}
+#: RV-06b: the ``base_type`` an active capture of base 13 / 14 records.
+_CAPTURED_BASE_TYPES = {13: "red", 14: "blue"}
 
 
 # ----------------------------------------------------------------------------
@@ -635,16 +637,26 @@ def capture_base(
 
     EventLog candidate: emits via ``ctx.events.base_capture`` with the
     "active capture" wording and the per-capture metadata extras
-    (shots_remaining, points_scored).
+    (shots_remaining, points_scored, base_type).
+
+    RV-06b: ``base_type`` names the base hit: ``"red"`` for 13, ``"blue"`` for
+    14, and for 15 the first ``neutral_*`` whose sight set holds the player's
+    cell. A neutral capture with no map or no cell omits it. Persistence only.
     """
+    base_type: str | None = _CAPTURED_BASE_TYPES.get(base_id)
     if movement_ctx is not None and player.cell_row is not None:
         base_sight_data = movement_ctx.base_sight_data
         cell_key = f"{player.cell_row},{player.cell_col}"
         if base_id == 15:
-            in_range = any(
-                cell_key in base_sight_data.get(bt, frozenset())
-                for bt in _NEUTRAL_BASE_TYPES
+            base_type = next(
+                (
+                    bt
+                    for bt in _NEUTRAL_BASE_TYPES
+                    if cell_key in base_sight_data.get(bt, frozenset())
+                ),
+                None,
             )
+            in_range = base_type is not None
         else:
             opp_type = "blue" if player.team_color == "red" else "red"
             in_range = cell_key in base_sight_data.get(opp_type, frozenset())
@@ -662,14 +674,14 @@ def capture_base(
         player.counters.points_scored += 1001
         if player.role != "heavy":
             player.final_special = min(player.max_special, player.final_special + 5)
+        extras: dict[str, object] = {
+            "shots_remaining": player.final_shots,
+            "points_scored": player.counters.points_scored,
+        }
+        if base_type is not None:
+            extras["base_type"] = base_type
         ctx.events.base_capture(
-            player,
-            second,
-            base_id=base_id,
-            metadata_extras={
-                "shots_remaining": player.final_shots,
-                "points_scored": player.counters.points_scored,
-            },
+            player, int(second), base_id=base_id, metadata_extras=extras
         )
         return True
     return False

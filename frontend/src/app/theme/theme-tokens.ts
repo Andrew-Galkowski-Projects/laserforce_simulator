@@ -85,6 +85,9 @@ export const LF_COLOUR_TOKENS = [
   // Compare Rounds' Points Over Time (ANG-06-9): one colour per shared Team, in series order.
   '--lf-chart-1',
   '--lf-chart-2',
+  // The Playback map's deactivated player marker (RV-06): one mid grey, the same in light and
+  // dark, since it is painted over the always-white processed image. Not a map editor token.
+  '--lf-map-marker-off',
   ...LF_MAP_TOKENS,
 ] as const;
 

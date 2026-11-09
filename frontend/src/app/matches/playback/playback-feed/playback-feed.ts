@@ -3,6 +3,7 @@ import { MatCheckbox } from '@angular/material/checkbox';
 import { TimelineEvent } from '../../../api/rounds.models';
 import { tickClock } from '../../shared/clock';
 import { EventGroup, eventGroupOf } from '../../shared/event-groups';
+import { RoleIcon } from '../../shared/role-icon-img';
 import { sideTag } from '../../shared/side-tag';
 
 /** True when the actor, the description or the target contains `term` (already lower-cased). */
@@ -19,7 +20,7 @@ function matches(e: TimelineEvent, term: string): boolean {
  */
 @Component({
   selector: 'app-playback-feed',
-  imports: [MatCheckbox],
+  imports: [MatCheckbox, RoleIcon],
   templateUrl: './playback-feed.html',
   styleUrl: './playback-feed.scss',
 })
@@ -61,4 +62,12 @@ export class PlaybackFeed {
   protected readonly group = (e: TimelineEvent): EventGroup => eventGroupOf(e.event_type);
   protected readonly clock = (ticks: number): string => tickClock(ticks, { pad: true });
   protected readonly sideTag = sideTag;
+  /** The event's `actor_role` / `target_role` metadata, or `null` when it has none. */
+  protected readonly role = (
+    e: TimelineEvent,
+    key: 'actor_role' | 'target_role',
+  ): string | null => {
+    const role = e.metadata[key];
+    return typeof role === 'string' && role !== '' ? role : null;
+  };
 }

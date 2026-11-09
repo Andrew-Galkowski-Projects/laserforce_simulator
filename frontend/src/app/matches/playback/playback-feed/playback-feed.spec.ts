@@ -66,6 +66,67 @@ describe('PlaybackFeed', () => {
     expect(text(target)).toBe('R Ace');
   });
 
+  it("shows the actor's and target's role icons before their names, adding no text", async () => {
+    await render(
+      [
+        timelineEvent({ tick: 3, description: 'Ace tags Dax', metadata: {} }),
+        timelineEvent({
+          tick: 9,
+          description: 'Dax tags Ace',
+          actor_name: 'Dax',
+          actor_side: 'blue',
+          target_name: 'Ace',
+          target_side: 'red',
+          metadata: { actor_role: 'scout', target_role: 'medic' },
+        }),
+      ],
+      100,
+    );
+    const [withRoles, without] = rows();
+    const alts = (el: Element | null): string[] =>
+      [...(el?.querySelectorAll('img') ?? [])].map((img) => img.alt);
+    const actor = withRoles.querySelector('.pf-row__actor');
+    const target = withRoles.querySelector('.pf-row__target');
+    expect(alts(actor)).toEqual(['Scout']);
+    expect(alts(target)).toEqual(['Medic']);
+    // The icon sits before the name.
+    const name = [...actor!.childNodes].find(
+      (n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim() === 'Dax',
+    )!;
+    const icon = actor!.querySelector('app-role-icon')!;
+    expect(icon.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(text(actor)).toBe('B Dax');
+    expect(text(target)).toBe('R Ace');
+    expect(withRoles.querySelectorAll('img')).toHaveLength(2);
+    expect(without.querySelector('img')).toBeNull();
+  });
+
+  it("tints each row's icons to that row's Sides as newer events push rows down", async () => {
+    const root = document.documentElement.style;
+    root.setProperty('--lf-side-red', '#c82814');
+    root.setProperty('--lf-side-blue', '#1a4a94');
+    try {
+      const ammoTags = (tick: number, actor: 'red' | 'blue'): TimelineEvent =>
+        timelineEvent({
+          tick,
+          description: `tag ${tick}`,
+          actor_side: actor,
+          target_side: actor === 'red' ? 'blue' : 'red',
+          metadata: { actor_role: 'ammo', target_role: 'commander' },
+        });
+      await render([ammoTags(1, 'red'), ammoTags(2, 'blue')], 1);
+      await setCursor(2);
+      const tints = (row: HTMLElement): (string | undefined)[] =>
+        [...row.querySelectorAll('img')].map((img) => img.dataset['tint']);
+      const [newest, older] = rows();
+      expect(tints(newest)).toEqual(['#1a4a94', '#c82814']);
+      expect(tints(older)).toEqual(['#c82814', '#1a4a94']);
+    } finally {
+      root.removeProperty('--lf-side-red');
+      root.removeProperty('--lf-side-blue');
+    }
+  });
+
   describe('filters', () => {
     const checkbox = (label: string): HTMLInputElement => {
       const box = [...host().querySelectorAll('mat-checkbox')].find((c) => text(c) === label);

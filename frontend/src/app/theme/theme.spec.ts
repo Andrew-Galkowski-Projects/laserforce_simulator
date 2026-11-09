@@ -152,6 +152,12 @@ const TEXT_TOKENS = LF_COLOUR_TOKENS.filter(
 const TEXT_BACKGROUNDS = ['--lf-bg', '--lf-surface'] as const;
 const MIN_TEXT_CONTRAST = 4.5;
 
+/**
+ * Colour tokens painted over the always-white processed map image, so dark mode keeps the
+ * light value (the dark block still declares them).
+ */
+const SAME_IN_BOTH_SCHEMES: readonly string[] = ['--lf-map-marker-off'];
+
 /** An sRGB channel (0..1) to linear light. */
 function linearise(channel: number): number {
   return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
@@ -319,7 +325,9 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
     const lightValues = LF_COLOUR_TOKENS.map((name) => light.getPropertyValue(name).trim());
     const dark = applyStylesheet('dark');
     const unchanged = LF_COLOUR_TOKENS.filter(
-      (name, i) => dark.getPropertyValue(name).trim() === lightValues[i],
+      (name, i) =>
+        !SAME_IN_BOTH_SCHEMES.includes(name) &&
+        dark.getPropertyValue(name).trim() === lightValues[i],
     );
     expect(unchanged).toEqual([]);
   });

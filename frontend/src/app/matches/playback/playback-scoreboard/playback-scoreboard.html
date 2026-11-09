@@ -50,7 +50,7 @@
                 ></span>
               }
             </td>
-            <td>{{ row.pos }}</td>
+            <td><app-role-icon [role]="row.role" [side]="side()" /></td>
             <td class="num">{{ row.snap.score }}</td>
             <td class="num">{{ row.acc }}</td>
             <td class="num">{{ row.snap.lives }}</td>

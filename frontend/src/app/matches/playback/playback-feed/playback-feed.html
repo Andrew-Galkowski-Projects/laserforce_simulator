@@ -20,7 +20,7 @@
   <p class="pf-empty">No events match your search.</p>
 } @else {
   <div class="pf-box">
-    @for (e of shown(); track $index) {
+    @for (e of shown(); track e) {
       @let g = group(e);
       <div class="pf-row" [class.is-current]="$first" [style.--pf-ev]="'var(' + g.token + ')'">
         <span class="pf-row__time">{{ clock(e.tick) }}</span>
@@ -29,6 +29,9 @@
         <span class="pf-row__who">
           <span class="pf-row__actor" [attr.data-lf-side]="e.actor_side">
             <span class="pf-sidetag">{{ sideTag(e.actor_side) }}</span>
+            @if (role(e, 'actor_role'); as r) {
+              <app-role-icon [role]="r" [side]="e.actor_side" />
+            }
             {{ e.actor_name }}
           </span>
           @if (e.target_name !== null) {
@@ -36,6 +39,9 @@
             <span class="pf-row__target" [attr.data-lf-side]="e.target_side">
               @if (e.target_side !== null) {
                 <span class="pf-sidetag">{{ sideTag(e.target_side) }}</span>
+                @if (role(e, 'target_role'); as r) {
+                  <app-role-icon [role]="r" [side]="e.target_side" />
+                }
               }
               {{ e.target_name }}
             </span>

@@ -184,7 +184,11 @@ src/
                           `rounds/:id/timeline/`; CDK virtual scroll, client-side filters),
                           /rounds/:id/playback (playback/: ANG-06f, the cursor shell +
                           snapshot-at.ts, playback-scoreboard, playback-feed, the beta
-                          playback-map; from `rounds/:id/playback/` + the timeline),
+                          playback-map: role-icon markers, playback-markers.ts markerSize /
+                          markerLook, playback-overlays.ts (RV-06c, pure: overlaysAt gives the
+                          Tag lines and capture bursts at a cursor, baseMarkers the R / B / N
+                          bases from the zone config); from `rounds/:id/playback/` + the
+                          timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
                           (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;
                           the chart itself is shared/line-chart.ts), /rounds/:id/missile-log
@@ -193,7 +197,14 @@ src/
                           /rounds/compare
                           (compare-rounds/: ANG-06-9, the stat-delta table + points chart);
                           shared/: clock.ts (tickClock: ticks as m:ss, or mm:ss with pad),
-                          role-label.ts (roleLabel: CMD/HVY/...), side-tag.ts (sideTag: R / B),
+                          role-label.ts (roleLabel: CMD/HVY/...; Missile log, Compare Rounds),
+                          role-icon.ts (RV-06: ROLE_ICON_URLS -> public/roles/<role>.png,
+                          tintPixels, tintedRoleIcon(role, colour) cached per role + colour,
+                          roleIconLoads: redraw when a PNG arrives), role-icon-img.ts
+                          (<app-role-icon [role] [side]>: 1.25em img, alt / title the role's
+                          name, tinted to --lf-side-<side> and re-tinted when side changes;
+                          Playback scoreboard Pos + feed names; clearRoleIconCache for specs),
+                          side-tag.ts (sideTag: R / B),
                           event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
                           "In progress"), result-chip, route-record.ts (loadRouteRecord),
                           record-not-found, setup-kind; testing/ (releaseMatchesLoads, fixtures,

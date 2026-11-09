@@ -140,6 +140,34 @@ DESK-05 (sign the Desktop build) is **[DEFERRED]**; see *Deferred Items*.
 
 BUG-SL-01 (Sight-line compute fails after a saved zone config) is **[DONE]**; see `PLAN-completed.md`.
 
+## Playback debugging aids, before more calibration (owner, 2026-11-09)
+
+The owner moved RV-06 and RV-07 ahead of CAL-03: reading tags, bases and each player's resources
+off the Playback map is the debugging aid the next calibration passes need. RV-06 shipped
+(2026-11-09); RV-07 is next, then CAL-03.
+
+RV-06 (Playback map: position icons, tag lines and bases) is **[DONE]**; see `PLAN-completed.md`.
+
+### RV-07 · Playback map: shots, lives and special beside the moving icon (owner, 2026-11-08)
+
+The owner wants to read a player's state off the map as it moves: how full its shots and lives
+are (a scale from green at full to dark red at empty) and whether it holds enough SP for its
+special (the Commander's nuke at 20 SP, the Scout's rapid fire, the Ammo's and Medic's team
+resupply), beside the position icon of RV-06. The Playback snapshots already carry `lives`,
+`shots`, `sp`, `missiles`, `rapid_fire` and `nuking` per player per tick, and the role maxima and
+special costs are in `role_constants`, so this is a rendering task.
+
+**The task produces three to five display options** as a prototype (`mattpocock-skills:prototype`),
+each drawn on the same round for the owner to pick from, before anything ships: for example
+(a) two thin arcs around the ring, lives on the left and shots on the right, coloured by the
+green-to-dark-red scale, with a small star when the special is ready; (b) a two-segment bar under
+the icon; (c) the ring itself coloured by lives and a dot by shots, special as a pulsing outline;
+(d) a compact `L S` pair of tiny vertical gauges beside the icon; (e) the icon's fill by shots and
+its border by lives. The owner's pick is the spec; the rest are recorded with screenshots in the
+spec issue. RV-06 has shipped the icon the indicators sit beside: the marker is the Side-tinted
+role icon with **no ring**, at 1.5x the old ring's size (owner's prototype pick), so an option
+drawn on the ring would bring a ring back.
+
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
 Follow-ups to the LFstats player import (#256). The import turns real players' LFstats numbers
@@ -348,7 +376,6 @@ and MECH-19, then the SM5 talk follow-ups** (from LFS-02's proposal), in order (
 shipped 2026-11-08):
 
 ```
-RV-06           Playback map: position icons, tag lines and bases (owner, 2026-11-08)
 RV-07           Playback map: shots, lives and special beside the moving icon (3-5 options to pick from)
 MOVE-10         A Downed player in view keeps moving
 MECH-18         Re-engage a known enemy the tick it comes back into sight
@@ -505,48 +532,6 @@ simulation, no migration. Both build on the existing `game_round_events.html` in
 (M-1 JSON windowing, the SIM-05 playback engine, and the RES-02 `_overlay_plugin` Chart.js v4
 vertical-overlay pattern).
 
-### RV-06 · Playback map: position icons, tag lines and bases (owner, 2026-11-08)
-
-From the owner's review of a CAL-02 round on the Playback map (`frontend/src/app/matches/playback/`,
-ANG-06f): the markers are a Side-coloured ring with a three-letter role label (`roleLabel`) and a
-Scout's number badge, and nothing shows who tagged whom or where the bases are. Three changes, one
-task:
-
-1. **Position icons, not three-letter acronyms.** Each marker shows the player's position icon
-   (Commander, Heavy, Scout, Ammo, Medic) inside its Side-coloured ring; the Scout number badge
-   stays. The same icon set serves the scoreboard and the feed where a role is named.
-2. **Tag lines.** On a `tag` event (and a `miss`, lighter), a line is drawn from the tagging
-   player's marker to the tagged player's marker for a short window (about a second of playback,
-   fading), in the tagger's Side colour, so the owner can tell who is tagging whom as the map runs.
-   A Down ends with a stronger mark on the tagged player. Missile hits get the same line in the
-   missile colour.
-3. **Bases on the replay.** The red, blue and neutral bases are drawn at their configured pixel
-   positions (`MapBaseConfig`, through the map's zone-config API) with their type, and a
-   `base_capture` event draws a line from the capturing player to the base, so base tagging reads
-   off the map like player tagging.
-
-The data is already there: the `tag` / `miss` / `missiled` / `base_capture` events carry actor and
-target ids and cells, and `build_playback_map` carries the players and the map. No new persistence.
-UI changes need before / after screenshots in the PR body (`CLAUDE.md`, Git Workflow).
-
-### RV-07 · Playback map: shots, lives and special beside the moving icon (owner, 2026-11-08)
-
-The owner wants to read a player's state off the map as it moves: how full its shots and lives
-are (a scale from green at full to dark red at empty) and whether it holds enough SP for its
-special (the Commander's nuke at 20 SP, the Scout's rapid fire, the Ammo's and Medic's team
-resupply), beside the position icon of RV-06. The Playback snapshots already carry `lives`,
-`shots`, `sp`, `missiles`, `rapid_fire` and `nuking` per player per tick, and the role maxima and
-special costs are in `role_constants`, so this is a rendering task.
-
-**The task produces three to five display options** as a prototype (`mattpocock-skills:prototype`),
-each drawn on the same round for the owner to pick from, before anything ships: for example
-(a) two thin arcs around the ring, lives on the left and shots on the right, coloured by the
-green-to-dark-red scale, with a small star when the special is ready; (b) a two-segment bar under
-the icon; (c) the ring itself coloured by lives and a dot by shots, special as a pulsing outline;
-(d) a compact `L S` pair of tiny vertical gauges beside the icon; (e) the icon's fill by shots and
-its border by lives. The owner's pick is the spec; the rest are recorded with screenshots in the
-spec issue. Blocked by RV-06 (the icon the indicators sit beside).
-
 ### RV-04 · Highlight overlay on the playback timeline + chart toggle
 
 Surface the RV-02 **Highlight** list (`GameRound.highlights_json`) in two more places beyond the
@@ -643,6 +628,19 @@ vocabulary (assist the Commander, hunt the Heavy, hunt the Medic, hold an area, 
 assigns a goal and when it changes, what "the area the Heavy wants" is on the map (its Control
 cells, its strong spots), and how the Modes' weight nudges and goal rules map onto goals. Measure
 time in each Mode and the CAL-02 counter before and after.
+
+### MECH-20 · Capture a base over three tags (owner, 2026-11-09)
+
+From RV-06's grill: a base capture is one `base_capture` event that takes its three shots at once
+(`combat.py`, `capture_base`), so the replay can only show the capture moment. In the arena a base
+falls on its third tag, and a missile takes it outright. The capture should take three base tags on
+separate ticks (each one an event the replay can draw), with the third tag (or a missile, if
+missiles on bases come in) capturing it. **Open for the grill:** whether a base hit is a tag roll
+like a player hit or always lands, whether the three tags must come from one player and within a
+window (or count across the team), what happens to a partial capture when the player is Downed or
+leaves sight, whether missiles on bases come in with this task, the new event's name and
+metadata, and the Tag counts this changes for CAL-03's numbers. RV-06's radial lasers then fire on
+the third tag.
 
 ### MECH-08 · Reset-timing miss penalty
 
