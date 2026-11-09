@@ -30,7 +30,7 @@ from matches.round_probe import (
     probe_seeds,
     run_probe,
 )
-from teams.lfstats_formulas import DEFAULT_CONSTANTS
+from matches.sim_helpers.time_constants import TICK_SECONDS
 
 # The real per-role targets ``--targets`` prints beside the sim's (CAL-02c, #566).
 DEFAULT_TARGETS = REPO_ROOT / "data" / "tdf_role_targets_2026.json"
@@ -40,29 +40,25 @@ _REAL_METRIC: dict[str, tuple[str, float]] = {
     "tags_made_per_round": ("tags", 1.0),
     "eliminated_share": ("eliminated", 100.0),
     "times_tagged": ("times_tagged", 1.0),
-    "shots_fired": ("shots_fired", 1.0),
+    # Like for like: the sim's shots fired are Tags plus misses, so the real figure
+    # is the zaps on players plus misses, without the Base zaps ``shots_fired`` holds.
+    "shots_fired": ("shots_at_players", 1.0),
     "downs_given": ("downs_given", 1.0),
     "downs_taken": ("downs_taken", 1.0),
     "active_share": ("active_share", 100.0),
     "tags_per_active_minute": ("tags_per_active_min", 1.0),
-    "enemies_alive_per_active_roll": ("enemies_on_floor", 1.0),
+    "enemies_on_floor_per_active_roll": ("enemies_on_floor", 1.0),
 }
 
 
 def calibration_lineups(limit: int | None = None) -> list[Lineup]:
-    """The used Test games' (red, blue) rosters, the Calibration harness's way: its
-    used-games filter, rosters in position order, the default import constants.
-    ``limit`` keeps the first games only."""
+    """The used Test games' (red, blue) rosters from the default Training and Test
+    files, the Calibration harness's way (``lfstats_calibration.used_lineups``:
+    its used-games filter, rosters in position order, the default import
+    constants). ``limit`` keeps the first games only."""
     train = _load_json(str(DEFAULT_TRAIN), "Training file")
     test = _load_json(str(DEFAULT_TEST), "Test file")
-    used, _coverage = cal._used_games(train, test)
-
-    def roster(sides: dict, colour: str) -> list:
-        return cal._sim_roster(
-            train, cal._ordered(sides[colour]["roster"]), DEFAULT_CONSTANTS
-        )
-
-    return [(roster(sides, "fire"), roster(sides, "ice")) for sides in used[:limit]]
+    return cal.used_lineups(train, test, limit)
 
 
 def _real(targets: Mapping | None, role: str, measure: str) -> str:
@@ -115,16 +111,29 @@ def _measure_spread(
     )
 
 
-def _cadence_line(pooled: RoleMeasures) -> str:
+def _real_cadence(targets: Mapping | None, role: str) -> str:
+    """`` | real median 7.2 ticks``: the targets' cadence median (seconds) in
+    ticks, or nothing without one."""
+    if targets is None:
+        return ""
+    median = targets.get("cadence", {}).get(role, {}).get("median")
+    if median is None:
+        return ""
+    return f" | real median {median / TICK_SECONDS:.1f} ticks"
+
+
+def _cadence_line(
+    pooled: RoleMeasures, role: str, targets: Mapping | None = None
+) -> str:
     cadence = pooled.cadence
     if cadence.median is None:
-        return "  Shot cadence, ticks: none"
+        return "  Shot cadence, ticks: none" + _real_cadence(targets, role)
     bins = ", ".join(
         f"{label} {share * 100:.0f}%" for label, share in cadence.bin_share.items()
     )
     return (
         f"  Shot cadence, ticks: median {cadence.median:.1f} over {cadence.gaps} "
-        f"gaps; {bins}"
+        f"gaps; {bins}" + _real_cadence(targets, role)
     )
 
 
@@ -225,8 +234,9 @@ def _role_lines(
         f"  Tags per Active minute: {measure('tags_per_active_minute')}",
         f"  Reaction shots per round: {measure('reaction_shots')}",
         f"  Follow-up shots per round: {measure('follow_up_shots')}",
-        f"  Enemies alive per Active roll: {measure('enemies_alive_per_active_roll')}",
-        _cadence_line(pooled),
+        "  Enemies on the floor per Active roll: "
+        f"{measure('enemies_on_floor_per_active_roll')}",
+        _cadence_line(pooled, role, targets),
     ]
 
 

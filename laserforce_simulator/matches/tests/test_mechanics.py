@@ -7,6 +7,7 @@ so testing them here covers both simulators simultaneously.
 from unittest.mock import patch
 
 from matches.sim_helpers.mechanics import (
+    cooldown_ticks,
     shot_cooldown,
     choose_tag_target,
     choose_resupply_target,
@@ -63,6 +64,25 @@ class TestShotCooldown:
     def test_scout_special_boundary_expired(self):
         # special_active_until=5, second=5 → not strictly > second → 0.5
         assert shot_cooldown(_ps("scout", special_active_until=5), 5.0) == 0.5
+
+
+class TestCooldownTicks:
+    """The one seconds-to-ticks conversion the tick loop, ``plan_action`` and the
+    deferred shot queues share (CAL-02 review): a Heavy waits 2 ticks, every
+    other role 1, a rapid-fire Scout none."""
+
+    def test_heavy_waits_two_ticks(self):
+        assert cooldown_ticks(_ps("heavy"), 30) == 2
+
+    def test_every_other_role_waits_one_tick(self):
+        for role in ("commander", "medic", "ammo", "scout"):
+            assert cooldown_ticks(_ps(role), 30) == 1, role
+
+    def test_rapid_fire_scout_waits_none(self):
+        assert cooldown_ticks(_ps("scout", special_active_until=100), 30) == 0
+
+    def test_it_returns_an_int(self):
+        assert type(cooldown_ticks(_ps("heavy"), 0)) is int
 
 
 # ---------------------------------------------------------------------------

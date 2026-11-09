@@ -729,7 +729,7 @@ def _enemy(team: str, lives: int) -> SimpleNamespace:
     return SimpleNamespace(role="scout", team_color=team, final_lives=lives)
 
 
-class TestEnemiesAlivePerActiveRoll(SimpleTestCase):
+class TestEnemiesOnFloorPerActiveRoll(SimpleTestCase):
     def test_it_counts_the_enemies_with_lives_at_each_active_roll(self) -> None:
         player = _scripted(_tick(), _tick(), _tick(active=False))
         floors = iter(
@@ -764,7 +764,9 @@ class TestEnemiesAlivePerActiveRoll(SimpleTestCase):
             with patch.object(BatchSimulator, "_simulate_round", fake_round):
                 result = run_probe(None, [1])
 
-        self.assertEqual(result.roles["scout"].enemies_alive_per_active_roll.mean, 3.0)
+        self.assertEqual(
+            result.roles["scout"].enemies_on_floor_per_active_roll.mean, 3.0
+        )
 
 
 def _probe_shots(*rounds: list[tuple]) -> ProbeResult:
@@ -1030,8 +1032,15 @@ _TARGETS = {
             "active_share": {"mean": 0.55, "se": 0.01, "n": 656},
             "eliminated": {"mean": 0.34, "se": 0.02, "n": 656},
             "enemies_on_floor": {"mean": 5.47, "se": 0.04, "n": 328},
+            # The file keeps both: the sim's shots fired are Tags plus misses, so
+            # the like-for-like real figure is the one without Base zaps.
+            "shots_fired": {"mean": 58.6, "se": 1.0, "n": 656},
+            "shots_at_players": {"mean": 54.3, "se": 1.0, "n": 656},
         },
         "heavy": {"downs_given": {"mean": 43.48, "se": 1.0, "n": 328}},
+    },
+    "cadence": {
+        "scout": {"median": 3.6, "bins": {"<=0.5": 0.27}, "n": 1000},
     },
     "who_tags_whom": {
         "commander": {
@@ -1086,7 +1095,9 @@ class TestFormatTagMeasures(SimpleTestCase):
         self.assertIn("  Tags per Active minute: 2.7 +/- 0.8 (2.7-2.7)", lines)
         self.assertIn("  Reaction shots per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
         self.assertIn("  Follow-up shots per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
-        self.assertIn("  Enemies alive per Active roll: 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn(
+            "  Enemies on the floor per Active roll: 0.0 +/- 0.0 (0.0-0.0)", lines
+        )
 
     def test_mode_shares_over_the_round_print_beside_the_mode_shares(self) -> None:
         lines = format_result(self._result())
@@ -1134,11 +1145,34 @@ class TestFormatTagMeasures(SimpleTestCase):
         )
         self.assertIn("  Active %: 50.0 +/- 0.0 (50.0-50.0) | real 55.0", lines)
         self.assertIn(
-            "  Enemies alive per Active roll: 0.0 +/- 0.0 (0.0-0.0) | real 5.5", lines
+            "  Enemies on the floor per Active roll: 0.0 +/- 0.0 (0.0-0.0) | real 5.5",
+            lines,
+        )
+        # Like for like: the sim's shots fired are Tags plus misses, so the real
+        # figure is ``shots_at_players`` (no Base zaps), not ``shots_fired``.
+        self.assertIn(
+            "  Shots fired per round: 20.0 +/- 5.8 (20.0-20.0) | real 54.3", lines
         )
         # No real figure in the file for this metric: the line is as without targets.
-        self.assertIn("  Shots fired per round: 20.0 +/- 5.8 (20.0-20.0)", lines)
         self.assertIn("  Downs given per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
+
+    def test_the_cadence_line_prints_the_real_median_in_ticks(self) -> None:
+        one = _scripted(_tick(), role="scout", team="red")
+        target = _scripted(_tick(), role="heavy", team="blue")
+        result = _probe_shots([(one, target, 0, "hit"), (one, target, 3, "hit")])
+        lines = format_result(result, targets=_TARGETS)
+        # The file's median is in seconds; a tick is 0.5 s, so 3.6 s is 7.2 ticks.
+        self.assertIn(
+            "  Shot cadence, ticks: median 3.0 over 1 gaps; <=1t 0%, 2t 0%, 3-4t 100%, "
+            "5-10t 0%, 11-20t 0%, 21-60t 0%, 61-120t 0%, 120t+ 0% "
+            "| real median 7.2 ticks",
+            lines,
+        )
+        # No real cadence for the Heavy in the file: its line is as without targets.
+        self.assertIn("  Shot cadence, ticks: none", lines)
+        self.assertFalse(
+            [line for line in format_result(result) if "real median" in line]
+        )
 
     def test_the_matrices_print_per_round_with_a_total_and_the_real_rows(self) -> None:
         commander = _scripted(_tick(), role="commander", team="red")

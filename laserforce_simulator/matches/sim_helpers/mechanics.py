@@ -10,6 +10,7 @@ from typing import Any
 
 from . import support_survival
 from .follow_rule import may_tag
+from .time_constants import TICK_SECONDS
 
 
 def shot_cooldown(player, second: float) -> float:
@@ -23,6 +24,13 @@ def shot_cooldown(player, second: float) -> float:
     if player.role == "heavy":
         return 1.0
     return 0.5
+
+
+def cooldown_ticks(player, tick: float) -> int:
+    """``shot_cooldown`` rounded to whole ticks: a Heavy 2, every other role 1, a
+    rapid-fire Scout 0. The one conversion the tick loop's Overwatch gate,
+    ``plan_action``'s cooldown gate and the deferred shot queues share."""
+    return int(round(shot_cooldown(player, tick) / TICK_SECONDS))
 
 
 def _aware_of_target(player, target) -> bool:

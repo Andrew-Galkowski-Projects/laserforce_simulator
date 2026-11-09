@@ -89,7 +89,8 @@ EVENTS: list[str] = [
 ]
 
 # Player-state rows: the blue Scout is Down at 1.0 s, coming back at 4.0 s and Active
-# again at 5.0 s; the blue Medic goes Down at 5:00 and never returns (an Elimination).
+# again at 5.0 s; the blue Medic goes Down at 5:00 and never returns (an Elimination:
+# its sm5-stats row has livesLeft 0 and its entity-end row is at 5:00).
 STATES: list[str] = [
     "9\t0000033\t#RC\t0",
     "9\t0001000\t#BS1\t3",
@@ -98,11 +99,17 @@ STATES: list[str] = [
     "9\t0300000\t#BM\t3",
 ]
 
-# sm5-stats: the red Medic's LFstats shotsHit is 3 (two Resupplies and one zap).
+# sm5-stats (``id shotsHit shotsFired timesZapped ... livesLeft`` in column 16): the
+# red Medic's LFstats shotsHit is 3 (two Resupplies and one zap); the blue Medic ends
+# with no lives.
 STATS: list[str] = [
     "7\t#RM\t3\t3\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t27\t0\t0\t0\t1\t0\t0\t0",
     "7\t#RC\t4\t5\t0\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t27\t0\t0\t0\t3\t1\t0\t0",
+    "7\t#BM\t0\t0\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0",
 ]
+
+# entity-end rows (``time id type score``): the blue Medic leaves the game at 5:00.
+ENDS: list[str] = ["6\t0300000\t#BM\tplayer\t-100"]
 
 
 def _write_log(
@@ -112,9 +119,10 @@ def _write_log(
     events: list[str] = EVENTS,
     states: list[str] = STATES,
     stats: list[str] = STATS,
+    ends: list[str] = ENDS,
 ) -> Path:
     path = directory / name
-    rows = _entity_rows(players) + events + states + stats
+    rows = _entity_rows(players) + events + states + stats + ends
     path.write_text("\n".join(rows) + "\n", encoding="utf-16")
     return path
 
@@ -160,6 +168,19 @@ class TestTagsFromTheSyntheticLog(TestCase):
         self.assertEqual(commander["team_zaps"]["mean"], 0.5)
         # Accuracy on enemies is Tags over Tags plus misses, over players who shot.
         self.assertEqual(commander["accuracy"], {"mean": 0.6667, "se": 0.0, "n": 1})
+
+    def test_shots_at_players_are_the_zaps_on_players_plus_the_misses(self) -> None:
+        per_role = _payload()["per_role"]
+        # The sim's shots fired are Tags plus misses, so the like-for-like figure
+        # leaves the Base zap out: red Commander 2 Tags, 1 team zap, 1 miss = 4;
+        # blue 0.
+        self.assertEqual(
+            per_role["commander"]["shots_at_players"], {"mean": 2.0, "se": 2.0, "n": 2}
+        )
+        self.assertEqual(per_role["commander"]["shots_fired"]["mean"], 2.5)
+        # The red Medic's one zap; its Resupplies are not shots.
+        self.assertEqual(per_role["medic"]["shots_at_players"]["mean"], 0.5)
+        self.assertEqual(per_role["heavy"]["shots_at_players"]["mean"], 0.0)
 
     def test_downs_given_and_taken_come_from_the_0206_zaps(self) -> None:
         per_role = _payload()["per_role"]
@@ -208,6 +229,49 @@ class TestStatesAndFloor(TestCase):
         self.assertEqual(per_role["scout"]["eliminated"]["mean"], 0.0)
         self.assertNotIn("elim_minute", per_role["scout"])
 
+    def test_an_elimination_is_no_lives_left_at_the_entity_end_time(self) -> None:
+        # In the logs the Elimination Down itself usually writes no player-state
+        # row: the rows end at the previous Down's return (3, 2, 0), the final zap
+        # on the player follows, and the entity-end row comes about 2 s later. So
+        # the Elimination is livesLeft 0 in the sm5-stats row, at the entity-end
+        # time, and the player's Active time stops there.
+        states = [(1000, "#X", "3"), (5000, "#X", "2"), (9000, "#X", "0")]
+        active_ms, elim_ms = tdf._active_and_eliminations(
+            ["#X"], states, {"#X": {"livesLeft": 0}}, {"#X": 20000}
+        )
+        self.assertEqual(elim_ms, {"#X": 20000})
+        self.assertEqual(active_ms, {"#X": 1000 + 11000})
+
+    def test_a_player_down_at_the_buzzer_with_lives_left_is_not_eliminated(
+        self,
+    ) -> None:
+        # The buzzer edge: Down at 14:55, coming back at 14:59, three lives left.
+        for tail in ("3", "2"):
+            states = [(895000, "#X", "3"), (899000, "#X", tail)]
+            active_ms, elim_ms = tdf._active_and_eliminations(
+                ["#X"], states, {"#X": {"livesLeft": 3}}, {"#X": tdf.GAME_MS}
+            )
+            self.assertEqual(elim_ms, {}, tail)
+            self.assertEqual(active_ms, {"#X": 895000}, tail)
+
+    def test_without_an_entity_end_row_the_elimination_is_the_last_down(self) -> None:
+        states = [(1000, "#X", "3"), (5000, "#X", "2")]
+        _, elim_ms = tdf._active_and_eliminations(
+            ["#X"], states, {"#X": {"livesLeft": 0}}, {}
+        )
+        self.assertEqual(elim_ms, {"#X": 1000})
+
+    def test_through_the_payload_lives_left_decides(self) -> None:
+        # The blue Medic's state rows are unchanged; three lives left at the end
+        # make its 5:00 Down a Down, not an Elimination, and it is Active until the
+        # 15:00 buzzer after it (its last state row is 3, so it is not).
+        stats = STATS[:2] + [
+            "7\t#BM\t0\t0\t1\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t0\t3\t0\t0\t0\t0\t0\t0\t0"
+        ]
+        per_role = _payload(stats=stats, ends=[])["per_role"]
+        self.assertEqual(per_role["medic"]["eliminated"]["mean"], 0.0)
+        self.assertNotIn("elim_minute", per_role["medic"])
+
     def test_tags_per_active_minute(self) -> None:
         commander = _payload()["per_role"]["commander"]
         # Red Commander 2 Tags over 15 Active minutes, blue 0.
@@ -247,7 +311,7 @@ class TestMatricesAndCadence(TestCase):
             {
                 "median": 0.75,
                 "bins": {
-                    "<0.5": 0.25,
+                    "<=0.5": 0.25,
                     "0.5-1": 0.5,
                     "1-2": 0.0,
                     "2-5": 0.25,
@@ -287,6 +351,85 @@ class TestSkippedGames(TestCase):
         payload = _payload(players=eleven)
         self.assertEqual(payload["games"], {"total": 1, "used": 0, "skipped": 1})
         self.assertEqual(payload["player_games"]["scout"], 0)
+
+
+class TestCorruptLogs(TestCase):
+    """A corrupt log is a clear ``ValueError`` naming the path, not an obscure
+    decode error and not a quietly skipped game."""
+
+    def test_a_file_that_is_not_utf_16_names_the_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "4-23-bad.tdf"
+            path.write_bytes(b"not a tdf")  # nine bytes: no UTF-16 text
+            with self.assertRaises(ValueError) as caught:
+                tdf.parse_log(path)
+            self.assertIn(str(path), str(caught.exception))
+            self.assertIn("UTF-16", str(caught.exception))
+            # build_payload does not count it as a skipped game.
+            with self.assertRaises(ValueError):
+                tdf.build_payload(Path(tmp))
+
+    def test_a_truncated_row_names_the_path_and_the_line(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_log(
+                Path(tmp), events=EVENTS + ["4\t00012a\t0205\t#RC\t zaps \t#BC"]
+            )
+            with self.assertRaises(ValueError) as caught:
+                tdf.parse_log(path)
+            message = str(caught.exception)
+            self.assertIn(str(path), message)
+            # The bad row follows the 6 header rows, 12 players and 10 events.
+            self.assertIn("line 29", message)
+
+
+class TestDownloadLog(TestCase):
+    """``download_log`` through a patched ``urlopen``: never the network."""
+
+    @staticmethod
+    def _response(body: bytes, status: int = 200) -> mock.MagicMock:
+        response = mock.MagicMock()
+        response.status = status
+        response.read.return_value = body
+        response.__enter__.return_value = response
+        return response
+
+    def test_it_writes_the_fetched_bytes_to_the_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "4-23-a.tdf"
+            with mock.patch.object(
+                tdf.urllib.request, "urlopen", return_value=self._response(b"\xff\xfe0")
+            ) as urlopen:
+                tdf.download_log("4-23-a", dest)
+            self.assertEqual(dest.read_bytes(), b"\xff\xfe0")
+            urlopen.assert_called_once_with(tdf.ARCHIVE_URL.format(slug="4-23-a"))
+
+    def test_a_url_error_is_a_clear_error_naming_the_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "4-23-a.tdf"
+            with mock.patch.object(
+                tdf.urllib.request,
+                "urlopen",
+                side_effect=tdf.urllib.error.URLError("name or service not known"),
+            ):
+                with self.assertRaises(RuntimeError) as caught:
+                    tdf.download_log("4-23-a", dest)
+            message = str(caught.exception)
+            self.assertIn(tdf.ARCHIVE_URL.format(slug="4-23-a"), message)
+            self.assertIn("name or service not known", message)
+            self.assertFalse(dest.exists())
+
+    def test_a_non_200_status_is_a_clear_error_and_writes_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "4-23-a.tdf"
+            with mock.patch.object(
+                tdf.urllib.request,
+                "urlopen",
+                return_value=self._response(b"<xml>denied</xml>", status=403),
+            ):
+                with self.assertRaises(RuntimeError) as caught:
+                    tdf.download_log("4-23-a", dest)
+            self.assertIn("403", str(caught.exception))
+            self.assertFalse(dest.exists())
 
 
 class TestFetchAndMain(TestCase):

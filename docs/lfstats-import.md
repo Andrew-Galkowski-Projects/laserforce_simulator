@@ -783,19 +783,29 @@ time tagged. The grill's "times tagged" column (58.8 / 47.8 / 33.5 / 23.2 / 10.2
 enemy Tags only, as the glossary defines it, and carries `timesZapped` beside it as
 `times_zapped_lfstats`.
 
-| Role | Tags | Times tagged (enemy; LFstats timesZapped) | Shots fired | Accuracy on enemies | Downs given / taken | Active share | Tags per Active minute | Eliminated (minute) |
+| Role | Tags | Times tagged (enemy; LFstats timesZapped) | Shots fired (at players) | Accuracy on enemies | Downs given / taken | Active share | Tags per Active minute | Eliminated (minute) |
 |---|---|---|---|---|---|---|---|---|
-| Commander | 54.5 | 57.4 (58.8) | 70.3 | 0.83 | 40.9 / 26.5 | 0.58 | 6.9 | 30% (11.4) |
-| Heavy | 43.5 | 46.8 (47.8) | 55.4 | 0.84 | 43.5 / 20.4 | 0.64 | 5.0 | 22% (11.4) |
-| Scout | 36.4 | 32.5 (33.5) | 58.6 | 0.70 | 21.5 / 32.5 | 0.55 | 4.9 | 34% (11.1) |
-| Ammo | 22.3 | 22.5 (23.2) | 45.8 | 0.58 | 12.3 / 22.5 | 0.63 | 2.6 | 32% (11.0) |
-| Medic | 8.6 | 9.9 (10.2) | 18.3 | 0.58 | 4.7 / 9.9 | 0.73 | 0.9 | 31% (8.4) |
+| Commander | 54.5 | 57.4 (58.8) | 70.3 (66.7) | 0.83 | 40.9 / 26.5 | 0.49 | 7.9 | 38% (9.7) |
+| Heavy | 43.5 | 46.8 (47.8) | 55.4 (52.7) | 0.84 | 43.5 / 20.4 | 0.52 | 6.1 | 43% (9.6) |
+| Scout | 36.4 | 32.5 (33.5) | 58.6 (53.7) | 0.70 | 21.5 / 32.5 | 0.47 | 5.5 | 44% (9.9) |
+| Ammo | 22.3 | 22.5 (23.2) | 45.8 (41.9) | 0.58 | 12.3 / 22.5 | 0.55 | 3.1 | 44% (9.7) |
+| Medic | 8.6 | 9.9 (10.2) | 18.3 (15.0) | 0.58 | 4.7 / 9.9 | 0.58 | 1.2 | 65% (8.6) |
 
 Shots fired are the player's misses (0201), Base zaps (0203) and zaps (0205 / 0206, a teammate's
-included); accuracy on enemies is Tags over Tags plus misses. Active share is the time in state 0
-of the player-state rows over 15 minutes; an Elimination is a Down the player never returns from.
-A team faces 5.47 of 6 enemies on the floor averaged over the game (the sim: 4.0). A game holds 403
-Tags, both teams.
+included); shots at players (`shots_at_players`) leave the Base zaps out, so they are the sim's
+Tags plus misses like for like, and the probe's `| real` beside Shots fired reads that key
+(CAL-02 review, 2026-11-08). Accuracy on enemies is Tags over Tags plus misses. An Elimination is
+ending the game with no lives (`livesLeft` 0 in the sm5-stats row), at the entity-end row's time:
+the Elimination Down itself usually writes no player-state row (the rows end at the previous
+Down's return, the final zap on the player follows, the entity-end comes about 2 s later), so the
+first cut's state-row count found 361 of the 917 Eliminated players and read 30 / 22 / 34 / 32 /
+31%. Active share is the time in state 0 of the player-state rows over 15 minutes, stopped at
+the Elimination. A team faces 4.98 of 6 enemies on the floor averaged over the game (the sim:
+4.0). A game holds 403 Tags, both teams. **Open (2026-11-08):** 110 of the 165 missions ended
+before 14:40 (a team wiped out; median mission end 12:26, mean length 79.6% of 15 minutes), while
+Active share and enemies on the floor are averaged over the full 15 minutes; whether to average
+over the mission's length instead, and how the sim counts a survivor's ticks after a wipe, is
+not decided.
 
 **Who tags whom** (Tags per game, both teams; attacker row, target column):
 
@@ -812,7 +822,7 @@ Down, and the Heavy's shot power 3 Downs anyone in one hit, so its two rows are 
 
 **Shot cadence** (gap between one player's consecutive shots; median and the share per bin):
 
-| Role | Median s | <0.5 | 0.5-1 | 1-2 | 2-5 | 5-10 | 10-30 | 30-60 | 60+ |
+| Role | Median s | <=0.5 | 0.5-1 | 1-2 | 2-5 | 5-10 | 10-30 | 30-60 | 60+ |
 |---|---|---|---|---|---|---|---|---|---|
 | Commander | 4.5 | 16% | 10% | 10% | 16% | 17% | 25% | 5% | 1% |
 | Heavy | 7.7 | 2% | 11% | 11% | 19% | 18% | 31% | 7% | 1% |
@@ -826,11 +836,11 @@ between 5:00 and 8:00 has the sim's Tags (CAL-03 carries the lives budget).
 
 | Medic out | Team-games | Commander | Heavy | Scout | Ammo | Medic |
 |---|---|---|---|---|---|---|
-| by 5:00 | 16 | 30.1 / 38.5 | 21.0 / 32.9 | 13.7 / 20.8 | 12.2 / 19.3 | 5.8 / 13.5 |
-| 5:00-8:00 | 41 | 40.4 / 54.2 | 34.9 / 42.3 | 25.3 / 28.1 | 18.9 / 24.3 | 6.7 / 13.1 |
-| 8:00-12:00 | 25 | 60.4 / 63.7 | 49.0 / 54.5 | 40.8 / 38.9 | 22.7 / 24.1 | 9.2 / 10.2 |
-| after 12:00 | 21 | 71.4 / 77.4 | 56.9 / 59.6 | 51.5 / 44.1 | 29.3 / 26.2 | 10.8 / 8.9 |
-| survives | 225 | 56.6 / 56.8 | 44.8 / 46.5 | 38.2 / 32.4 | 22.9 / 21.9 | 8.8 / 9.1 |
+| by 5:00 | 18 | 30.4 / 41.1 | 20.3 / 30.9 | 16.4 / 20.3 | 12.1 / 20.7 | 5.7 / 13.5 |
+| 5:00-8:00 | 79 | 42.3 / 52.4 | 34.6 / 44.2 | 25.6 / 28.9 | 19.3 / 24.7 | 7.6 / 13.6 |
+| 8:00-12:00 | 87 | 64.5 / 71.9 | 52.4 / 59.4 | 42.0 / 40.3 | 26.7 / 28.9 | 9.6 / 11.7 |
+| after 12:00 | 30 | 72.8 / 77.1 | 56.7 / 61.5 | 50.2 / 44.6 | 27.6 / 29.0 | 10.3 / 10.3 |
+| survives | 114 | 54.3 / 47.3 | 43.0 / 37.4 | 39.2 / 27.9 | 21.2 / 14.7 | 8.5 / 5.3 |
 
 The sim side is one command (#567): `python manage.py round_probe --lineups test --workers 8`
 plays the 128 used Test games' real lineups (one round each, seed 42, about 12 minutes) and
@@ -838,6 +848,46 @@ prints every measure above beside this file's real value (`| real`), with the wh
 who-Downs-whom matrices and the shot cadence per role; see the command's section in
 `laserforce_simulator/matches/management/commands/CLAUDE.md`. The baseline, the prototype
 ladder and the shipped tree, read off it, follow.
+
+**The sim side** (128 Test games, one round each, seed 42; per player-round, Commander / Heavy /
+Scout / Ammo / Medic). The baseline is `origin/main` at 5d0821a7 on the grill's counter, the
+ancestor of the probe mode; the shipped tree is the integration branch on `round_probe --lineups
+test` (every standard error under 1):
+
+| Tree | Tags made (real 54.5 / 43.5 / 36.4 / 22.3 / 8.6) | Times tagged (real 57.4 / 46.8 / 32.5 / 22.5 / 9.9) | Tags a round, both teams (real 403) |
+|---|---|---|---|
+| baseline | 42.0 / 35.7 / 26.1 / 11.3 / 2.1 | 28.9 / 32.6 / 25.7 / 14.9 / 15.5 | 287 |
+| bugs A and B (P1) | 43.5 / 33.8 / 26.1 / 12.1 / 2.3 | 28.7 / 34.5 / 25.5 / 14.4 / 15.4 | 288 |
+| + the defender learns the attacker (P2) | 44.2 / 34.2 / 27.4 / 13.6 / 2.8 | 31.3 / 35.7 / 26.0 / 15.2 / 15.3 | 299 |
+| + the Attack table (P3) | 45.1 / 35.3 / 26.7 / 13.2 / 2.7 | 30.1 / 36.8 / 26.4 / 14.9 / 15.0 | 299 |
+| + Medic tag weight 15 (P4, the prototype of the shipped tree) | 44.2 / 34.7 / 27.1 / 13.3 / 4.9 | 30.9 / 37.1 / 26.0 / 15.3 / 15.8 | 302 |
+| **shipped** (`round_probe --lineups test`) | 44.2 / 34.7 / 27.1 / 13.3 / 4.9 | 30.9 / 37.1 / 26.0 / 15.3 / 15.8 | 303 |
+
+The shipped tree also prints, per round: Reaction shots Commander 2.4, Heavy 1.0, Scout 0.8, Ammo
+0.7, Medic 0.3 (0 for every role but the rapid-fire Scout before bug A); Follow-ups Commander 3.2,
+Scout 3.5, Ammo 1.5, Medic 0.5, Heavy 0 (a Heavy's Hit always Downs); Downs given 33.2 / 34.7 /
+16.8 / 8.6 / 3.2 against the real 40.9 / 43.5 / 21.5 / 12.3 / 4.7; enemies on the floor per Active
+roll 4.4 for the Commander and Heavy, 4.6 for the Scout, against 5.0 in the arena. Who tags whom,
+both teams a round: Scouts on Commanders 22.9 (real 40.1), on Heavies 31.8 (39.4); Commanders on
+the Medic 12.1 (7.7). Measured and not shipped (PLAN.md, CAL-02, has the rows): Control Mode at a
+quarter of resources (the owner ruled Modes must follow goals, MECH-19), the Scout tag weight 60
+(zero-sum), the attackers' hide bumps halved (noise), and Syracuse's coloured wall segments as low
+walls (they are not low walls).
+
+**Acceptance (spec #563, D9), read off the shipped tree:** every role's Tags made and times
+tagged at or above the P4 value less two standard errors; total Tags 303 against the floor of
+295; the Medic's Tags 4.9 against 4.2; Reactions Commander 2.4 and Heavy 1.0 against 1.5 and 0.7.
+Calibrate (`lfstats_calibrate --split test --rounds 3 --seed 42`): 15/36 cells (14 before),
+winner agreement 64.1% (57.0%), mean margin error 7,309 (7,950); Commander `avg_nukes_detonated`
+1.76 a scorecard (1.59 before; real 2.79), so about 3.5 nukes a round against the CAL #558 tree's
+3.1, up with the SP income; fired 3.98 a round (3.93). On the default-stat rosters (`round_probe`,
+seeds 1-12) against the MECH-17 baseline: Still % Commander 31.7 +/- 3.2 (was 27.2 +/- 2.0),
+Heavy 38.8 +/- 4.2 (36.2 +/- 3.6), Scout 26.7 +/- 4.1 (25.4 +/- 3.6); squares to target Commander
+38.0 +/- 1.6 (39.6 +/- 1.6), Heavy 40.8 +/- 2.1 (41.0 +/- 2.7), Scout 36.3 +/- 1.0 (39.7 +/- 1.1,
+closer, the direction MECH-17 wanted), Ammo 38.8 +/- 2.2 (35.5 +/- 1.6), Medic 31.8 +/- 1.9
+(34.8 +/- 2.1); read with both standard errors only the Scout's squares is a real move. The
+Scout's planned Shots 41.2 +/- 2.9 (floor 40; 45.6 +/- 6.2 on seeds 1-4). The Medic's Still fell
+from 48.7 to 31.3: it now shoots, and a tag roll leaves a hide.
 
 ### SM5-02: a Downed pack is dark (2026-11-03)
 

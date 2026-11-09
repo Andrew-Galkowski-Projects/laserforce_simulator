@@ -283,16 +283,39 @@ the sim's are to be compared with the sim, and the support-survival work becomes
 tied to goal-cell selection.
 
 **Real games by the team's own Medic's Elimination minute (TDF, 328 team-games; per
-player-game Tags / times tagged):** Medic out by 5:00 (16 team-games): Commander 30.1 / 38.5,
-Heavy 21.0 / 32.9, Scout 13.7 / 20.8, Ammo 12.2 / 19.3, Medic 5.8 / 13.5. Medic out 5:00-8:00 (41):
-Commander 40.4 / 54.2, Heavy 34.9 / 42.3, Scout 25.3 / 28.1, Ammo 18.9 / 24.3, Medic 6.7 / 13.1.
-Medic out 8:00-12:00 (25): 60.4 / 63.7, 49.0 / 54.5, 40.8 / 38.9, 22.7 / 24.1, 9.2 / 10.2. Medic out
-after 12:00 (21): 71.4 / 77.4, 56.9 / 59.6, 51.5 / 44.1, 29.3 / 26.2, 10.8 / 8.9. Both Medics
-survive (225): 56.6 / 56.8, 44.8 / 46.5, 38.2 / 32.4, 22.9 / 21.9, 8.8 / 9.1. The sim's Medic dies
-at minute 6.4 on average, and in the arena's 5:00-8:00 games the real Tags (Commander 40, Heavy
-35, Scout 25) are the sim's (44, 35, 27): the tag deficit is the lives budget. Times tagged is not
+player-game Tags / times tagged; corrected 2026-11-08 by the CAL-02 review fix pass, which found
+the grill's state-row rule missed 556 of the 917 real Eliminations: an Elimination is `livesLeft`
+0 in the sm5-stats row, at the entity-end time, and so read the real rates are 38 / 43 / 44 / 44 /
+65%, the LFstats cells exactly, with players leaving at minute 9.7 / 9.6 / 9.9 / 9.7 / 8.6, Active
+share 0.49 / 0.52 / 0.47 / 0.55 / 0.58 and 5.0 of 6 enemies on the floor):** Medic out by 5:00
+(18 team-games): Commander 30.4 / 41.1, Heavy 20.3 / 30.9, Scout 16.4 / 20.3, Ammo 12.1 / 20.7,
+Medic 5.7 / 13.5. Medic out 5:00-8:00 (79): 42.3 / 52.4, 34.6 / 44.2, 25.6 / 28.9, 19.3 / 24.7,
+7.6 / 13.6. Medic out 8:00-12:00 (87): 64.5 / 71.9, 52.4 / 59.4, 42.0 / 40.3, 26.7 / 28.9, 9.6 /
+11.7. Medic out after 12:00 (30): 72.8 / 77.1, 56.7 / 61.5, 50.2 / 44.6, 27.6 / 29.0, 10.3 / 10.3.
+The Medic survives (114): 54.3 / 47.3, 43.0 / 37.4, 39.2 / 27.9, 21.2 / 14.7, 8.5 / 5.3. The sim's
+Medic dies at minute 6.4 on average, and in the arena's 5:00-8:00 games the real Tags (Commander
+42, Heavy 35, Scout 26) are the sim's (44, 35, 27): the tag deficit is the lives budget. Also
+open: 110 of the 165 missions ended before 14:40 (a team wiped out; median end 12:26, mean length
+79.6% of 15 minutes), while the real Active share and enemies on the floor are averaged over the
+full 15 minutes and the sim's over 1800 ticks. Times tagged is not
 (54 against 31): a team whose Medic dies early is the losing team, tagged 190 times against 151
 Tags, where the sim's rounds lose both Medics alike.
+
+**Shipped tree, measured (2026-11-08, spec #563 D9).** `round_probe --lineups test` (128 games,
+one round each, seed 42): Tags made 44.2 / 34.7 / 27.1 / 13.3 / 4.9 and times tagged 30.9 / 37.1 /
+26.0 / 15.3 / 15.8 (Commander / Heavy / Scout / Ammo / Medic), every cell at or above its P4 floor;
+303 Tags a round (floor 295); Reactions Commander 2.4 and Heavy 1.0 a round (0 before). Default
+rosters, seeds 1-12: Still % Commander 31.7 +/- 3.2 (baseline 27.2 +/- 2.0), Heavy 38.8 +/- 4.2
+(36.2 +/- 3.6), Scout 26.7 +/- 4.1 (25.4 +/- 3.6); squares to target Commander 38.0 +/- 1.6 (39.6),
+Heavy 40.8 +/- 2.1 (41.0), Scout 36.3 +/- 1.0 (39.7 +/- 1.1: closer, the direction MECH-17
+wanted), Ammo 38.8 +/- 2.2 (35.5 +/- 1.6), Medic 31.8 +/- 1.9 (34.8 +/- 2.1); Scout planned Shots
+41.2 +/- 2.9 (floor 40). Read with both standard errors, only the Scout's squares is a real move.
+The Medic's Still fell from 48.7 to 31.3 (it shoots now). Calibrate (`--split test --rounds 3
+--seed 42`): 15/36 cells (14 before), winner agreement 64.1% (57.0%), margin error 7,309 (7,950),
+Commander nukes detonated 1.76 a scorecard (1.59; real 2.79), so about 3.5 a round against the
+CAL #558 tree's 3.1, up with the SP income; fired 3.98 a round (3.93). Mutations: both queue
+rebinds, the seconds cooldown, the switch off, the Commander off the Attack table and the Medic
+weight at 5 are each caught by the intended tests.
 
 **Time in each Mode (Test set, 128 games, current engine; share of the ticks a player was on the
 floor):** Commander Attack 14% / Control 86%; Heavy Attack 33% / Control 67%; Scout Attack 26% /
@@ -310,21 +333,27 @@ and only Attack hunts) and the map's sight lines: 359 of the 1,725 interior wall
 the drawing's coloured segments, which the confirmed grid holds as high walls; as low walls (zone
 4) the median cell sees 317 cells instead of 233. The sight-line compute itself has no reach cap
 (the quadtree radius is 88 squares on a 119-wide grid). The ceiling under everything is the
-floor count: on P10 an attacker's Active rolls see 4.0 enemies alive on average and 3 or fewer on
-a third of them, against 5.5 of 6 in the arena, because the sim Ammo is eliminated at minute 4.5
-on average and the Medic at 6.4, where real players leave at minute 11 (the Medic 8.4). Commanders
+floor count: on P10 an attacker's Active rolls see 4.0 enemies on the floor on average and 3 or
+fewer on a third of them, against 5.0 of 6 in the arena, because the sim Ammo is eliminated at
+minute 4.5 on average and the Medic at 6.4, where real players leave at about minute 9.7 (the
+Medic 8.6; the corrected Elimination rule above). Commanders
 and Heavies also fire nearly every shot in the pack (8.8 and 6.6 left of 60 and 40; a Resupply
 gives 5), so their shots are capped by Ammo flow, where the real Commander fires 70.
 
 ### CAL-03 · Supports stay on the floor, and goal-cell variety (owner, 2026-11-08)
 
 The lives budget behind CAL-02. The sim Ammo is eliminated at minute 4.5 of 15 on average and
-the Medic at 6.4 (Active 26% and 33% of the round against 63% and 73% real); real players leave at
-minute 11 (the Medic 8.4), so a sim team faces 4.0 enemies on the floor averaged over its Active
-ticks against 5.5 of 6 in the arena, and the round's Tags stop near 300 against 403. The arena's
-own games say the Tags follow the Medic: in the 41 team-games whose Medic died between 5:00 and
-8:00 the real per-player Tags are the sim's (Commander 40, Heavy 35, Scout 25, Ammo 19), and in
-the 225 whose Medic survived they are 57, 45, 38, 23 (CAL-02's table above). Also from CAL-02:
+the Medic at 6.4 (eliminated in 82% and 88% of rounds; Active 26% and 33% of the round against
+55% and 58% real); real players leave at about minute 9.7 (the Medic 8.6; real Elimination rates
+38 / 43 / 44 / 44 / 65%, the corrected TDF rule in CAL-02), so a sim team faces 4.0 enemies on the
+floor averaged over its Active ticks against 5.0 of 6 in the arena, and the round's Tags stop
+near 300 against 403. The arena's own games say the Tags follow the Medic: in the 79 team-games
+whose Medic died between 5:00 and 8:00 the real per-player Tags are the sim's (Commander 42,
+Heavy 35, Scout 26, Ammo 19), and in the 87 whose Medic died between 8:00 and 12:00 they are 65,
+52, 42, 27 (CAL-02's table above). Also open from CAL-02: 110 of the 165 real missions ended
+before 14:40 (a team wiped out; median end 12:26), so per-game real figures come from shorter
+games than the sim's 1800-tick rounds; whether to normalise by mission length, and how the sim
+counts a survivor's ticks after a wipe, is this task's to settle. Also from CAL-02:
 Commanders and Heavies fire nearly every shot in the pack (8.8 and 6.6 left of 60 and 40, a
 Resupply gives 5), so the Commander's 70 real shots need two more Resupplies than it gets; and the
 Commander stands with no shots on 100 Active rolls a round.
@@ -335,8 +364,9 @@ found. **Open for the grill:** where the "more random goal cell selection" idea 
 item holds it; MOVE-06's goal-location noise and `positioning`'s sharpness are the nearest shipped
 pieces), what a support's day looks like in the arena (the TDF state rows give every Down and
 Resupply with a time), and whether the Medic's extra lives (20) are being spent on Downs or on
-nukes and missiles. Measure with the CAL-02 counter (Eliminations and their minute, enemies alive
-per Active roll, Resupplies given and received per role) against the TDF targets. Keep the T, H,
+nukes and missiles. Measure with `round_probe --lineups test` (Eliminations and their minute,
+enemies on the floor per Active roll, Resupplies given and received per role) against the TDF
+targets in `data/tdf_role_targets_2026.json`. Keep the T, H,
 M, A switches as the starting point; CAL-02's levers are in.
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.

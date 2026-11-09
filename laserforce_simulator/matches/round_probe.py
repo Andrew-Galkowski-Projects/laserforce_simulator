@@ -5,7 +5,7 @@ Role the time in each Mode, where goals come from, the time not Active, the dist
 to the Role's target, mean points, what the Role does with its Actions, Tags made and
 Eliminations, plus goal sharing per seed. CAL-02 (#567) added the tag measures: times
 tagged, shots fired, Downs given and taken, Active share, Tags per Active minute,
-Reaction and Follow-up shots, enemies alive per Active roll, shot cadence, and the
+Reaction and Follow-up shots, enemies on the floor per Active roll, shot cadence, and the
 who-tags-whom and who-Downs-whom matrices. Each measure is pooled over the rounds and
 kept per round. Read-only: it observes ``plan_action``, ``choose_goal_cell``, the
 capture and ``resolve_shot`` without drawing from the RNG, so a seed plays the same
@@ -114,7 +114,7 @@ class RoleMeasures:
     tags_per_active_minute: Measure
     reaction_shots: Measure
     follow_up_shots: Measure
-    enemies_alive_per_active_roll: Measure
+    enemies_on_floor_per_active_roll: Measure
     # Mode ticks over the round's ticks (``mode_share`` is over the Mode ticks).
     mode_round_share: dict[str, float]
     cadence: Cadence
@@ -150,7 +150,7 @@ class _PlayerRound:
     reaction_shots: int = 0
     follow_up_shots: int = 0
     active_rolls: int = 0
-    enemies_alive: int = 0
+    enemies_on_floor: int = 0
 
     @property
     def active_share(self) -> float:
@@ -161,8 +161,8 @@ class _PlayerRound:
         return _ratio(self.tags_made, self.ticks_active / TICKS_PER_MINUTE)
 
     @property
-    def enemies_alive_per_active_roll(self) -> float:
-        return _ratio(self.enemies_alive, self.active_rolls)
+    def enemies_on_floor_per_active_roll(self) -> float:
+        return _ratio(self.enemies_on_floor, self.active_rolls)
 
 
 @dataclass
@@ -350,7 +350,7 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
         tags_per_active_minute=measure("tags_per_active_minute"),
         reaction_shots=measure("reaction_shots"),
         follow_up_shots=measure("follow_up_shots"),
-        enemies_alive_per_active_roll=measure("enemies_alive_per_active_roll"),
+        enemies_on_floor_per_active_roll=measure("enemies_on_floor_per_active_roll"),
         mode_round_share={
             mode: ticks / (round_ticks * tally.player_rounds)
             for mode, ticks in sorted(tally.modes.items())
@@ -460,7 +460,7 @@ def _probe_round(task: tuple) -> _RoundTally:
             tally.active_rolls[player.last_chosen_action] += 1
             row = rows[id(player)]
             row.active_rolls += 1
-            row.enemies_alive += sum(
+            row.enemies_on_floor += sum(
                 1
                 for other in all_alive
                 if other.team_color != player.team_color and other.final_lives > 0

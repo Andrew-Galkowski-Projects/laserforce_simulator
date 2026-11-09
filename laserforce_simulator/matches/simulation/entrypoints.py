@@ -36,7 +36,7 @@ from ..sim_helpers.map_loader import (
     zone_from_cell,
 )
 from ..sim_helpers import nuke_arming
-from ..sim_helpers.mechanics import shot_cooldown
+from ..sim_helpers.mechanics import cooldown_ticks
 from ..sim_helpers.modes import update_mode
 from ..sim_helpers.pathfinding import (
     astar_advance_cached,
@@ -60,11 +60,7 @@ from ..sim_helpers.shot import (
     resolve_shot,
 )
 from ..sim_helpers.spawn_assigner import assign_spawn_cells
-from ..sim_helpers.time_constants import (
-    SURVIVED_SENTINEL,
-    TICK_SECONDS,
-    TICKS_PER_ROUND,
-)
+from ..sim_helpers.time_constants import SURVIVED_SENTINEL, TICKS_PER_ROUND
 
 from . import persistence
 from .round_loop import (
@@ -1786,7 +1782,7 @@ class BatchSimulator:
                 # CAL-02a bug B (2026-11-08): ``second`` and ``last_shot_time``
                 # are ticks here, so the seconds cooldown is converted to whole
                 # ticks before the comparison (Heavy 2, others 1, rapid Scout 0).
-                h_cd = int(round(shot_cooldown(h, second) / TICK_SECONDS))
+                h_cd = cooldown_ticks(h, second)
                 if not (h_cd == 0 or (second - h.last_shot_time) >= h_cd):
                     continue
                 holder_cell = (h.cell_row, h.cell_col)

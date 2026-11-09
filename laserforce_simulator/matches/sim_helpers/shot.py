@@ -34,11 +34,10 @@ from dataclasses import dataclass
 from .combat import _elevation_hit_modifier
 from .down import record_down
 from .follow_rule import may_tag
-from .mechanics import shot_cooldown
+from .mechanics import cooldown_ticks
 from .pending_events import PendingFollowup, PendingReaction
 from .round_context import RoundContext
 from . import engagement
-from .time_constants import TICK_SECONDS
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -109,12 +108,9 @@ def _elimination_action(kind: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _cooldown_ticks(player, tick: int) -> int:
-    """TIME-01: round a seconds cooldown to whole ticks.
-
-    Mirrors the ``simulation._cooldown_ticks`` helper byte-for-byte.
-    """
-    return int(round(shot_cooldown(player, tick) / TICK_SECONDS))
+# TIME-01: the seconds cooldown in whole ticks, ``mechanics.cooldown_ticks`` (the
+# tick loop's Overwatch gate and ``plan_action`` use the same helper).
+_cooldown_ticks = cooldown_ticks
 
 
 # ---------------------------------------------------------------------------

@@ -7,21 +7,30 @@ Usage:
 Pure parsing, no Django. A TDF log is UTF-16, tab-separated; the rows read here are
 entity-start (type 3: the role in column 7 as 1 Commander / 2 Heavy / 3 Scout / 4 Ammo /
 5 Medic, the team in column 5), events (type 4: ``time code actor text [target]``),
-player-state (type 9: ``time entity state`` with 0 Active, 2 coming back, 3 Down) and
-sm5-stats (type 7: ``id shotsHit shotsFired timesZapped ...``).
+player-state (type 9: ``time entity state`` with 0 Active, 2 coming back, 3 Down),
+sm5-stats (type 7: ``id shotsHit shotsFired timesZapped ... livesLeft`` in column 16)
+and entity-end (type 6: ``time id type score``, the time the player left the game).
 
 A Tag is a zap (code 0205 without a Down, 0206 with one) on an ENEMY; a zap on a teammate
 is a shot, not a Tag, and LFstats ``shotsHit`` is never a tag count (it also counts
 Resupplies and Base zaps). Times tagged counts enemy Tags on a player; a Missile hit
 (0306) is not one. Shots fired are the player's 0201 misses, 0203 Base zaps and
-0205 / 0206 zaps; accuracy on enemies is Tags over Tags plus misses. Active share is the
-share of the 15 minutes spent in state 0 of the player-state rows; an Elimination is a
-Down the player never returns from. Games without exactly twelve players at the five
-roles (one Medic a team) are skipped and counted.
+0205 / 0206 zaps; shots at players (``shots_at_players``) are the zaps on players, enemy
+or teammate, plus the misses, with no Base zaps: what the sim's shots fired count.
+Accuracy on enemies is Tags over Tags plus misses. An Elimination is ending the game
+with no lives: ``livesLeft`` 0 in the player's sm5-stats row, at the entity-end row's
+time (the Elimination Down itself usually writes no player-state row: the rows end at
+the previous Down's return, the final zap on the player follows, and the entity-end
+comes about 2 s later; a player Down at the buzzer with lives left is not Eliminated).
+Active share is the share of the 15 minutes spent in state 0 of the player-state rows,
+stopped at the Elimination. Games without exactly twelve players at the five roles (one
+Medic a team) are skipped and counted; a corrupt log (not UTF-16, or a malformed row)
+is a ``ValueError`` naming the file, never a skipped game.
 
 The logs stay out of the repo. ``--fetch`` downloads a missing ``<slug>.tdf`` from the
-public archive for every slug in the Test file's games. Treat the logs as untrusted data:
-run with ``python -I`` and keep this script outside the logs folder.
+public archive for every slug in the Test file's games; a failed download is a
+``RuntimeError`` naming the URL. Treat the logs as untrusted data: run with
+``python -I`` and keep this script outside the logs folder.
 """
 
 from __future__ import annotations
@@ -30,6 +39,7 @@ import argparse
 import json
 import statistics
 import sys
+import urllib.error
 import urllib.request
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
@@ -53,7 +63,7 @@ TAG_CODES = {ZAP, ZAP_DOWN}
 STATE_ACTIVE, STATE_DOWN = "0", "3"
 # Shot cadence bins: a gap of ``x`` seconds falls in the first bin with ``x <= edge``.
 CADENCE_BINS: list[tuple[float, str]] = [
-    (0.5, "<0.5"),
+    (0.5, "<=0.5"),
     (1.0, "0.5-1"),
     (2.0, "1-2"),
     (5.0, "2-5"),
@@ -83,6 +93,7 @@ class ParsedLog:
     events: list[tuple[int, str, str, str | None]] = field(default_factory=list)
     states: list[tuple[int, str, str]] = field(default_factory=list)
     stats: dict[str, dict[str, int]] = field(default_factory=dict)
+    ends: dict[str, int] = field(default_factory=dict)  # entity -> entity-end ms
 
 
 @dataclass
@@ -101,26 +112,45 @@ class GameStats:
     gaps: dict[str, list[float]]  # role -> gaps between one player's shots, seconds
 
 
+def _read_row(log: ParsedLog, p: list[str]) -> None:
+    """Add one tab-split row to ``log``; rows of other types are passed over."""
+    if p[0] == "3" and len(p) >= 8 and p[3] == "player":
+        log.roles[p[2]] = ROLE_CODES.get(p[7], p[7])
+        log.teams[p[2]] = p[5]
+    elif p[0] == "4" and len(p) >= 4:
+        target = p[5] if len(p) >= 6 else None
+        log.events.append((int(p[1]), p[2], p[3], target))
+    elif p[0] == "9" and len(p) >= 4:
+        log.states.append((int(p[1]), p[2], p[3]))
+    elif p[0] == "7" and len(p) >= 5:
+        log.stats[p[1]] = {
+            "shotsHit": int(p[2]),
+            "shotsFired": int(p[3]),
+            "timesZapped": int(p[4]),
+        }
+        if len(p) >= 17:
+            log.stats[p[1]]["livesLeft"] = int(p[16])
+    elif p[0] == "6" and len(p) >= 3:
+        log.ends[p[2]] = int(p[1])
+
+
 def parse_log(path: Path) -> ParsedLog:
-    """Read the player, event, state and stats rows of one UTF-16 TDF log."""
+    """Read the player, event, state and stats rows of one UTF-16 TDF log.
+
+    Raises:
+        ValueError: naming ``path`` when the file is not UTF-16 text, or naming
+            the line when a row's number does not parse (a truncated row).
+    """
     log = ParsedLog()
-    text = path.read_text(encoding="utf-16")
-    for line in text.splitlines():
-        p = line.split("\t")
-        if p[0] == "3" and len(p) >= 8 and p[3] == "player":
-            log.roles[p[2]] = ROLE_CODES.get(p[7], p[7])
-            log.teams[p[2]] = p[5]
-        elif p[0] == "4" and len(p) >= 4:
-            target = p[5] if len(p) >= 6 else None
-            log.events.append((int(p[1]), p[2], p[3], target))
-        elif p[0] == "9" and len(p) >= 4:
-            log.states.append((int(p[1]), p[2], p[3]))
-        elif p[0] == "7" and len(p) >= 5:
-            log.stats[p[1]] = {
-                "shotsHit": int(p[2]),
-                "shotsFired": int(p[3]),
-                "timesZapped": int(p[4]),
-            }
+    try:
+        text = path.read_text(encoding="utf-16")
+    except UnicodeError as exc:
+        raise ValueError(f"{path}: not a UTF-16 TDF log ({exc})") from exc
+    for number, line in enumerate(text.splitlines(), start=1):
+        try:
+            _read_row(log, line.split("\t"))
+        except ValueError as exc:
+            raise ValueError(f"{path} line {number}: malformed row ({exc})") from exc
     log.events.sort(key=lambda e: e[0])
     log.states.sort(key=lambda s: s[0])
     return log
@@ -138,8 +168,19 @@ def is_full_game(log: ParsedLog) -> bool:
 
 
 def _active_and_eliminations(
-    players: list[str], states: list[tuple[int, str, str]]
+    players: list[str],
+    states: list[tuple[int, str, str]],
+    stats: dict[str, dict[str, int]],
+    ends: dict[str, int],
 ) -> tuple[dict[str, int], dict[str, int]]:
+    """Each player's Active ms and, for the Eliminated, the Elimination ms.
+
+    An Elimination is ``livesLeft`` 0 in the sm5-stats row, at the entity-end time
+    (the last Down row when there is none). The Elimination Down itself usually
+    writes no player-state row, so the state rows alone miss most of them, and a
+    player Down at the buzzer with lives left is no Elimination. Active time is
+    the time in state 0, stopped at the Elimination.
+    """
     timeline: dict[str, list[tuple[int, str]]] = defaultdict(list)
     for t, ent, st in states:
         timeline[ent].append((t, st))
@@ -147,18 +188,18 @@ def _active_and_eliminations(
     elim_ms: dict[str, int] = {}
     for e in players:
         tl = timeline.get(e, [])
+        if stats.get(e, {}).get("livesLeft") == 0:
+            last_down = max([t for t, st in tl if st == STATE_DOWN], default=GAME_MS)
+            elim_ms[e] = ends.get(e, last_down)
+        end = min(GAME_MS, elim_ms.get(e, GAME_MS))
         active, state, since = 0, STATE_ACTIVE, 0
         for t, st in tl:
             if state == STATE_ACTIVE:
-                active += t - since
+                active += max(0, min(t, end) - since)
             state, since = st, t
         if state == STATE_ACTIVE:
-            active += GAME_MS - since
+            active += max(0, end - since)
         active_ms[e] = active
-        last_active = max([t for t, st in tl if st == STATE_ACTIVE], default=0)
-        downs_after = [t for t, st in tl if st == STATE_DOWN and t > last_active]
-        if downs_after and tl and tl[-1][1] != STATE_ACTIVE:
-            elim_ms[e] = downs_after[0]
     return active_ms, elim_ms
 
 
@@ -212,7 +253,9 @@ def game_stats(log: ParsedLog) -> GameStats | None:
                 counts[actor]["downs_given"] += 1
                 counts[target]["downs_taken"] += 1
                 who_downs_whom[(roles[actor], roles[target])] += 1
-    active_ms, elim_ms = _active_and_eliminations(players, log.states)
+    active_ms, elim_ms = _active_and_eliminations(
+        players, log.states, log.stats, log.ends
+    )
     return GameStats(
         roles=roles,
         teams=teams,
@@ -253,6 +296,9 @@ def _player_metrics(game: GameStats, e: str) -> dict[str, float]:
         "shots_hit_lfstats": lfstats.get("shotsHit", 0),
         "times_zapped_lfstats": lfstats.get("timesZapped", 0),
         "shots_fired": c["shots_fired"],
+        # The sim's shots fired: zaps on players (enemy or teammate) plus misses,
+        # with no Base zaps.
+        "shots_at_players": c["tags"] + c["team_zaps"] + c["misses"],
         "misses": c["misses"],
         "base_zaps": c["base_zaps"],
         "team_zaps": c["team_zaps"],
@@ -364,9 +410,22 @@ def build_payload(logs_dir: Path) -> dict[str, Any]:
 
 
 def download_log(slug: str, dest: Path) -> None:
-    """Fetch one log from the public archive into ``dest``."""
-    with urllib.request.urlopen(ARCHIVE_URL.format(slug=slug)) as response:
-        dest.write_bytes(response.read())
+    """Fetch one log from the public archive into ``dest``.
+
+    Raises:
+        RuntimeError: naming the URL when the fetch fails or answers other than 200;
+            nothing is written then.
+    """
+    url = ARCHIVE_URL.format(slug=slug)
+    try:
+        with urllib.request.urlopen(url) as response:
+            status = getattr(response, "status", 200)
+            if status != 200:
+                raise RuntimeError(f"could not fetch {url}: HTTP {status}")
+            body = response.read()
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"could not fetch {url}: {exc.reason}") from exc
+    dest.write_bytes(body)
 
 
 def fetch_missing(
