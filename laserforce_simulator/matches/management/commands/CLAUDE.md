@@ -151,8 +151,11 @@ Throwaway data for a browser check in a worktree's disposable database (ADR-0004
 python manage.py seed_browser_check          # Accounts browser-a / browser-b@example.com, password browser-check-pass
 python manage.py seed_browser_check --league # also seed Account A "Browser Check League" and "Browser Check Conferences"
 python manage.py seed_browser_check --tournaments # also seed Account A one Tournament per format and stage
-python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, both Leagues and the map
+python manage.py seed_browser_check --syracuse # also seed Account A a full-fidelity Single Round on the committed Syracuse map
+python manage.py seed_browser_check --clean  # delete both Accounts, every row they own, both Leagues and the maps
 ```
+
+**`--syracuse`** (for reviewing real pathing, CAL-02 retro) loads `data/maps/syracuse.json` as "Browser Check Syracuse", with its own copy of the drawing from `DEFAULT_MAPS_DIR` (`maps/browser_check_Syracuse_Laser_Tag_Map_cropped.png`), so `--clean` leaves any default "Syracuse Laser Tag" and its image alone. It simulates one full-fidelity Single Round between A's first two Teams and prints its `/rounds/<id>/playback`, `/events` and `/heatmap` paths. It adds about 50 s to the seed's 20 s.
 
 Account A gets four valid Teams, a simulated sandbox Match, a map-less Single Round, a **mapped
 Single Round** and an unfinished Match (round 1 only, `is_completed=False`, no winner: what a League

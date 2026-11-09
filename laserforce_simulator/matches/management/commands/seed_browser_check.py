@@ -13,15 +13,21 @@ two Conferences, each with a rotation on the map, map mode
 ``rotate_by_conference``.
 ``--tournaments`` also gives A one sandbox Tournament per format and stage
 (``_browser_check_tournaments``; Matches played with ``play_next``).
+``--syracuse`` also gives A a full-fidelity Single Round on the committed Syracuse
+fixture, "Browser Check Syracuse", for reviewing real pathing on Playback, the event
+log and the heatmap.
 ``--clean`` deletes both Accounts, every row they own, the Tournaments, both Leagues and
-their Matches, the map and its media files. For a worktree's disposable database
+their Matches, the maps and their media files. For a worktree's disposable database
 (ADR-0004).
 """
 
 import io
+from pathlib import Path
 from typing import Any
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files import File
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 from django.db import transaction
@@ -46,6 +52,8 @@ from matches.management.commands._browser_check_tournaments import (
     delete_browser_check_tournaments,
     seed_browser_check_tournaments,
 )
+from matches.management.commands.lfstats_calibrate import DEFAULT_MAP_FIXTURE
+from matches.lfstats_calibration import load_map_fixture
 from matches.models import GameRound, League, Match
 from matches.services import create_sandbox_match, create_sandbox_round
 from matches.simulation import BatchSimulator
@@ -58,6 +66,8 @@ EMAIL_B = "browser-b@example.com"
 PASSWORD = "browser-check-pass"
 
 MAP_NAME = "Browser Check Arena"
+SYRACUSE_MAP_NAME = "Browser Check Syracuse"
+SYRACUSE_IMAGE = "Syracuse_Laser_Tag_Map_cropped.png"
 ZONE_SIZE = 20
 MAP_ROWS = 20
 MAP_COLS = 30
@@ -181,6 +191,20 @@ def create_mapped_round(
     return game_round
 
 
+def create_syracuse_map() -> ArenaMap:
+    """The committed Syracuse fixture as a real map, under its own name and image
+    file, so ``--clean`` never touches a default "Syracuse Laser Tag" or its image."""
+    source = Path(settings.DEFAULT_MAPS_DIR) / SYRACUSE_IMAGE
+    if not source.is_file():
+        raise CommandError(f"The Syracuse image is missing: {source}")
+    arena_map = load_map_fixture(DEFAULT_MAP_FIXTURE)
+    arena_map.name = SYRACUSE_MAP_NAME
+    with source.open("rb") as image:
+        arena_map.image.save(f"browser_check_{SYRACUSE_IMAGE}", File(image))
+    arena_map.save()
+    return arena_map
+
+
 def mark_friendly_fire_missile(game_round: GameRound) -> bool:
     """Flag the Round's first missile hit (or first missile) as Friendly fire, and
     return whether there was one to flag.
@@ -227,18 +251,33 @@ class Command(BaseCommand):
             action="store_true",
             help="also seed Account A one sandbox Tournament per format and stage",
         )
+        parser.add_argument(
+            "--syracuse",
+            action="store_true",
+            help="also seed Account A a full-fidelity Single Round on Syracuse",
+        )
 
     def handle(self, *args: Any, **options: Any) -> None:
         if options["clean"]:
             self._clean()
         else:
-            self._seed(league=options["league"], tournaments=options["tournaments"])
+            self._seed(
+                league=options["league"],
+                tournaments=options["tournaments"],
+                syracuse=options["syracuse"],
+            )
 
-    def _seed(self, *, league: bool = False, tournaments: bool = False) -> None:
+    def _seed(
+        self,
+        *,
+        league: bool = False,
+        tournaments: bool = False,
+        syracuse: bool = False,
+    ) -> None:
         user_model = get_user_model()
         if (
             user_model.objects.filter(email__in=[EMAIL_A, EMAIL_B]).exists()
-            or ArenaMap.objects.filter(name=MAP_NAME).exists()
+            or ArenaMap.objects.filter(name__in=[MAP_NAME, SYRACUSE_MAP_NAME]).exists()
             or (
                 league
                 and League.objects.filter(
@@ -314,6 +353,16 @@ class Command(BaseCommand):
                 "Tournaments "
                 + ", ".join(f"{t.pk} ({t.name})" for t in seeded_tournaments)
             )
+        if syracuse:
+            syracuse_map = create_syracuse_map()
+            review = BatchSimulator().ensure_fidelity(
+                create_sandbox_round(red, blue, arena_map=syracuse_map, user=a), "full"
+            )
+            self.stdout.write(
+                f"Map {syracuse_map.pk} ({SYRACUSE_MAP_NAME}), review Round {review.pk}: "
+                f"/rounds/{review.pk}/playback, /rounds/{review.pk}/events, "
+                f"/rounds/{review.pk}/heatmap"
+            )
 
     @transaction.atomic
     def _clean(self) -> None:
@@ -347,7 +396,7 @@ class Command(BaseCommand):
             "Accounts": _deleted(users),
         }
         # delete_map removes the image and processed cache once this commits.
-        maps = list(ArenaMap.objects.filter(name=MAP_NAME))
+        maps = list(ArenaMap.objects.filter(name__in=[MAP_NAME, SYRACUSE_MAP_NAME]))
         for arena_map in maps:
             delete_map(arena_map)
         counts["Maps"] = len(maps)

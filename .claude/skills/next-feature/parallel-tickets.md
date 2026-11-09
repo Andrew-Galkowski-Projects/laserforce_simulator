@@ -132,5 +132,17 @@ Add these to each implementer prompt, beside `SKILL.md`'s shared constraints:
   with `new_page`, close only that page, and leave `close_mcp_browser.ps1` to
   the orchestrator, who runs it once after the last agent reports. This
   overrides the reuse-the-tab rule in `CLAUDE.md`.
-- Commit only on your ticket branch. Merge the integration tip into it before
-  reporting done. Comment the commit hash on your ticket issue.
+- Commit only on your ticket branch, and commit each green slice as you go: the
+  PR is squash-merged, so WIP commits cost nothing, and uncommitted work is lost
+  if your session ends. Merge the integration tip into it before reporting done.
+  Comment the commit hash on your ticket issue.
+
+## An implementer that stops reporting
+
+An agent's session can end with no report and no commit (CAL-02b finished every
+criterion and died before `git commit`). Before restarting a ticket, compare its
+worktree with `git log <its branch>` and `diff` against the integration branch.
+Bring finished work over with `python scripts/copy_staged.py <worktree> --worktree`:
+it takes everything uncommitted and prints any path that also changed on the
+integration branch as `CHANGED ON BOTH SIDES`, for you to merge by hand. Re-run the
+ticket's tests there and commit it yourself.

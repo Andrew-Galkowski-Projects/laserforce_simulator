@@ -19,7 +19,9 @@ free-agent pool, a ratings snapshot per Player per Season, and settled finances
 for both completed Seasons (cash, Season history, one injured Player), plus a
 sandbox League whose draft Season splits four Teams into two Conferences
 (ANG-06-18: editable Conferences, draft Standings); `--tournaments` for
-Tournament features: one sandbox Tournament per format and stage) and
+Tournament features: one sandbox Tournament per format and stage; `--syracuse`
+when the owner reviews real pathing: a full-fidelity Single Round on the committed
+Syracuse map, with its Playback, event log and heatmap paths in the summary) and
 remove it with `--clean` when done.
 
 ## Assert and screenshot

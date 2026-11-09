@@ -1,5 +1,8 @@
 """Real per-role targets from the Laserforce TDF event logs (CAL-02, spec #563 D1 / D8).
 
+The sm5-stats row (type 7) is each player's ground truth; derive from the events only
+what it lacks, and check each derivation against it.
+
 Usage:
     python -I scripts/tdf_role_stats.py <logs dir> --out data/tdf_role_targets_2026.json
         [--fetch] [--test-file data/lfstats_test_internationals_2026.json]

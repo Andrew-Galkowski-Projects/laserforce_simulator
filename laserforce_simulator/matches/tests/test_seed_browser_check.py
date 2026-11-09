@@ -35,6 +35,7 @@ from teams.models import Player, Team
 _A = "browser-a@example.com"
 _B = "browser-b@example.com"
 _MAP_NAME = "Browser Check Arena"
+_SYRACUSE_NAME = "Browser Check Syracuse"
 _LEAGUE_NAME = "Browser Check League"
 _CONFERENCE_LEAGUE_NAME = "Browser Check Conferences"
 
@@ -300,6 +301,88 @@ class SeedBrowserCheckMapCleanTests(TempMediaMixin, TestCase):
         with self.captureOnCommitCallbacks(execute=True):
             output = _seed("--clean")
         self.assertIn("removed", output)
+
+
+class SeedBrowserCheckSyracuseTests(ClassTempMediaMixin, TestCase):
+    """``--syracuse``: a reviewable full-fidelity Round on the committed fixture."""
+
+    output: str
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.output = _seed("--syracuse")
+
+    def _round(self) -> GameRound:
+        return GameRound.objects.get(arena_map__name=_SYRACUSE_NAME)
+
+    def test_the_map_resolves_and_keeps_the_fixture_scale(self) -> None:
+        arena_map = ArenaMap.objects.get(name=_SYRACUSE_NAME)
+        self.assertEqual(arena_map.feet_per_pixel, 0.05)
+        self.assertIsNotNone(load_map_context(arena_map)[0])
+
+    def test_the_image_is_under_the_media_root(self) -> None:
+        arena_map = ArenaMap.objects.get(name=_SYRACUSE_NAME)
+        self.assertTrue(self.media_root.joinpath(arena_map.image.name).exists())
+        # upload_to already adds maps/, and a second one would nest the file.
+        self.assertEqual(
+            arena_map.image.name,
+            "maps/browser_check_Syracuse_Laser_Tag_Map_cropped.png",
+        )
+
+    def test_the_round_is_full_fidelity_and_account_a_owns_it(self) -> None:
+        game_round = self._round()
+        self.assertEqual(game_round.fidelity, "full")
+        self.assertEqual(game_round.manager.email, _A)
+        self.assertTrue(game_round.events.filter(event_type="movement").exists())
+
+    def test_playback_returns_the_map(self) -> None:
+        game_round = self._round()
+        api = APIClient()
+        api.force_login(game_round.manager)
+        response = api.get(f"/api/rounds/{game_round.pk}/playback/")
+        self.assertEqual(response.status_code, 200, response.content)
+        self.assertEqual(
+            response.json()["data"]["map"]["arena_map"]["name"], _SYRACUSE_NAME
+        )
+
+    def test_the_summary_names_the_round_screens(self) -> None:
+        pk = self._round().pk
+        for screen in ("playback", "events", "heatmap"):
+            self.assertIn(f"/rounds/{pk}/{screen}", self.output)
+
+    def test_seeding_twice_is_refused(self) -> None:
+        with self.assertRaises(CommandError):
+            _seed("--syracuse")
+
+
+class SeedBrowserCheckWithoutSyracuseTests(ClassTempMediaMixin, TestCase):
+    def test_without_the_flag_no_syracuse_map_is_seeded(self) -> None:
+        _seed()
+        self.assertFalse(ArenaMap.objects.filter(name=_SYRACUSE_NAME).exists())
+
+    def test_a_stray_syracuse_map_refuses_the_seed(self) -> None:
+        ArenaMap.objects.create(name=_SYRACUSE_NAME)
+        with self.assertRaises(CommandError):
+            _seed()
+
+
+class SeedBrowserCheckSyracuseCleanTests(TempMediaMixin, TestCase):
+    def test_clean_removes_the_map_and_only_its_own_image(self) -> None:
+        _seed("--syracuse")
+        arena_map = ArenaMap.objects.get(name=_SYRACUSE_NAME)
+        own_image = self.media_root.joinpath(arena_map.image.name)
+        default_image = self.media_root / "maps" / "Syracuse_Laser_Tag_Map_cropped.png"
+        default_image.parent.mkdir(parents=True, exist_ok=True)
+        default_image.write_bytes(b"the default map's image")
+        self.assertNotEqual(own_image, default_image)
+
+        with self.captureOnCommitCallbacks(execute=True):
+            output = _seed("--clean")
+
+        self.assertIn("Maps: 2", output)
+        self.assertFalse(ArenaMap.objects.filter(name=_SYRACUSE_NAME).exists())
+        self.assertFalse(own_image.exists())
+        self.assertTrue(default_image.exists())
 
 
 def _api_for_a() -> APIClient:

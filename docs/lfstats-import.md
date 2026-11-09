@@ -556,8 +556,12 @@ LFstats serves each game's raw Laserforce TDF event log (`tdf_url` on `lfstats_g
 `https://lfstats-modern-archive.s3.us-west-1.amazonaws.com/<slug>.tdf`; UTF-16, tab-separated;
 event codes 0205 zap without a Down, 0206 zap with a Down, 0404 activates nuke, 0405 detonates
 nuke; there is no cancel event, a cancel is an activation with no detonation before the player's
-next one). All 165 Internationals 2026 games were parsed (the analysis script lived in the session
-scratchpad; the figures below are the record). The sim column is the shipped branch over the 128
+next one). **The sm5-stats row (type 7) is each player's ground truth** (shotsHit, shotsFired,
+timesZapped, missileHits, nukesActivated, nukesDetonated, nukeCancels, livesLeft and more; the
+`;7/sm5-stats` header row names the columns): derive from the events only what it lacks, and
+check each derivation against it. CAL-02's first Elimination rule, read off the state rows, missed
+556 of the 917 Eliminations that `livesLeft` shows. All 165 Internationals 2026 games were parsed
+(the analysis script lived in the session scratchpad; the figures below are the record). The sim column is the shipped branch over the 128
 usable Test games, one round each, both Commanders per round.
 
 | Per game, both teams | Real (TDF) | Sim (branch) |
