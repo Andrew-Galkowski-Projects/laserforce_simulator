@@ -3,8 +3,9 @@ import { provideHttpClient, withInterceptors } from '@angular/common/http';
 import { HttpTestingController, provideHttpClientTesting } from '@angular/common/http/testing';
 import { environment } from '../../../../environments/environment';
 import { authInterceptor } from '../../../auth/auth.interceptor';
-import { PlaybackMap as PlaybackMapData } from '../../../api/rounds.models';
-import { playbackMap } from '../../testing/playback-fixtures';
+import { PlaybackMap as PlaybackMapData, PlaybackSnapshot } from '../../../api/rounds.models';
+import { POLL_TIMERS } from '../../../shared/testing/poll-timers';
+import { playbackMap, playbackMapPlayer, playbackSnapshot } from '../../testing/playback-fixtures';
 import { PlaybackMap, readPalette } from './playback-map';
 
 const BASE = environment.apiBaseUrl;
@@ -56,11 +57,15 @@ describe('PlaybackMap (beta, contract only)', () => {
   /** Answers the zone-config request the first open sends beside the image request. */
   const answerZoneConfig = (): void => http.expectOne(ZONE_URL).flush(zoneConfig());
 
-  async function render(map: PlaybackMapData | null, cursor = 0): Promise<void> {
+  async function render(
+    map: PlaybackMapData | null,
+    cursor = 0,
+    snapshots: ReadonlyMap<number, readonly PlaybackSnapshot[]> = new Map(),
+  ): Promise<void> {
     fixture = TestBed.createComponent(PlaybackMap);
     fixture.componentRef.setInput('map', map);
     fixture.componentRef.setInput('cursor', cursor);
-    fixture.componentRef.setInput('snapshots', new Map());
+    fixture.componentRef.setInput('snapshots', snapshots);
     fixture.componentRef.setInput('respawnTicks', 16);
     fixture.componentRef.setInput('events', []);
     await fixture.whenStable();
@@ -175,6 +180,125 @@ describe('PlaybackMap (beta, contract only)', () => {
     expect(text(host().querySelector('.pm-notice'))).toBe(NOTICE);
     expect(host().querySelector('.pm-panel canvas')).toBeNull();
     expect(create).not.toHaveBeenCalled();
+  });
+
+  describe('frame loop (RV-07b)', () => {
+    // A Scout in rapid fire from tick 10 until tick 20.
+    const scoutMap = playbackMap({
+      players: [playbackMapPlayer({ role: 'scout', special_cost: 10, max_missiles: 0 })],
+    });
+    const rapidFire = new Map([
+      [
+        101,
+        [
+          playbackSnapshot({ tick: 0 }),
+          playbackSnapshot({ tick: 10, rapid_fire: true }),
+          playbackSnapshot({ tick: 20 }),
+        ],
+      ],
+    ]);
+    // Another spec in this worker may have left its own matchMedia: put back whatever was there.
+    let matchMediaBefore: PropertyDescriptor | undefined;
+
+    beforeEach(() => {
+      matchMediaBefore = Object.getOwnPropertyDescriptor(window, 'matchMedia');
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+      if (matchMediaBefore) {
+        Object.defineProperty(window, 'matchMedia', matchMediaBefore);
+      } else {
+        delete (window as Partial<Window>).matchMedia;
+      }
+    });
+
+    /** Renders the map at tick 0 (nothing running) and opens it, with its fetches answered. */
+    async function renderOpen(): Promise<void> {
+      await render(scoutMap, 0, rapidFire);
+      await openMap();
+      http.expectOne(IMAGE_URL).flush(png());
+      answerZoneConfig();
+      await fixture.whenStable();
+    }
+
+    /** Fakes the interval timers and rAF (`POLL_TIMERS`), after the first render. */
+    const fakeFrames = (): void => {
+      vi.useFakeTimers({ toFake: POLL_TIMERS });
+    };
+
+    async function seek(tick: number): Promise<void> {
+      fixture.componentRef.setInput('cursor', tick);
+      await fixture.whenStable();
+    }
+
+    /**
+     * The frames still requested after three frames have run and the page has settled. Angular's
+     * scheduler and the button ripple take one-shot frames; only the map's loop asks again.
+     */
+    async function pendingFrames(): Promise<number> {
+      for (let i = 0; i < 3; i++) {
+        vi.advanceTimersToNextFrame();
+      }
+      await fixture.whenStable();
+      return vi.getTimerCount();
+    }
+
+    it('requests frames while the cursor sits in a rapid-fire run, and stops once it leaves', async () => {
+      await renderOpen();
+      fakeFrames();
+      await seek(12);
+      expect(await pendingFrames()).toBe(1);
+      await seek(25);
+      expect(await pendingFrames()).toBe(0);
+    });
+
+    it('requests none while no special runs at the cursor', async () => {
+      await renderOpen();
+      fakeFrames();
+      await seek(5);
+      expect(await pendingFrames()).toBe(0);
+    });
+
+    it('requests none while the map is closed', async () => {
+      await render(scoutMap, 0, rapidFire);
+      fakeFrames();
+      await seek(12);
+      expect(await pendingFrames()).toBe(0);
+    });
+
+    it('stops when the map closes, or the component is destroyed', async () => {
+      await renderOpen();
+      fakeFrames();
+      await seek(12);
+      expect(await pendingFrames()).toBe(1);
+      await openMap();
+      expect(await pendingFrames()).toBe(0);
+      await openMap();
+      expect(await pendingFrames()).toBe(1);
+      fixture.destroy();
+      vi.advanceTimersToNextFrame();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    it('requests none under prefers-reduced-motion: reduce', async () => {
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true,
+        writable: true,
+        value: (query: string) => ({
+          matches: query === '(prefers-reduced-motion: reduce)',
+          media: query,
+          addEventListener: () => undefined,
+          removeEventListener: () => undefined,
+          addListener: () => undefined,
+          removeListener: () => undefined,
+        }),
+      });
+      await renderOpen();
+      fakeFrames();
+      await seek(12);
+      expect(await pendingFrames()).toBe(0);
+    });
   });
 });
 

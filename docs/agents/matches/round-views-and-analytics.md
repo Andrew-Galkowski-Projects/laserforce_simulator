@@ -288,8 +288,29 @@ after LFstats's Replay tab, within ADR-0043.
     over a `--lf-gauge-track` arc; then, for a Commander or Heavy, `max_missiles` pips of radius
     `0.055 size` under the arcs, lit in `--lf-ev-missile` per missile left, unlit in the track.
     A deactivated player's gauges are drawn at the icon's 0.35 alpha and keep their colours. The
-    four gauge tokens are the same in light and dark (the map image is white in both). The
-    special bar under the pips is RV-07b.
+    four gauge tokens are the same in light and dark (the map image is white in both).
+  - RV-07b: every player with a special (not a Heavy) gets a **special bar** under the pips.
+    `playerGauges` fills `special` (`SpecialBar`, `null` when `special_cost` is null): SP is
+    capped at `MAX_SP` (99), `lap = floor(sp / cost)` the completed laps and
+    `fill = (sp % cost) / cost` the current one; `running` is `'nuke'` on `nuking`,
+    `'rapid-fire'` on `rapid_fire`, else `'none'`; `fuse` is `fuseProgress(snapshots, tick)`
+    while nuking. `fuseProgress` lights the fuse at the first snapshot of the latest `nuking` run
+    at or before the tick and ends it at the next snapshot that clears `nuking` (detonation or
+    cancel), else lit + 14; the end tick reads 1, later ticks `null`. `drawSpecialBar` paints it
+    `1.15 size` wide and `max(4, 0.13 size)` high, centred `1.12 h` + `0.3 size` (with missiles,
+    else `0.18 size`) under the player: the previous lap's colour (`lapColour(lap - 1)`, or the
+    track before the first lap) with the current lap's fill over it, and one tick per completed
+    lap above the bar in that lap's colour. `lapColour(lap, laps)` takes the ten
+    `--lf-special-lap-*` tokens (green, orange, red, then darker reds; the same in both themes)
+    and clamps to the last. **Rapid fire** rolls stripes (`--lf-map-base-outline`, near white)
+    across the whole bar over the Side colour; a **nuke** turns the bar into its fuse, the first
+    `fuse` of the track rolling the same stripes, with no label. The bar dims with the icon.
+  - **Frame loop:** while the map is open and `anySpecialRunning(players, snapshots, cursor)`,
+    an effect runs a `requestAnimationFrame` loop that sets `performance.now()` for the stripe
+    phase, so the stripes roll while paused. It is cancelled when no special runs, the map
+    closes or the component is destroyed. Under `prefers-reduced-motion: reduce` it never starts
+    and the stripes stand at phase 0. `playback-map.spec.ts` drives it with fake rAF
+    (`POLL_TIMERS`).
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
 
 Tests:
