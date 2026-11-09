@@ -110,7 +110,7 @@ function capturedBase(
   } else if (id === NEUTRAL_BASE_ID) {
     const distance = (b: MapBase) => Math.hypot(b.x_px - capturer[0], b.y_px - capturer[1]);
     base = bases
-      .filter((b) => b.type.startsWith('neutral_'))
+      .filter((b) => baseKind(b.type) === 'neutral')
       .reduce<MapBase | undefined>(
         (best, b) => (!best || distance(b) < distance(best) ? b : best),
         undefined,
@@ -161,10 +161,15 @@ function lineKind(event: TimelineEvent): TagLineKind | null {
   }
 }
 
+/** A base's Side, or `neutral` for every `neutral_*` base. */
+export function baseKind(type: BaseType): 'red' | 'blue' | 'neutral' {
+  return type === 'red' || type === 'blue' ? type : 'neutral';
+}
+
 /** The bases to draw: a lettered diamond each, where the map editor placed them. */
 export function baseMarkers(bases: readonly MapBase[]): BaseMarker[] {
   return bases.map((b) => {
-    const kind = b.type === 'red' || b.type === 'blue' ? b.type : 'neutral';
+    const kind = baseKind(b.type);
     const letter = kind === 'red' ? 'R' : kind === 'blue' ? 'B' : 'N';
     return { type: b.type, kind, letter, x: b.x_px, y: b.y_px };
   });

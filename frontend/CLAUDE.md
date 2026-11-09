@@ -201,8 +201,9 @@ src/
                           role-icon.ts (RV-06: ROLE_ICON_URLS -> public/roles/<role>.png,
                           tintPixels, tintedRoleIcon(role, colour) cached per role + colour,
                           roleIconLoads: redraw when a PNG arrives), role-icon-img.ts
-                          (<app-role-icon [role]>: 1.25em img, alt / title the role's name,
-                          tinted to the host's --side; Playback scoreboard Pos + feed names),
+                          (<app-role-icon [role] [side]>: 1.25em img, alt / title the role's
+                          name, tinted to --lf-side-<side> and re-tinted when side changes;
+                          Playback scoreboard Pos + feed names; clearRoleIconCache for specs),
                           side-tag.ts (sideTag: R / B),
                           event-groups.ts (EVENT_GROUPS, EventGroupKey, eventGroupOf), result.ts (matchResult / roundResult: winner, "Tie", muted
                           "In progress"), result-chip, route-record.ts (loadRouteRecord),

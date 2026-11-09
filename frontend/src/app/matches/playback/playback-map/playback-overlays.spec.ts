@@ -1,7 +1,20 @@
 import { MapBase } from '../../../api/maps.models';
 import { TimelineEvent, TimelineEventType } from '../../../api/rounds.models';
 import { timelineEvent } from '../../testing/timeline-fixtures';
-import { baseMarkers, overlaysAt } from './playback-overlays';
+import { baseKind, baseMarkers, overlaysAt } from './playback-overlays';
+
+describe('baseKind', () => {
+  it('is the Side for a red or blue base', () => {
+    expect(baseKind('red')).toBe('red');
+    expect(baseKind('blue')).toBe('blue');
+  });
+
+  it('is neutral for every neutral_* base', () => {
+    for (const type of ['neutral_1', 'neutral_2', 'neutral_3', 'neutral_4'] as const) {
+      expect(baseKind(type)).toBe('neutral');
+    }
+  });
+});
 
 // Ace (red, 101) stands at (0, 0) and Bolt (blue, 201) at (100, 0) at every tick unless a test
 // says otherwise: an east-facing tag, so the 4 px right-hand offset is +4 in y (y grows down).

@@ -101,6 +101,32 @@ describe('PlaybackFeed', () => {
     expect(without.querySelector('img')).toBeNull();
   });
 
+  it("tints each row's icons to that row's Sides as newer events push rows down", async () => {
+    const root = document.documentElement.style;
+    root.setProperty('--lf-side-red', '#c82814');
+    root.setProperty('--lf-side-blue', '#1a4a94');
+    try {
+      const ammoTags = (tick: number, actor: 'red' | 'blue'): TimelineEvent =>
+        timelineEvent({
+          tick,
+          description: `tag ${tick}`,
+          actor_side: actor,
+          target_side: actor === 'red' ? 'blue' : 'red',
+          metadata: { actor_role: 'ammo', target_role: 'commander' },
+        });
+      await render([ammoTags(1, 'red'), ammoTags(2, 'blue')], 1);
+      await setCursor(2);
+      const tints = (row: HTMLElement): (string | undefined)[] =>
+        [...row.querySelectorAll('img')].map((img) => img.dataset['tint']);
+      const [newest, older] = rows();
+      expect(tints(newest)).toEqual(['#1a4a94', '#c82814']);
+      expect(tints(older)).toEqual(['#c82814', '#1a4a94']);
+    } finally {
+      root.removeProperty('--lf-side-red');
+      root.removeProperty('--lf-side-blue');
+    }
+  });
+
   describe('filters', () => {
     const checkbox = (label: string): HTMLInputElement => {
       const box = [...host().querySelectorAll('mat-checkbox')].find((c) => text(c) === label);

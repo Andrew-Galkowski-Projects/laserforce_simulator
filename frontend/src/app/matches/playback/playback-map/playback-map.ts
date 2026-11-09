@@ -21,7 +21,7 @@ import {
 } from '../../../api/rounds.models';
 import { Role } from '../../../api/players.models';
 import { TICKS_PER_SECOND } from '../../shared/clock';
-import { ROLE_ICON_URLS, roleIconLoads, tintedRoleIcon } from '../../shared/role-icon';
+import { iconRole, roleIconLoads, tintedRoleIcon } from '../../shared/role-icon';
 import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
 import {
   BaseMarker,
@@ -54,12 +54,6 @@ interface Route {
   off: (tick: number) => boolean;
 }
 
-/** `role` as a `Role` with an icon (case-insensitive), or `null`. */
-function iconRole(role: string): Role | null {
-  const key = role.toLowerCase();
-  return key in ROLE_ICON_URLS ? (key as Role) : null;
-}
-
 /** The colours, read from the tokens at draw time. */
 interface Palette {
   side: Record<Side, string>;
@@ -75,13 +69,14 @@ interface Palette {
   baseOutline: string;
 }
 
-function readPalette(el: Element): Palette {
+/** The map's colours, from the tokens as `el` computes them. */
+export function readPalette(el: Element): Palette {
   const css = getComputedStyle(el);
   const token = (name: string): string => css.getPropertyValue(name).trim();
   return {
     side: { red: token('--lf-side-red'), blue: token('--lf-side-blue') },
     trail: { red: token('--lf-side-red-dim'), blue: token('--lf-side-blue-dim') },
-    muted: token('--lf-text-muted'),
+    muted: token('--lf-map-marker-off'),
     surface: token('--lf-surface'),
     border: token('--lf-border'),
     font: token('--lf-font-body'),

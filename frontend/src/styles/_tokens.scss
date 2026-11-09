@@ -81,6 +81,8 @@
   --lf-map-strong-spot: rgb(255 140 0 / 0.82);
   --lf-map-heat-low: rgb(249 249 6);
   --lf-map-heat-high: rgb(249 6 6);
+  // The Playback map's deactivated marker: a mid grey on the always-white image (4.8:1).
+  --lf-map-marker-off: #6b7280;
 
   // Fonts and shape (shared by both modes). JetBrains Mono is self-hosted (`@fontsource`).
   --lf-font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
@@ -159,5 +161,7 @@
     --lf-map-strong-spot: rgb(255 155 30 / 0.82);
     --lf-map-heat-low: rgb(250 235 40);
     --lf-map-heat-high: rgb(245 40 40);
+    // The same grey as light mode: the processed image stays white in dark mode.
+    --lf-map-marker-off: #6b7280;
   }
 }

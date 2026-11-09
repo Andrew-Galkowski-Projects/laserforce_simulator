@@ -12,6 +12,12 @@ export const ROLE_ICON_URLS: Readonly<Record<Role, string>> = {
   medic: 'roles/medic.png',
 };
 
+/** `role` as a `Role` with an icon, matched case-insensitively; `null` for any other role. */
+export function iconRole(role: string): Role | null {
+  const key = role.toLowerCase();
+  return key in ROLE_ICON_URLS ? (key as Role) : null;
+}
+
 /**
  * Tints RGBA pixel data in place: each pixel with alpha > 0 takes
  * `channel = target * (1 - l) + 255 * l`, `l = (r + g + b) / 765`. Black line art becomes `rgb`,
@@ -30,6 +36,15 @@ export function tintPixels(data: Uint8ClampedArray, rgb: readonly [number, numbe
 const images = new Map<Role, HTMLImageElement>();
 const tinted = new Map<string, HTMLCanvasElement>();
 const loads = signal(0);
+
+/**
+ * Forgets every loaded and tinted icon. For specs: the caches are module-wide, and a spec file
+ * sharing a worker with another can otherwise inherit its never-loading jsdom image.
+ */
+export function clearRoleIconCache(): void {
+  images.clear();
+  tinted.clear();
+}
 
 /**
  * Counts the role PNGs loaded so far. A caller that draws `tintedRoleIcon` reads it so it draws

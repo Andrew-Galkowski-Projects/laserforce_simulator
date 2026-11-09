@@ -5,7 +5,7 @@ import { environment } from '../../../../environments/environment';
 import { authInterceptor } from '../../../auth/auth.interceptor';
 import { PlaybackMap as PlaybackMapData } from '../../../api/rounds.models';
 import { playbackMap } from '../../testing/playback-fixtures';
-import { PlaybackMap } from './playback-map';
+import { PlaybackMap, readPalette } from './playback-map';
 
 const BASE = environment.apiBaseUrl;
 
@@ -175,5 +175,19 @@ describe('PlaybackMap (beta, contract only)', () => {
     expect(text(host().querySelector('.pm-notice'))).toBe(NOTICE);
     expect(host().querySelector('.pm-panel canvas')).toBeNull();
     expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe('readPalette', () => {
+  it('greys a deactivated marker with --lf-map-marker-off, not the theme-dependent muted text', () => {
+    const el = document.createElement('canvas');
+    el.style.setProperty('--lf-map-marker-off', '#6b7280');
+    el.style.setProperty('--lf-text-muted', '#e0e0e0');
+    document.body.append(el);
+    try {
+      expect(readPalette(el).muted).toBe('#6b7280');
+    } finally {
+      el.remove();
+    }
   });
 });

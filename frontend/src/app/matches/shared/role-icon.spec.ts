@@ -1,6 +1,25 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROLE_ICON_URLS, tintPixels, tintedRoleIcon } from './role-icon';
+import {
+  ROLE_ICON_URLS,
+  clearRoleIconCache,
+  iconRole,
+  tintPixels,
+  tintedRoleIcon,
+} from './role-icon';
+
+describe('iconRole', () => {
+  it('is the Role with an icon, matched case-insensitively', () => {
+    expect(iconRole('scout')).toBe('scout');
+    expect(iconRole('Commander')).toBe('commander');
+    expect(iconRole('MEDIC')).toBe('medic');
+  });
+
+  it('is null for a role with no icon', () => {
+    expect(iconRole('sniper')).toBeNull();
+    expect(iconRole('')).toBeNull();
+  });
+});
 
 describe('tintPixels', () => {
   /** Black, white, mid-grey and a transparent black pixel, all opaque but the last. */
@@ -90,6 +109,7 @@ describe('tintedRoleIcon', () => {
 
     beforeEach(() => {
       put = [];
+      clearRoleIconCache();
       vi.stubGlobal('Image', LoadedImage);
       vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockImplementation(function (
         this: HTMLCanvasElement,
