@@ -211,6 +211,87 @@ class TestPlaybackMapOrder(TestCase):
         )
 
 
+class TestPlaybackMapRoleLimits(TestCase):
+    """RV-07a (spec #575): every map player carries its role's limits, so the
+    SPA keeps no copy of the role table."""
+
+    LIMIT_KEYS = ("max_lives", "max_shots", "special_cost", "max_missiles")
+
+    def _player(self, role: str, *, stored_role: str | None = None, **state) -> dict:
+        arena_map, zone_size = _make_arena_map(f"PbLimits{role}{stored_role}")
+        gr, red_players, _b = _round(
+            arena_map, zone_size, prefix=f"PbLim{role}{stored_role}"
+        )
+        player = red_players[role]
+        PlayerRoundState.objects.create(
+            game_round=gr,
+            player=player,
+            team_color="red",
+            role=stored_role or role,
+            cell_row=0,
+            cell_col=0,
+            **state,
+        )
+        payload = build_playback_map(gr)
+        assert payload is not None
+        return {p["id"]: p for p in payload["players"]}[player.id]
+
+    def _limits(self, p: dict) -> tuple:
+        return tuple(p[key] for key in self.LIMIT_KEYS)
+
+    def test_every_player_carries_the_limit_keys_after_role(self) -> None:
+        arena_map, zone_size = _make_arena_map("PbLimitKeys")
+        gr, red_players, blue_players = _round(
+            arena_map, zone_size, prefix="PbLimitKeys"
+        )
+        for player, team, role in (
+            (red_players["commander"], "red", "commander"),
+            (blue_players["heavy"], "blue", "heavy"),
+            (blue_players["medic"], "blue", "medic"),
+        ):
+            PlayerRoundState.objects.create(
+                game_round=gr,
+                player=player,
+                team_color=team,
+                role=role,
+                cell_row=0,
+                cell_col=0,
+            )
+        payload = build_playback_map(gr)
+        assert payload is not None
+        players = payload["players"]
+        self.assertEqual(len(players), 3)
+        for p in players:
+            keys = list(p)
+            at = keys.index("role")
+            self.assertEqual(tuple(keys[at + 1 : at + 5]), self.LIMIT_KEYS)
+
+    def test_commander_limits(self) -> None:
+        p = self._player("commander", starting_missiles=5)
+        self.assertEqual(self._limits(p), (30, 60, 20, 5))
+
+    def test_heavy_limits_have_no_special_cost(self) -> None:
+        p = self._player("heavy", starting_missiles=5)
+        self.assertEqual(self._limits(p), (20, 40, None, 5))
+
+    def test_scout_limits(self) -> None:
+        self.assertEqual(self._limits(self._player("scout")), (30, 60, 10, 0))
+
+    def test_medic_limits(self) -> None:
+        self.assertEqual(self._limits(self._player("medic")), (20, 30, 10, 0))
+
+    def test_ammo_limits(self) -> None:
+        self.assertEqual(self._limits(self._player("ammo")), (20, 15, 15, 0))
+
+    def test_role_is_case_insensitive(self) -> None:
+        p = self._player("commander", stored_role="Commander", starting_missiles=5)
+        self.assertEqual(self._limits(p), (30, 60, 20, 5))
+
+    def test_max_missiles_follows_stored_starting_missiles(self) -> None:
+        p = self._player("commander", starting_missiles=3)
+        self.assertEqual(p["max_missiles"], 3)
+
+
 class TestStoredRoutePreferred(TestCase):
     def test_uses_stored_route_verbatim_over_astar(self) -> None:
         """When a movement event carries ``metadata["route"]`` (the true cells

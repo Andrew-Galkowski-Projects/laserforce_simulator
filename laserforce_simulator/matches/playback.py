@@ -15,6 +15,7 @@ from operator import attrgetter
 from django.db.models import QuerySet
 
 from .models import GameEvent, GameRound, PlayerRoundState
+from .sim_helpers.role_constants import MAX_LIVES, MAX_SHOTS, SPECIAL_COST
 from .sim_helpers.time_constants import (
     NOT_TARGETABLE_TICKS,
     RESPAWN_TICKS,
@@ -108,12 +109,18 @@ def build_playback_map(game_round: GameRound) -> dict | None:
             # No cell position recorded — defensive; skip on a map round.
             continue
         out_moves = [[ts, polyline] for ts, _start, polyline in moves]
+        role = (ps.role or "").lower()
         players.append(
             {
                 "id": ps.player_id,
                 "name": ps.player.name,
                 "team": ps.team_color,
                 "role": ps.role,
+                # RV-07a: the role's limits, so the client keeps no role table.
+                "max_lives": MAX_LIVES[role],
+                "max_shots": MAX_SHOTS[role],
+                "special_cost": SPECIAL_COST.get(role),
+                "max_missiles": ps.starting_missiles,
                 "scout": scout_nums.get(ps.player_id, 0),
                 "spawn": spawn,
                 "moves": out_moves,
