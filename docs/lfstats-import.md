@@ -758,7 +758,8 @@ a round before). The SP
 shape now matches the arena. The after-Down share moved a little (24% -> 28% at 2.0; 3.0 gave the
 same, so 2.0 ships); the real 41% is out of reach by weight alone because the sim Commander comes
 back from a Down without the SP for a nuke more often than the real one, which is the SP income
-gap (CAL-02 in `PLAN.md`). Fewer nukes are fired than before (4.44 -> 3.91) because the bank
+gap (CAL-02, shipped 2026-11-08: "Tags and times tagged" below; its tree lifts detonations to
+1.76 a Commander-scorecard). Fewer nukes are fired than before (4.44 -> 3.91) because the bank
 holds some SP back, and the same number detonate.
 
 Calibration (3 rounds, Test set): 14/36 cells, objective 0.135 (no-broadcast tree 0.134), winner
