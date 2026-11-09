@@ -14,6 +14,7 @@ import pytest
 from matches.round_probe import run_probe
 from matches.sim_helpers import combat, modes, pathfinding
 from matches.sim_helpers.combat import award_bases, capture_base, plan_action
+from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.modes import (
     CONTROL_BONUS,
@@ -430,6 +431,120 @@ class TestCaptureRulesDoNotChange:
         award_bases(cmdr, NOW, ctx=RoundContext())
         assert cmdr.neutral_base_destroyed
         assert cmdr.counters.points_scored == 2002
+
+
+def _logged() -> RoundContext:
+    """A round context whose event log keeps what it is given."""
+    return RoundContext(events=EventLog())
+
+
+def _captures(ctx: RoundContext) -> list[dict]:
+    return [e["metadata"] for e in ctx.events if e["event_type"] == "base_capture"]
+
+
+class TestCaptureRecordsTheBase:
+    """RV-06b (spec #570): an active capture names the base it hit as ``base_type``."""
+
+    def test_red_capturing_the_blue_base_records_blue(self) -> None:
+        ctx = _logged()
+        cmdr = _placed("commander", ENEMY_RANGE[0])
+        assert capture_base(cmdr, 14, NOW, _bases(), ctx=ctx)
+        assert _captures(ctx)[0]["base_type"] == "blue"
+
+    def test_blue_capturing_the_red_base_records_red(self) -> None:
+        ctx = _logged()
+        cmdr = _placed("commander", OWN_RANGE[0], team_color="blue")
+        assert capture_base(cmdr, 13, NOW, _bases(), ctx=ctx)
+        assert _captures(ctx)[0]["base_type"] == "red"
+
+    def test_a_neutral_capture_records_the_neutral_base_in_sight(self) -> None:
+        ctx = _logged()
+        cell = (4, 4)
+        bases = _grid_map(
+            base_sight={"neutral_1": {_key((2, 2))}, "neutral_2": {_key(cell)}}
+        )
+        cmdr = _placed("commander", cell)
+        assert capture_base(cmdr, 15, NOW, bases, ctx=ctx)
+        assert _captures(ctx)[0]["base_type"] == "neutral_2"
+
+    def test_a_cell_two_neutral_bases_see_records_the_first(self) -> None:
+        ctx = _logged()
+        cell = (4, 4)
+        bases = _grid_map(
+            base_sight={"neutral_3": {_key(cell)}, "neutral_2": {_key(cell)}}
+        )
+        cmdr = _placed("commander", cell)
+        assert capture_base(cmdr, 15, NOW, bases, ctx=ctx)
+        assert _captures(ctx)[0]["base_type"] == "neutral_2"
+
+    def test_a_map_less_neutral_capture_omits_it(self) -> None:
+        ctx = _logged()
+        cmdr = _placed("commander", NEUTRAL_RANGE[0])
+        assert capture_base(cmdr, 15, NOW, None, ctx=ctx)
+        assert "base_type" not in _captures(ctx)[0]
+        assert "shots_remaining" in _captures(ctx)[0]
+
+    def test_a_neutral_capture_off_every_sight_set_omits_it(self) -> None:
+        ctx = _logged()
+        cmdr = _player("commander", cell_row=None, cell_col=None)
+        assert capture_base(cmdr, 15, NOW, _bases(), ctx=ctx)
+        assert "base_type" not in _captures(ctx)[0]
+
+    def test_a_map_less_enemy_capture_still_records_it(self) -> None:
+        ctx = _logged()
+        cmdr = _placed("commander")
+        assert capture_base(cmdr, 14, NOW, None, ctx=ctx)
+        assert _captures(ctx)[0]["base_type"] == "blue"
+
+    def test_awarded_captures_carry_none(self) -> None:
+        ctx = _logged()
+        award_bases(_placed("commander"), NOW, ctx=ctx)
+        captures = _captures(ctx)
+        assert [m["base_id"] for m in captures] == [15, 14]
+        assert all("base_type" not in m for m in captures)
+
+    @pytest.mark.parametrize("base_id, cell", [(14, ENEMY_RANGE[0]), (15, (2, 2))])
+    def test_it_draws_no_random_number(self, base_id: int, cell: Cell) -> None:
+        cmdr = _placed("commander", cell)
+        before = random.getstate()
+        assert capture_base(cmdr, base_id, NOW, _bases(), ctx=_logged())
+        assert random.getstate() == before
+
+
+@pytest.mark.django_db
+class TestSyracuseCapturesNameTheirBase:
+    def test_every_active_capture_names_a_configured_base(self) -> None:
+        from core.models import BaseSightLineConfig
+        from matches.lfstats_calibration import load_map_fixture
+        from matches.management.commands.lfstats_calibrate import DEFAULT_MAP_FIXTURE
+        from matches.models import GameEvent
+
+        arena = load_map_fixture(DEFAULT_MAP_FIXTURE)
+        configured = set(
+            BaseSightLineConfig.objects.filter(arena_map=arena).values_list(
+                "base_type", flat=True
+            )
+        )
+        red, _ = make_team_with_slots("BTRed")
+        blue, _ = make_team_with_slots("BTBlue")
+        random.seed(5)
+        game_round = BatchSimulator().simulate_single_round_detailed(
+            red, blue, arena_map=arena, fidelity="combat"
+        )
+        active = [
+            e.metadata
+            for e in GameEvent.objects.filter(
+                game_round=game_round, event_type="base_capture"
+            )
+            if "shots_remaining" in e.metadata
+        ]
+        assert active, "the seeded round made no active capture"
+        assert all(m.get("base_type") in configured for m in active), active
+        expected = {13: {"red"}, 14: {"blue"}}
+        for m in active:
+            assert m["base_type"] in expected.get(
+                m["base_id"], configured - {"red", "blue"}
+            )
 
 
 @pytest.mark.django_db

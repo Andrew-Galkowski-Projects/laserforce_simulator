@@ -581,8 +581,10 @@ class EventLog:
             ``description="X awarded opposing base"``
 
         ``metadata_extras`` lets the active-capture site attach its
-        extras (``shots_remaining``, ``points_scored``,
-        ``target_base_type``, ``role``); the awarded sites pass nothing.
+        extras (``shots_remaining``, ``points_scored``, ``base_type``:
+        ``"red"`` / ``"blue"`` / ``"neutral_1"`` .. ``"neutral_4"``, the base
+        hit, omitted for a neutral capture with no map); the awarded sites
+        pass nothing.
         ``base_id`` is always in metadata.
         """
         if not self._persist:
