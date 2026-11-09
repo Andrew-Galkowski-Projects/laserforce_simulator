@@ -405,6 +405,10 @@ _Avoid_: calling Playback a **Replay** (a Replay re-simulates from the **RNG see
 One player's state at one **Tick** of a **Playback**: score, **Lives**, **Shots**, missiles, **SP**, tags and misses, and whether they are **Down**, eliminated, in rapid fire or arming a **Nuke**. Taken from the after-event values the event log already records, never re-derived from combat rules. A player's last snapshot equals their **Round scoreboard** row.
 _Avoid_: frame (a **Tick** is the time unit; a snapshot is the state at one).
 
+**Tag line**:
+A short-lived line on a **Playback** map from the player who acted to the player (or base) they acted on, drawn between where both stood at that **Tick** and fading over the next second. Tags, misses, missiles, resupplies and base captures each draw one, told apart by shape and colour.
+_Avoid_: shot line, trace (a missed shot is a Tag line too).
+
 **Batch run**:
 Simulating the same two **Teams** N times to sample the outcome distribution (win %, score variance); remains a variance sampler — a fresh random **Master seed** per run unless one is supplied. Applies **Side alternation** so per-team aggregates are not biased by map-side advantage; aggregate keys are **team-position keyed** (`red_*` = the team passed as the `team_red` argument, whichever **Side** it played), with a separate side-advantage breakdown for the raw red/blue-side signal.
 
