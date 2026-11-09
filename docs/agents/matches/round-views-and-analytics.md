@@ -249,6 +249,18 @@ after LFstats's Replay tab, within ADR-0043.
     the object URL on destroy.
   - It draws on a canvas, ported from the Django overlay's Catmull-Rom and 16 s trails.
   - It dims a player's marker and trail while they are deactivated (`deactivatedAt`).
+  - RV-06c: it takes the timeline's `events` too, and draws a **Tag line** for each tag, miss,
+    missile, resupply and active base capture, from the pure `playback-overlays.ts`
+    (`overlaysAt`, `baseMarkers`; its spec is the test seam). A line joins where both players
+    stood at the event's tick, sits `LINE_OFFSET_PX` (4) to the actor's right, shows for
+    `LINE_TICKS` (2) and fades, with a muzzle flare at the acting end. A miss is dashed and faint,
+    missiles take `--lf-ev-missile` (a miss dashed), a resupply `--lf-ev-resupply` with a "+" at
+    the receiver. A capture's base is `metadata.base_type`, else `base_id` 13 red / 14 blue / 15
+    the nearest `neutral_*`; it adds 8 radial lasers for `BURST_TICKS` (4). Round-end awarded
+    captures (no `shots_remaining`) draw nothing.
+  - On first open it also fetches `MapsService.zoneConfig` and draws each base as an R / B / N
+    diamond. A failed fetch, or no bases, draws none and shows no notice. Draw order: bases,
+    trails, lines and bursts, markers.
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
 
 Tests:

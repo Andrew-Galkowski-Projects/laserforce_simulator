@@ -185,7 +185,10 @@ src/
                           /rounds/:id/playback (playback/: ANG-06f, the cursor shell +
                           snapshot-at.ts, playback-scoreboard, playback-feed, the beta
                           playback-map: role-icon markers, playback-markers.ts markerSize /
-                          markerLook; from `rounds/:id/playback/` + the timeline),
+                          markerLook, playback-overlays.ts (RV-06c, pure: overlaysAt gives the
+                          Tag lines and capture bursts at a cursor, baseMarkers the R / B / N
+                          bases from the zone config); from `rounds/:id/playback/` + the
+                          timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
                           (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;
                           the chart itself is shared/line-chart.ts), /rounds/:id/missile-log
