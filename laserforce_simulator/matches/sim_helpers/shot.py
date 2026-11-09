@@ -34,10 +34,10 @@ from dataclasses import dataclass
 from .combat import _elevation_hit_modifier
 from .down import record_down
 from .follow_rule import may_tag
-from .mechanics import shot_cooldown
+from .mechanics import cooldown_ticks
 from .pending_events import PendingFollowup, PendingReaction
 from .round_context import RoundContext
-from .time_constants import TICK_SECONDS
+from . import engagement
 
 # ---------------------------------------------------------------------------
 # Public constants
@@ -108,12 +108,9 @@ def _elimination_action(kind: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _cooldown_ticks(player, tick: int) -> int:
-    """TIME-01: round a seconds cooldown to whole ticks.
-
-    Mirrors the ``simulation._cooldown_ticks`` helper byte-for-byte.
-    """
-    return int(round(shot_cooldown(player, tick) / TICK_SECONDS))
+# TIME-01: the seconds cooldown in whole ticks, ``mechanics.cooldown_ticks`` (the
+# tick loop's Overwatch gate and ``plan_action`` use the same helper).
+_cooldown_ticks = cooldown_ticks
 
 
 # ---------------------------------------------------------------------------
@@ -327,6 +324,14 @@ def resolve_shot(
 
             _update_player_memory(attacker, [defender], tick)
             _broadcast_communication(attacker, ctx.all_alive, ctx.movement_ctx, tick)
+            if engagement.DEFENDER_LEARNS_ATTACKER:
+                # CAL-02 decision 12 (D4): the tagged player saw the flash, so
+                # it learns the attacker's cell and calls it out. Its draws come
+                # after the attacker's; a map-less round never reaches here.
+                _update_player_memory(defender, [attacker], tick)
+                _broadcast_communication(
+                    defender, ctx.all_alive, ctx.movement_ctx, tick
+                )
     else:
         # ── Phase 8. Miss ────────────────────────────────────────────
         attacker.counters.shots_missed += 1

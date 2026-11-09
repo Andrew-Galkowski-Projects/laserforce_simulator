@@ -3,9 +3,14 @@
 The numbers behind a simulation behaviour decision, ``round_probe``'s engine: per
 Role the time in each Mode, where goals come from, the time not Active, the distance
 to the Role's target, mean points, what the Role does with its Actions, Tags made and
-Eliminations, plus goal sharing per seed. Each measure is pooled over the seeds and kept per seed. Serial and
-read-only: it observes ``plan_action`` and ``choose_goal_cell`` without drawing from
-the RNG, so a seed plays the same round as it would unobserved.
+Eliminations, plus goal sharing per seed. CAL-02 (#567) added the tag measures: times
+tagged, shots fired, Downs given and taken, Active share, Tags per Active minute,
+Reaction and Follow-up shots, enemies on the floor per Active roll, shot cadence, and the
+who-tags-whom and who-Downs-whom matrices. Each measure is pooled over the rounds and
+kept per round. Read-only: it observes ``plan_action``, ``choose_goal_cell``, the
+capture and ``resolve_shot`` without drawing from the RNG, so a seed plays the same
+round as it would unobserved. One round is one task, so ``workers`` processes give
+the serial numbers.
 """
 
 from __future__ import annotations
@@ -13,9 +18,13 @@ from __future__ import annotations
 import random
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
-from typing import Iterable, Mapping
+from math import sqrt
+from statistics import median, stdev
+from typing import Iterable, Mapping, Sequence
 
+from matches.sim_helpers import shot as shot_module
 from matches.sim_helpers.combat import _CHOICES
+from matches.sim_helpers.parallel_worker import worker_django_init
 from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
 from matches.simulation import BatchSimulator, entrypoints
 from matches.simulation.entrypoints import _SIMULATION_STATS, _PlayerData
@@ -34,6 +43,43 @@ _GOAL_SOURCES = ("action", "positioning", "override")
 # A hide roll stops the player on the tick it lands, before is_hiding reads True.
 _STILL_ROLLS = ("capture_base", "hide")
 _RESUPPLY_PLANS = ("resupply_ammo", "resupply_lives")
+
+# A lineup: the red and the blue roster, each ``(role, _PlayerData)`` pairs.
+Lineup = tuple[Sequence[tuple[str, _PlayerData]], Sequence[tuple[str, _PlayerData]]]
+
+
+_ROLES = ("commander", "heavy", "scout", "ammo", "medic")
+# Shot cadence bins (ticks between a player's consecutive shots): upper bound, label.
+_CADENCE_BINS: tuple[tuple[int, str], ...] = (
+    (1, "<=1t"),
+    (2, "2t"),
+    (4, "3-4t"),
+    (10, "5-10t"),
+    (20, "11-20t"),
+    (60, "21-60t"),
+    (120, "61-120t"),
+    (10**9, "120t+"),
+)
+TICKS_PER_MINUTE = 120
+
+
+@dataclass(frozen=True)
+class Measure:
+    """A per-player-round number: its mean and its standard error over the
+    player-rounds (0.0 with fewer than two)."""
+
+    mean: float
+    se: float
+
+
+@dataclass(frozen=True)
+class Cadence:
+    """Ticks between a player's consecutive shots: the median (None with no gap)
+    and the share of the gaps in each bin of ``_CADENCE_BINS``."""
+
+    median: float | None
+    bin_share: dict[str, float]
+    gaps: int
 
 
 @dataclass(frozen=True)
@@ -58,16 +104,65 @@ class RoleMeasures:
     eliminated_share: float
     # The mean tick of the player-rounds that ended Eliminated; None with none.
     elimination_tick: float | None
+    # CAL-02: the tag measures, per player-round.
+    times_tagged: Measure
+    shots_fired: Measure
+    hiding_misses: Measure
+    downs_given: Measure
+    downs_taken: Measure
+    active_share: Measure
+    tags_per_active_minute: Measure
+    reaction_shots: Measure
+    follow_up_shots: Measure
+    enemies_on_floor_per_active_roll: Measure
+    # Mode ticks over the round's ticks (``mode_share`` is over the Mode ticks).
+    mode_round_share: dict[str, float]
+    cadence: Cadence
 
 
 @dataclass(frozen=True)
 class ProbeResult:
-    """``roles`` pools every seed; ``by_seed`` holds the same measures per seed."""
+    """``roles`` pools every seed; ``by_seed`` holds the same measures per seed.
+
+    ``who_tags_whom`` and ``who_downs_whom`` are per round, both teams: attacker
+    role to defender role to the Tags (Downs) landed.
+    """
 
     roles: dict[str, RoleMeasures]
     sharing_by_seed: dict[int, float]
     by_seed: dict[int, dict[str, RoleMeasures]]
     team_captures_by_seed: dict[int, dict[str, int]]
+    who_tags_whom: dict[str, dict[str, float]] = field(default_factory=dict)
+    who_downs_whom: dict[str, dict[str, float]] = field(default_factory=dict)
+
+
+@dataclass
+class _PlayerRound:
+    """One player's numbers from one round, read off its counters and the observers."""
+
+    times_tagged: int = 0
+    shots_fired: int = 0
+    hiding_misses: int = 0
+    downs_given: int = 0
+    downs_taken: int = 0
+    ticks_active: int = 0
+    tags_made: int = 0
+    reaction_shots: int = 0
+    follow_up_shots: int = 0
+    active_rolls: int = 0
+    enemies_on_floor: int = 0
+
+    @property
+    def active_share(self) -> float:
+        return self.ticks_active / BatchSimulator.ROUND_TICKS
+
+    @property
+    def tags_per_active_minute(self) -> float:
+        return _ratio(self.tags_made, self.ticks_active / TICKS_PER_MINUTE)
+
+    @property
+    def enemies_on_floor_per_active_roll(self) -> float:
+        return _ratio(self.enemies_on_floor, self.active_rolls)
 
 
 @dataclass
@@ -90,6 +185,8 @@ class _RoleTally:
     resupply_plans: int = 0
     captures: int = 0
     elimination_ticks: list[int] = field(default_factory=list)
+    rows: list[_PlayerRound] = field(default_factory=list)
+    gaps: list[int] = field(default_factory=list)
 
     def add(self, other: _RoleTally) -> None:
         self.modes.update(other.modes)
@@ -108,6 +205,23 @@ class _RoleTally:
         self.resupply_plans += other.resupply_plans
         self.captures += other.captures
         self.elimination_ticks += other.elimination_ticks
+        self.rows += other.rows
+        self.gaps += other.gaps
+
+
+@dataclass
+class _RoundTally:
+    """Everything one round's observers saw: plain counts a worker can return.
+
+    The matrices count ``(attacker role, defender role)`` over both teams.
+    """
+
+    seed: int
+    roles: dict[str, _RoleTally]
+    sharing: float
+    team_captures: dict[str, int]
+    tags_by_pair: Counter = field(default_factory=Counter)
+    downs_by_pair: Counter = field(default_factory=Counter)
 
 
 def goal_sharing_share(goals_by_team_tick: Mapping) -> float:
@@ -165,9 +279,43 @@ def _share(counter: Counter, keys: Iterable[str] | None = None) -> dict[str, flo
     return {name: _ratio(counter[name], total) for name in names}
 
 
+def _measure(values: Sequence[float]) -> Measure:
+    """The mean of ``values`` and its standard error (0.0 below two values)."""
+    mean = _ratio(sum(values), len(values))
+    se = stdev(values) / sqrt(len(values)) if len(values) > 1 else 0.0
+    return Measure(mean=mean, se=se)
+
+
+def _cadence(gaps: Sequence[int]) -> Cadence:
+    """The median gap and the share of the gaps in each cadence bin."""
+    bins: Counter = Counter()
+    for gap in gaps:
+        bins[next(label for bound, label in _CADENCE_BINS if gap <= bound)] += 1
+    return Cadence(
+        median=float(median(gaps)) if gaps else None,
+        bin_share={label: _ratio(bins[label], len(gaps)) for _, label in _CADENCE_BINS},
+        gaps=len(gaps),
+    )
+
+
+def _per_round_matrix(pairs: Counter, rounds: int) -> dict[str, dict[str, float]]:
+    """``pairs`` counts over ``rounds`` as attacker role to defender role, per round."""
+    return {
+        attacker: {
+            defender: _ratio(pairs[(attacker, defender)], rounds) for defender in _ROLES
+        }
+        for attacker in _ROLES
+    }
+
+
 def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
     round_ticks = BatchSimulator.ROUND_TICKS
     active_rolls = sum(tally.active_rolls.values())
+    rows = tally.rows
+
+    def measure(name: str) -> Measure:
+        return _measure([getattr(row, name) for row in rows])
+
     return RoleMeasures(
         mode_share=_share(tally.modes),
         goal_share=_share(tally.sources, _GOAL_SOURCES),
@@ -193,6 +341,21 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
             if tally.elimination_ticks
             else None
         ),
+        times_tagged=measure("times_tagged"),
+        shots_fired=measure("shots_fired"),
+        hiding_misses=measure("hiding_misses"),
+        downs_given=measure("downs_given"),
+        downs_taken=measure("downs_taken"),
+        active_share=measure("active_share"),
+        tags_per_active_minute=measure("tags_per_active_minute"),
+        reaction_shots=measure("reaction_shots"),
+        follow_up_shots=measure("follow_up_shots"),
+        enemies_on_floor_per_active_roll=measure("enemies_on_floor_per_active_roll"),
+        mode_round_share={
+            mode: ticks / (round_ticks * tally.player_rounds)
+            for mode, ticks in sorted(tally.modes.items())
+        },
+        cadence=_cadence(tally.gaps),
     )
 
 
@@ -205,18 +368,56 @@ def _role_measures(tallies: Mapping[str, _RoleTally]) -> dict[str, RoleMeasures]
     }
 
 
-def run_probe(movement_ctx, seeds: Iterable[int]) -> ProbeResult:
-    """Play one round per seed on ``movement_ctx`` and measure it."""
+def _probe_round(task: tuple) -> _RoundTally:
+    """Play one observed round: ``task`` is ``(red, blue, movement_ctx, seed)``.
+
+    The observers are installed in this process for the round and put back after
+    it, so a worker process observes its own rounds. They read and call through,
+    never roll, so the round is the one the seed plays unobserved.
+    """
+    red, blue, movement_ctx, seed = task
     tallies: dict[str, _RoleTally] = defaultdict(_RoleTally)
+    rows: dict[int, _PlayerRound] = defaultdict(_PlayerRound)
+    last_shot_tick: dict[int, int] = {}
+    tags_by_pair: Counter = Counter()
+    downs_by_pair: Counter = Counter()
     open_runs: Counter = Counter()
     goals_by_team_tick: dict = {}
-    tallies_by_seed: dict[int, dict[str, _RoleTally]] = {}
-    sharing_by_seed: dict[int, float] = {}
+    team_captures = {"red": 0, "blue": 0}
     real_choose = entrypoints.choose_goal_cell
     real_plan = entrypoints.plan_action
     real_capture = entrypoints._capture_base_shared
-    team_captures: dict[str, int] = {}
-    team_captures_by_seed: dict[int, dict[str, int]] = {}
+    # The tick loop fires Shots through the name ``entrypoints`` imported; a Reaction
+    # or Follow-up with no cooldown fires through the resolver's own module.
+    real_resolve = entrypoints.resolve_shot
+    real_shot_resolve = shot_module.resolve_shot
+
+    def observed_resolve(real):
+        def observe(attacker, defender, tick, *, kind, ctx, chain_depth=0):
+            tags_before = attacker.counters.tags_made
+            misses_before = attacker.counters.shots_missed
+            defender_hiding = defender.is_hiding
+            outcome = real(
+                attacker, defender, tick, kind=kind, ctx=ctx, chain_depth=chain_depth
+            )
+            hit = attacker.counters.tags_made > tags_before
+            missed = attacker.counters.shots_missed > misses_before
+            if hit or missed:
+                last = last_shot_tick.get(id(attacker))
+                if last is not None:
+                    tallies[attacker.role].gaps.append(tick - last)
+                last_shot_tick[id(attacker)] = tick
+            if missed and defender_hiding:
+                rows[id(attacker)].hiding_misses += 1
+            if hit:
+                tags_by_pair[(attacker.role, defender.role)] += 1
+                if outcome.downed:
+                    downs_by_pair[(attacker.role, defender.role)] += 1
+                    rows[id(attacker)].downs_given += 1
+                    rows[id(defender)].downs_taken += 1
+            return outcome
+
+        return observe
 
     def observed_capture(player, *args, **kwargs) -> bool:
         # Only a live capture comes through here; the round-end award does not.
@@ -257,6 +458,13 @@ def run_probe(movement_ctx, seeds: Iterable[int]) -> ProbeResult:
         active = player.is_active_at(second)
         if active:
             tally.active_rolls[player.last_chosen_action] += 1
+            row = rows[id(player)]
+            row.active_rolls += 1
+            row.enemies_on_floor += sum(
+                1
+                for other in all_alive
+                if other.team_color != player.team_color and other.final_lives > 0
+            )
             if not plans:
                 tally.empty_rolls[player.last_chosen_action] += 1
             if (
@@ -303,47 +511,102 @@ def run_probe(movement_ctx, seeds: Iterable[int]) -> ProbeResult:
     entrypoints.choose_goal_cell = observed_choose
     entrypoints.plan_action = observed_plan
     entrypoints._capture_base_shared = observed_capture
+    entrypoints.resolve_shot = observed_resolve(real_resolve)
+    shot_module.resolve_shot = observed_resolve(real_shot_resolve)
     try:
-        for seed in seeds:
-            tallies = defaultdict(_RoleTally)
-            team_captures = {"red": 0, "blue": 0}
-            team_captures_by_seed[seed] = team_captures
-            goals_by_team_tick.clear()
-            random.seed(seed)
-            _, reds, blues = BatchSimulator()._simulate_round(
-                _default_roster("red"),
-                _default_roster("blue"),
-                movement_ctx=movement_ctx,
-            )
-            sharing_by_seed[seed] = goal_sharing_share(goals_by_team_tick)
-            for player in reds + blues:
-                close_run(player)
-                tally = tallies[player.role]
-                tally.modes.update(
-                    {str(mode): n for mode, n in player.mode_ticks.items()}
-                )
-                tally.points.append(player.counters.points_scored)
-                tally.tags_made += player.counters.tags_made
-                tally.ticks_active += player.ticks_active
-                tally.player_rounds += 1
-                if player.was_eliminated_at < SURVIVED_SENTINEL:
-                    tally.elimination_ticks.append(player.was_eliminated_at)
-            tallies_by_seed[seed] = tallies
+        random.seed(seed)
+        _, reds, blues = BatchSimulator()._simulate_round(
+            list(red), list(blue), movement_ctx=movement_ctx
+        )
+        for player in reds + blues:
+            close_run(player)
+            tally = tallies[player.role]
+            counters = player.counters
+            tally.modes.update({str(mode): n for mode, n in player.mode_ticks.items()})
+            tally.points.append(counters.points_scored)
+            tally.tags_made += counters.tags_made
+            tally.ticks_active += player.ticks_active
+            tally.player_rounds += 1
+            if player.was_eliminated_at < SURVIVED_SENTINEL:
+                tally.elimination_ticks.append(player.was_eliminated_at)
+            row = rows[id(player)]
+            row.times_tagged = counters.times_tagged
+            row.tags_made = counters.tags_made
+            row.shots_fired = counters.tags_made + counters.shots_missed
+            row.reaction_shots = counters.reaction_shots
+            row.follow_up_shots = counters.follow_up_shots
+            row.ticks_active = player.ticks_active
+            tally.rows.append(row)
     finally:
         entrypoints.choose_goal_cell = real_choose
         entrypoints.plan_action = real_plan
         entrypoints._capture_base_shared = real_capture
+        entrypoints.resolve_shot = real_resolve
+        shot_module.resolve_shot = real_shot_resolve
+    return _RoundTally(
+        seed=seed,
+        roles=dict(tallies),
+        sharing=goal_sharing_share(goals_by_team_tick),
+        team_captures=team_captures,
+        tags_by_pair=tags_by_pair,
+        downs_by_pair=downs_by_pair,
+    )
+
+
+def probe_seeds(seed: int, count: int) -> list[int]:
+    """``count`` per-round seeds drawn from ``random.Random(seed)``, in round order."""
+    generator = random.Random(seed)
+    return [generator.getrandbits(63) for _ in range(count)]
+
+
+def _run_rounds(tasks: list[tuple], workers: int) -> list[_RoundTally]:
+    """``_probe_round`` over ``tasks`` in order, in this process or ``workers``."""
+    if workers > 1:
+        from concurrent.futures import ProcessPoolExecutor  # noqa: PLC0415
+
+        with ProcessPoolExecutor(
+            max_workers=workers, initializer=worker_django_init
+        ) as executor:
+            return list(executor.map(_probe_round, tasks))
+    return [_probe_round(task) for task in tasks]
+
+
+def run_probe(
+    movement_ctx,
+    seeds: Iterable[int],
+    lineups: Sequence[Lineup] | None = None,
+    workers: int = 1,
+) -> ProbeResult:
+    """Play one round per seed on ``movement_ctx`` and measure it.
+
+    With no ``lineups`` every seed plays the default-stat rosters. With them, seed
+    ``i`` plays ``lineups[i]`` (red roster, blue roster), one round per lineup.
+    ``workers`` above 1 plays the rounds across that many processes; the numbers
+    are the serial ones.
+    """
+    seed_list = list(seeds)
+    if lineups is None:
+        default: Lineup = (_default_roster("red"), _default_roster("blue"))
+        lineups = [default] * len(seed_list)
+    tasks: list[tuple] = [
+        (red, blue, movement_ctx, seed)
+        for seed, (red, blue) in zip(seed_list, lineups, strict=True)
+    ]
+    rounds = _run_rounds(tasks, workers)
 
     pooled: dict[str, _RoleTally] = defaultdict(_RoleTally)
-    for seed_tallies in tallies_by_seed.values():
-        for role, tally in seed_tallies.items():
+    tags_by_pair: Counter = Counter()
+    downs_by_pair: Counter = Counter()
+    for played in rounds:
+        for role, tally in played.roles.items():
             pooled[role].add(tally)
+        tags_by_pair.update(played.tags_by_pair)
+        downs_by_pair.update(played.downs_by_pair)
     return ProbeResult(
         roles=_role_measures(pooled),
-        sharing_by_seed=sharing_by_seed,
-        by_seed={
-            seed: _role_measures(seed_tallies)
-            for seed, seed_tallies in tallies_by_seed.items()
-        },
-        team_captures_by_seed=team_captures_by_seed,
+        sharing_by_seed={played.seed: played.sharing for played in rounds},
+        by_seed={played.seed: _role_measures(played.roles) for played in rounds},
+        team_captures_by_seed={played.seed: played.team_captures for played in rounds},
+        who_tags_whom=_per_round_matrix(tags_by_pair, len(rounds)),
+        who_downs_whom=_per_round_matrix(downs_by_pair, len(rounds)),
     )

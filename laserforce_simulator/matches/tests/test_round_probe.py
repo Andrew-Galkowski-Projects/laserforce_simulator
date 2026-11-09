@@ -13,18 +13,21 @@ from django.test import SimpleTestCase, TestCase
 
 from core.models import ArenaMap
 from matches.lfstats_calibration import load_map_fixture
-from matches.management.commands.round_probe import format_result
+from matches.management.commands.round_probe import calibration_lineups, format_result
 from matches.round_probe import (
     ProbeResult,
     _default_roster,
     _goal_source,
     _squares_to_target,
     goal_sharing_share,
+    probe_seeds,
     run_probe,
 )
+from matches.sim_helpers import shot
 from matches.sim_helpers.map_loader import load_map_context
 from matches.sim_helpers.modes import Mode
 from matches.sim_helpers.player_state import PlayerState
+from matches.sim_helpers.shot import ShotOutcome
 from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
 from matches.simulation import BatchSimulator, entrypoints
 from teams.models import Player, Team
@@ -100,7 +103,14 @@ class TestRunProbeTotals(SimpleTestCase):
             return SimpleNamespace(
                 role="scout",
                 mode_ticks={Mode.ATTACK: attack, Mode.CONTROL: 100 - attack},
-                counters=SimpleNamespace(points_scored=points, tags_made=0),
+                counters=SimpleNamespace(
+                    points_scored=points,
+                    tags_made=0,
+                    times_tagged=0,
+                    shots_missed=0,
+                    reaction_shots=0,
+                    follow_up_shots=0,
+                ),
                 ticks_active=active,
                 was_eliminated_at=SURVIVED_SENTINEL,
             )
@@ -179,6 +189,10 @@ def _scripted(
     points: int = 0,
     tags_made: int = 0,
     eliminated_at: int = SURVIVED_SENTINEL,
+    times_tagged: int = 0,
+    shots_missed: int = 0,
+    reaction_shots: int = 0,
+    follow_up_shots: int = 0,
 ) -> SimpleNamespace:
     """A finished player whose ``plan_action`` calls follow ``ticks``."""
     return SimpleNamespace(
@@ -190,7 +204,14 @@ def _scripted(
         is_holding=False,
         last_chosen_action="",
         mode_ticks={},
-        counters=SimpleNamespace(points_scored=points, tags_made=tags_made),
+        counters=SimpleNamespace(
+            points_scored=points,
+            tags_made=tags_made,
+            times_tagged=times_tagged,
+            shots_missed=shots_missed,
+            reaction_shots=reaction_shots,
+            follow_up_shots=follow_up_shots,
+        ),
         ticks_active=sum(1 for step in ticks if step.active),
         was_eliminated_at=eliminated_at,
     )
@@ -577,6 +598,21 @@ class TestRunProbe(TestCase):
             with self.subTest(seed=seed):
                 self.assertEqual(set(roles), _ROLES)
 
+    def test_a_non_scout_role_reacts_on_seed_1(self) -> None:
+        # CAL-02a bug A: the round the probe plays on seed 1, taken from its
+        # players' counters. Before the fix only a rapid-fire Scout, whose
+        # cooldown rounds to 0 ticks, ever made a Reaction shot.
+        random.seed(1)
+        _, reds, blues = BatchSimulator()._simulate_round(
+            _default_roster("red"),
+            _default_roster("blue"),
+            movement_ctx=self.movement_ctx,
+        )
+        reactions = sum(
+            p.counters.reaction_shots for p in reds + blues if p.role != "scout"
+        )
+        self.assertGreater(reactions, 0)
+
 
 class TestOutcomes(SimpleTestCase):
     """What landed, beside what was planned: the numbers real play is compared with."""
@@ -627,6 +663,263 @@ class TestOutcomes(SimpleTestCase):
     def test_a_role_nobody_eliminated_prints_none(self) -> None:
         lines = format_result(_probe_scripted([_scripted(_tick())]))
         self.assertIn("  Elimination tick: none", lines)
+
+
+class TestTagMeasures(SimpleTestCase):
+    """CAL-02 (#567): the tag measures, each a mean over player-rounds with its
+    standard error over those player-rounds."""
+
+    def test_times_tagged_is_the_mean_over_player_rounds(self) -> None:
+        result = _probe_scripted(
+            [_scripted(_tick(), times_tagged=1), _scripted(_tick(), times_tagged=5)]
+        )
+        measure = result.roles["scout"].times_tagged
+        self.assertEqual(measure.mean, 3.0)
+        # The sample deviation of 1 and 5 is sqrt(8), over the root of two players.
+        self.assertEqual(measure.se, 2.0)
+
+    def test_shots_fired_are_the_tags_made_plus_the_misses(self) -> None:
+        result = _probe_scripted(
+            [
+                _scripted(_tick(), tags_made=30, shots_missed=10),
+                _scripted(_tick(), tags_made=10, shots_missed=10),
+            ]
+        )
+        self.assertEqual(result.roles["scout"].shots_fired.mean, 30.0)
+
+    def test_reaction_and_follow_up_shots_made_are_per_player_round(self) -> None:
+        result = _probe_scripted(
+            [
+                _scripted(_tick(), reaction_shots=2, follow_up_shots=1),
+                _scripted(_tick(), reaction_shots=0, follow_up_shots=0),
+            ]
+        )
+        self.assertEqual(result.roles["scout"].reaction_shots.mean, 1.0)
+        self.assertEqual(result.roles["scout"].follow_up_shots.mean, 0.5)
+
+    def test_active_share_and_tags_per_active_minute(self) -> None:
+        # 900 of 1800 ticks Active is 7.5 minutes on the floor for 30 Tags.
+        player = _scripted(_tick(), tags_made=30)
+        player.ticks_active = 900
+        result = _probe_scripted([player])
+        self.assertEqual(result.roles["scout"].active_share.mean, 0.5)
+        self.assertEqual(result.roles["scout"].tags_per_active_minute.mean, 4.0)
+
+    def test_a_player_never_active_has_no_tags_per_minute(self) -> None:
+        player = _scripted(_tick(active=False), tags_made=3)
+        self.assertEqual(
+            _probe_scripted([player]).roles["scout"].tags_per_active_minute.mean, 0.0
+        )
+
+    def test_mode_shares_are_over_the_round_ticks(self) -> None:
+        # Eliminated at mid-round: the Mode ticks stop, the round does not.
+        player = _scripted(_tick(), eliminated_at=1350)
+        player.mode_ticks = {Mode.ATTACK: 900, Mode.CONTROL: 450}
+        result = _probe_scripted([player])
+        self.assertEqual(
+            result.roles["scout"].mode_round_share, {"attack": 0.5, "control": 0.25}
+        )
+        # The existing share over the Mode ticks is unchanged.
+        self.assertEqual(
+            result.roles["scout"].mode_share, {"attack": 2 / 3, "control": 1 / 3}
+        )
+
+
+def _enemy(team: str, lives: int) -> SimpleNamespace:
+    return SimpleNamespace(role="scout", team_color=team, final_lives=lives)
+
+
+class TestEnemiesOnFloorPerActiveRoll(SimpleTestCase):
+    def test_it_counts_the_enemies_with_lives_at_each_active_roll(self) -> None:
+        player = _scripted(_tick(), _tick(), _tick(active=False))
+        floors = iter(
+            [
+                [
+                    _enemy("blue", 3),
+                    _enemy("blue", 1),
+                    _enemy("blue", 0),
+                    _enemy("red", 5),
+                ],
+                [
+                    _enemy("blue", 3),
+                    _enemy("blue", 1),
+                    _enemy("blue", 1),
+                    _enemy("blue", 2),
+                ],
+                # Not Active: not a roll, whatever the floor holds.
+                [_enemy("blue", 1)],
+            ]
+        )
+
+        def scripted_plan(player, all_alive, tick, movement_ctx=None, **kwargs):
+            player.last_chosen_action = "tag_player"
+            return []
+
+        def fake_round(self, red, blue, movement_ctx=None):
+            for tick in range(3):
+                entrypoints.plan_action(player, next(floors), tick, None)
+            return {}, [player], []
+
+        with patch.object(entrypoints, "plan_action", scripted_plan):
+            with patch.object(BatchSimulator, "_simulate_round", fake_round):
+                result = run_probe(None, [1])
+
+        self.assertEqual(
+            result.roles["scout"].enemies_on_floor_per_active_roll.mean, 3.0
+        )
+
+
+def _probe_shots(*rounds: list[tuple]) -> ProbeResult:
+    """Run the probe over rounds of scripted Shots, seeds 1 up.
+
+    Each Shot is ``(attacker, defender, tick, landed)`` with ``landed`` one of
+    ``"hit"``, ``"down"`` (a Downing Hit) or ``"miss"``; the scripted resolve moves
+    the counters the way the engine does and returns the ``ShotOutcome``.
+    """
+    remaining = iter(rounds)
+    landing: list[str] = []
+
+    def scripted_resolve(attacker, defender, tick, *, kind, ctx, chain_depth=0):
+        landed = landing.pop()
+        if landed == "miss":
+            attacker.counters.shots_missed += 1
+            return ShotOutcome(False, False, False)
+        attacker.counters.tags_made += 1
+        defender.counters.times_tagged += 1
+        return ShotOutcome(True, landed == "down", False)
+
+    def fake_round(self, red, blue, movement_ctx=None):
+        shots = next(remaining)
+        players: dict[int, SimpleNamespace] = {}
+        for attacker, defender, tick, landed in shots:
+            players.setdefault(id(attacker), attacker)
+            players.setdefault(id(defender), defender)
+            landing.append(landed)
+            entrypoints.resolve_shot(attacker, defender, tick, kind="initial", ctx=None)
+        return {}, list(players.values()), []
+
+    with patch.object(entrypoints, "resolve_shot", scripted_resolve):
+        with patch.object(BatchSimulator, "_simulate_round", fake_round):
+            return run_probe(None, range(1, len(rounds) + 1))
+
+
+class TestWhoTagsWhom(SimpleTestCase):
+    def test_three_hits_fill_the_attacker_by_defender_matrix_per_round(self) -> None:
+        commander = _scripted(_tick(), role="commander", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        medic = _scripted(_tick(), role="medic", team="red")
+        result = _probe_shots(
+            [
+                (commander, scout, 10, "hit"),
+                (commander, scout, 12, "hit"),
+                (scout, medic, 20, "down"),
+                (commander, medic, 30, "miss"),
+            ],
+            [
+                (
+                    _scripted(_tick(), role="heavy"),
+                    _scripted(_tick(), team="blue"),
+                    5,
+                    "miss",
+                )
+            ],
+        )
+        # Two rounds, so the three Hits read per round.
+        self.assertEqual(result.who_tags_whom["commander"]["scout"], 1.0)
+        self.assertEqual(result.who_tags_whom["scout"]["medic"], 0.5)
+        self.assertEqual(result.who_tags_whom["commander"]["medic"], 0.0)
+        self.assertEqual(result.who_tags_whom["heavy"]["scout"], 0.0)
+
+    def test_a_downing_hit_is_a_down_given_a_down_taken_and_a_matrix_cell(self) -> None:
+        heavy = _scripted(_tick(), role="heavy", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        ammo = _scripted(_tick(), role="ammo", team="blue")
+        result = _probe_shots(
+            [
+                (heavy, scout, 10, "down"),
+                # A Hit that does not Down is a Tag, not a Down.
+                (heavy, ammo, 11, "hit"),
+                (heavy, ammo, 12, "miss"),
+            ]
+        )
+        self.assertEqual(result.roles["heavy"].downs_given.mean, 1.0)
+        self.assertEqual(result.roles["scout"].downs_taken.mean, 1.0)
+        self.assertEqual(result.roles["ammo"].downs_taken.mean, 0.0)
+        self.assertEqual(result.who_downs_whom["heavy"]["scout"], 1.0)
+        self.assertEqual(result.who_downs_whom["heavy"]["ammo"], 0.0)
+        self.assertEqual(result.who_tags_whom["heavy"]["ammo"], 1.0)
+
+    def test_a_miss_at_a_hiding_defender_is_counted_against_the_attacker(self) -> None:
+        scout = _scripted(_tick(), role="scout", team="red")
+        hidden = _scripted(_tick(), role="medic", team="blue")
+        hidden.is_hiding = True
+        seen = _scripted(_tick(), role="ammo", team="blue")
+        result = _probe_shots(
+            [
+                (scout, hidden, 10, "miss"),
+                (scout, hidden, 11, "miss"),
+                (scout, seen, 12, "miss"),
+                (scout, hidden, 13, "hit"),
+            ]
+        )
+        self.assertEqual(result.roles["scout"].hiding_misses.mean, 2.0)
+        self.assertEqual(result.roles["scout"].shots_fired.mean, 4.0)
+
+
+class TestShotCadence(SimpleTestCase):
+    def test_the_gaps_between_a_players_shots_fill_the_bins_and_the_median(
+        self,
+    ) -> None:
+        scout = _scripted(_tick(), role="scout", team="red")
+        target = _scripted(_tick(), role="heavy", team="blue")
+        # Gaps of 1, 2, 4, 10, 20, 60, 120 and 121 ticks: one per bin, the last two
+        # in the top one; a miss is a shot too.
+        ticks = [0, 1, 3, 7, 17, 37, 97, 217, 338]
+        result = _probe_shots(
+            [(scout, target, tick, "miss" if tick == 3 else "hit") for tick in ticks]
+        )
+        cadence = result.roles["scout"].cadence
+        self.assertEqual(cadence.median, 15.0)
+        self.assertEqual(
+            cadence.bin_share,
+            {
+                "<=1t": 0.125,
+                "2t": 0.125,
+                "3-4t": 0.125,
+                "5-10t": 0.125,
+                "11-20t": 0.125,
+                "21-60t": 0.125,
+                "61-120t": 0.125,
+                "120t+": 0.125,
+            },
+        )
+
+    def test_each_players_shots_are_their_own_and_a_round_starts_afresh(self) -> None:
+        one = _scripted(_tick(), role="scout", team="red")
+        other = _scripted(_tick(), role="scout", team="red")
+        target = _scripted(_tick(), role="heavy", team="blue")
+        result = _probe_shots(
+            [
+                (one, target, 0, "hit"),
+                (other, target, 1, "hit"),
+                (one, target, 3, "hit"),
+            ],
+            [(one, target, 100, "hit")],
+        )
+        # One gap of 3 ticks; the other player's shot and the next round add none.
+        self.assertEqual(result.roles["scout"].cadence.median, 3.0)
+        self.assertEqual(result.roles["scout"].cadence.bin_share["3-4t"], 1.0)
+
+    def test_a_player_with_one_shot_has_no_median(self) -> None:
+        result = _probe_shots(
+            [(_scripted(_tick()), _scripted(_tick(), team="blue"), 0, "hit")]
+        )
+        self.assertIsNone(result.roles["scout"].cadence.median)
+
+    def test_the_shot_observer_is_put_back(self) -> None:
+        _probe_shots([(_scripted(_tick()), _scripted(_tick(), team="blue"), 0, "hit")])
+        self.assertEqual(entrypoints.resolve_shot.__name__, "resolve_shot")
+        self.assertEqual(shot.resolve_shot.__name__, "resolve_shot")
 
 
 class TestFormatResult(SimpleTestCase):
@@ -731,7 +1024,281 @@ class TestFormatResult(SimpleTestCase):
         self.assertIn("  Mean points: 50 +/- 0 (50-50)", format_result(result))
 
 
+_TARGETS = {
+    "per_role": {
+        "scout": {
+            "tags": {"mean": 36.42, "se": 0.9, "n": 656},
+            "times_tagged": {"mean": 57.44, "se": 1.0, "n": 656},
+            "active_share": {"mean": 0.55, "se": 0.01, "n": 656},
+            "eliminated": {"mean": 0.34, "se": 0.02, "n": 656},
+            "enemies_on_floor": {"mean": 5.47, "se": 0.04, "n": 328},
+            # The file keeps both: the sim's shots fired are Tags plus misses, so
+            # the like-for-like real figure is the one without Base zaps.
+            "shots_fired": {"mean": 58.6, "se": 1.0, "n": 656},
+            "shots_at_players": {"mean": 54.3, "se": 1.0, "n": 656},
+        },
+        "heavy": {"downs_given": {"mean": 43.48, "se": 1.0, "n": 328}},
+    },
+    "cadence": {
+        "scout": {"median": 3.6, "bins": {"<=0.5": 0.27}, "n": 1000},
+    },
+    "who_tags_whom": {
+        "commander": {
+            "commander": 28.16,
+            "heavy": 22.54,
+            "scout": 34.77,
+            "ammo": 15.91,
+            "medic": 7.65,
+        },
+    },
+    "who_downs_whom": {
+        "heavy": {
+            "commander": 22.95,
+            "heavy": 16.63,
+            "scout": 33.09,
+            "ammo": 9.92,
+            "medic": 4.37,
+        },
+    },
+}
+
+
+class TestFormatTagMeasures(SimpleTestCase):
+    """CAL-02 (#567): the tag measures print as ``mean +/- se (min-max)``, the
+    standard error over the player-rounds and the range across the seeds, and the
+    real value beside them when targets are given."""
+
+    def _result(self) -> ProbeResult:
+        first = _scripted(_tick(), times_tagged=1, tags_made=30, eliminated_at=600)
+        first.ticks_active = 900
+        first.mode_ticks = {Mode.ATTACK: 900, Mode.CONTROL: 450}
+        second = _scripted(_tick(), times_tagged=5, tags_made=10)
+        second.ticks_active = 900
+        second.mode_ticks = {Mode.ATTACK: 900, Mode.CONTROL: 450}
+        third = _scripted(_tick(), times_tagged=9, tags_made=20, eliminated_at=1000)
+        third.ticks_active = 900
+        third.mode_ticks = {Mode.ATTACK: 1800}
+        return _probe_scripted([first, second], [third])
+
+    def test_a_measure_prints_its_player_round_error_and_its_seed_range(self) -> None:
+        lines = format_result(self._result())
+        # 1, 5 and 9 over three player-rounds: deviation 4 over root 3; the seeds
+        # read 3.0 and 9.0.
+        self.assertIn("  Times tagged per round: 5.0 +/- 2.3 (3.0-9.0)", lines)
+        self.assertIn("  Shots fired per round: 20.0 +/- 5.8 (20.0-20.0)", lines)
+        self.assertIn(
+            "  Misses at a hiding target per round: 0.0 +/- 0.0 (0.0-0.0)", lines
+        )
+        self.assertIn("  Downs given per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Downs taken per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Active %: 50.0 +/- 0.0 (50.0-50.0)", lines)
+        self.assertIn("  Tags per Active minute: 2.7 +/- 0.8 (2.7-2.7)", lines)
+        self.assertIn("  Reaction shots per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn("  Follow-up shots per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
+        self.assertIn(
+            "  Enemies on the floor per Active roll: 0.0 +/- 0.0 (0.0-0.0)", lines
+        )
+
+    def test_mode_shares_over_the_round_print_beside_the_mode_shares(self) -> None:
+        lines = format_result(self._result())
+        self.assertIn(
+            "  Mode % of round: attack 66.7 (50.0-100.0), control 16.7 (0.0-25.0)",
+            lines,
+        )
+
+    def test_the_cadence_prints_its_median_and_bins(self) -> None:
+        one = _scripted(_tick(), role="scout", team="red")
+        other = _scripted(_tick(), role="scout", team="red")
+        target = _scripted(_tick(), role="heavy", team="blue")
+        lines = format_result(
+            _probe_shots(
+                [
+                    (one, target, 0, "hit"),
+                    (other, target, 1, "hit"),
+                    (one, target, 3, "hit"),
+                ]
+            )
+        )
+        self.assertIn(
+            "  Shot cadence, ticks: median 3.0 over 1 gaps; <=1t 0%, 2t 0%, 3-4t 100%, "
+            "5-10t 0%, 11-20t 0%, 21-60t 0%, 61-120t 0%, 120t+ 0%",
+            lines,
+        )
+        self.assertIn("  Shot cadence, ticks: none", lines)  # the Heavy never shot
+
+    def test_without_targets_no_line_names_a_real_value(self) -> None:
+        self.assertFalse(
+            [line for line in format_result(self._result()) if "real" in line]
+        )
+
+    def test_with_targets_each_role_line_with_a_counterpart_prints_the_real_mean(
+        self,
+    ) -> None:
+        lines = format_result(self._result(), targets=_TARGETS)
+        # The existing lines keep their across-seed error and gain the real value.
+        self.assertIn(
+            "  Tags made per round: 20.0 +/- 0.0 (20.0-20.0) | real 36.4", lines
+        )
+        self.assertIn("  Eliminated %: 66.7 +/- 25.0 (50.0-100.0) | real 34.0", lines)
+        self.assertIn(
+            "  Times tagged per round: 5.0 +/- 2.3 (3.0-9.0) | real 57.4", lines
+        )
+        self.assertIn("  Active %: 50.0 +/- 0.0 (50.0-50.0) | real 55.0", lines)
+        self.assertIn(
+            "  Enemies on the floor per Active roll: 0.0 +/- 0.0 (0.0-0.0) | real 5.5",
+            lines,
+        )
+        # Like for like: the sim's shots fired are Tags plus misses, so the real
+        # figure is ``shots_at_players`` (no Base zaps), not ``shots_fired``.
+        self.assertIn(
+            "  Shots fired per round: 20.0 +/- 5.8 (20.0-20.0) | real 54.3", lines
+        )
+        # No real figure in the file for this metric: the line is as without targets.
+        self.assertIn("  Downs given per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
+
+    def test_the_cadence_line_prints_the_real_median_in_ticks(self) -> None:
+        one = _scripted(_tick(), role="scout", team="red")
+        target = _scripted(_tick(), role="heavy", team="blue")
+        result = _probe_shots([(one, target, 0, "hit"), (one, target, 3, "hit")])
+        lines = format_result(result, targets=_TARGETS)
+        # The file's median is in seconds; a tick is 0.5 s, so 3.6 s is 7.2 ticks.
+        self.assertIn(
+            "  Shot cadence, ticks: median 3.0 over 1 gaps; <=1t 0%, 2t 0%, 3-4t 100%, "
+            "5-10t 0%, 11-20t 0%, 21-60t 0%, 61-120t 0%, 120t+ 0% "
+            "| real median 7.2 ticks",
+            lines,
+        )
+        # No real cadence for the Heavy in the file: its line is as without targets.
+        self.assertIn("  Shot cadence, ticks: none", lines)
+        self.assertFalse(
+            [line for line in format_result(result) if "real median" in line]
+        )
+
+    def test_the_matrices_print_per_round_with_a_total_and_the_real_rows(self) -> None:
+        commander = _scripted(_tick(), role="commander", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        result = _probe_shots(
+            [(commander, scout, 10, "hit"), (commander, scout, 12, "down")],
+            [(commander, scout, 5, "hit")],
+        )
+        lines = format_result(result)
+        header = lines.index(
+            "Who tags whom per round, both teams (attacker row, defender column):"
+        )
+        self.assertEqual(
+            lines[header + 1],
+            "             commander     heavy     scout      ammo     medic     total",
+        )
+        self.assertEqual(
+            lines[header + 2],
+            "commander          0.0       0.0       1.5       0.0       0.0       1.5",
+        )
+        downs = lines.index(
+            "Who Downs whom per round, both teams (attacker row, defender column):"
+        )
+        self.assertEqual(
+            lines[downs + 2],
+            "commander          0.0       0.0       0.5       0.0       0.0       0.5",
+        )
+        self.assertFalse([line for line in lines if line.startswith("  real")])
+
+        with_real = format_result(result, targets=_TARGETS)
+        header = with_real.index(
+            "Who tags whom per round, both teams (attacker row, defender column):"
+        )
+        self.assertEqual(
+            with_real[header + 3],
+            "  real            28.2      22.5      34.8      15.9       7.7     109.0",
+        )
+        # A row with no real figures has no real line under it.
+        self.assertEqual(with_real[header + 4][:5], "heavy")
+
+
+class TestCalibrationLineups(SimpleTestCase):
+    """CAL-02 (#567): the Test games' rosters, built as the Calibration harness does."""
+
+    def test_each_used_test_game_gives_a_red_and_a_blue_roster_in_position_order(
+        self,
+    ) -> None:
+        lineups = calibration_lineups(limit=2)
+        self.assertEqual(len(lineups), 2)
+        for red, blue in lineups:
+            for roster in (red, blue):
+                self.assertEqual(
+                    [role for role, _ in roster],
+                    ["commander", "heavy", "scout", "scout", "ammo", "medic"],
+                )
+            self.assertNotEqual([p.id for _, p in red], [p.id for _, p in blue])
+
+    def test_every_used_test_game_by_default(self) -> None:
+        self.assertEqual(len(calibration_lineups()), 128)
+
+
+class TestProbeSeeds(SimpleTestCase):
+    def test_one_63_bit_seed_per_game_from_the_master_seed(self) -> None:
+        seeds = probe_seeds(42, 3)
+        self.assertEqual(len(set(seeds)), 3)
+        self.assertEqual(seeds, probe_seeds(42, 3))
+        self.assertNotEqual(seeds, probe_seeds(43, 3))
+        self.assertTrue(all(0 <= seed < 2**63 for seed in seeds))
+
+
+class TestLineupsProbe(TestCase):
+    """CAL-02 (#567): two Test games, in this process and across two workers."""
+
+    @classmethod
+    def setUpTestData(cls) -> None:
+        cls.movement_ctx, _ = load_map_context(load_map_fixture(_SYRACUSE))
+
+    def test_serial_and_two_workers_give_the_same_result(self) -> None:
+        lineups = calibration_lineups(limit=2)
+        seeds = probe_seeds(42, 2)
+        serial = run_probe(self.movement_ctx, seeds, lineups=lineups, workers=1)
+        parallel = run_probe(self.movement_ctx, seeds, lineups=lineups, workers=2)
+        self.assertEqual(serial, parallel)
+        self.assertEqual(list(serial.by_seed), seeds)
+        self.assertEqual(set(serial.roles), _ROLES)
+        self.assertGreater(serial.roles["commander"].times_tagged.mean, 0.0)
+        self.assertGreater(serial.roles["commander"].shots_fired.mean, 0.0)
+        self.assertGreater(serial.who_tags_whom["commander"]["scout"], 0.0)
+        self.assertIsNotNone(serial.roles["commander"].cadence.median)
+
+
 class TestRoundProbeCommand(TestCase):
+    def test_the_test_lineups_print_with_the_real_values(self) -> None:
+        out = StringIO()
+        call_command("round_probe", "--lineups", "test", "--games", "1", stdout=out)
+        output = out.getvalue()
+        for text in (
+            "Times tagged per round",
+            "| real",
+            "Who tags whom per round",
+            "Who Downs whom per round",
+            "  real",
+            "Shot cadence, ticks",
+        ):
+            self.assertIn(text, output)
+        self.assertTrue(output.isascii())
+
+    def test_an_unknown_lineup_set_is_refused(self) -> None:
+        with self.assertRaisesMessage(CommandError, "bogus"):
+            call_command("round_probe", "--lineups", "bogus", stdout=StringIO())
+
+    def test_a_worker_count_below_one_is_refused(self) -> None:
+        with self.assertRaisesMessage(CommandError, "--workers"):
+            call_command("round_probe", "--workers", "0", stdout=StringIO())
+
+    def test_a_missing_targets_file_is_named(self) -> None:
+        with self.assertRaisesMessage(CommandError, "no_such_targets.json"):
+            call_command(
+                "round_probe",
+                "--seeds",
+                "1",
+                "--targets",
+                "no_such_targets.json",
+                stdout=StringIO(),
+            )
+
     def test_it_prints_the_measures_and_writes_nothing(self) -> None:
         maps, teams, players = (
             ArenaMap.objects.count(),

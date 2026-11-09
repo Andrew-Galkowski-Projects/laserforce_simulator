@@ -7,6 +7,7 @@ so testing them here covers both simulators simultaneously.
 from unittest.mock import patch
 
 from matches.sim_helpers.mechanics import (
+    cooldown_ticks,
     shot_cooldown,
     choose_tag_target,
     choose_resupply_target,
@@ -63,6 +64,80 @@ class TestShotCooldown:
     def test_scout_special_boundary_expired(self):
         # special_active_until=5, second=5 → not strictly > second → 0.5
         assert shot_cooldown(_ps("scout", special_active_until=5), 5.0) == 0.5
+
+
+class TestCooldownTicks:
+    """The one seconds-to-ticks conversion the tick loop, ``plan_action`` and the
+    deferred shot queues share (CAL-02 review): a Heavy waits 2 ticks, every
+    other role 1, a rapid-fire Scout none."""
+
+    def test_heavy_waits_two_ticks(self):
+        assert cooldown_ticks(_ps("heavy"), 30) == 2
+
+    def test_every_other_role_waits_one_tick(self):
+        for role in ("commander", "medic", "ammo", "scout"):
+            assert cooldown_ticks(_ps(role), 30) == 1, role
+
+    def test_rapid_fire_scout_waits_none(self):
+        assert cooldown_ticks(_ps("scout", special_active_until=100), 30) == 0
+
+    def test_it_returns_an_int(self):
+        assert type(cooldown_ticks(_ps("heavy"), 0)) is int
+
+
+# ---------------------------------------------------------------------------
+# plan_action's cooldown gate (CAL-02a bug B)
+# ---------------------------------------------------------------------------
+
+
+def _tag_weight(player, now, time_domain):
+    """The ``tag_player`` weight ``plan_action`` hands the Action draw at ``now``."""
+    from matches.sim_helpers.combat import _ACTION_IDX, plan_action
+
+    enemy = _ps("commander", team_color="blue", tag_id="blue_commander")
+    seen = []
+
+    def record(choices, weights):
+        seen.append(list(weights))
+        return ["hide"]
+
+    with patch("random.choices", side_effect=record):
+        plan_action(player, [player, enemy], now, time_domain=time_domain)
+    assert len(seen) == 1
+    return seen[0][_ACTION_IDX["tag_player"]]
+
+
+class TestPlanActionCooldownGate:
+    """The gate compares ``last_shot_time`` with the cooldown in the caller's unit.
+
+    CAL-02a bug B: in the ticks domain the seconds cooldown is converted to
+    whole ticks first (Heavy 2, every other role 1), so a Heavy that fired last
+    tick may not plan a Shot, the way the deferred queues already space them.
+    """
+
+    def test_heavy_that_fired_last_tick_plans_no_shot(self):
+        heavy = _ps("heavy", last_shot_time=29)
+        assert _tag_weight(heavy, 30, "ticks") == 0
+
+    def test_heavy_two_ticks_after_its_shot_has_its_full_weight(self):
+        rested = _tag_weight(_ps("heavy", last_shot_time=-100), 30, "ticks")
+        assert rested > 0
+        assert _tag_weight(_ps("heavy", last_shot_time=28), 30, "ticks") == rested
+
+    def test_commander_that_fired_last_tick_keeps_its_weight(self):
+        rested = _tag_weight(_ps("commander", last_shot_time=-100), 30, "ticks")
+        assert rested > 0
+        assert _tag_weight(_ps("commander", last_shot_time=29), 30, "ticks") == rested
+
+    def test_rapid_fire_scout_keeps_its_weight_on_the_same_tick(self):
+        scout = _ps("scout", last_shot_time=30, special_active_until=100)
+        assert _tag_weight(scout, 30, "ticks") > 0
+
+    def test_seconds_domain_still_blocks_inside_the_cooldown(self):
+        # Unchanged: a Heavy 0.6 s after its shot is inside its 1.0 s cooldown,
+        # a Commander 0.6 s after its shot is past its 0.5 s one.
+        assert _tag_weight(_ps("heavy", last_shot_time=5.0), 5.6, "seconds") == 0
+        assert _tag_weight(_ps("commander", last_shot_time=5.0), 5.6, "seconds") > 0
 
 
 # ---------------------------------------------------------------------------

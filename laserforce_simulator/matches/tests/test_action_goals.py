@@ -102,9 +102,12 @@ class TestTagGoalSeesItsTarget:
         _assert_a_full_value_draw_over(draws, VIEW)
 
     def test_the_attack_target_is_seen_not_stood_on(self, draws: list) -> None:
+        # CAL-02 D5: every role is an Attack target, so the near Scout is Downed
+        # inside its window to keep it off the Attack path (the Control path of the
+        # test above would still take the nearest remembered enemy).
         cmdr = _placed("commander", mode=Mode.ATTACK)
         _remember(cmdr, "blue_medic", TARGET, 100, "medic")
-        _remember(cmdr, "blue_scout", (1, 1), 100, "scout")
+        _remember(cmdr, "blue_scout", (1, 1), 100, "scout", status="downed")
         everyone = [cmdr, _enemy("medic"), _enemy("scout")]
         goal = _choose(cmdr, everyone, _sees_target(), action="tag_player")
         assert goal == (5, 2)
@@ -409,6 +412,13 @@ class TestEngagementGuard:
     picking seeds.
     """
 
+    # CAL-02 (2026-11-08): on the CAL-02b worktree alone (the defender learning the
+    # attacker, the Attack table for every role, the Medic tag weight 15, without
+    # CAL-02a) seeds 1-4 scored 38.8 +/- 1.1 as built and 35.8 +/- 6.7 with the
+    # bug, under the floor; with CAL-02a merged (queued Reactions and Follow-ups
+    # fire, the cooldown counts ticks) the floor holds again (the value is in
+    # PLAN.md's CAL-02 section). A later change that fails this re-measures both
+    # sides with ``scripts/mutate.py --measure`` before touching the floor.
     def test_scouts_keep_shooting_on_syracuse(self) -> None:
         result = run_probe(_syracuse(), [1, 2, 3, 4])
         assert result.roles["scout"].tags_per_round >= 40

@@ -512,6 +512,38 @@ class TestOverwatchFiringCap:
         attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
         assert not [a for a in attempts if a.get("overwatch") is True]
 
+    def _holder(self, role, last_shot_time):
+        holder = _ps(
+            role,
+            team_color="red",
+            cell_row=0,
+            cell_col=0,
+            final_shots=20,
+            last_shot_time=last_shot_time,
+        )
+        holder.is_holding = True
+        return holder
+
+    def test_heavy_holder_that_fired_last_tick_draws_no_attempt(self):
+        # CAL-02a bug B: the gate counts the Heavy's 1.0 s cooldown as 2 ticks,
+        # not as 1.0 compared with a tick gap of 1.
+        holder = self._holder("heavy", last_shot_time=29)
+        e1, _ = self._two_enemies()
+        attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
+        assert not [a for a in attempts if a.get("overwatch") is True]
+
+    def test_heavy_holder_two_ticks_after_its_shot_draws_an_attempt(self):
+        holder = self._holder("heavy", last_shot_time=28)
+        e1, _ = self._two_enemies()
+        attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
+        assert len([a for a in attempts if a.get("overwatch") is True]) == 1
+
+    def test_commander_holder_that_fired_last_tick_draws_an_attempt(self):
+        holder = self._holder("commander", last_shot_time=29)
+        e1, _ = self._two_enemies()
+        attempts = self.sim._collect_overwatch_attempts([holder, e1], 30, self.ctx)
+        assert len([a for a in attempts if a.get("overwatch") is True]) == 1
+
     def test_holder_not_active_produces_no_attempt(self):
         holder = _ps(
             "heavy",

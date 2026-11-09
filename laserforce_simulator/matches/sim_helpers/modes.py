@@ -67,8 +67,19 @@ _MODE_WEIGHT_SLOTS: dict[Mode, tuple[int, ...]] = {
 }
 
 # ── Goals (spec decisions 14, 16, 17) ────────────────────────────────────
-#: Attack: the value of a cell that can see a remembered target of this role.
-_ATTACK_TARGET_VALUES: dict[str, float] = {"medic": 1.0, "ammo": 0.7}
+#: Attack: the value of a cell that can see a remembered target of this role. One
+#: table for every attacker (CAL-02 D5, spec #563), proportional to how real
+#: Commanders spread their zaps per enemy player over the 128 Internationals 2026
+#: Test games (28 on the Commander, 22.5 on the Heavy, 17.4 on each Scout, 15.9 on
+#: the Ammo, 7.7 on the Medic). Before CAL-02 only the Medic (1.0) and Ammo (0.7)
+#: were hunted.
+_ATTACK_TARGET_VALUES: dict[str, float] = {
+    "commander": 1.0,
+    "heavy": 0.8,
+    "scout": 0.6,
+    "ammo": 0.55,
+    "medic": 0.3,
+}
 #: Base goal: a Commander needs this many Shots for a capture (``combat.capture_base``).
 BASE_CAPTURE_SHOTS: int = 3
 #: Control: added for a cell in range of the enemy base, for one in range of a neutral
@@ -290,9 +301,10 @@ def _attack_targets(
     time_domain: str,
     exclude: set[str],
 ) -> list[tuple[str, Cell]]:
-    """``(role, cell)`` of the Medics and Ammos worth hunting. Only ``downed`` is out,
-    and only for as long as a Down lasts: a player in ``reset_window`` can still be
-    hunted (spec decision 27)."""
+    """``(role, cell)`` of the remembered enemies worth hunting: every role in
+    ``_ATTACK_TARGET_VALUES`` (CAL-02 D5). Only ``downed`` is out, and only for as
+    long as a Down lasts: a player in ``reset_window`` can still be hunted (spec
+    decision 27)."""
     return [
         (entry["role"], _remembered_cell(entry))
         for tag, entry in _fresh_enemies(

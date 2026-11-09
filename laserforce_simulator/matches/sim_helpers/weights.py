@@ -7,7 +7,9 @@ from . import nuke_arming
 # ---------------------------------------------------------------------------
 
 _MEDIC = dict(
-    baseline_tag=-65,  # opening tag_player delta (70 -> 5)
+    # CAL-02 D6 (spec #563): the Medic shoots back at an enemy that walks into its
+    # view. Was -65 (70 -> 5); the real Medic lands 8.6 Tags a round, the sim's 2.1.
+    baseline_tag=-55,  # opening tag_player delta (70 -> 15)
     baseline_cz=-30,  # opening only_move delta (30 -> 0)
     baseline_hide=+30,  # opening hide delta (0 -> 30)
     baseline_resupply=+65,  # opening resupply_ally delta (0 -> 65)
@@ -465,8 +467,9 @@ def _get_medic_weights(
     """Compute the Medic action weights in place from ``_MEDIC`` and return them.
 
     Baseline after role adjustment (before situational modifiers):
-    ``tag_player=5, only_move=0, hide=30, resupply_ally=65, hold=0`` — Medic
-    never holds (no Overwatch source), staying support-focused.
+    ``tag_player=15, only_move=0, hide=30, resupply_ally=65, hold=0`` — Medic
+    never holds (no Overwatch source), staying support-focused; CAL-02 D6 raised
+    ``tag_player`` from 5 so it shoots back.
 
     Situational blocks, in application order (only the ones Medic calls):
     baseline -> hold baseline -> support capture incentive -> low-lives

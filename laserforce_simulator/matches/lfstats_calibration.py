@@ -644,6 +644,28 @@ def _used_games(train: dict, test: dict) -> tuple[list[dict], Coverage]:
     return used, coverage
 
 
+def used_lineups(
+    train: dict,
+    test: dict,
+    limit: int | None = None,
+    constants: ImportConstants = DEFAULT_CONSTANTS,
+) -> list[tuple[Sequence[tuple[str, _PlayerData]], Sequence[tuple[str, _PlayerData]]]]:
+    """The used Test games' ``(red, blue)`` rosters, as ``run_test`` plays them.
+
+    Each roster is the ``(role, _PlayerData)`` pairs of ``_sim_roster`` in
+    ``POSITIONS`` order, built from the players' Training rows with
+    ``constants``; Fire is red and Ice blue. The games are ``_used_games``'s, in
+    Test order; ``limit`` keeps the first games only. The seam ``round_probe
+    --lineups test`` plays its rounds on (CAL-02, #567).
+    """
+    used, _coverage = _used_games(train, test)
+
+    def roster(sides: dict, colour: str) -> list:
+        return _sim_roster(train, _ordered(sides[colour]["roster"]), constants)
+
+    return [(roster(sides, "fire"), roster(sides, "ice")) for sides in used[:limit]]
+
+
 def real_targets(train: dict, test: dict) -> list[CellTarget]:
     """One ``CellTarget`` per Test cell, in ``run_test``'s order, with no simulation.
 

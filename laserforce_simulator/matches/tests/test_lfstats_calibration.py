@@ -798,6 +798,37 @@ class TestRealTargets:
         train, test = _data([_game("seven", seven, _side("j"))])
         assert cal.real_targets(train, test) == []
 
+
+class TestUsedLineups:
+    """The used Test games' (red, blue) rosters, the way ``run_test`` builds them
+    (CAL-02 review: the probe's ``--lineups test`` seam)."""
+
+    def test_each_used_game_gives_fire_as_red_and_ice_as_blue_in_position_order(
+        self,
+    ) -> None:
+        train, test = _three_game_set()
+        lineups = cal.used_lineups(train, test)
+        # The two-heavy and the thin game are skipped, as run_test skips them.
+        assert len(lineups) == 1
+        red, blue = lineups[0]
+        assert [role for role, _ in red] == list(LINEUP)
+        assert [role for role, _ in blue] == list(LINEUP)
+        assert [p.id for _, p in red] == [e["ipl_id"] for e in _ordered(_side("a"))]
+        assert [p.id for _, p in blue] == [e["ipl_id"] for e in _ordered(_side("b"))]
+        # Each player carries their Training row's stats, as run_test's rosters do.
+        want = _roster(train, _side("a"))
+        assert [(r, p.name, p._stats) for r, p in red] == [
+            (r, p.name, p._stats) for r, p in want
+        ]
+
+    def test_limit_keeps_the_first_games_in_test_order(self) -> None:
+        games = [_game(f"g{i}", _side(f"f{i}"), _side(f"i{i}")) for i in range(3)]
+        train, test = _data(games)
+        assert len(cal.used_lineups(train, test)) == 3
+        two = cal.used_lineups(train, test, limit=2)
+        assert [red[0][1].id for red, _ in two] == ["f0-commander0", "f1-commander0"]
+        assert len(cal.used_lineups(train, test, limit=None)) == 3
+
     def test_payload_carries_the_coverage_the_gate_and_the_cells_as_json(self) -> None:
         train, test = _three_game_set()
         payload = cal.targets_payload(train, test)

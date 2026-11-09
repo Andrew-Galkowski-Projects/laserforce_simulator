@@ -26,6 +26,7 @@ from .modes import (
 from .round_context import RoundContext
 from .time_constants import HOLD_TICKS
 from .mechanics import (
+    cooldown_ticks,
     shot_cooldown,
     choose_tag_target,
     choose_resupply_target,
@@ -350,7 +351,13 @@ def plan_action(
             )
 
     cooldown = shot_cooldown(player, second)
-    if cooldown > 0.0 and (second - player.last_shot_time) < cooldown:
+    if time_domain == "ticks":
+        # CAL-02a bug B (2026-11-08): ``second`` and ``last_shot_time`` are ticks
+        # here, so the seconds cooldown is converted to whole ticks first (Heavy
+        # 2, every other role 1, a rapid-fire Scout 0), the way the deferred
+        # queues already space their shots.
+        cooldown = cooldown_ticks(player, second)
+    if cooldown > 0 and (second - player.last_shot_time) < cooldown:
         weights[_ACTION_IDX["tag_player"]] = 0
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1

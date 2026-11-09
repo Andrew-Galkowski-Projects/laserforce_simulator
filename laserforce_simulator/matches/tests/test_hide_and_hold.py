@@ -686,7 +686,7 @@ class TestHoldBaselines:
             ("heavy", 4, "only_move", 25 - 4 - 15),
             ("scout", 3, "only_move", 60 - 3),
             ("ammo", 3, "tag_player", 45 - 3),
-            ("medic", 0, "tag_player", 5),
+            ("medic", 0, "tag_player", 15),  # CAL-02 D6: was 5
         ],
     )
     def test_on_a_map_the_difference_stays_in_the_source_slot(
@@ -735,8 +735,19 @@ class TestMapLessRoundsAreUnchanged:
     # each nuke draws its SP bank from the real table (nuke_arming.banked_enough)
     # and rolls its resupply slip when the fuse starts (nuke_arming.fuse_lit), two
     # more draws per nuke, and the nuke weight is doubled just after a Down (the
-    # values before were 41b1e498403fc1d7 and 5f99af49798143f2).
-    PINNED = {7: "95ffd6649674d1d3", 21: "e83dc90224030c38"}
+    # values before were 41b1e498403fc1d7 and 5f99af49798143f2). Re-pinned
+    # 2026-11-08 for CAL-02a: queued Reactions and Follow-ups now resolve on
+    # their due tick, each a hit roll the old round never drew, and a Heavy's
+    # planning gate counts its cooldown as 2 ticks, so a map-less Heavy rolls
+    # tag_player on every other tick only (the values before were
+    # 95ffd6649674d1d3 and e83dc90224030c38). Re-pinned 2026-11-08 for CAL-02b
+    # (#565): the Medic's opening tag_player weight is 15 (was 5, weights._MEDIC),
+    # so the map-less Medic's action roll draws differently from its first tick
+    # (the values before were 4c638ab236715605 and 5f130a9800c7c5ac). Measured
+    # per decision on the CAL-02b worktree: the Medic weight alone moves both
+    # seeds; the defender-learns-attacker switch and the Attack table leave a
+    # map-less round untouched, as spec #563 D4 requires.
+    PINNED = {7: "1dc64a3eb8fe381c", 21: "d0bee54c85ccea54"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:
