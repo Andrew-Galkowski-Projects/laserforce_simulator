@@ -88,6 +88,12 @@ export const LF_COLOUR_TOKENS = [
   // The Playback map's deactivated player marker (RV-06): one mid grey, the same in light and
   // dark, since it is painted over the always-white processed image. Not a map editor token.
   '--lf-map-marker-off',
+  // The Playback map's lives / shots arcs and missile pips (RV-07a): the same in light and dark,
+  // for the same reason.
+  '--lf-gauge-full',
+  '--lf-gauge-mid',
+  '--lf-gauge-empty',
+  '--lf-gauge-track',
   ...LF_MAP_TOKENS,
 ] as const;
 

@@ -187,7 +187,9 @@ src/
                           playback-map: role-icon markers, playback-markers.ts markerSize /
                           markerLook, playback-overlays.ts (RV-06c, pure: overlaysAt gives the
                           Tag lines and capture bursts at a cursor, baseMarkers the R / B / N
-                          bases from the zone config); from `rounds/:id/playback/` + the
+                          bases from the zone config), playback-gauges.ts (RV-07a, pure:
+                          playerGauges gives a player's lives / shots levels and missiles
+                          at a tick, gaugeColour the arcs' colour); from `rounds/:id/playback/` + the
                           timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
                           (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;

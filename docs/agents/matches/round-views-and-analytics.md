@@ -216,6 +216,11 @@ computed this way.
 - `build_playback_map(game_round) -> dict | None` (see **Round-playback map** above) adds
   `arena_map: {id, name}`. Players come in state-id
   order and moves in (tick, event id) order.
+  - RV-07a: each map player carries its role's limits right after `role`, so the SPA keeps no
+    copy of the role table: `max_lives` (`MAX_LIVES`), `max_shots` (`MAX_SHOTS`), `special_cost`
+    (`SPECIAL_COST.get(role)`: `null` for a Heavy), all from `sim_helpers/role_constants.py` and
+    case-insensitive on `role`, and `max_missiles` (the state's `starting_missiles`). They come
+    from rows already loaded, so the query count is unchanged.
 - **Final-state invariant:** each player's last snapshot equals their `PlayerRoundState`. The fields
   compared are score, lives, shots, missiles, sp, eliminated, `tags_made` and `shots_missed`.
 - The action upgrades the round to `full` fidelity. Its query count does not grow with the number of
@@ -272,6 +277,19 @@ after LFstats's Replay tab, within ADR-0043.
   - On first open it also fetches `MapsService.zoneConfig` and draws each base as an R / B / N
     diamond. A failed fetch, or no bases, draws none and shows no notice. Draw order: bases,
     trails, lines and bursts, markers.
+  - RV-07a: each marker carries what the player holds, from the pure `playback-gauges.ts`
+    (`playerGauges(player, snapshots, tick)` reads the snapshot at the tick through
+    `snapshotAt`: `lives` / `shots` as 0..1 of `max_lives` / `max_shots`, clamped, and
+    `missiles` or `null` when `max_missiles` is 0; `gaugeColour` blends `--lf-gauge-empty` ->
+    `--lf-gauge-mid` below 0.5 and mid -> `--lf-gauge-full` from 0.5; its spec is the test
+    seam). `drawGauges` paints, after the icon: a lives arc on the left (`0.55 pi` to
+    `1.45 pi`) and a shots arc on the right (`0.45 pi` back to `-0.45 pi`), each at radius
+    `1.12 h` (`h` = half the marker size), width `max(3, 0.1 size)`, filling from the bottom
+    over a `--lf-gauge-track` arc; then, for a Commander or Heavy, `max_missiles` pips of radius
+    `0.055 size` under the arcs, lit in `--lf-ev-missile` per missile left, unlit in the track.
+    A deactivated player's gauges are drawn at the icon's 0.35 alpha and keep their colours. The
+    four gauge tokens are the same in light and dark (the map image is white in both). The
+    special bar under the pips is RV-07b.
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
 
 Tests:
@@ -280,7 +298,7 @@ Tests:
   **Replay**), unit cases on hand-built
   events, and the special-kind check.
 - `test_api_round_playback.py`: shape, map, ownership, fidelity and query count.
-- `test_playback_map.py`: the map and its order.
+- `test_playback_map.py`: the map and its order, and each role's limits (RV-07a).
 - The Vitest specs beside each component.
 
 ## ANG-06g Event charts

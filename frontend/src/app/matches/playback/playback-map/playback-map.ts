@@ -22,6 +22,7 @@ import {
 import { Role } from '../../../api/players.models';
 import { TICKS_PER_SECOND } from '../../shared/clock';
 import { iconRole, roleIconLoads, tintedRoleIcon } from '../../shared/role-icon';
+import { PlayerGauges, Rgb, gaugeColour, hexRgb, playerGauges } from './playback-gauges';
 import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
 import {
   BaseMarker,
@@ -52,6 +53,10 @@ interface Route {
   keyframes: Keyframe[];
   /** Whether the player is deactivated at a tick (dims the marker and that trail segment). */
   off: (tick: number) => boolean;
+  /** What the player carries at a tick (RV-07a): the arcs' levels and the missiles left. */
+  gauges: (tick: number) => PlayerGauges;
+  /** How many missile pips to draw: the player's `max_missiles` (0 draws none). */
+  maxMissiles: number;
 }
 
 /** The colours, read from the tokens at draw time. */
@@ -67,6 +72,12 @@ interface Palette {
   resupply: string;
   baseNeutral: string;
   baseOutline: string;
+  /** The arcs' colour scale (RV-07a), as channels for `gaugeColour`. */
+  gaugeFull: Rgb;
+  gaugeMid: Rgb;
+  gaugeEmpty: Rgb;
+  /** Under each arc, and an unlit missile pip. */
+  gaugeTrack: string;
 }
 
 /** The map's colours, from the tokens as `el` computes them. */
@@ -84,6 +95,10 @@ export function readPalette(el: Element): Palette {
     resupply: token('--lf-ev-resupply'),
     baseNeutral: token('--lf-map-base-neutral'),
     baseOutline: token('--lf-map-base-outline'),
+    gaugeFull: hexRgb(token('--lf-gauge-full')),
+    gaugeMid: hexRgb(token('--lf-gauge-mid')),
+    gaugeEmpty: hexRgb(token('--lf-gauge-empty')),
+    gaugeTrack: token('--lf-gauge-track'),
   };
 }
 
@@ -299,6 +314,7 @@ function drawBurst(
  * Draws each player's marker at `t` seconds: the role icon centred on the player, tinted in the
  * Side colour (grey and dimmed while deactivated), with no ring, and a Scout's number badge at
  * its bottom-right in the same colour. A plain dot stands in until the icon's PNG has loaded.
+ * Then its gauges (`drawGauges`), dimmed with the icon.
  */
 function drawMarkers(
   ctx: CanvasRenderingContext2D,
@@ -336,8 +352,66 @@ function drawMarkers(
       ctx.font = `700 ${Math.round(br * 1.4)}px ${colours.font}`;
       ctx.fillText(String(route.scout), bx, by + 0.5);
     }
+    // Still at the icon's alpha, so a deactivated player's gauges dim with it.
+    drawGauges(ctx, [x, y], size, route.gauges(t * TICKS_PER_SECOND), route.maxMissiles, colours);
   }
   ctx.globalAlpha = 1;
+}
+
+/** The lives arc's span, clockwise from just left of the bottom (canvas angles: y grows down). */
+const LIVES_FROM = 0.55 * Math.PI;
+/** The shots arc's span, counter-clockwise from just right of the bottom. */
+const SHOTS_FROM = 0.45 * Math.PI;
+/** Each arc sweeps 0.9 pi when full. */
+const ARC_SWEEP = 0.9 * Math.PI;
+
+/**
+ * One marker's gauges (RV-07a), drawn after its icon at the current alpha: the lives arc on the
+ * left and the shots arc on the right, each filling from the bottom over a track arc, then a
+ * row of `maxMissiles` pips under them, lit in the missile colour for each missile left.
+ * RV-07b draws the special bar under the pips.
+ */
+function drawGauges(
+  ctx: CanvasRenderingContext2D,
+  [x, y]: readonly [number, number],
+  size: number,
+  gauges: PlayerGauges,
+  maxMissiles: number,
+  colours: Palette,
+): void {
+  const h = size / 2;
+  const radius = 1.12 * h;
+  ctx.lineWidth = Math.max(3, 0.1 * size);
+  ctx.lineCap = 'butt';
+  const arc = (from: number, sweep: number, ccw: boolean, colour: string): void => {
+    ctx.beginPath();
+    ctx.arc(x, y, radius, from, ccw ? from - sweep : from + sweep, ccw);
+    ctx.strokeStyle = colour;
+    ctx.stroke();
+  };
+  const colour = (level: number): string =>
+    gaugeColour(level, colours.gaugeFull, colours.gaugeMid, colours.gaugeEmpty);
+  arc(LIVES_FROM, ARC_SWEEP, false, colours.gaugeTrack);
+  if (gauges.lives > 0) {
+    arc(LIVES_FROM, ARC_SWEEP * gauges.lives, false, colour(gauges.lives));
+  }
+  arc(SHOTS_FROM, ARC_SWEEP, true, colours.gaugeTrack);
+  if (gauges.shots > 0) {
+    arc(SHOTS_FROM, ARC_SWEEP * gauges.shots, true, colour(gauges.shots));
+  }
+  if (maxMissiles > 0) {
+    const pip = 0.055 * size;
+    const gap = 3 * pip;
+    const py = y + radius + 0.16 * size;
+    const left = x - ((maxMissiles - 1) * gap) / 2;
+    const lit = gauges.missiles ?? 0;
+    for (let i = 0; i < maxMissiles; i++) {
+      ctx.beginPath();
+      ctx.arc(left + i * gap, py, pip, 0, Math.PI * 2);
+      ctx.fillStyle = i < lit ? colours.missile : colours.gaugeTrack;
+      ctx.fill();
+    }
+  }
 }
 
 /**
@@ -401,6 +475,8 @@ export class PlaybackMap {
         scout: p.scout,
         keyframes: routeKeyframes(p),
         off: (tick: number) => deactivatedAt(own, tick, respawnTicks),
+        gauges: (tick: number) => playerGauges(p, own, tick),
+        maxMissiles: p.max_missiles,
       };
     });
   });

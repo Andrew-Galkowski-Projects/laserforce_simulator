@@ -156,7 +156,13 @@ const MIN_TEXT_CONTRAST = 4.5;
  * Colour tokens painted over the always-white processed map image, so dark mode keeps the
  * light value (the dark block still declares them).
  */
-const SAME_IN_BOTH_SCHEMES: readonly string[] = ['--lf-map-marker-off'];
+const SAME_IN_BOTH_SCHEMES: readonly string[] = [
+  '--lf-map-marker-off',
+  '--lf-gauge-full',
+  '--lf-gauge-mid',
+  '--lf-gauge-empty',
+  '--lf-gauge-track',
+];
 
 /** An sRGB channel (0..1) to linear light. */
 function linearise(channel: number): number {
@@ -330,6 +336,38 @@ describe('global stylesheet (styles.scss compiled into jsdom)', () => {
         dark.getPropertyValue(name).trim() === lightValues[i],
     );
     expect(unchanged).toEqual([]);
+  });
+
+  it('gives every SAME_IN_BOTH_SCHEMES token one value in light and dark', () => {
+    const light = applyStylesheet('light');
+    const lightValues = SAME_IN_BOTH_SCHEMES.map((name) => light.getPropertyValue(name).trim());
+    const dark = applyStylesheet('dark');
+    const differing = SAME_IN_BOTH_SCHEMES.filter(
+      (name, i) => dark.getPropertyValue(name).trim() !== lightValues[i],
+    );
+    expect(differing).toEqual([]);
+  });
+
+  it("paints the Playback map's gauges (RV-07a) in the same colours in both schemes", () => {
+    const gauges: Record<string, string> = {
+      '--lf-gauge-full': '#1e9e3e',
+      '--lf-gauge-mid': '#e3a008',
+      '--lf-gauge-empty': '#7f1010',
+      '--lf-gauge-track': 'rgb(27 34 48 / 0.18)',
+    };
+    const names = Object.keys(gauges);
+    expect(names.filter((name) => !(LF_TOKENS as readonly string[]).includes(name))).toEqual([]);
+    expect(names.filter((name) => !SAME_IN_BOTH_SCHEMES.includes(name))).toEqual([]);
+    // Sass compiles `rgb(27 34 48 / 0.18)` to `rgb(27 34 48/0.18)`, so compare without spaces.
+    const squash = (value: string) => value.replace(/\s+/g, '');
+    for (const scheme of ['light', 'dark'] as const) {
+      const root = applyStylesheet(scheme);
+      for (const name of names) {
+        expect(squash(root.getPropertyValue(name)), `${name} in ${scheme}`).toBe(
+          squash(gauges[name]),
+        );
+      }
+    }
   });
 
   it('keeps colour literals out of every .scss under src/ but the token block and palettes', () => {

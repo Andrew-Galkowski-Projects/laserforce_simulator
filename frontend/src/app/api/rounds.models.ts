@@ -284,6 +284,14 @@ export interface PlaybackMapPlayer {
   name: string;
   team: Side;
   role: string;
+  /** RV-07a: the role's maximum lives (`MAX_LIVES`). */
+  max_lives: number;
+  /** RV-07a: the role's maximum shots (`MAX_SHOTS`). */
+  max_shots: number;
+  /** RV-07a: the role's special cost in SP (`SPECIAL_COST`); `null` for a Heavy. */
+  special_cost: number | null;
+  /** RV-07a: the player's `starting_missiles`: 5 for a Commander or Heavy, else 0. */
+  max_missiles: number;
   /** 1 / 2 for a Side's two Scouts, else 0. */
   scout: number;
   /** `[row, col]`. */
