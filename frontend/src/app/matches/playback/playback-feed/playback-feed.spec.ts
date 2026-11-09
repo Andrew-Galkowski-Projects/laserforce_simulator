@@ -66,6 +66,41 @@ describe('PlaybackFeed', () => {
     expect(text(target)).toBe('R Ace');
   });
 
+  it("shows the actor's and target's role icons before their names, adding no text", async () => {
+    await render(
+      [
+        timelineEvent({ tick: 3, description: 'Ace tags Dax', metadata: {} }),
+        timelineEvent({
+          tick: 9,
+          description: 'Dax tags Ace',
+          actor_name: 'Dax',
+          actor_side: 'blue',
+          target_name: 'Ace',
+          target_side: 'red',
+          metadata: { actor_role: 'scout', target_role: 'medic' },
+        }),
+      ],
+      100,
+    );
+    const [withRoles, without] = rows();
+    const alts = (el: Element | null): string[] =>
+      [...(el?.querySelectorAll('img') ?? [])].map((img) => img.alt);
+    const actor = withRoles.querySelector('.pf-row__actor');
+    const target = withRoles.querySelector('.pf-row__target');
+    expect(alts(actor)).toEqual(['Scout']);
+    expect(alts(target)).toEqual(['Medic']);
+    // The icon sits before the name.
+    const name = [...actor!.childNodes].find(
+      (n) => n.nodeType === Node.TEXT_NODE && n.textContent?.trim() === 'Dax',
+    )!;
+    const icon = actor!.querySelector('app-role-icon')!;
+    expect(icon.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(text(actor)).toBe('B Dax');
+    expect(text(target)).toBe('R Ace');
+    expect(withRoles.querySelectorAll('img')).toHaveLength(2);
+    expect(without.querySelector('img')).toBeNull();
+  });
+
   describe('filters', () => {
     const checkbox = (label: string): HTMLInputElement => {
       const box = [...host().querySelectorAll('mat-checkbox')].find((c) => text(c) === label);

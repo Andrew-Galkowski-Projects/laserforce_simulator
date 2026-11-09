@@ -42,7 +42,11 @@ describe('PlaybackScoreboard', () => {
   const text = (el: Element | null | undefined): string =>
     el?.textContent?.replace(/\s+/g, ' ').trim() ?? '';
   const rows = (): HTMLElement[] => [...host().querySelectorAll<HTMLElement>('tbody tr')];
-  const cells = (row: HTMLElement): string[] => [...row.querySelectorAll('td')].map((c) => text(c));
+  /** Each cell's text; the Pos cell's role icon reads as its `alt` (it adds no text). */
+  const cells = (row: HTMLElement): string[] =>
+    [...row.querySelectorAll('td')].map(
+      (c) => text(c) || (c.querySelector('img') as HTMLImageElement | null)?.alt || '',
+    );
   const names = (): string[] => rows().map((r) => text(r.querySelector('.sb-name__text')));
   const rowOf = (name: string): HTMLElement =>
     rows().find((r) => text(r.querySelector('.sb-name__text')) === name)!;
@@ -87,7 +91,7 @@ describe('PlaybackScoreboard', () => {
       '1',
       'Ace',
       '',
-      'CMD',
+      'Commander',
       '100',
       '100%',
       '15',
@@ -102,7 +106,7 @@ describe('PlaybackScoreboard', () => {
       '1',
       'Ace',
       '',
-      'CMD',
+      'Commander',
       '300',
       '50%',
       '15',
@@ -110,7 +114,18 @@ describe('PlaybackScoreboard', () => {
       '4',
       '6',
     ]);
-    expect(cells(rowOf('Cleo'))).toEqual(['3', 'Cleo', '', 'MED', '0', '—', '20', '15', '0', '0']);
+    expect(cells(rowOf('Cleo'))).toEqual([
+      '3',
+      'Cleo',
+      '',
+      'Medic',
+      '0',
+      '—',
+      '20',
+      '15',
+      '0',
+      '0',
+    ]);
   });
 
   it('re-sorts the rows by live score, with # the live rank', async () => {
@@ -197,7 +212,7 @@ describe('PlaybackScoreboard', () => {
       0,
       [ACE, bolt],
     );
-    expect(cells(rowOf('Bolt'))[3]).toBe('HVY');
+    expect(cells(rowOf('Bolt'))[3]).toBe('Heavy');
     expect(cells(rowOf('Bolt'))[9]).toBe('—');
     expect(cells(rowOf('Ace'))[9]).toBe('4');
   });
