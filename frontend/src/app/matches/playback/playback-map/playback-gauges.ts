@@ -14,8 +14,42 @@ export interface PlayerGauges {
   shots: number;
   /** Snapshot missiles (the lit pips), or `null` when `max_missiles` is 0. */
   missiles: number | null;
-  /** The special bar: RV-07b (#577) fills it in; always `null` until then. */
-  special: null;
+  /** The special bar (RV-07b), or `null` when `special_cost` is null (a Heavy). */
+  special: SpecialBar | null;
+}
+
+/** A player's SP against its special's cost, and the special running at the tick. */
+export interface SpecialBar {
+  /** `floor(min(sp, MAX_SP) / cost)`: the completed laps. */
+  lap: number;
+  /** `(min(sp, MAX_SP) % cost) / cost`: the current lap's fill, 0..1. */
+  fill: number;
+  /** A Commander's nuke or a Scout's rapid fire; a Medic's or Ammo's special never runs. */
+  running: 'none' | 'rapid-fire' | 'nuke';
+  /** The nuke fuse's progress 0..1 (`fuseProgress`) while `running` is `'nuke'`, else `null`. */
+  fuse: number | null;
+}
+
+/** The most SP a player can bank. */
+export const MAX_SP = 99;
+
+function specialBar(
+  cost: number | null,
+  snapshots: readonly PlaybackSnapshot[],
+  tick: number,
+): SpecialBar | null {
+  if (cost === null) {
+    return null;
+  }
+  const snap = snapshotAt(snapshots, tick);
+  const sp = Math.min(snap?.sp ?? 0, MAX_SP);
+  const state = running(snap);
+  return {
+    lap: Math.floor(sp / cost),
+    fill: (sp % cost) / cost,
+    running: state,
+    fuse: state === 'nuke' ? fuseProgress(snapshots, tick) : null,
+  };
 }
 
 /** `value / max` clamped to 0..1; 0 when the maximum is not positive. */
@@ -37,8 +71,68 @@ export function playerGauges(
     lives: level(snap?.lives ?? 0, player.max_lives),
     shots: level(snap?.shots ?? 0, player.max_shots),
     missiles: player.max_missiles > 0 ? (snap?.missiles ?? 0) : null,
-    special: null,
+    special: specialBar(player.special_cost, snapshots, tick),
   };
+}
+
+/** The longest nuke fuse in ticks: a fuse with no snapshot clearing `nuking` ends here. */
+const LONGEST_FUSE = 14;
+
+/**
+ * A nuke fuse's progress at `tick`, 0..1, or `null` when no fuse burns then. The fuse is lit at
+ * the first tick of the latest run of `nuking` snapshots at or before `tick`, and ends at the next
+ * snapshot that clears `nuking` (detonation or cancel), else at lit + 14. The end tick itself
+ * still reads 1; any later tick reads `null`. `snapshots` must be in tick order.
+ */
+export function fuseProgress(snapshots: readonly PlaybackSnapshot[], tick: number): number | null {
+  let last = -1;
+  for (let i = 0; i < snapshots.length && snapshots[i].tick <= tick; i++) {
+    if (snapshots[i].nuking) {
+      last = i;
+    }
+  }
+  if (last < 0) {
+    return null;
+  }
+  let first = last;
+  while (first > 0 && snapshots[first - 1].nuking) {
+    first--;
+  }
+  const lit = snapshots[first].tick;
+  let next = last + 1;
+  while (next < snapshots.length && snapshots[next].nuking) {
+    next++;
+  }
+  const cleared = snapshots[next]?.tick;
+  if (cleared !== undefined && cleared < tick) {
+    return null;
+  }
+  const end = cleared ?? lit + LONGEST_FUSE;
+  return Math.min(1, Math.max(0, (tick - lit) / (end - lit)));
+}
+
+function running(snap: PlaybackSnapshot | null): SpecialBar['running'] {
+  if (snap?.nuking) {
+    return 'nuke';
+  }
+  return snap?.rapid_fire ? 'rapid-fire' : 'none';
+}
+
+/** Lap `lap`'s colour from the lap tokens; a lap past the last token takes the last one. */
+export function lapColour(lap: number, laps: readonly string[]): string {
+  return laps[Math.min(lap, laps.length - 1)];
+}
+
+/** Whether any player with a special has its nuke or rapid fire running at `tick`. */
+export function anySpecialRunning(
+  players: readonly PlaybackMapPlayer[],
+  snapshotsById: ReadonlyMap<number, readonly PlaybackSnapshot[]>,
+  tick: number,
+): boolean {
+  return players.some((player) => {
+    const snap = snapshotAt(snapshotsById.get(player.id) ?? [], tick);
+    return player.special_cost !== null && running(snap) !== 'none';
+  });
 }
 
 function mix(from: Rgb, to: Rgb, t: number): string {
