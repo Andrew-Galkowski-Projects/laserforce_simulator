@@ -9,7 +9,7 @@ import {
   untracked,
 } from '@angular/core';
 import { PlaybackSnapshot, Side, TimelinePlayer } from '../../../api/rounds.models';
-import { roleLabel } from '../../shared/role-label';
+import { RoleIcon } from '../../shared/role-icon-img';
 import { sideTag } from '../../shared/side-tag';
 import { snapshotAt } from '../snapshot-at';
 
@@ -17,7 +17,8 @@ import { snapshotAt } from '../snapshot-at';
 interface BoardRow {
   id: number;
   name: string;
-  pos: string;
+  /** The Pos cell's role icon. */
+  role: string;
   rank: number;
   snap: PlaybackSnapshot;
   acc: string;
@@ -91,6 +92,7 @@ function respawnAt(
  */
 @Component({
   selector: 'app-playback-scoreboard',
+  imports: [RoleIcon],
   templateUrl: './playback-scoreboard.html',
   styleUrl: './playback-scoreboard.scss',
 })
@@ -117,7 +119,7 @@ export class PlaybackScoreboard {
         return {
           id: p.id,
           name: p.name,
-          pos: roleLabel(p.role),
+          role: p.role,
           rank: 0,
           snap,
           acc: accuracy(snap),

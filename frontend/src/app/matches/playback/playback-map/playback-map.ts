@@ -13,8 +13,10 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { MatButton } from '@angular/material/button';
 import { MapsService } from '../../../api/maps.service';
 import { PlaybackMap as PlaybackMapData, PlaybackSnapshot, Side } from '../../../api/rounds.models';
+import { Role } from '../../../api/players.models';
 import { TICKS_PER_SECOND } from '../../shared/clock';
-import { roleLabel } from '../../shared/role-label';
+import { ROLE_ICON_URLS, roleIconLoads, tintedRoleIcon } from '../../shared/role-icon';
+import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
 import {
   Keyframe,
   TRAIL_SEC,
@@ -28,8 +30,8 @@ import {
 /** One player's marker, ready to draw. */
 interface Route {
   side: Side;
-  /** CMD / HVY / SCT / AMO / MED. */
-  label: string;
+  /** The marker's role icon; `null` for a role with no icon (drawn as a plain dot). */
+  role: Role | null;
   /** 1 / 2 for a Side's two Scouts, else 0. */
   scout: number;
   keyframes: Keyframe[];
@@ -37,15 +39,19 @@ interface Route {
   off: (tick: number) => boolean;
 }
 
-/** Opacity factor for a deactivated player's marker and trail. */
-const DIM = 0.35;
+/** `role` as a `Role` with an icon (case-insensitive), or `null`. */
+function iconRole(role: string): Role | null {
+  const key = role.toLowerCase();
+  return key in ROLE_ICON_URLS ? (key as Role) : null;
+}
 
 /** The colours, read from the tokens at draw time. */
 interface Palette {
   side: Record<Side, string>;
   trail: Record<Side, string>;
+  /** A deactivated player's marker. */
+  muted: string;
   surface: string;
-  text: string;
   border: string;
   font: string;
 }
@@ -56,8 +62,8 @@ function readPalette(el: Element): Palette {
   return {
     side: { red: token('--lf-side-red'), blue: token('--lf-side-blue') },
     trail: { red: token('--lf-side-red-dim'), blue: token('--lf-side-blue-dim') },
+    muted: token('--lf-text-muted'),
     surface: token('--lf-surface'),
-    text: token('--lf-text'),
     border: token('--lf-border'),
     font: token('--lf-font-body'),
   };
@@ -65,6 +71,18 @@ function readPalette(el: Element): Palette {
 
 /** Draws the trails, then the markers, at `t` seconds; ported from the Django overlay. */
 function drawMap(
+  ctx: CanvasRenderingContext2D,
+  routes: readonly Route[],
+  zone: number,
+  t: number,
+  colours: Palette,
+): void {
+  drawTrails(ctx, routes, zone, t, colours);
+  drawMarkers(ctx, routes, zone, t, colours);
+}
+
+/** Clears the canvas, frames it, and draws each player's comet trail. */
+function drawTrails(
   ctx: CanvasRenderingContext2D,
   routes: readonly Route[],
   zone: number,
@@ -89,7 +107,7 @@ function drawMap(
       const xy = cellToPixel(r, c, zone);
       if (prev) {
         const age = (t - s) / TRAIL_SEC;
-        const dim = route.off(s * TICKS_PER_SECOND) ? DIM : 1;
+        const dim = route.off(s * TICKS_PER_SECOND) ? MARKER_DIM : 1;
         ctx.globalAlpha = (0.8 * (1 - age) + 0.05) * dim;
         ctx.lineWidth = Math.max(1.5, zone * (0.08 + 0.12 * (1 - age)));
         ctx.beginPath();
@@ -101,32 +119,44 @@ function drawMap(
     }
   }
   ctx.globalAlpha = 1;
+}
 
-  // Markers: a Side-coloured ring, the role label, and a Scout's number badge.
-  const size = Math.max(18, zone * 1.3);
+/**
+ * Draws each player's marker at `t` seconds: the role icon centred on the player, tinted in the
+ * Side colour (grey and dimmed while deactivated), with no ring, and a Scout's number badge at
+ * its bottom-right in the same colour. A plain dot stands in until the icon's PNG has loaded.
+ */
+function drawMarkers(
+  ctx: CanvasRenderingContext2D,
+  routes: readonly Route[],
+  zone: number,
+  t: number,
+  colours: Palette,
+): void {
+  const size = markerSize(zone);
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   for (const route of routes) {
     const [r, c] = positionAt(route.keyframes, t);
     const [x, y] = cellToPixel(r, c, zone);
-    ctx.globalAlpha = route.off(t * TICKS_PER_SECOND) ? DIM : 1;
-    ctx.beginPath();
-    ctx.arc(x, y, size * 0.6, 0, Math.PI * 2);
-    ctx.fillStyle = colours.surface;
-    ctx.fill();
-    ctx.lineWidth = Math.max(2, size * 0.12);
-    ctx.strokeStyle = colours.side[route.side];
-    ctx.stroke();
-    ctx.fillStyle = colours.text;
-    ctx.font = `700 ${Math.round(size * 0.36)}px ${colours.font}`;
-    ctx.fillText(route.label, x, y + 0.5);
+    const look = markerLook(route.side, route.off(t * TICKS_PER_SECOND), colours);
+    ctx.globalAlpha = look.alpha;
+    const icon = route.role ? tintedRoleIcon(route.role, look.colour) : null;
+    if (icon) {
+      ctx.drawImage(icon, x - size / 2, y - size / 2, size, size);
+    } else {
+      ctx.beginPath();
+      ctx.arc(x, y, size * 0.25, 0, Math.PI * 2);
+      ctx.fillStyle = look.colour;
+      ctx.fill();
+    }
     if (route.scout) {
-      const bx = x + size * 0.42;
-      const by = y + size * 0.42;
-      const br = size * 0.26;
+      const bx = x + size * 0.36;
+      const by = y + size * 0.36;
+      const br = size * 0.17;
       ctx.beginPath();
       ctx.arc(bx, by, br, 0, Math.PI * 2);
-      ctx.fillStyle = colours.side[route.side];
+      ctx.fillStyle = look.colour;
       ctx.fill();
       ctx.fillStyle = colours.surface;
       ctx.font = `700 ${Math.round(br * 1.4)}px ${colours.font}`;
@@ -187,7 +217,7 @@ export class PlaybackMap {
       const own = snapshots.get(p.id) ?? [];
       return {
         side: p.team,
-        label: roleLabel(p.role),
+        role: iconRole(p.role),
         scout: p.scout,
         keyframes: routeKeyframes(p),
         off: (tick: number) => deactivatedAt(own, tick, respawnTicks),
@@ -200,6 +230,8 @@ export class PlaybackMap {
       const t = this.cursor() / TICKS_PER_SECOND;
       const zone = this.map()?.zone_size ?? 0;
       const routes = this.routes();
+      // Redraw when a role icon's PNG arrives, so a paused map swaps its dots for icons.
+      roleIconLoads();
       const img = this.image()?.nativeElement;
       const canvas = this.canvas()?.nativeElement;
       if (!this.loaded() || !img || !canvas || !zone || !img.naturalWidth) {
