@@ -249,6 +249,17 @@ after LFstats's Replay tab, within ADR-0043.
     the object URL on destroy.
   - It draws on a canvas, ported from the Django overlay's Catmull-Rom and 16 s trails.
   - It dims a player's marker and trail while they are deactivated (`deactivatedAt`).
+  - RV-06a: each marker is the player's SM5 role icon (`public/roles/<role>.png`, restored from
+    the Django templates), tinted in the Side colour by `matches/shared/role-icon.ts`
+    (`tintPixels`: line art takes the colour, the white fill stays; `tintedRoleIcon` caches per
+    role + colour), with no ring, at 1.5 times the old ring (`playback-markers.ts` `markerSize`).
+    A deactivated player's icon takes `--lf-map-marker-off` (one grey in both themes: the map
+    image is white in both) at 0.35 opacity (`markerLook`). A dot stands in until the PNG loads
+    (`roleIconLoads` redraws). The Scout badge sits at the icon's bottom-right.
+  - The Playback scoreboard's Pos cell and the feed's actor / target names show
+    `<app-role-icon [role] [side]>` (`role-icon-img.ts`), whose `alt` / `title` is the role's
+    name; it tints from `--lf-side-<side>` and re-tints when `side` changes (the feed reuses rows,
+    and tracks them by event).
   - RV-06c: it takes the timeline's `events` too, and draws a **Tag line** for each tag, miss,
     missile, resupply and active base capture, from the pure `playback-overlays.ts`
     (`overlaysAt`, `baseMarkers`; its spec is the test seam). A line joins where both players
