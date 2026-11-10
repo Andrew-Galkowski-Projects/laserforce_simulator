@@ -32,15 +32,15 @@ function missileRow(overrides: Partial<MissileLogRow> = {}): MissileLogRow {
 }
 
 function missileLog(overrides: Partial<RoundMissileLog> = {}): RoundMissileLog {
-  return { round_id: 9, fired: 0, hit: 0, efficiency: 0, rows: [], ...overrides };
+  return { round_id: 9, locks: 0, missiles: 0, conversion: 0, rows: [], ...overrides };
 }
 
-/** Three fired, two hit (one of them Friendly fire), one miss. */
+/** Seven locks, three missiles (one of them Friendly fire): MECH-21, every missile hits. */
 function threeMissiles(): RoundMissileLog {
   return missileLog({
-    fired: 3,
-    hit: 2,
-    efficiency: 66.66666666666667,
+    locks: 7,
+    missiles: 3,
+    conversion: 42.857142857142854,
     rows: [
       missileRow(),
       missileRow({
@@ -59,9 +59,7 @@ function threeMissiles(): RoundMissileLog {
         timestamp_mmss: '10:00',
         actor_role: 'commander',
         target_role: 'medic',
-        result: 'miss',
-        description: 'Commander missed Medic',
-        points: 0,
+        description: 'Commander missiled Medic',
       }),
     ],
   });
@@ -162,21 +160,30 @@ describe('Missile log (/rounds/:id/missile-log)', () => {
   });
 
   describe('stats', () => {
-    it('shows Fired, Hit and Efficiency to one decimal place with %', async () => {
+    it('shows Locks, Missiles and Conversion to one decimal place with %', async () => {
       await open();
       expect(stats()).toEqual([
-        ['Fired', '3'],
-        ['Hit', '2'],
-        ['Efficiency', '66.7%'],
+        ['Locks', '7'],
+        ['Missiles', '3'],
+        ['Conversion', '42.9%'],
       ]);
     });
 
-    it('shows 0, 0 and 0.0% for a Round with no missiles', async () => {
+    it('shows 0, 0 and 0.0% for a Round with no locks', async () => {
       await open(missileLog());
       expect(stats()).toEqual([
-        ['Fired', '0'],
-        ['Hit', '0'],
-        ['Efficiency', '0.0%'],
+        ['Locks', '0'],
+        ['Missiles', '0'],
+        ['Conversion', '0.0%'],
+      ]);
+    });
+
+    it('shows locks with no missile as 0.0% Conversion', async () => {
+      await open(missileLog({ locks: 4 }));
+      expect(stats()).toEqual([
+        ['Locks', '4'],
+        ['Missiles', '0'],
+        ['Conversion', '0.0%'],
       ]);
     });
   });
@@ -200,7 +207,7 @@ describe('Missile log (/rounds/:id/missile-log)', () => {
       expect(bodyRows().map(cells)).toEqual([
         ['00:42', 'SCT', 'CMD', 'hit', 'no', 'Scout missiled Commander', '500'],
         ['05:00', 'CMD', 'HVY', 'hit', 'yes', 'Commander missiled own Heavy', '0'],
-        ['10:00', 'CMD', 'MED', 'miss', 'no', 'Commander missed Medic', '0'],
+        ['10:00', 'CMD', 'MED', 'hit', 'no', 'Commander missiled Medic', '500'],
       ]);
     });
 

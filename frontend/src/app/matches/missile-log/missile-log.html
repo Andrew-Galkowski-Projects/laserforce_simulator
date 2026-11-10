@@ -19,16 +19,16 @@
   } @else if (log(); as log) {
     <ul class="ml-stats" aria-label="Missile summary">
       <li class="ml-stat">
-        <span class="ml-stat__value">{{ log.fired }}</span>
-        <span class="ml-stat__label">Fired</span>
+        <span class="ml-stat__value">{{ log.locks }}</span>
+        <span class="ml-stat__label">Locks</span>
       </li>
       <li class="ml-stat">
-        <span class="ml-stat__value">{{ log.hit }}</span>
-        <span class="ml-stat__label">Hit</span>
+        <span class="ml-stat__value">{{ log.missiles }}</span>
+        <span class="ml-stat__label">Missiles</span>
       </li>
       <li class="ml-stat">
-        <span class="ml-stat__value">{{ efficiencyLabel(log.efficiency) }}</span>
-        <span class="ml-stat__label">Efficiency</span>
+        <span class="ml-stat__value">{{ conversionLabel(log.conversion) }}</span>
+        <span class="ml-stat__label">Conversion</span>
       </li>
     </ul>
 

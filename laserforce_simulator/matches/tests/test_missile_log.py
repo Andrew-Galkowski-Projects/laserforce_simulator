@@ -636,96 +636,97 @@ def _ev(
     }
 
 
+def _summary(events: list[dict], locks: int | None = None) -> dict:
+    """``summarize_missile_log`` with ``locks`` defaulting to one per missile."""
+    return summarize_missile_log(events, locks=len(events) if locks is None else locks)
+
+
 class TestSummarizeMissileLogEmpty(unittest.TestCase):
     def test_empty_input(self) -> None:
-        out = summarize_missile_log([])
-        self.assertEqual(out, {"fired": 0, "hit": 0, "efficiency": 0.0, "rows": []})
+        out = summarize_missile_log([], locks=0)
+        self.assertEqual(
+            out, {"locks": 0, "missiles": 0, "conversion": 0.0, "rows": []}
+        )
 
-    def test_no_div_by_zero_on_empty(self) -> None:
-        # The 0/0 efficiency case must short-circuit cleanly.
-        out = summarize_missile_log([])
-        self.assertEqual(out["efficiency"], 0.0)
+    def test_zero_locks_gives_zero_conversion(self) -> None:
+        # MECH-21: 0 locks short-circuits the 0/0 conversion cleanly.
+        out = summarize_missile_log([], locks=0)
+        self.assertEqual(out["conversion"], 0.0)
 
 
 class TestSummarizeMissileLogCounts(unittest.TestCase):
-    def test_one_hit(self) -> None:
-        out = summarize_missile_log([_ev(result="hit")])
-        self.assertEqual(out["fired"], 1)
-        self.assertEqual(out["hit"], 1)
-        self.assertEqual(out["efficiency"], 100.0)
+    """MECH-21: every launched missile hits, so the figure is conversion,
+    missiles / locks * 100 (spec #583 [9])."""
 
-    def test_one_miss(self) -> None:
-        out = summarize_missile_log([_ev(result="miss")])
-        self.assertEqual(out["fired"], 1)
-        self.assertEqual(out["hit"], 0)
-        self.assertEqual(out["efficiency"], 0.0)
+    def test_four_locks_two_missiles_is_fifty_percent(self) -> None:
+        out = summarize_missile_log([_ev(), _ev()], locks=4)
+        self.assertEqual(out["locks"], 4)
+        self.assertEqual(out["missiles"], 2)
+        self.assertEqual(out["conversion"], 50.0)
 
-    def test_mixed_efficiency(self) -> None:
-        evs = [_ev(result="hit"), _ev(result="miss"), _ev(result="hit")]
-        out = summarize_missile_log(evs)
-        self.assertEqual(out["fired"], 3)
-        self.assertEqual(out["hit"], 2)
-        self.assertAlmostEqual(out["efficiency"], 2 / 3 * 100.0)
+    def test_locks_with_no_missile_give_zero_conversion(self) -> None:
+        out = summarize_missile_log([], locks=3)
+        self.assertEqual((out["locks"], out["missiles"]), (3, 0))
+        self.assertEqual(out["conversion"], 0.0)
+
+    def test_old_keys_are_gone(self) -> None:
+        out = summarize_missile_log([_ev()], locks=1)
+        self.assertEqual(set(out), {"locks", "missiles", "conversion", "rows"})
 
 
-class TestFriendlyFireCountedAsHit(unittest.TestCase):
-    def test_friendly_fire_hit_counted(self) -> None:
+class TestFriendlyFireRows(unittest.TestCase):
+    def test_friendly_fire_missile_counted(self) -> None:
         # GLOSSARY.md: the missile landed; FF is qualitative, not discount.
-        out = summarize_missile_log(
-            [_ev(result="hit", friendly_fire=True), _ev(result="miss")]
-        )
-        self.assertEqual(out["hit"], 1)
-        self.assertEqual(out["fired"], 2)
+        out = _summary([_ev(friendly_fire=True), _ev()])
+        self.assertEqual(out["missiles"], 2)
 
     def test_row_class_marks_friendly_fire(self) -> None:
-        out = summarize_missile_log([_ev(result="hit", friendly_fire=True)])
+        out = _summary([_ev(result="hit", friendly_fire=True)])
         self.assertIn("friendly-fire", out["rows"][0]["row_class"])
 
     def test_row_class_default_when_not_friendly(self) -> None:
-        out = summarize_missile_log([_ev(result="hit", friendly_fire=False)])
+        out = _summary([_ev(result="hit", friendly_fire=False)])
         self.assertEqual(out["rows"][0]["row_class"], "missile-row")
 
 
 class TestMmssFormatting(unittest.TestCase):
     def test_zero_tick(self) -> None:
-        out = summarize_missile_log([_ev(timestamp=0)])
+        out = _summary([_ev(timestamp=0)])
         self.assertEqual(out["rows"][0]["timestamp_mmss"], "00:00")
 
     def test_tick_2_is_one_second(self) -> None:
         # TIME-01: 2 ticks = 1 second.
-        out = summarize_missile_log([_ev(timestamp=2)])
+        out = _summary([_ev(timestamp=2)])
         self.assertEqual(out["rows"][0]["timestamp_mmss"], "00:01")
 
     def test_round_end_tick_1800(self) -> None:
         # 1800 ticks = 900 seconds = 15:00.
-        out = summarize_missile_log([_ev(timestamp=1800)])
+        out = _summary([_ev(timestamp=1800)])
         self.assertEqual(out["rows"][0]["timestamp_mmss"], "15:00")
 
     def test_mid_round_tick(self) -> None:
         # 245 ticks // 2 = 122 s = 2:02.
-        out = summarize_missile_log([_ev(timestamp=245)])
+        out = _summary([_ev(timestamp=245)])
         self.assertEqual(out["rows"][0]["timestamp_mmss"], "02:02")
 
 
 class TestRowShape(unittest.TestCase):
     def test_no_event_orm_ref_in_row(self) -> None:
-        out = summarize_missile_log([_ev()])
+        out = _summary([_ev()])
         self.assertNotIn("event", out["rows"][0])
 
     def test_row_carries_description_and_points_flat(self) -> None:
-        out = summarize_missile_log(
-            [_ev(description="missile detonates", points_awarded=500)]
-        )
+        out = _summary([_ev(description="missile detonates", points_awarded=500)])
         self.assertEqual(out["rows"][0]["description"], "missile detonates")
         self.assertEqual(out["rows"][0]["points"], 500)
 
     def test_null_points_coalesce_to_zero(self) -> None:
-        out = summarize_missile_log([_ev(points_awarded=None)])
+        out = _summary([_ev(points_awarded=None)])
         self.assertEqual(out["rows"][0]["points"], 0)
 
     def test_missing_metadata_keys_default_to_empty_str(self) -> None:
         ev = {"timestamp": 10, "metadata": {}, "description": "", "points_awarded": 0}
-        out = summarize_missile_log([ev])
+        out = _summary([ev])
         self.assertEqual(out["rows"][0]["actor_role"], "")
         self.assertEqual(out["rows"][0]["target_role"], "")
         self.assertEqual(out["rows"][0]["result"], "")

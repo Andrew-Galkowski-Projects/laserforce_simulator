@@ -7,7 +7,6 @@ over seeded, fully simulated Rounds.
 
 from __future__ import annotations
 
-import pytest
 from django.test import TestCase
 
 from matches.models import GameEvent, GameRound, PlayerRoundState
@@ -90,12 +89,6 @@ class TestFinalStateInvariant(TestCase):
     """ADR-0044: each player's last snapshot equals their Round scoreboard
     row. An engine change that alters state without logging it fails here."""
 
-    # MECH-21a (#584) moved the missile spend to the launch; playback.py still
-    # drops the pip at ``locking``, so every cancelled lock leaves the
-    # snapshot one missile short. #585 moves the drop to ``missiled``.
-    # Not strict: each failing subTest reports as xfailed, but the outer
-    # test then passes and a strict mark turns that into XPASS(strict).
-    @pytest.mark.xfail(reason="MECH-21 #585", strict=False)
     def test_last_snapshot_equals_player_round_state(self) -> None:
         # Three fresh games per run. A Single Round draws its own seed from OS
         # entropy (``random.Random().getrandbits``), so ``random.seed`` cannot
@@ -299,21 +292,26 @@ class TestDerivedValues(_PlaybackCase):
         self.assertTrue(self.snapshots(self.hvy)[-1]["eliminated"])
         self.assertFalse(self.snapshots(self.cmd)[-1]["eliminated"])
 
-    def test_missiles_minus_one_on_lock_only(self) -> None:
-        """MECH-16: a missile is spent at the lock; a hit or a miss costs
-        nothing more."""
+    def test_missiles_minus_one_at_launch_only(self) -> None:
+        """MECH-21 (ADR-0050): the missile is spent at the launch, the
+        ``missiled`` row; a lock start, and a cancelled lock, spend nothing."""
         meta = {**_actor(15, 30, 0, 0), **_target(10, 20, 0)}
-        self.event(60, "locking", self.cmd, self.hvy, metadata=meta)
+        lock = {**meta, "lock_ticks": 2}
+        self.event(60, "locking", self.cmd, self.hvy, metadata=lock)
         self.event(
-            64, "missiled", self.cmd, self.hvy, metadata={**meta, "result": "hit"}
+            62, "missiled", self.cmd, self.hvy, metadata={**meta, "result": "hit"}
         )
-        self.event(70, "locking", self.cmd, self.med, metadata=meta)
+        self.event(70, "locking", self.cmd, self.med, metadata=lock)
         self.event(
-            74, "missiled", self.cmd, self.med, metadata={**meta, "result": "miss"}
+            72,
+            "lock_cancelled",
+            self.cmd,
+            self.med,
+            metadata={**meta, "reason": "dodge"},
         )
         self.assertEqual(
             [(s["tick"], s["missiles"]) for s in self.snapshots(self.cmd)],
-            [(0, 5), (60, 4), (70, 3)],
+            [(0, 5), (62, 4)],
         )
         # The target's missiles never move.
         self.assertEqual(self.snapshots(self.hvy)[-1]["missiles"], 5)

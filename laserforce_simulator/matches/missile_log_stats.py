@@ -38,28 +38,25 @@ def _format_mmss(timestamp_ticks: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def summarize_missile_log(events: Iterable[Mapping]) -> dict:
-    """Build the fired/hit/efficiency summary plus per-event display rows.
+def summarize_missile_log(events: Iterable[Mapping], *, locks: int) -> dict:
+    """Build the locks/missiles/conversion summary plus per-event display rows.
 
     ``events`` is a list of missiled-event dicts with keys ``timestamp``
     (int ticks), ``metadata`` (dict, may be ``{}``), ``description`` (str),
     ``points_awarded`` (int or ``None``). Locking events are filtered out
-    by the caller — only missiled rows cross the seam.
+    by the caller — only missiled rows cross the seam; the caller counts
+    the round's ``locking`` rows into ``locks``.
 
-    Returns ``{"fired": int, "hit": int, "efficiency": float,
+    Returns ``{"locks": int, "missiles": int, "conversion": float,
     "rows": list[dict]}`` where each row is the ``MissileRow`` dict (9
-    keys, fully flat — the legacy ``row["event"]`` ORM ref is gone).
-    Friendly-fire hits count as hits — preserves the GLOSSARY.md
+    keys, fully flat). MECH-21 (ADR-0050): every launched missile hits, so
+    ``conversion`` is ``missiles / locks * 100``, 0.0 when ``locks`` is 0.
+    Friendly-fire missiles count — preserves the GLOSSARY.md
     **Friendly fire** contract (the missile landed; FF is qualitative).
-
-    Empty input ⇒ ``{"fired": 0, "hit": 0, "efficiency": 0.0, "rows": []}``.
     """
     materialised = list(events)
-    fired = len(materialised)
-    hit = sum(
-        1 for e in materialised if (e.get("metadata") or {}).get("result") == "hit"
-    )
-    efficiency = (hit / fired * 100.0) if fired else 0.0
+    missiles = len(materialised)
+    conversion = (missiles / locks * 100.0) if locks else 0.0
 
     rows: list[dict] = []
     for ev in materialised:
@@ -79,4 +76,9 @@ def summarize_missile_log(events: Iterable[Mapping]) -> dict:
         )
         rows.append(asdict(row))
 
-    return {"fired": fired, "hit": hit, "efficiency": efficiency, "rows": rows}
+    return {
+        "locks": locks,
+        "missiles": missiles,
+        "conversion": conversion,
+        "rows": rows,
+    }

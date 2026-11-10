@@ -224,7 +224,7 @@ The `GameEvent` row written when a **Lock** ends without a launch (`event_type="
 _Avoid_: calling every cancel a dodge (only the target breaking the Lock is one).
 
 **Friendly fire**:
-A **Missiled event** where `actor.team_color == target.team_color` — a player hitting their own teammate with a **Missile**. Server-emitted on the event row as `metadata["friendly_fire"]: bool`, never derived view-side, so the view code stays dumb and the contract is single-source. Friendly fire hits **count as hits** in the missile-log efficiency summary — the missile landed; the friendly-fire flag carries the qualitative distinction rather than discounting the hit. Rendered with a CSS class containing the substring `friendly-fire` so the row is visually distinguishable. Tag events have no analogous flag — friendly fire is a missile-specific qualifier in this codebase.
+A **Missiled event** where `actor.team_color == target.team_color` — a player hitting their own teammate with a **Missile**. Server-emitted on the event row as `metadata["friendly_fire"]: bool`, never derived view-side, so the view code stays dumb and the contract is single-source. Friendly fire hits **count as missiles** in the missile-log conversion summary — the missile landed; the friendly-fire flag carries the qualitative distinction rather than discounting the hit. Rendered with a CSS class containing the substring `friendly-fire` so the row is visually distinguishable. Tag events have no analogous flag — friendly fire is a missile-specific qualifier in this codebase.
 _Avoid_: deriving friendly-fire status from team-colour comparison at the template layer (the server emits the bool); excluding friendly fire from the hit count (it is a hit, just a regrettable one).
 
 ### Time

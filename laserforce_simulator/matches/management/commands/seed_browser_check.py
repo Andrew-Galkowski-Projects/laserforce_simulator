@@ -25,7 +25,7 @@ import io
 import random
 from collections.abc import Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -84,7 +84,8 @@ WALL_BLOCKS = [
 RED_BASE_CELL = (10, 3)
 BLUE_BASE_CELL = (9, 26)
 BASE_SIGHT_RADIUS = 3
-#: How many times to simulate the mapped Round: a real one can fire no missile.
+#: How many times to simulate the mapped Round: a real one can have no missile, no
+#: dodge or no other cancelled lock (``missing_lock_endings``).
 MISSILE_ROUND_ATTEMPTS = 5
 #: Seeds Python's ``random`` before anything is generated, so every seed makes the same
 #: Players and the same Rounds: a spec can name a tick in the review Round and every
@@ -107,13 +108,16 @@ def review_ticks(events: Iterable[dict[str, Any]]) -> dict[str, int | None]:
       award carries none).
     - ``nuke``: a nuke activation (a ``special`` whose metadata has ``fires_at``).
     - ``rapid fire``: a Scout's rapid-fire activation.
-    - ``lock hit`` / ``lock dodge`` / ``lock lost`` (RV-08 retro): the ``locking`` tick of
-      the first missile Lock that runs its full ``LOCK_TICKS`` and ends in a hit, a dodge,
-      or nothing; a review watches it from that tick to three after. The Playback map's own
-      rule (``playback-missiles.ts``): the shooter's next lock, tag, miss or active capture
-      before then cuts a lock, and a cut lock is none of the three.
+    - ``lock hit`` / ``lock dodge`` / ``lock lost`` (RV-08 retro, MECH-21): the
+      ``locking`` tick of the first missile Lock that ends in a ``missiled``, a
+      ``lock_cancelled reason=dodge``, or a ``lock_cancelled`` with any other reason
+      (``lock_ending``, the Playback map's own rule in ``playback-missiles.ts``). A lock
+      still open at round end is none of the three.
+
+    Rows are ordered by tick, then by ``id`` when given (a tick's rows in log order);
+    without ``id`` a tick keeps the order they came in.
     """
-    ordered = sorted(events, key=lambda e: e["timestamp"])
+    ordered = sorted(events, key=lambda e: (e["timestamp"], e.get("id") or 0))
     found: dict[str, int | None] = {
         "mutual tag": None,
         "capture": None,
@@ -143,57 +147,43 @@ def review_ticks(events: Iterable[dict[str, Any]]) -> dict[str, int | None]:
     return found
 
 
-# The engine's literal lock length (``combat.start_missile_lock``); RV-08's ``LOCK_TICKS``.
-LOCK_TICKS = 3
+def lock_ending(
+    ordered: list[dict[str, Any]], index: int
+) -> Literal["lock hit", "lock dodge", "lock lost"] | None:
+    """How the lock at ``ordered[index]`` ends, ``None`` while it is open at round end.
 
-
-def _cuts_lock(event: dict[str, Any]) -> bool:
-    """Whether the shooter acting this way ends their own lock (``cutsLock`` in RV-08)."""
-    kind = event["event_type"]
-    if kind == "locking":
-        return event["target_id"] is not None
-    if kind == "base_capture":
-        return "shots_remaining" in (event["metadata"] or {})
-    return kind in ("tag", "miss")
+    MECH-21 (#583 [15]): the engine writes the ending. It is the shooter's first
+    later row in log order that is a ``missiled`` on the lock's target (a hit) or
+    a ``lock_cancelled`` (a dodge for ``reason=dodge``, lost for any other reason).
+    "Later" is log order, not tick: a retarget's cancel of the old lock is logged
+    just before the new ``locking`` on the same tick.
+    """
+    lock = ordered[index]
+    shooter, target = lock["actor_id"], lock["target_id"]
+    for e in ordered[index + 1 :]:
+        if e["actor_id"] != shooter:
+            continue
+        if e["event_type"] == "missiled" and e["target_id"] == target:
+            return "lock hit"
+        if e["event_type"] == "lock_cancelled":
+            reason = (e["metadata"] or {}).get("reason")
+            return "lock dodge" if reason == "dodge" else "lock lost"
+    return None
 
 
 def _lock_ticks(ordered: list[dict[str, Any]]) -> dict[str, int | None]:
-    """The start of the first full-length lock ending in a hit, a dodge, or nothing."""
+    """The start of the first lock ending in a hit, a dodge, or lost."""
     found: dict[str, int | None] = {
         "lock hit": None,
         "lock dodge": None,
         "lock lost": None,
     }
-    for lock in ordered:
+    for index, lock in enumerate(ordered):
         if lock["event_type"] != "locking" or lock["target_id"] is None:
             continue
-        shooter, target, start = lock["actor_id"], lock["target_id"], lock["timestamp"]
-        end = start + LOCK_TICKS
-        if any(
-            e["actor_id"] == shooter and start < e["timestamp"] < end and _cuts_lock(e)
-            for e in ordered
-        ):
-            continue
-        at_end = [e for e in ordered if e["timestamp"] == end]
-        if any(
-            e["event_type"] == "missile_dodge"
-            and e["actor_id"] == target
-            and e["target_id"] == shooter
-            for e in at_end
-        ):
-            name = "lock dodge"
-        elif any(
-            e["event_type"] == "missiled"
-            and e["actor_id"] == shooter
-            and e["target_id"] == target
-            and (e["metadata"] or {}).get("result") == "hit"
-            for e in at_end
-        ):
-            name = "lock hit"
-        else:
-            name = "lock lost"
-        if found[name] is None:
-            found[name] = start
+        name = lock_ending(ordered, index)
+        if name is not None and found[name] is None:
+            found[name] = lock["timestamp"]
     return found
 
 
@@ -281,8 +271,9 @@ def create_browser_check_map() -> ArenaMap:
 def create_mapped_round(
     red: Team, blue: Team, arena_map: ArenaMap, user: Any
 ) -> GameRound:
-    """A full-fidelity Single Round on the map, simulated again while it fires no
-    missile, because the Missile log check needs a row.
+    """A full-fidelity Single Round on the map, simulated again while it lacks a
+    lock ending (``missing_lock_endings``): the Missile log check needs a row, and
+    the Playback check a hit, a dodge and another cancelled lock (MECH-21).
 
     The last attempt is kept either way: a short Round (the Tournament tests' 40
     ticks) fires none, and that must not stop the rest of the seed.
@@ -295,11 +286,24 @@ def create_mapped_round(
 
     game_round = simulate()
     for _ in range(MISSILE_ROUND_ATTEMPTS - 1):
-        if game_round.events.filter(event_type="missiled").exists():
+        if not missing_lock_endings(game_round):
             break
         game_round.delete()
         game_round = simulate()
     return game_round
+
+
+def missing_lock_endings(game_round: GameRound) -> list[str]:
+    """Which of ``missile``, ``dodge`` and ``cancel`` (a ``lock_cancelled`` with any
+    other reason) the Round has no row for, in that order."""
+    events = game_round.events
+    cancels = events.filter(event_type="lock_cancelled")
+    present = {
+        "missile": events.filter(event_type="missiled").exists(),
+        "dodge": cancels.filter(metadata__reason="dodge").exists(),
+        "cancel": cancels.exclude(metadata__reason="dodge").exists(),
+    }
+    return [name for name, found in present.items() if not found]
 
 
 def create_syracuse_map() -> ArenaMap:
@@ -317,15 +321,17 @@ def create_syracuse_map() -> ArenaMap:
 
 
 def mark_friendly_fire_missile(game_round: GameRound) -> bool:
-    """Flag the Round's first missile hit (or first missile) as Friendly fire, and
-    return whether there was one to flag.
+    """Flag the Round's first missile as Friendly fire, and return whether there was
+    one to flag.
 
     A simulated Round rarely fires at a teammate, and the Missile log check
     needs one tinted row. Only the flag changes: actor and target stay as
     simulated (ANG-06-10 retro).
     """
-    missiles = game_round.events.filter(event_type="missiled").order_by("timestamp")
-    event = missiles.filter(metadata__result="hit").first() or missiles.first()
+    # MECH-21: every missile hits, so the first one is the first hit.
+    event = (
+        game_round.events.filter(event_type="missiled").order_by("timestamp").first()
+    )
     if event is None:
         return False
     event.metadata = {**event.metadata, "friendly_fire": True}
@@ -420,10 +426,13 @@ class Command(BaseCommand):
         )
         arena_map = create_browser_check_map()
         mapped_round = create_mapped_round(third, fourth, arena_map, a)
-        if not mark_friendly_fire_missile(mapped_round):
+        mark_friendly_fire_missile(mapped_round)
+        missing = missing_lock_endings(mapped_round)
+        if missing:
             self.stdout.write(
-                f"Warning: mapped Single Round {mapped_round.pk} fired no missile in "
-                f"{MISSILE_ROUND_ATTEMPTS} attempts, so the Missile log has no rows."
+                f"Warning: mapped Single Round {mapped_round.pk} has no "
+                f"{', '.join(missing)} in {MISSILE_ROUND_ATTEMPTS} attempts, so its "
+                "Missile log or Playback check misses that lock ending."
             )
         unfinished = Match.objects.create(
             team_red=red,
@@ -484,6 +493,7 @@ class Command(BaseCommand):
             )
             ticks = review_ticks(
                 review.events.values(
+                    "id",
                     "event_type",
                     "timestamp",
                     "actor_id",

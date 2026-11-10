@@ -41,7 +41,8 @@ export const EVENT_GROUPS: readonly EventGroup[] = [
     key: 'missile',
     label: 'Missile',
     token: '--lf-ev-missile',
-    types: ['missiled', 'missile_dodge'],
+    // MECH-21: a lock that ends without a missile writes `lock_cancelled`.
+    types: ['missiled', 'lock_cancelled'],
   },
   { key: 'locking', label: 'Locking', token: '--lf-ev-locking', types: ['locking'] },
   {

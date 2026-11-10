@@ -253,8 +253,6 @@ function lineStyle(
       return { colour: colours.side[line.side], width: 0.6, opacity: 0.4, dashed: true };
     case 'missile-hit':
       return { colour: colours.missile, width: 1.2, opacity: 1, dashed: false };
-    case 'missile-miss':
-      return { colour: colours.missile, width: 1, opacity: 1, dashed: true };
     case 'resupply':
       return { colour: colours.resupply, width: 1, opacity: 1, dashed: false };
     default:
@@ -797,7 +795,7 @@ export class PlaybackMap {
         return kf ? cellToPixel(...positionAt(kf, tick / TICKS_PER_SECOND), zone) : null;
       };
       const overlays = overlaysAt(events, cursor, at, bases);
-      const locks = lockOverlaysAt(spans, events, cursor, at);
+      const locks = lockOverlaysAt(spans, cursor, at);
       const t = cursor / TICKS_PER_SECOND;
       const scene = { routes, zone, t, now, overlays, locks, bases: marks };
       drawMap(ctx, scene, readPalette(canvas));

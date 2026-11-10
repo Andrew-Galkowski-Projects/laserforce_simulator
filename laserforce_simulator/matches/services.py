@@ -792,11 +792,16 @@ def build_player_h2h(
 
 
 def build_missile_log(game_round: GameRound) -> dict:
-    """RES-03: ``{"fired", "hit", "efficiency", "rows"}`` for one round.
+    """RES-03: ``{"locks", "missiles", "conversion", "rows"}`` for one round.
 
+    ``locks`` counts the round's ``locking`` rows (MECH-21, #583 [9]).
     Lazily upgrades the round to ``combat`` fidelity first (GEN-01).
     """
     BatchSimulator().ensure_fidelity(game_round, "combat")
+
+    locks = GameEvent.objects.filter(
+        game_round=game_round, event_type="locking"
+    ).count()
 
     events_qs = GameEvent.objects.filter(
         game_round=game_round,
@@ -811,7 +816,7 @@ def build_missile_log(game_round: GameRound) -> dict:
         }
         for e in events_qs
     ]
-    return missile_log_stats.summarize_missile_log(events)
+    return missile_log_stats.summarize_missile_log(events, locks=locks)
 
 
 def build_heatmap(game_round: GameRound) -> dict:
