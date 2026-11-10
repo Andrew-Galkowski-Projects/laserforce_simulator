@@ -3,7 +3,7 @@
 import { BaseType, MapBase } from '../../../api/maps.models';
 import { Side, TimelineEvent } from '../../../api/rounds.models';
 
-export type TagLineKind = 'tag' | 'miss' | 'missile-hit' | 'missile-miss' | 'resupply' | 'capture';
+export type TagLineKind = 'tag' | 'miss' | 'missile-hit' | 'resupply' | 'capture';
 
 export interface TagLine {
   kind: TagLineKind;
@@ -158,7 +158,8 @@ function lineKind(event: TimelineEvent): TagLineKind | null {
     case 'miss':
       return 'miss';
     case 'missiled':
-      return event.metadata['result'] === 'hit' ? 'missile-hit' : 'missile-miss';
+      // MECH-21 (ADR-0050): a launched missile always hits; a dodge is a `lock_cancelled`.
+      return 'missile-hit';
     case 'base_capture':
       // Only an active capture draws: round-end awarded ones carry no extras.
       return 'shots_remaining' in event.metadata ? 'capture' : null;

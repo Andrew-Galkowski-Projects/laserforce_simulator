@@ -75,12 +75,12 @@ def _simulate_round_log(seed: int = 42, ticks: int = 1200) -> list[dict]:
 
 
 def _missile_subset(event_log: list[dict]) -> list[tuple]:
-    """Return a stable tuple list of just the ``locking`` / ``missiled``
-    events for determinism comparison (test #15).
+    """Return a stable tuple list of just the ``locking`` / ``missiled`` /
+    ``lock_cancelled`` (MECH-21) events for determinism comparison (test #15).
     """
     out: list[tuple] = []
     for ev in event_log:
-        if ev.get("event_type") in ("locking", "missiled"):
+        if ev.get("event_type") in ("locking", "missiled", "lock_cancelled"):
             out.append(
                 (
                     ev.get("event_type"),
@@ -121,8 +121,11 @@ class TestRes03MissileEventSplit:
 
     # bug-class: happy path
     def test_missile_resolution_emits_missiled_event_with_result(self):
-        """A resolved missile produces an ``event_type="missiled"`` row whose
-        ``metadata["result"]`` is one of ``"hit"`` / ``"miss"``.
+        """A launched missile produces an ``event_type="missiled"`` row whose
+        ``metadata["result"]`` is ``"hit"``.
+
+        MECH-21 (ADR-0050): a launched missile always hits; a dodge is a
+        ``lock_cancelled`` row, so ``"miss"`` is no longer a legal result.
         """
         log = _simulate_round_log(seed=42, ticks=1500)
         missileds = [e for e in log if e.get("event_type") == "missiled"]
@@ -135,10 +138,9 @@ class TestRes03MissileEventSplit:
             assert "result" in md, (
                 f"missiled event must carry metadata['result']; got " f"metadata={md!r}"
             )
-            assert md["result"] in ("hit", "miss"), (
-                f"missiled metadata['result']={md['result']!r} must be 'hit' "
-                f"or 'miss'"
-            )
+            assert (
+                md["result"] == "hit"
+            ), f"missiled metadata['result']={md['result']!r} must be 'hit'"
 
     # bug-class: happy path
     def test_missiled_event_metadata_carries_actor_and_target_roles(self):
@@ -252,11 +254,10 @@ class TestRes03FriendlyFireFlag:
 class TestMissileCostsOneMissile:
     """CAL #560: a landed missile costs exactly one missile.
 
-    ``start_missile_lock`` consumes the missile when the lock starts. The
-    completion used to take a second one, so a hit cost two and a miss one: a
-    player with five missiles could land at most three, and ``final_missiles``
-    went negative. Measured on the Test set, removing it raised Commander
-    missiles landed 1.08 -> 1.25 and Heavy 0.92 -> 1.17 a round.
+    The completion used to take a second one on top of the lock start's, so a
+    hit cost two: a player with five missiles could land at most three.
+    MECH-21 (ADR-0050) moved the one spend to the launch (``_complete_missile``),
+    so the lock start spends nothing and the launch spends exactly one.
     """
 
     @staticmethod
@@ -289,12 +290,12 @@ class TestMissileCostsOneMissile:
 
         lock = start_missile_lock(attacker, defender, 10, None, ctx=ctx)
         assert lock is not None
-        assert attacker.final_missiles == 4, "the lock start consumes the missile"
+        assert attacker.final_missiles == 5, "MECH-21: the lock start spends nothing"
 
-        BatchSimulator()._complete_missile(attacker, defender, 13, ctx=ctx)
+        BatchSimulator()._complete_missile(attacker, defender, 12, ctx=ctx)
 
         assert attacker.counters.missiles_landed == 1
-        assert attacker.final_missiles == 4, "the hit must not consume a second one"
+        assert attacker.final_missiles == 4, "the launch spends exactly one"
 
     def test_five_missiles_can_all_land(self) -> None:
         from matches.sim_helpers.combat import start_missile_lock
@@ -308,7 +309,10 @@ class TestMissileCostsOneMissile:
             defender = self._ps("blue", "scout")
             tick = 10 * (n + 1)
             assert start_missile_lock(attacker, defender, tick, None, ctx=ctx)
-            sim._complete_missile(attacker, defender, tick + 3, ctx=ctx)
+            # MECH-21: the tick loop removes a launching lock before
+            # _complete_missile; mirror it so the next lock is not a retarget.
+            del ctx.missile_locks[attacker.player_id]
+            sim._complete_missile(attacker, defender, tick + 2, ctx=ctx)
 
         assert attacker.counters.missiles_landed == 5
         assert attacker.final_missiles == 0
@@ -364,7 +368,8 @@ class TestRes03DownAndRespawn:
         and confirm the resolution tick does NOT produce a ``missiled``
         event. The ``locking`` event remains in the log.
         """
-        from matches.sim_helpers.combat import start_missile_lock, tick_missile_lock
+        from matches.sim_helpers.combat import start_missile_lock
+        from matches.sim_helpers.down import record_down
         from matches.sim_helpers.player_state import PlayerState
 
         attacker = PlayerState(
@@ -405,20 +410,27 @@ class TestRes03DownAndRespawn:
         log = ctx.events.entries  # transitional shim; same list for asserts
         lock = start_missile_lock(attacker, defender, second=10, ctx=ctx)
         assert lock is not None, "lock setup failed — adjust fixture state"
-        # Now eliminate the attacker before the lock resolves.
+        # MECH-21: the elimination goes through record_down, which ends the
+        # lock with ``lock_cancelled reason=out`` at the Down tick; the tick
+        # loop then has no lock left to launch. (tick_missile_lock no longer
+        # reads lives, so the old direct tick-and-"miss" path is gone.)
         attacker.final_lives = 0
-        # Advance the lock 3 ticks; tick_missile_lock should return "miss"
-        # (attacker died), and the simulator must NOT emit a 'missiled' hit.
-        for delta in range(1, 4):
-            tick_missile_lock(lock, second=10 + delta, movement_ctx=None)
+        record_down(attacker, 11, ctx)
+        sim = BatchSimulator()
+        for tick in range(11, 14):
+            sim._advance_missile_locks(tick, ctx)
 
         lockings = [e for e in log if e.get("event_type") == "locking"]
         missileds = [e for e in log if e.get("event_type") == "missiled"]
+        cancels = [e for e in log if e.get("event_type") == "lock_cancelled"]
         assert lockings, "the locking event must survive even when attacker dies"
         assert not missileds, (
             "no missiled event must fire when the locking actor was "
             f"eliminated before resolution; got {missileds!r}"
         )
+        assert [(e["timestamp"], e["metadata"]["reason"]) for e in cancels] == [
+            (11, "out")
+        ]
 
     # bug-class: Down/respawn
     def test_missiled_event_clears_actor_missile_lock_state(self):
@@ -597,7 +609,13 @@ class TestRes03Determinism:
 # ===== Missile-log stats surface =====
 import unittest
 
-from matches.missile_log_stats import MissileRow, summarize_missile_log
+from dataclasses import fields
+
+from matches.missile_log_stats import (
+    MissileLogSummary,
+    MissileRow,
+    summarize_missile_log,
+)
 from laserforce_simulator.testing import run_project_python
 
 
@@ -624,100 +642,103 @@ def _ev(
     }
 
 
+def _summary(events: list[dict], locks: int | None = None) -> MissileLogSummary:
+    """``summarize_missile_log`` with ``locks`` defaulting to one per missile."""
+    return summarize_missile_log(events, locks=len(events) if locks is None else locks)
+
+
 class TestSummarizeMissileLogEmpty(unittest.TestCase):
     def test_empty_input(self) -> None:
-        out = summarize_missile_log([])
-        self.assertEqual(out, {"fired": 0, "hit": 0, "efficiency": 0.0, "rows": []})
+        out = summarize_missile_log([], locks=0)
+        self.assertEqual(
+            out, MissileLogSummary(locks=0, missiles=0, conversion=0.0, rows=[])
+        )
 
-    def test_no_div_by_zero_on_empty(self) -> None:
-        # The 0/0 efficiency case must short-circuit cleanly.
-        out = summarize_missile_log([])
-        self.assertEqual(out["efficiency"], 0.0)
+    def test_zero_locks_gives_zero_conversion(self) -> None:
+        # MECH-21: 0 locks short-circuits the 0/0 conversion cleanly.
+        out = summarize_missile_log([], locks=0)
+        self.assertEqual(out.conversion, 0.0)
 
 
 class TestSummarizeMissileLogCounts(unittest.TestCase):
-    def test_one_hit(self) -> None:
-        out = summarize_missile_log([_ev(result="hit")])
-        self.assertEqual(out["fired"], 1)
-        self.assertEqual(out["hit"], 1)
-        self.assertEqual(out["efficiency"], 100.0)
+    """MECH-21: every launched missile hits, so the figure is conversion,
+    missiles / locks * 100 (spec #583 [9])."""
 
-    def test_one_miss(self) -> None:
-        out = summarize_missile_log([_ev(result="miss")])
-        self.assertEqual(out["fired"], 1)
-        self.assertEqual(out["hit"], 0)
-        self.assertEqual(out["efficiency"], 0.0)
+    def test_four_locks_two_missiles_is_fifty_percent(self) -> None:
+        out = summarize_missile_log([_ev(), _ev()], locks=4)
+        self.assertEqual(out.locks, 4)
+        self.assertEqual(out.missiles, 2)
+        self.assertEqual(out.conversion, 50.0)
 
-    def test_mixed_efficiency(self) -> None:
-        evs = [_ev(result="hit"), _ev(result="miss"), _ev(result="hit")]
-        out = summarize_missile_log(evs)
-        self.assertEqual(out["fired"], 3)
-        self.assertEqual(out["hit"], 2)
-        self.assertAlmostEqual(out["efficiency"], 2 / 3 * 100.0)
+    def test_locks_with_no_missile_give_zero_conversion(self) -> None:
+        out = summarize_missile_log([], locks=3)
+        self.assertEqual((out.locks, out.missiles), (3, 0))
+        self.assertEqual(out.conversion, 0.0)
 
-
-class TestFriendlyFireCountedAsHit(unittest.TestCase):
-    def test_friendly_fire_hit_counted(self) -> None:
-        # GLOSSARY.md: the missile landed; FF is qualitative, not discount.
-        out = summarize_missile_log(
-            [_ev(result="hit", friendly_fire=True), _ev(result="miss")]
+    def test_old_keys_are_gone(self) -> None:
+        out = summarize_missile_log([_ev()], locks=1)
+        self.assertEqual(
+            {f.name for f in fields(out)}, {"locks", "missiles", "conversion", "rows"}
         )
-        self.assertEqual(out["hit"], 1)
-        self.assertEqual(out["fired"], 2)
+
+
+class TestFriendlyFireRows(unittest.TestCase):
+    def test_friendly_fire_missile_counted(self) -> None:
+        # GLOSSARY.md: the missile landed; FF is qualitative, not discount.
+        out = _summary([_ev(friendly_fire=True), _ev()])
+        self.assertEqual(out.missiles, 2)
 
     def test_row_class_marks_friendly_fire(self) -> None:
-        out = summarize_missile_log([_ev(result="hit", friendly_fire=True)])
-        self.assertIn("friendly-fire", out["rows"][0]["row_class"])
+        out = _summary([_ev(result="hit", friendly_fire=True)])
+        self.assertIn("friendly-fire", out.rows[0]["row_class"])
 
     def test_row_class_default_when_not_friendly(self) -> None:
-        out = summarize_missile_log([_ev(result="hit", friendly_fire=False)])
-        self.assertEqual(out["rows"][0]["row_class"], "missile-row")
+        out = _summary([_ev(result="hit", friendly_fire=False)])
+        self.assertEqual(out.rows[0]["row_class"], "missile-row")
 
 
 class TestMmssFormatting(unittest.TestCase):
     def test_zero_tick(self) -> None:
-        out = summarize_missile_log([_ev(timestamp=0)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "00:00")
+        out = _summary([_ev(timestamp=0)])
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "00:00")
 
     def test_tick_2_is_one_second(self) -> None:
         # TIME-01: 2 ticks = 1 second.
-        out = summarize_missile_log([_ev(timestamp=2)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "00:01")
+        out = _summary([_ev(timestamp=2)])
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "00:01")
 
     def test_round_end_tick_1800(self) -> None:
         # 1800 ticks = 900 seconds = 15:00.
-        out = summarize_missile_log([_ev(timestamp=1800)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "15:00")
+        out = _summary([_ev(timestamp=1800)])
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "15:00")
 
     def test_mid_round_tick(self) -> None:
         # 245 ticks // 2 = 122 s = 2:02.
-        out = summarize_missile_log([_ev(timestamp=245)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "02:02")
+        out = _summary([_ev(timestamp=245)])
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "02:02")
 
 
 class TestRowShape(unittest.TestCase):
     def test_no_event_orm_ref_in_row(self) -> None:
-        out = summarize_missile_log([_ev()])
-        self.assertNotIn("event", out["rows"][0])
+        out = _summary([_ev()])
+        self.assertNotIn("event", out.rows[0])
 
     def test_row_carries_description_and_points_flat(self) -> None:
-        out = summarize_missile_log(
-            [_ev(description="missile detonates", points_awarded=500)]
-        )
-        self.assertEqual(out["rows"][0]["description"], "missile detonates")
-        self.assertEqual(out["rows"][0]["points"], 500)
+        out = _summary([_ev(description="missile detonates", points_awarded=500)])
+        self.assertEqual(out.rows[0]["description"], "missile detonates")
+        self.assertEqual(out.rows[0]["points"], 500)
 
     def test_null_points_coalesce_to_zero(self) -> None:
-        out = summarize_missile_log([_ev(points_awarded=None)])
-        self.assertEqual(out["rows"][0]["points"], 0)
+        out = _summary([_ev(points_awarded=None)])
+        self.assertEqual(out.rows[0]["points"], 0)
 
     def test_missing_metadata_keys_default_to_empty_str(self) -> None:
         ev = {"timestamp": 10, "metadata": {}, "description": "", "points_awarded": 0}
-        out = summarize_missile_log([ev])
-        self.assertEqual(out["rows"][0]["actor_role"], "")
-        self.assertEqual(out["rows"][0]["target_role"], "")
-        self.assertEqual(out["rows"][0]["result"], "")
-        self.assertFalse(out["rows"][0]["friendly_fire"])
+        out = _summary([ev])
+        self.assertEqual(out.rows[0]["actor_role"], "")
+        self.assertEqual(out.rows[0]["target_role"], "")
+        self.assertEqual(out.rows[0]["result"], "")
+        self.assertFalse(out.rows[0]["friendly_fire"])
 
     def test_missile_row_dataclass_is_frozen(self) -> None:
         row = MissileRow(

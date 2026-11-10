@@ -50,12 +50,9 @@ describe('overlaysAt: which events draw a line', () => {
     expect(linesAt([ev({ event_type: 'miss' })]).map((l) => l.kind)).toEqual(['miss']);
   });
 
-  it('a missile with result hit is a missile-hit, any other result a missile-miss', () => {
-    const lines = linesAt([
-      ev({ event_type: 'missiled', metadata: { result: 'hit' } }),
-      ev({ event_type: 'missiled', metadata: { result: 'miss' } }),
-    ]);
-    expect(lines.map((l) => l.kind)).toEqual(['missile-hit', 'missile-miss']);
+  it('a missile is a missile-hit: MECH-21 launches only missiles that hit', () => {
+    const lines = linesAt([ev({ event_type: 'missiled', metadata: { result: 'hit' } })]);
+    expect(lines.map((l) => l.kind)).toEqual(['missile-hit']);
   });
 
   it('all three resupply types draw a resupply line, actor to target', () => {
@@ -76,7 +73,7 @@ describe('overlaysAt: which events draw a line', () => {
     const lines = linesAt([
       ev({ event_type: 'special' }),
       ev({ event_type: 'elimination' }),
-      ev({ event_type: 'missile_dodge' }),
+      ev({ event_type: 'lock_cancelled', metadata: { reason: 'dodge' } }),
       ev({ event_type: 'movement' }),
       ev({ event_type: 'tag', target_id: null, target_side: null, target_name: null }),
     ]);

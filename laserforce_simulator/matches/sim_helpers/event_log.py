@@ -35,6 +35,9 @@ from __future__ import annotations
 
 from typing import Optional
 
+from .pending_events import LOCK_CANCEL_REASONS, LockCancelReason
+from .time_constants import LOCK_TICKS
+
 # ---------------------------------------------------------------------------
 # Private metadata builders — the universal RES-02b actor/target snapshot
 # blocks. Owned by EventLog; the duplicate copies that lived on
@@ -376,15 +379,15 @@ class EventLog:
         )
 
     # ------------------------------------------------------------------ #
-    # Missile verbs (3): locking / missiled / missile_dodge (RES-03)
+    # Missile verbs (3): locking / missiled / lock_cancelled (RES-03, MECH-21)
     # ------------------------------------------------------------------ #
 
     def locking(self, attacker, defender, tick: int) -> None:
-        """Emit ``event_type='locking'`` at the missile fire tick.
-        points_awarded=0. RES-03 — pairs with a later ``missiled``
-        resolution event (unless the locking actor is Down'd first,
-        in which case the missiled never fires per the MECH-05
-        precedent).
+        """Emit ``event_type='locking'`` at the Lock start tick; nothing is
+        spent (MECH-21, ADR-0050). points_awarded=0. The lock ends in one
+        ``missiled`` (launch) or one ``lock_cancelled`` row, unless the
+        round ends first. ``metadata.lock_ticks`` is ``LOCK_TICKS``, so
+        Playback needs no lock length of its own.
         """
         if not self._persist:
             return
@@ -396,7 +399,7 @@ class EventLog:
                 "timestamp": int(tick),
                 "points_awarded": 0,
                 "description": f"{attacker.name} locks on {defender.name}",
-                "metadata": _build_meta(attacker, defender),
+                "metadata": _build_meta(attacker, defender, lock_ticks=LOCK_TICKS),
             }
         )
 
@@ -406,56 +409,54 @@ class EventLog:
         defender,
         tick: int,
         *,
-        result: str,
         friendly_fire: bool,
     ) -> None:
-        """Emit ``event_type='missiled'`` at the missile resolution tick.
+        """Emit ``event_type='missiled'`` at the launch tick.
 
-        ``result`` ∈ {``hit``, ``miss``}. ``hit`` ⇒ points_awarded=500;
-        ``miss`` ⇒ 0. Metadata carries the four RES-03-required keys:
-        ``result``, ``friendly_fire``, ``actor_role``, ``target_role``
-        (the last two come from the actor/target blocks).
+        MECH-21 (ADR-0050): a launched missile always hits, so every row
+        carries ``metadata.result = "hit"`` and 500 points. Metadata carries
+        the four RES-03-required keys: ``result``, ``friendly_fire``,
+        ``actor_role``, ``target_role``.
         """
         if not self._persist:
             return
-        if result == "hit":
-            desc = f"{attacker.name} hits {defender.name} with missile"
-            points = 500
-        else:  # "miss"
-            desc = f"{attacker.name} misses {defender.name} with missile"
-            points = 0
         self._entries.append(
             {
                 "event_type": "missiled",
                 "actor_id": attacker.player_id,
                 "target_id": defender.player_id,
                 "timestamp": int(tick),
-                "points_awarded": points,
-                "description": desc,
+                "points_awarded": 500,
+                "description": f"{attacker.name} hits {defender.name} with missile",
                 "metadata": _build_meta(
-                    attacker, defender, result=result, friendly_fire=friendly_fire
+                    attacker, defender, result="hit", friendly_fire=friendly_fire
                 ),
             }
         )
 
-    def missile_dodge(self, defender, attacker, tick: int) -> None:
-        """Emit ``event_type='missile_dodge'``. points_awarded=0.
-
-        Note ``actor=defender`` and ``target=attacker`` — the dodging
-        defender is the protagonist of the event (mirrors the
-        pre-refactor wire format).
+    def lock_cancelled(
+        self, locker, defender, tick: int, *, reason: LockCancelReason
+    ) -> None:
+        """Emit ``event_type='lock_cancelled'``: a Lock ended without a
+        missile (MECH-21). points_awarded=0; ``metadata.reason`` is one of
+        ``LOCK_CANCEL_REASONS``, and any other reason raises ``ValueError``
+        (also on the null log).
         """
+        if reason not in LOCK_CANCEL_REASONS:
+            raise ValueError(f"unknown lock_cancelled reason {reason!r}")
         if not self._persist:
             return
         self._entries.append(
             {
-                "event_type": "missile_dodge",
-                "actor_id": defender.player_id,
-                "target_id": attacker.player_id,
+                "event_type": "lock_cancelled",
+                "actor_id": locker.player_id,
+                "target_id": defender.player_id,
                 "timestamp": int(tick),
                 "points_awarded": 0,
-                "description": f"{defender.name} dodges missile from {attacker.name}",
-                "metadata": _build_meta(defender, attacker),
+                "description": (
+                    f"{locker.name} loses the lock on {defender.name} ({reason})"
+                ),
+                "metadata": _build_meta(locker, defender, reason=reason),
             }
         )
 

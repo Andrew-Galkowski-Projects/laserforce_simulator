@@ -445,9 +445,39 @@ class TestRoundAnalyticsBuilders(_ServicesTestCase):
         game_round = _saved_round(self.red, self.blue)
         with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
             result = build_missile_log(game_round)
-        self.assertEqual(set(result), {"fired", "hit", "efficiency", "rows"})
+        self.assertEqual(set(result), {"locks", "missiles", "conversion", "rows"})
         game_round.refresh_from_db()
         self.assertEqual(game_round.fidelity, "combat")
+
+    def test_missile_log_counts_the_locking_rows(self) -> None:
+        """MECH-21 (#583 [9]): ``locks`` is the round's ``locking`` rows and
+        ``missiles`` its ``missiled`` rows, so 4 locks and 2 missiles is 50.0."""
+        from matches.services import build_missile_log
+
+        game_round = _bare_round(self.red, self.blue)
+        for tick, event_type in (
+            (10, "locking"),
+            (12, "missiled"),
+            (20, "locking"),
+            (21, "lock_cancelled"),
+            (30, "locking"),
+            (32, "missiled"),
+            (40, "locking"),
+        ):
+            GameEvent.objects.create(
+                game_round=game_round,
+                timestamp=tick,
+                event_type=event_type,
+                actor=self.red_players["commander"],
+                target=self.blue_players["heavy"],
+                metadata={"result": "hit"} if event_type == "missiled" else {},
+            )
+        result = build_missile_log(game_round)
+        self.assertEqual(
+            (result["locks"], result["missiles"], result["conversion"]),
+            (4, 2, 50.0),
+        )
+        self.assertEqual([r["timestamp"] for r in result["rows"]], [12, 32])
 
     def test_heatmap_keys_and_upgrade(self) -> None:
         from matches.services import build_heatmap

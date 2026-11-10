@@ -169,10 +169,12 @@ class TestTimelineShape(_TimelineTestCase):
         self.event(timestamp=1, event_type="movement")
         self.event(timestamp=2, event_type="base_capture", actor=self.blue_hvy)
         self.event(timestamp=3, event_type="combo_resupply", actor=self.red_med)
-        self.event(timestamp=4, event_type="missile_dodge", actor=self.blue_ammo)
+        # MECH-21: the engine no longer writes ``missile_dodge``; a dodge is a
+        # ``lock_cancelled`` row now, so the timeline must carry that one.
+        self.event(timestamp=4, event_type="lock_cancelled", actor=self.blue_ammo)
         self.assertEqual(
             [e["event_type"] for e in self.data()["events"]],
-            ["movement", "base_capture", "combo_resupply", "missile_dodge"],
+            ["movement", "base_capture", "combo_resupply", "lock_cancelled"],
         )
 
     def test_events_in_timestamp_then_insertion_order(self) -> None:

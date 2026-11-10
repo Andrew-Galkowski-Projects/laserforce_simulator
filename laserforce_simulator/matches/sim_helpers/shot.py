@@ -31,7 +31,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
-from .combat import _elevation_hit_modifier
+from .combat import _elevation_hit_modifier, cancel_missile_lock
 from .down import record_down
 from .follow_rule import may_tag
 from .mechanics import cooldown_ticks
@@ -221,6 +221,9 @@ def resolve_shot(
     # MECH-10: a Chaser cannot Tag the player they Chased (every shot kind).
     if not may_tag(attacker, defender, tick):
         return ShotOutcome(False, False, False)
+
+    # MECH-21: a trigger pull ends the shooter's own Lock, every kind.
+    cancel_missile_lock(ctx, attacker, tick, "shot")
 
     # ── Phase 2. Hide-50%-miss roll (uniform across all kinds) ────────
     if defender.is_hiding and random.random() > 0.5:

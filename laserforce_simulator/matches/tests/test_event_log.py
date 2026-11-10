@@ -451,6 +451,15 @@ class TestLockingVerb(unittest.TestCase):
         self.assertEqual(md["actor_role"], "scout")
         self.assertEqual(md["target_role"], "commander")
 
+    def test_metadata_carries_lock_ticks(self) -> None:
+        """MECH-21: Playback reads the lock length from the row, so it needs
+        no lock length of its own (``time_constants.LOCK_TICKS``)."""
+        from matches.sim_helpers.time_constants import LOCK_TICKS
+
+        log = EventLog()
+        log.locking(_attacker(), _defender(), 30)
+        self.assertEqual(log.entries[0]["metadata"]["lock_ticks"], LOCK_TICKS)
+
 
 # ---------------------------------------------------------------------------
 # Verb 8: missiled
@@ -458,9 +467,14 @@ class TestLockingVerb(unittest.TestCase):
 
 
 class TestMissiledVerb(unittest.TestCase):
-    def test_hit_result_points_500(self) -> None:
+    """MECH-21 (ADR-0050): ``missiled`` is the launch, and a launched missile
+    always hits, so the verb takes no ``result``; every row is a 500-point hit.
+    A dodge is a ``lock_cancelled`` row instead (the old ``result="miss"`` row
+    and its test are gone)."""
+
+    def test_hit_points_500(self) -> None:
         log = EventLog()
-        log.missiled(_attacker(), _defender(), 35, result="hit", friendly_fire=False)
+        log.missiled(_attacker(), _defender(), 35, friendly_fire=False)
         e = log.entries[0]
         self.assertEqual(e["event_type"], "missiled")
         self.assertEqual(e["points_awarded"], 500)
@@ -468,48 +482,76 @@ class TestMissiledVerb(unittest.TestCase):
         self.assertEqual(e["metadata"]["result"], "hit")
         self.assertFalse(e["metadata"]["friendly_fire"])
 
-    def test_miss_result_points_0(self) -> None:
+    def test_result_parameter_is_gone(self) -> None:
         log = EventLog()
-        log.missiled(_attacker(), _defender(), 35, result="miss", friendly_fire=False)
-        e = log.entries[0]
-        self.assertEqual(e["points_awarded"], 0)
-        self.assertEqual(e["description"], "Alice misses Bob with missile")
-        self.assertEqual(e["metadata"]["result"], "miss")
+        with self.assertRaises(TypeError):
+            log.missiled(  # type: ignore[call-arg]
+                _attacker(), _defender(), 35, result="miss", friendly_fire=False
+            )
 
     def test_friendly_fire_flag(self) -> None:
         log = EventLog()
-        log.missiled(_attacker(), _defender(), 35, result="hit", friendly_fire=True)
+        log.missiled(_attacker(), _defender(), 35, friendly_fire=True)
         self.assertTrue(log.entries[0]["metadata"]["friendly_fire"])
 
     def test_metadata_has_required_four_keys(self) -> None:
         """RES-03 contract: metadata MUST include result + friendly_fire
         + actor_role + target_role."""
         log = EventLog()
-        log.missiled(_attacker(), _defender(), 35, result="hit", friendly_fire=False)
+        log.missiled(_attacker(), _defender(), 35, friendly_fire=False)
         md = log.entries[0]["metadata"]
         for key in ("result", "friendly_fire", "actor_role", "target_role"):
             self.assertIn(key, md, f"missile metadata missing {key!r}")
 
 
 # ---------------------------------------------------------------------------
-# Verb 9: missile_dodge
+# Verb 9: lock_cancelled (MECH-21; replaces missile_dodge)
 # ---------------------------------------------------------------------------
 
 
-class TestMissileDodgeVerb(unittest.TestCase):
-    def test_actor_target_swap(self) -> None:
-        """Defender is the protagonist of a dodge — actor=defender,
-        target=attacker."""
+class TestLockCancelledVerb(unittest.TestCase):
+    def test_basic_shape(self) -> None:
         log = EventLog()
         att = _attacker()
         defn = _defender()
-        log.missile_dodge(defn, att, 40)
+        log.lock_cancelled(att, defn, 40, reason="dodge")
         e = log.entries[0]
-        self.assertEqual(e["event_type"], "missile_dodge")
-        self.assertEqual(e["actor_id"], defn.player_id)  # defender as actor
-        self.assertEqual(e["target_id"], att.player_id)  # attacker as target
+        self.assertEqual(e["event_type"], "lock_cancelled")
+        self.assertEqual(e["actor_id"], att.player_id)  # the locker
+        self.assertEqual(e["target_id"], defn.player_id)
+        self.assertEqual(e["timestamp"], 40)
         self.assertEqual(e["points_awarded"], 0)
-        self.assertEqual(e["description"], "Bob dodges missile from Alice")
+        self.assertEqual(e["description"], "Alice loses the lock on Bob (dodge)")
+        md = e["metadata"]
+        self.assertEqual(md["reason"], "dodge")
+        self.assertEqual(md["actor_role"], "scout")
+        self.assertEqual(md["target_role"], "commander")
+
+    def test_every_listed_reason_is_accepted(self) -> None:
+        from matches.sim_helpers.pending_events import LOCK_CANCEL_REASONS
+
+        log = EventLog()
+        for reason in LOCK_CANCEL_REASONS:
+            log.lock_cancelled(_attacker(), _defender(), 40, reason=reason)
+        self.assertEqual(
+            [e["metadata"]["reason"] for e in log.entries], list(LOCK_CANCEL_REASONS)
+        )
+
+    def test_unknown_reason_raises(self) -> None:
+        log = EventLog()
+        with self.assertRaises(ValueError):
+            log.lock_cancelled(
+                _attacker(), _defender(), 40, reason="bored"  # type: ignore[arg-type]
+            )
+        self.assertEqual(len(log), 0)
+
+    def test_null_log_writes_nothing(self) -> None:
+        log = EventLog(persist=False)
+        log.lock_cancelled(_attacker(), _defender(), 40, reason="sight")
+        self.assertEqual(len(log), 0)
+
+    def test_missile_dodge_verb_is_gone(self) -> None:
+        self.assertFalse(hasattr(EventLog, "missile_dodge"))
 
 
 # ---------------------------------------------------------------------------

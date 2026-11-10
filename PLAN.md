@@ -145,7 +145,7 @@ BUG-SL-01 (Sight-line compute fails after a saved zone config) is **[DONE]**; se
 The owner moved RV-06 and RV-07 ahead of CAL-03: reading tags, bases and each player's resources
 off the Playback map is the debugging aid the next calibration passes need. RV-06, RV-07 and RV-08
 (added by RV-07's grill) shipped (2026-11-09); MECH-21 (added by RV-08's grill: the engine's
-missile follows the real Lock) is next, then CAL-03.
+missile follows the real Lock) shipped (2026-11-10); CAL-03 is next.
 
 RV-06 (Playback map: position icons, tag lines and bases) is **[DONE]**; see `PLAN-completed.md`.
 
@@ -153,18 +153,7 @@ RV-07 (Playback map: shots, lives and special beside the moving icon) is **[DONE
 
 RV-08 (Playback map: animate a missile) is **[DONE]**; see `PLAN-completed.md`.
 
-### MECH-21 · One Lock at a time, the missile spent at launch (owner, 2026-11-09)
-
-From RV-08's grill (decisions above; GLOSSARY *Lock*). Make the engine's missile follow the real
-Lock: the missile is spent when it launches, not at lock start; a dodge breaks the lock with no
-missile spent and no `missiled` row (`missile_dodge` becomes a lock-break reason); a shot by the
-locker abandons the lock; a new target replaces the lock for free (one lock per player; 6.6% of the
-sim's locks overlap today, 12-seed Syracuse probe); a cancel event records the break tick and its
-reason (sight, dodge, shot, retarget, down, out). Playback's missile count then drops at the
-missile, not at `locking`. **Open for the grill:** the lock length (the sim's 3 ticks = 1.5 s, while
-the real `0300` to `0306` gap, trigger pull included, is as short as 0.6 s), the 0.5 s look-away
-grace against the sim's `special_usage` save, when an AI locker chooses to drop a lock for a tag,
-and the calibration shift (seeded games change).
+MECH-21 (One Lock at a time, the missile spent at launch) is **[DONE]**; see `PLAN-completed.md`.
 
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 

@@ -456,17 +456,12 @@ class TestSeededRoundOnAMap:
                 violations.append(("tag", attacker.tag_id, defender.tag_id, tick))
             real_tag(self, attacker, defender, tick, **kw)
 
-        def spy_missiled(self, attacker, defender, tick, *, result, friendly_fire):
-            if result == "hit" and not may_tag(attacker, defender, tick):
+        # MECH-21: ``missiled`` lost its ``result`` kwarg; every row is a
+        # launch, and a launched missile always hits, so every row is checked.
+        def spy_missiled(self, attacker, defender, tick, *, friendly_fire):
+            if not may_tag(attacker, defender, tick):
                 violations.append(("missile", attacker.tag_id, defender.tag_id, tick))
-            real_missiled(
-                self,
-                attacker,
-                defender,
-                tick,
-                result=result,
-                friendly_fire=friendly_fire,
-            )
+            real_missiled(self, attacker, defender, tick, friendly_fire=friendly_fire)
 
         monkeypatch.setattr(entrypoints, "record_step", spy_step)
         monkeypatch.setattr(EventLog, "tag", spy_tag)

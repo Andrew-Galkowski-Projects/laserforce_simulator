@@ -208,8 +208,9 @@ def _apply_actor(
         actor["tags"] += 1
     elif etype == "miss":
         actor["misses"] += 1
-    elif etype == "locking":
-        # The lock start is the one place a missile is spent (MECH-16).
+    elif etype == "missiled":
+        # The launch is the one place a missile is spent (MECH-21, ADR-0050);
+        # a lock start or a cancelled lock spends nothing.
         actor["missiles"] -= 1
     elif etype == "nuke_cancelled":
         _end_nuke(actor, fuses, ev.actor_id)

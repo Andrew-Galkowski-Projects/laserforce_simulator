@@ -113,7 +113,7 @@ _Avoid_: "special" alone (overloaded — say **SP** for the resource, **Special*
 A role's activatable ability — the Commander's **Nuke** or the Scout's **Rapid Fire**; "activating the special" spends **SP**.
 
 **Missile**:
-A locked, dodgeable long-range attack available to Commander and Heavy, scored separately from tag points.
+A long-range attack available to Commander and Heavy, launched at the end of a **Lock** and scored separately from tag points. A launched Missile always hits; the target's dodge happens before the launch and ends the Lock.
 
 **Resupply**:
 A support transfer of a resource to an ally — **Medic** gives **Lives**, **Ammo** gives **Shots**. Needs **Line of sight** to the ally on a map round; a map-less round uses the same zone.
@@ -212,16 +212,20 @@ A Commander or Heavy holding their sights on one valid enemy without pulling the
 _Avoid_: reading a Lock as a launched missile (a Lock can end without one); calling anything but the target breaking the Lock a dodge.
 
 **Locking event**:
-The `GameEvent` row emitted at **Missile** fire / lock start (`event_type="locking"`), carrying the actor's and target's after-event values in `metadata` (`actor_role`, `actor_shots`, `actor_lives`, `actor_points`, `sp`, and the `target_*` equivalents). Distinct from the **Missiled event** that fires at resolution: a Locking event marks the *fire tick*, a Missiled event marks the *resolution tick* (hit or miss). Together they replace the pre-RES-03 single `event_type="missile"` row, which collapsed both moments into one and made fired-but-cancelled missiles invisible to the log. If the locking actor is **Down**ed before the missile resolves, the Locking event remains in the log but **no Missiled event fires** (mirrors the **MECH-05** nuke-cancellation precedent: a fired-but-cancelled attack leaves a fire-tick trace, not a resolution-tick one).
-_Avoid_: calling the resolution row a "locking" event, or reading a Locking event as proof that the missile landed (the resolution lives on the **Missiled event**).
+The `GameEvent` row written when a **Lock** starts (`event_type="locking"`). Nothing is spent at a Locking event: every one ends in exactly one **Missiled event** (the launch) or one **Lock cancelled event**, unless the round ends first (MECH-21, ADR-0050).
+_Avoid_: reading a Locking event as a fired missile (it was before MECH-21, under ADR-0011).
 
 **Missiled event**:
-The `GameEvent` row emitted at **Missile** resolution (`event_type="missiled"`), carrying `metadata = {"result": "hit"|"miss", "friendly_fire": bool, "actor_role", "target_role"}`. One Missiled event per resolved missile; never emitted when the locking actor was **Down**ed before resolution (see **Locking event**). Drives the missile-log surface at `/rounds/:id/missile-log` (`GET /api/rounds/<id>/missile-log/`) and its **fired / hit / efficiency** summary (efficiency = `hits / fired × 100`, computed view-side; **Friendly fire** hits count as hits). Distinct from the **Locking event** at the fire tick.
-_Avoid_: confusing the missile-log row count (Missiled events) with the lock-attempt count (Locking events) — they differ whenever a locker is Downed mid-flight.
+The `GameEvent` row written when a **Lock** launches its **Missile** (`event_type="missiled"`). A launched missile always lands on the locked target, so every Missiled event is a hit; the missile is spent here. The missile log counts **locks** (Locking events), **missiles** (Missiled events) and their **conversion** (missiles / locks).
+_Avoid_: a missed missile (there is none since MECH-21: a target that gets away breaks the Lock, which is a **Lock cancelled event**).
+
+**Lock cancelled event**:
+The `GameEvent` row written when a **Lock** ends without a launch (`event_type="lock_cancelled"`), at the tick it ends, with one reason: **sight** (the locker lost the target), **dodge** (the target got out of the sights at the launch), **shot** (the locker fired an ordinary **Shot** instead), **retarget** (the locker started a new Lock on someone else), **down** (either player was **Down**ed) or **out** (either player was eliminated). No missile is spent.
+_Avoid_: calling every cancel a dodge (only the target breaking the Lock is one).
 
 **Friendly fire**:
-A **Missiled event** where `actor.team_color == target.team_color` — a player hitting their own teammate with a **Missile**. Server-emitted on the event row as `metadata["friendly_fire"]: bool`, never derived view-side, so the view code stays dumb and the contract is single-source. Friendly fire hits **count as hits** in the missile-log efficiency summary — the missile landed; the friendly-fire flag carries the qualitative distinction rather than discounting the hit. Rendered with a CSS class containing the substring `friendly-fire` so the row is visually distinguishable. Tag events have no analogous flag — friendly fire is a missile-specific qualifier in this codebase.
-_Avoid_: deriving friendly-fire status from team-colour comparison at the template layer (the server emits the bool); excluding friendly fire from the hit count (it is a hit, just a regrettable one).
+A **Missiled event** where `actor.team_color == target.team_color` — a player hitting their own teammate with a **Missile**. Server-emitted on the event row as `metadata["friendly_fire"]: bool`, never derived view-side, so the view code stays dumb and the contract is single-source. Friendly fire hits **count as missiles** in the missile-log conversion summary — the missile landed; the friendly-fire flag carries the qualitative distinction rather than discounting the hit. Rendered with a CSS class containing the substring `friendly-fire` so the row is visually distinguishable. Tag events have no analogous flag — friendly fire is a missile-specific qualifier in this codebase.
+_Avoid_: deriving friendly-fire status from team-colour comparison at the template layer (the server emits the bool); excluding friendly fire from the missile count (the missile landed, just regrettably).
 
 ### Time
 

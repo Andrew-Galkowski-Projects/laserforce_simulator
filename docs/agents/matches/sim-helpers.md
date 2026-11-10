@@ -25,9 +25,9 @@ The **single source of truth for the `GameEvent`-dict shape**. Lands as deepenin
 | `nuke_cancelled` | `(commander, tick)` | `"nuke_cancelled"` | 0 | `"X nuke cancelled"` |
 | `medic_reset` | `(medic, tick)` | `"medic_reset"` | 0 | `"X medic reset (down-chain)"` |
 | `special` | `(actor, tick, *, description, points=0, metadata_extras=None)` | `"special"` | per-arg | caller passes the description (nuke activation, detonation, rapid fire, team heal, team ammo) |
-| `locking` | `(attacker, defender, tick)` | `"locking"` | 0 | `"X locks on Y"` |
-| `missiled` | `(attacker, defender, tick, *, result, friendly_fire)` | `"missiled"` | 500 if hit else 0 | `"X hits Y with missile"` / `"X misses Y with missile"` |
-| `missile_dodge` | `(defender, attacker, tick)` | `"missile_dodge"` | 0 | `"Y dodges missile from X"` (defender as actor, attacker as target) |
+| `locking` | `(attacker, defender, tick)` | `"locking"` | 0 | `"X locks on Y"`: the Lock start, nothing spent; metadata carries `lock_ticks` (= `LOCK_TICKS`, MECH-21) |
+| `missiled` | `(attacker, defender, tick, *, friendly_fire)` | `"missiled"` | 500 | `"X hits Y with missile"`: the launch, which always hits (MECH-21, ADR-0050); metadata `result="hit"` |
+| `lock_cancelled` | `(locker, defender, tick, *, reason)` | `"lock_cancelled"` | 0 | `"X loses the lock on Y (<reason>)"`: a Lock that ended without a missile; metadata `reason` in `pending_events.LOCK_CANCEL_REASONS`, any other reason raises `ValueError` (MECH-21; replaces `missile_dodge`) |
 | `resupply_lives` | `(supporter, requestor, tick, *, amount=None)` | `"resupply_lives"` | 0 | `"X heals Y"` |
 | `resupply_ammo` | `(supporter, requestor, tick, *, amount=None)` | `"resupply_ammo"` | 0 | `"X resupplies Y"` |
 | `combo_resupply` | `(requestor, medic, ammo, tick)` | `"combo_resupply"` | 0 | `"medic combo-resupplies requestor"` — actor=medic by convention, target=requestor, metadata extras = `medic_tag` / `ammo_tag` |
@@ -47,11 +47,11 @@ These were duplicated three times pre-refactor (in `simulation.py`, `shot.py`, `
 
 **Behaviour-neutral.** Zero RNG consumed. Dict shape is byte-identical to pre-refactor literals. Seeded games byte-identical. **No new Score Calibration re-baseline.**
 
-**Tests:** `matches/tests/test_event_log.py` — 59 pure-unit tests across 17 classes (per-verb output shape, null-log no-op, iteration/length contracts, RES-03 four-key missile metadata, combo_resupply tag-id metadata, three `base_capture` description variants, `TestNoDjangoImportsLeaked` defensive check).
+**Tests:** `matches/tests/test_event_log.py` — 64 pure-unit tests across 16 classes (per-verb output shape, null-log no-op, iteration/length contracts, RES-03 four-key missile metadata, the MECH-21 `lock_cancelled` verb and `locking` `lock_ticks`, combo_resupply tag-id metadata, three `base_capture` description variants, `TestNoDjangoImportsLeaked` defensive check).
 
 ## round_context.py
 
-Pure Python, zero imports beyond stdlib (mirrors `time_constants.py` discipline). `RoundContext` is a `@dataclass` bundling the six per-round mutable references the tick loop threads through:
+Pure Python, no Django imports (it imports `event_log` and `pending_events`). `RoundContext` is a `@dataclass` bundling the seven per-round mutable references the tick loop threads through:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -61,14 +61,15 @@ Pure Python, zero imports beyond stdlib (mirrors `time_constants.py` discipline)
 | `pending_reactions` | `list[PendingReaction]` | Written by `resolve_shot` when a tag/miss provokes a deferred reaction |
 | `all_alive` | `list` | Live `PlayerState` list this tick. Consumed by the MECH-06 medic-under-fire alert + memory-broadcast side effects on a hit |
 | `movement_ctx` | `Any` (`MapContext | None`) | Read by `resolve_shot` for elevation / LoS / base-in-range gates; `None` on the 3-zone fallback |
+| `missile_locks` | `dict[int, PendingMissileLock]` | MECH-21: the round's Locks, keyed by the locker's `player_id` (the key is the one-lock rule). Insertion order is the resolution order; a retarget deletes the old key first, so the new lock goes to the end. Written by `combat.start_missile_lock` / `cancel_missile_lock`, advanced by `BatchSimulator._advance_missile_locks` |
 
 Built once in `BatchSimulator._simulate_round` after the four pending-event queues are initialised; passed to `sim_helpers.down.record_down` and `sim_helpers.shot.resolve_shot`. Replaces the RV-02 static→instance self-stash on `BatchSimulator` (`self._event_log` / `self._pending_nukes`) that the chokepoint used to reach via `getattr(self, ...)`. The `movement_ctx` field is typed `Any` to keep the module Django-free without an import dependency on `MapContext`. See the shot-resolver consolidation in [`docs/agents/matches/simulation-engine.md`](../../../docs/agents/matches/simulation-engine.md) and the seam contract at [`.claude/worktrees/shot-resolver-seam-contract.md`](../../../.claude/worktrees/shot-resolver-seam-contract.md).
 
 ## down.py
 
-`record_down(player, tick, ctx, *, tagger=None)` is the **single life-loss bookkeeping chokepoint**. **MOVE-08:** `tagger` (the Tag / Missile shooter, the Nuke's Commander) feeds the Downed option; `record_down` clears `is_hiding` and calls `downed_option.choose_downed_option` before the `last_downed_time` stamp. Pure free function; no Django imports; the only sibling sim_helper imports are `round_context` and `pending_events`. Lifted from `BatchSimulator._record_down` by the shot-resolver consolidation (May 2026) — the static→instance hack RV-02 introduced is structurally unnecessary now that `event_log` and `pending_nukes` ride on `ctx`.
+`record_down(player, tick, ctx, *, tagger=None)` is the **single life-loss bookkeeping chokepoint**. **MOVE-08:** `tagger` (the Tag / Missile shooter, the Nuke's Commander) feeds the Downed option; `record_down` clears `is_hiding` and calls `downed_option.choose_downed_option` before the `last_downed_time` stamp. Pure free function; no Django imports; it imports `combat` (for `cancel_missile_locks_involving`), `downed_option`, `follow_rule`, `round_context` and `time_constants`. Lifted from `BatchSimulator._record_down` by the shot-resolver consolidation (May 2026) — the static→instance hack RV-02 introduced is structurally unnecessary now that `event_log` and `pending_nukes` ride on `ctx`.
 
-**Seven behaviours, in evaluation order:**
+**Eight behaviours, in evaluation order:**
 
 1. **RV-02 medic-reset chain.** `player.is_active_at(tick)` True (fresh Down / fully recovered) ⇒ `down_chain_count = 1`; False (re-Down within the respawn cooldown) ⇒ `down_chain_count += 1`. A Medic at `chain == 2` emits one `medic_reset` event into `ctx.event_log`.
 2. **Stamp `player.last_downed_time = tick`.**
@@ -76,7 +77,8 @@ Built once in `BatchSimulator._simulate_round` after the four pending-event queu
 4. **Clear `player.is_holding = False` and `player.hold_until = None`** (MOVE-03, MECH-17 — Down ends Overwatch).
 5. **Clear `player._committed_goal = None`** iff `_committed_goal[1]` (the `from_action_driven` flag) is True (MOVE-04 — positioning goals survive a Down).
 6. **A Down ends the nuke (CAL #558, 2026-11-07).** Commander only: `special_active_until > tick` is zeroed, so the drain's `special_active_until >= complete_time` check skips it. The shot path and an enemy detonation already cleared it themselves; the missile path did not, so a missiled Commander's nuke still detonated, 1 to 3 a round on the Test set. A Scout's Rapid Fire is not a fuse and survives a Down.
-7. **RV-02 nuke_cancelled.** Commander only: scan `ctx.pending_nukes`; for each nuke whose `player is` this Commander and `cancel_logged` is False, emit one `nuke_cancelled` event via `ctx.events.nuke_cancelled(commander, tick)` and set `cancel_logged = True`. The nuke is LEFT in the queue (MECH-05 — drain path is structurally unchanged).
+7. **MECH-21 Lock cancel.** With a `ctx`, `combat.cancel_missile_locks_involving(ctx, player, tick)` ends the player's own Lock and every Lock on them, each with a `lock_cancelled` row at the Down tick: `reason="out"` when `final_lives <= 0` (the caller has already taken the lives), `"down"` otherwise. So every Down (Tag, Missile, Nuke) ends the locks; `tick_missile_lock` no longer reads lives.
+8. **RV-02 nuke_cancelled.** Commander only: scan `ctx.pending_nukes`; for each nuke whose `player is` this Commander and `cancel_logged` is False, emit one `nuke_cancelled` event via `ctx.events.nuke_cancelled(commander, tick)` and set `cancel_logged = True`. The nuke is LEFT in the queue (MECH-05 — drain path is structurally unchanged).
 
 **MECH-10 resupply death counts** (between 1 and 2): `downs_taken += 1` on every Down, and `downs_in_resupply_cooldown += 1` when `tick - last_resupplied_at < RESPAWN_TICKS` (the Down landed inside a Respawn cooldown a Resupply started). Read only by `score_averages`.
 
@@ -147,7 +149,7 @@ Measured on Syracuse (4 seeded rounds, PLAN.md MOVE-08 round 5): Downs that move
 **CAL-02a bug A (2026-11-08).** The deferred queues now fire: `_simulate_round` drains `ctx.pending_reactions` / `ctx.pending_followups` by filtering those same lists in place, so a Reaction due at tick T resolves at the first tick at or after T and a Follow-up carries its chain depth (`test_batch_sim.TestQueuedShotsFire`). Until then the loop rebound its own copies and only a rapid-fire Scout, whose cooldown rounds to 0 ticks, ever made a deferred shot; a Reaction still never re-reacts and a Follow-up never chains past depth 2.
 
 **10 phases** (per the seam contract):
-1. **Validity gate.** `attacker.is_active_at(tick)` (**SM5-02**: a Downed pack fires nothing); `attacker.final_shots > 0 or role == "ammo"`; `defender.final_lives > 0` and `defender.is_taggable_at(tick)` (SM5-02: no Shot at a player in the **Not-targetable window**); `follow_rule.may_tag(attacker, defender, tick)` (**MECH-10**: no Shot by a Chaser at the player they Chased). Else early return: no Shot consumed, no event, no counter. The gate sits here, not only in planning, so a queued Follow-up / Reaction, or a holder / target Downed earlier in the tick, is caught too.
+1. **Validity gate.** `attacker.is_active_at(tick)` (**SM5-02**: a Downed pack fires nothing); `attacker.final_shots > 0 or role == "ammo"`; `defender.final_lives > 0` and `defender.is_taggable_at(tick)` (SM5-02: no Shot at a player in the **Not-targetable window**); `follow_rule.may_tag(attacker, defender, tick)` (**MECH-10**: no Shot by a Chaser at the player they Chased). Else early return: no Shot consumed, no event, no counter. The gate sits here, not only in planning, so a queued Follow-up / Reaction, or a holder / target Downed earlier in the tick, is caught too. **MECH-21:** once the gate passes, every kind calls `combat.cancel_missile_lock(ctx, attacker, tick, "shot")`, so a trigger pull ends the shooter's own Lock with a `lock_cancelled` row before the Shot's `tag` / `miss` row. A refused Shot holds the Lock.
 2. **Hide-50%-miss roll** (uniform across all kinds — behaviour change). `defender.is_hiding and random.random() > 0.5` ⇒ `miss_hid`; emit `miss` with `metadata["reason"]="hiding"`, decrement shots (skip for Ammo — uniform), stamp `last_shot_time`, return.
 3. **Hit roll.** `random.randint(1, 100) < clamp(int((70 + acc - surv) * elev_mod * stamina_modifier), 10, 95)`.
 4. **Kind-specific counter.** FOLLOW_UP ⇒ `follow_up_shots += 1`; REACTION ⇒ `reaction_shots += 1`; INITIAL / OVERWATCH ⇒ no counter.
@@ -597,7 +599,17 @@ EventLog candidate: all four combat helpers below dropped their `emit_event=None
 
 **`award_bases(player, second, *, ctx) -> None`** — Awards any uncaptured bases to a surviving player at round end. Emits via `ctx.events.base_capture(..., description="X awarded neutral/opposing base")`.
 
-**`start_missile_lock(attacker, defender, second, *, ctx) -> PendingMissileLock | None`** — Validates state and requires initial LOS; consumes one missile. Emits via `ctx.events.locking(attacker, defender, second)`. Returns the pending lock on success.
+**Missile Lock (MECH-21, spec #583, [ADR-0050](../../adr/0050-a-lock-is-not-a-launch.md); GLOSSARY *Lock*).** A player holds at most one Lock, in `ctx.missile_locks` keyed by `player_id`. Nothing is spent at the start; the Lock launches after `LOCK_TICKS` (2 ticks, 1.0 s), where `BatchSimulator._complete_missile` spends the missile and always hits. A Lock that ends any other way writes one `lock_cancelled` row with the tick and the reason; one still open at round end writes nothing.
+
+**`start_missile_lock(attacker, defender, second, movement_ctx=None, *, ctx) -> PendingMissileLock | None`** — Gates: attacker Active, defender Taggable, `final_missiles > 0`, defender not hiding, no MECH-10 Chase ban (`may_tag`), sight at the start. A Lock already on the same defender holds: `None`, no row. A Lock on another defender is cancelled with `"retarget"` only once the new gates pass, and the new Lock starts on that tick; if they fail, the old Lock holds. On a start it writes `locking`, stores the Lock and **spends nothing**.
+
+**`cancel_missile_lock(ctx, locker, tick, reason) -> PendingMissileLock | None`** — removes the locker's Lock and writes `lock_cancelled`; `None` (no row) when the locker held none. Draws no RNG.
+
+**`cancel_missile_locks_involving(ctx, player, tick) -> int`** — cancels the player's own Lock and every Lock on them, returning how many: `"out"` when `player.final_lives <= 0`, else `"down"`. Called by `down.record_down` (every Down) and by `_reset_resupplied` (a Resupply restarts the receiver's Respawn cooldown, so no launch could land: `"down"`; a MECH-21a addition to the spec, #583).
+
+**`tick_missile_lock(lock, tick, movement_ctx) -> "pending" | "launch" | "sight"`** — run by `BatchSimulator._advance_missile_locks` at the top of each tick, before planning, over a copy of `ctx.missile_locks`. With no sight, a failed `special_usage` save returns `"sight"` (the loop cancels). Otherwise it counts down and returns `"launch"` at 0. It reads no lives. On `"launch"` the loop first re-checks the launch gates, so every Lock still ends in one row: a locker not Active or a target not Taggable is `"down"`, a Chase ban (`may_tag`) is `"sight"`, both with no dodge roll (spec #583 gap, owner 2026-11-09; `record_down` already ends most). Then it rolls the one dodge, `min(20, survival / 5)` percent: a dodge is `cancel_missile_lock(..., "dodge")` (no missile spent, no `missiled`); otherwise the Lock is removed and `_complete_missile` runs, writing `missiled` at `T + LOCK_TICKS`.
+
+**Trigger pulls.** `shot.resolve_shot` (every kind) and an active `capture_base` (the branch that spends the shots and writes `base_capture` with `shots_remaining`) cancel the player's Lock with `"shot"` before their own row. `award_bases` does not. Every other roll (move, hide, resupply, special, a missile roll on the same target) holds.
 
 ---
 
@@ -631,6 +643,7 @@ Pure Python, **zero imports** (no Django, no other `sim_helpers` modules). The s
 | `GOAL_RECOMPUTE_PERIOD_TICKS` | `4` | MOVE-04 **Goal commitment** cadence (2 s) — steady-state `choose_goal_cell` recompute period; reactive overrides bypass this and run every tick. Phase is **expiry-based** per-player (`expires_at_tick = tick + N`), **not** a global `tick % N == 0`. See [ADR-0010](../../../docs/adr/0010-goal-commitment-via-tick-cadence-throttling.md) |
 | staleness | `120` / `30` | MECH-06 memory staleness — Heavy/Medic/Ammo `120`, Scout/Commander `30` (60 s / 15 s) |
 | `HOLD_TICKS` | `7` | MECH-17: the length of a map-round **Hold** (3.5 s), tuned by `round_probe` (the spec's first value was 6; see #550) |
+| `LOCK_TICKS` | `2` | MECH-21: the only Lock length (1.0 s): a Lock started at T launches at the top of T+2. `PendingMissileLock`'s default and the `locking` row's `metadata.lock_ticks` read it |
 
 (Other constants follow the same pattern, e.g. the medic-under-fire alert window.) Imported by `weights.py` (endgame rush, score broadcast), `support_survival.py` (`_stale_table`, which `pathfinding.py` and `modes.py` read through `support_survival.stale_table`), `player_state.py`, and `BatchSimulator` — all now consume tick-valued constants from here rather than inline numeric literals. **`_stale_table(time_domain)`** returns the role-to-threshold table: `_STALE_THRESHOLD_TICKS` for `"ticks"`, the seconds table `_STALE_THRESHOLD` otherwise (MECH-07 moved all three here from `pathfinding`).
 
@@ -690,12 +703,12 @@ Typed `@dataclass` classes for the four pending-event queues used by `BatchSimul
 
 | Class | Fields | Replaces |
 |-------|--------|---------|
-| `PendingMissileLock` | `attacker`, `defender`, `ticks_remaining` (3), `los_broken` | `(float, player, player)` |
+| `PendingMissileLock` | `attacker`, `defender`, `ticks_remaining` (`LOCK_TICKS`) | `(float, player, player)` |
 | `PendingNuke` | `complete_time`, `player`, `cancel_logged` | `(float, player)` |
 | `PendingFollowup` | `fire_at`, `attacker`, `defender`, `chain_depth` | `(float, player, player, int)` |
 | `PendingReaction` | `fire_at`, `attacker`, `defender` | `(float, player, player)` |
 
-`combat.py::start_missile_lock` returns a `PendingMissileLock` (was a raw 3-tuple); `tick_missile_lock` counts it down once a tick, so a lock started at tick T resolves at T+3.
+`combat.py::start_missile_lock` returns a `PendingMissileLock` (was a raw 3-tuple) and stores it in `RoundContext.missile_locks`; `tick_missile_lock` counts it down once a tick, so a Lock started at tick T launches at T + `LOCK_TICKS` (T+2). `los_broken` is gone (MECH-21): a failed sight save ends the Lock on the tick it fails. **`LockCancelReason`** is the `Literal` of the `lock_cancelled` row's `metadata.reason`, and **`LOCK_CANCEL_REASONS`** = `get_args(LockCancelReason)` = `("sight", "dodge", "shot", "retarget", "down", "out")`; `cancel_missile_lock` and `EventLog.lock_cancelled` take the `Literal`, so mypy flags an unknown reason.
 
 **CAL-02a bug A (2026-11-08):** `RoundContext.pending_followups` / `.pending_reactions` are the very lists `BatchSimulator._simulate_round` drains, and `shot.resolve_shot` appends to them, so the drain filters them in place (`queue[:] = [...]`) instead of rebinding the local name, which left every queued `PendingReaction` / `PendingFollowup` in an orphan list. `pending_nukes` is still rebound each tick, as the LFS-01a drain note relies on.
 

@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from django.contrib.auth import get_user_model
 from django.core.management import CommandError, call_command
+from django.db.models import Q
 from django.test import TestCase
 from rest_framework.test import APIClient
 
@@ -212,9 +213,32 @@ class SeedBrowserCheckMapTests(ClassTempMediaMixin, TestCase):
         self.assertIsNotNone(response.json()["data"]["map"])
 
 
-def _mapped_rounds_lose_their_missiles(lose_them: Callable[[int], bool]) -> Any:
-    """Patch ``ensure_fidelity`` so the nth mapped Round fires no missile when
-    ``lose_them(n)``: a real Round does this too rarely to wait for."""
+#: The rows each lock ending the mapped Round needs (MECH-21, #583 [15]).
+_LOCK_ENDING_ROWS = {
+    "missile": Q(event_type="missiled"),
+    "dodge": Q(event_type="lock_cancelled", metadata__reason="dodge"),
+    "cancel": Q(event_type="lock_cancelled") & ~Q(metadata__reason="dodge"),
+}
+
+
+#: A row standing in for each lock ending a simulated Round happens to lack.
+_LOCK_ENDING_STAND_INS = {
+    "missile": ("missiled", {"result": "hit", "friendly_fire": False}),
+    "dodge": ("lock_cancelled", {"reason": "dodge"}),
+    "cancel": ("lock_cancelled", {"reason": "sight"}),
+}
+
+
+def _mapped_rounds_lose_their_missiles(
+    lose_them: Callable[[int], bool], ending: str = "missile"
+) -> Any:
+    """Patch ``ensure_fidelity`` so the nth mapped Round has no ``ending`` rows
+    when ``lose_them(n)``: a real Round does this too rarely to wait for.
+
+    Every other lock ending is made present (a stand-in row where the Round has
+    none): a mapped Round draws its seed from OS entropy, so a real one lacks a
+    dodge often enough to make the attempt counts flaky.
+    """
     real = BatchSimulator.ensure_fidelity
     mapped_rounds = 0
 
@@ -223,15 +247,64 @@ def _mapped_rounds_lose_their_missiles(lose_them: Callable[[int], bool]) -> Any:
         upgraded = real(sim, game_round, level)
         if game_round.arena_map_id is not None:
             mapped_rounds += 1
+            _add_missing_lock_endings(upgraded)
             if lose_them(mapped_rounds):
-                upgraded.events.filter(event_type="missiled").delete()
+                upgraded.events.filter(_LOCK_ENDING_ROWS[ending]).delete()
         return upgraded
 
     return patch.object(BatchSimulator, "ensure_fidelity", ensure_fidelity)
 
 
+def _add_missing_lock_endings(game_round: GameRound) -> None:
+    states = list(game_round.player_states.order_by("id")[:2])
+    for name, rows in _LOCK_ENDING_ROWS.items():
+        if not game_round.events.filter(rows).exists():
+            event_type, metadata = _LOCK_ENDING_STAND_INS[name]
+            game_round.events.create(
+                timestamp=100,
+                event_type=event_type,
+                actor_id=states[0].player_id,
+                target_id=states[1].player_id,
+                metadata=metadata,
+            )
+
+
 class SeedBrowserCheckMissileRetryTests(TempMediaMixin, TestCase):
-    """The Missile log check needs a missile, and a real Round can fire none."""
+    """The Missile log and Playback checks need a missile, a dodge and another
+    cancelled lock, and a real Round can have none of one."""
+
+    def test_a_round_missing_a_dodge_or_a_cancel_is_simulated_again(self) -> None:
+        for ending in ("dodge", "cancel"):
+            with self.subTest(ending=ending):
+                attempts = []
+
+                def lose_them(n: int) -> bool:
+                    attempts.append(n)
+                    return n == 1
+
+                with _mapped_rounds_lose_their_missiles(lose_them, ending):
+                    with self.captureOnCommitCallbacks(execute=True):
+                        _seed()
+                game_round = self._mapped_rounds().get()
+                self.assertEqual(attempts, [1, 2])
+                rows = game_round.events.filter(_LOCK_ENDING_ROWS[ending])
+                self.assertTrue(rows.exists())
+                with self.captureOnCommitCallbacks(execute=True):
+                    _seed("--clean")
+
+    def test_the_warning_names_only_what_is_missing(self) -> None:
+        with _mapped_rounds_lose_their_missiles(lambda n: True, "dodge"):
+            output = _seed()
+
+        game_round = self._mapped_rounds().get()
+        self.assertIn(
+            f"Warning: mapped Single Round {game_round.pk} has no dodge in "
+            f"{MISSILE_ROUND_ATTEMPTS} attempts",
+            output,
+        )
+        warning = next(l for l in output.splitlines() if l.startswith("Warning"))
+        self.assertNotIn("missile", warning)
+        self.assertNotIn("cancel", warning)
 
     def _mapped_rounds(self) -> Any:
         return GameRound.objects.filter(arena_map__name=_MAP_NAME)
@@ -267,7 +340,7 @@ class SeedBrowserCheckMissileRetryTests(TempMediaMixin, TestCase):
         self.assertEqual(attempts, list(range(1, MISSILE_ROUND_ATTEMPTS + 1)))
         game_round = self._mapped_rounds().get()
         self.assertIn(
-            f"Warning: mapped Single Round {game_round.pk} fired no missile", output
+            f"Warning: mapped Single Round {game_round.pk} has no missile in", output
         )
         self.assertTrue(Match.objects.filter(is_completed=False).exists())
 
@@ -366,6 +439,7 @@ class SeedBrowserCheckSyracuseTests(ClassTempMediaMixin, TestCase):
         game_round = self._round()
         events = list(
             game_round.events.values(
+                "id",
                 "event_type",
                 "timestamp",
                 "actor_id",
@@ -457,56 +531,77 @@ class ReviewTicksTests(TestCase):
         events = [_event(10, "tag", 1, 2), _event(12, "tag", 2, 1)]
         self.assertIsNone(review_ticks(events)["mutual tag"])
 
-    def test_finds_the_start_of_the_first_full_lock_ending_each_way(self) -> None:
-        """RV-08 retro: the Playback map's lock rule, so a check seeks start..start+3."""
+    def test_finds_the_start_of_the_first_lock_ending_each_way(self) -> None:
+        """MECH-21 (#583 [15]): a lock ends at its shooter's first later
+        ``missiled`` on its target (hit) or ``lock_cancelled`` (dodge for
+        ``reason=dodge``, lost for any other reason)."""
         events = [
-            # Cut by the shooter's own tag at 11: not a review "lost".
-            _event(10, "locking", 1, 2),
-            _event(11, "tag", 1, 2),
-            _event(20, "locking", 1, 2),
-            _event(23, "missiled", 1, 2, result="hit"),
-            _event(30, "locking", 3, 4),
-            _event(33, "missile_dodge", 4, 3),
-            _event(33, "missiled", 3, 4, result="miss"),
-            _event(40, "locking", 1, 3),
+            _event(10, "locking", 1, 2, lock_ticks=2),
+            _event(11, "lock_cancelled", 1, 2, reason="shot"),
+            _event(20, "locking", 1, 2, lock_ticks=2),
+            _event(22, "missiled", 1, 2, result="hit"),
+            _event(30, "locking", 3, 4, lock_ticks=2),
+            _event(32, "lock_cancelled", 3, 4, reason="dodge"),
         ]
         ticks = review_ticks(events)
         self.assertEqual(
             (ticks["lock hit"], ticks["lock dodge"], ticks["lock lost"]),
-            (20, 30, 40),
+            (20, 30, 10),
         )
 
-    def test_a_missed_missile_is_no_hit_and_a_targetless_lock_cuts_nothing(
+    def test_each_other_reason_is_lost(self) -> None:
+        for reason in ("sight", "shot", "retarget", "down", "out"):
+            with self.subTest(reason=reason):
+                events = [
+                    _event(10, "locking", 1, 2, lock_ticks=2),
+                    _event(11, "lock_cancelled", 1, 2, reason=reason),
+                ]
+                ticks = review_ticks(events)
+                self.assertEqual(
+                    (ticks["lock hit"], ticks["lock dodge"], ticks["lock lost"]),
+                    (None, None, 10),
+                )
+
+    def test_a_lock_open_at_round_end_or_paired_wrongly_is_none_of_them(
         self,
     ) -> None:
         events = [
-            # A full lock whose missile missed with no dodge: lost, not hit.
-            _event(10, "locking", 1, 2),
-            _event(13, "missiled", 1, 2, result="miss"),
-            # A targetless locking at 21 is no Lock, so lock 20 runs full and hits.
-            _event(20, "locking", 3, 4),
-            _event(21, "locking", 3, None),
-            _event(23, "missiled", 3, 4, result="hit"),
-        ]
-        ticks = review_ticks(events)
-        self.assertEqual((ticks["lock hit"], ticks["lock lost"]), (20, 10))
-
-    def test_a_lock_cut_by_its_shooter_or_paired_wrongly_is_none_of_them(self) -> None:
-        events = [
-            # The shooter re-locks at 11: the first lock is cut, the second is lost.
-            _event(10, "locking", 1, 2),
-            _event(11, "locking", 1, 2),
-            # A hit at 13 belongs to neither: the first lock was cut, the second ends at 14.
-            _event(13, "missiled", 1, 2, result="hit"),
-            # A dodge the wrong way round does not pair with lock 20 (1 -> 3).
-            _event(20, "locking", 1, 3),
-            _event(23, "missile_dodge", 1, 3),
+            # Another shooter's missile and a dodge row the wrong way round
+            # (the target as actor) end neither lock.
+            _event(10, "locking", 1, 2, lock_ticks=2),
+            _event(12, "missiled", 3, 2, result="hit"),
+            _event(12, "lock_cancelled", 2, 1, reason="dodge"),
+            # A missile on another target is not this lock's hit.
+            _event(20, "locking", 5, 6, lock_ticks=2),
+            _event(22, "missiled", 5, 7, result="hit"),
+            # Still open when the round ends: no row at all.
+            _event(1799, "locking", 8, 9, lock_ticks=2),
         ]
         ticks = review_ticks(events)
         self.assertEqual(
             (ticks["lock hit"], ticks["lock dodge"], ticks["lock lost"]),
-            (None, None, 11),
+            (None, None, None),
         )
+
+    def test_a_retarget_ends_the_old_lock_not_the_new_one(self) -> None:
+        """A retarget writes the old lock's ``lock_cancelled`` and the new
+        ``locking`` on one tick: the cancel, logged first, is not the new lock's."""
+        events = [
+            _event(10, "locking", 1, 2, lock_ticks=2),
+            _event(11, "lock_cancelled", 1, 2, reason="retarget"),
+            _event(11, "locking", 1, 3, lock_ticks=2),
+            _event(13, "missiled", 1, 3, result="hit"),
+        ]
+        ticks = review_ticks(events)
+        self.assertEqual((ticks["lock hit"], ticks["lock lost"]), (11, 10))
+
+    def test_a_cancel_logged_after_the_lock_on_its_tick_ends_it(self) -> None:
+        # A reaction shot on the lock's own tick cancels it there.
+        events = [
+            _event(10, "locking", 1, 2, lock_ticks=2),
+            _event(10, "lock_cancelled", 1, 2, reason="shot"),
+        ]
+        self.assertEqual(review_ticks(events)["lock lost"], 10)
 
 
 class SeedBrowserCheckReproducibleTests(TempMediaMixin, TestCase):

@@ -369,7 +369,7 @@ describe('Event log (/rounds/:id/events)', () => {
       'special',
       'nuke_cancelled',
       'missiled',
-      'missile_dodge',
+      'lock_cancelled',
       'locking',
       'resupply_ammo',
       'resupply_lives',
@@ -410,7 +410,7 @@ describe('Event log (/rounds/:id/events)', () => {
         'Special:special',
         'Special:nuke_cancelled',
         'Missile:missiled',
-        'Missile:missile_dodge',
+        'Missile:lock_cancelled',
         'Locking:locking',
         'Resupply:resupply_ammo',
         'Resupply:resupply_lives',
@@ -529,7 +529,7 @@ describe('Event log (/rounds/:id/events)', () => {
     it.each<[string, TimelineEventType[]]>([
       ['Elimination', ['elimination', 'team_elimination']],
       ['Special', ['special', 'nuke_cancelled']],
-      ['Missile', ['missiled', 'missile_dodge']],
+      ['Missile', ['missiled', 'lock_cancelled']],
       ['Resupply', ['resupply_ammo', 'resupply_lives', 'combo_resupply', 'medic_reset']],
     ])('unchecking %s hides exactly %j', async (label, types) => {
       await open(everyType());

@@ -203,8 +203,8 @@ computed this way.
   - **Values are read, never re-derived.** Score, lives, shots and SP come from the after-event
     values every event logs: `actor_*`, `sp`, `target_*`, and `special.targets[]`.
   - **Derived values:**
-    - `missiles`: −1 per `locking`. A hit costs nothing more: the engine spends the missile once,
-      at the lock (**MECH-16**, fixed 2026-11-06, with the matching −1 dropped here).
+    - `missiles`: −1 per `missiled`. The engine spends the missile once, at the launch
+      (**MECH-21**, ADR-0050); a `locking` and a `lock_cancelled` cost nothing.
     - `eliminated`: from the target's `elimination` event.
     - `tags` / `misses`: counts of `tag` / `miss` events.
     - `downed_at`: set on a lives decrease (`record_down` is the engine's life-loss chokepoint) or
@@ -271,7 +271,7 @@ after LFstats's Replay tab, within ADR-0043.
     (`overlaysAt`, `baseMarkers`; its spec is the test seam). A line joins where both players
     stood at the event's tick, sits `LINE_OFFSET_PX` (4) to the actor's right, shows for
     `LINE_TICKS` (2) and fades, with a muzzle flare at the acting end. A miss is dashed and faint,
-    missiles take `--lf-ev-missile` (a miss dashed), a resupply `--lf-ev-resupply` with a "+" at
+    a missile takes `--lf-ev-missile` (always a hit, MECH-21), a resupply `--lf-ev-resupply` with a "+" at
     the receiver. A capture's base is `metadata.base_type`, else `base_id` 13 red / 14 blue / 15
     the nearest `neutral_*`; it adds 8 radial lasers for `BURST_TICKS` (4). Round-end awarded
     captures (no `shots_remaining`) draw nothing.
@@ -316,18 +316,19 @@ after LFstats's Replay tab, within ADR-0043.
     (`POLL_TIMERS`).
   - RV-08 (spec #580): each missile **Lock** is animated from the timeline alone, by the pure
     `playback-missiles.ts` (its spec is the test seam). `lockSpans(events)` (a `computed`, once
-    per timeline) gives one `LockSpan` per `locking` with a target: `start` = its tick, `end` =
-    `start + LOCK_TICKS` (3, the engine's literal), cut short to the first tick strictly inside
-    the window at which the shooter locks again, tags, misses or makes an active base capture (one
-    Lock at a time; an early trigger pull drops it). An uncut span's `ending` is `'result'` when
-    a `missiled` (shooter -> target) or a `missile_dodge` (target -> shooter: the dodger is the
-    actor) lands at its `end`, else `'lost'` (a broken lock writes no event, so it fizzles at
-    T+3). `lockOverlaysAt(spans, events, cursor, positionAt)` gives the building locks
-    (`start <= cursor < end`, `progress` 0..1, both ends at the **cursor's** positions, unlike a
-    Tag line) and the marks, each shown for `LINE_TICKS` with the Tag lines' fade: `hit` on
-    every `missiled` hit, `dodge` on every `missile_dodge` (at the dodger), `lost` at the target
-    at a lost span's `end`. Hits and dodges come from the events, so a cut lock's late hit still
-    bursts. `drawLocks` paints after the Tag lines and before the markers, in `--lf-ev-locking`:
+    per timeline) gives one `LockSpan` per `locking` with a target: `start` = its tick,
+    `lockTicks` = its `metadata.lock_ticks` (MECH-21: the engine's `LOCK_TICKS`, so Playback has
+    no lock length of its own). The engine writes how each lock ended (ADR-0050), and the span
+    ends at the shooter's first row **later in log order** (the timeline's `(timestamp, id)`
+    order: a retarget logs the old lock's cancel just before the new `locking`, on one tick) that
+    is a `missiled` on its target (`ending` `'hit'`) or a `lock_cancelled` (`'dodge'` for
+    `reason=dodge`, else `'lost'`); `end` is that row's tick. A lock with neither (still open at
+    round end) ends at `start + lockTicks`, `'lost'`. Stored rounds from before MECH-21 get no
+    back-compat (ADR-0004). `lockOverlaysAt(spans, cursor, positionAt)` gives the building locks
+    (`start <= cursor < end`, `progress` = `(cursor - start) / lockTicks`, both ends at the
+    **cursor's** positions, unlike a Tag line) and one mark per span, its kind the span's
+    `ending`, on the target where it stood at `end` (a dodge's dodger is the target), in the
+    shooter's Side, shown for `LINE_TICKS` with the Tag lines' fade. `drawLocks` paints after the Tag lines and before the markers, in `--lf-ev-locking`:
     a dotted line (a Tag line's width) firming with `progress`, a reticle closing from `1.6` to
     `LOCKED_RING` (0.8) marker sizes, just outside the gauge arcs that are drawn over it; a hit
     is a 12-spike burst in `--lf-ev-missile`, a dodge the locked reticle split into four
@@ -339,8 +340,7 @@ after LFstats's Replay tab, within ADR-0043.
     last, so anything drawn round a player sits outside `MARKER_FOOTPRINT` or hides under the
     arcs; `LOCKED_RING` is `MARKER_FOOTPRINT + 0.19`, and `playback-map.spec.ts` pins it
     outside. No frame loop of its own: the map redraws on each
-    cursor step. The RV-07 pips still drop at `locking` (the sim spends the missile at lock
-    start); MECH-21 moves that to the launch.
+    cursor step. The RV-07 pips drop at `missiled`, the launch (MECH-21).
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
 
 Tests:
@@ -430,8 +430,9 @@ action row after Charts. Both load the Round with
 | `/rounds/:id/missile-log` | `matches/missile-log/` | `rounds/<id>/missile-log/` |
 | `/rounds/:id/heatmap` | `matches/round-heatmap/` | `rounds/<id>/heatmap/` + `maps/<id>/processed-image/` |
 
-- **Missile log:** Fired / Hit / Efficiency (`toFixed(1)` + `%`; the API sends `hit / fired *
-  100` unrounded), then Time, Actor, Target (`roleLabel`), Result, Friendly fire yes/no,
+- **Missile log:** Locks / Missiles / Conversion (`conversionLabel`: `toFixed(1)` + `%`; the API
+  sends `missiles / locks * 100` unrounded, 0 with no locks; MECH-21: every launched missile
+  hits, so conversion replaced fired / hit / efficiency), then Time, Actor, Target (`roleLabel`), Result, Friendly fire yes/no,
   Description, Points. Friendly-fire rows get class `friendly-fire` from the `friendly_fire`
   boolean (not the API's `row_class`), tinted from `--lf-ev-missile`. Below 640px of table width a
   container query tightens the cells so all seven columns fit at a 768px viewport.

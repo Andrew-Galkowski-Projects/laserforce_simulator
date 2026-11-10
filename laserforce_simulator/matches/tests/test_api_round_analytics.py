@@ -29,7 +29,7 @@ User = get_user_model()
 
 _FAST_TICKS = 40
 
-_MISSILE_LOG_KEYS = {"round_id", "fired", "hit", "efficiency", "rows"}
+_MISSILE_LOG_KEYS = {"round_id", "locks", "missiles", "conversion", "rows"}
 _HEATMAP_KEYS = {
     "round_id",
     "has_map",
@@ -116,7 +116,8 @@ class TestMissileLog(_AnalyticsTestCase):
         self.assertEqual(set(data), _MISSILE_LOG_KEYS)
         self.assertEqual(data["round_id"], game_round.pk)
         self.assertIsInstance(data["rows"], list)
-        self.assertGreaterEqual(data["fired"], data["hit"])
+        # MECH-21: a missile needs a lock, so a round never has more.
+        self.assertGreaterEqual(data["locks"], data["missiles"])
 
     def test_upgrades_scores_round_to_combat(self) -> None:
         game_round = _saved_round(self.red, self.blue)
@@ -130,7 +131,10 @@ class TestMissileLog(_AnalyticsTestCase):
         )
         response = self.get(f"/api/rounds/{game_round.pk}/missile-log/")
         self.assertEqual(response.status_code, 200, response.content)
-        self.assertEqual(response.json()["data"]["fired"], 0)
+        data = response.json()["data"]
+        self.assertEqual(
+            (data["locks"], data["missiles"], data["conversion"]), (0, 0, 0.0)
+        )
         self.assertEqual(response.json()["data"]["rows"], [])
 
     def test_foreign_round_is_404(self) -> None:

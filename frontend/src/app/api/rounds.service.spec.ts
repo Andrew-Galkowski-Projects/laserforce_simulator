@@ -270,6 +270,7 @@ describe('RoundsService', () => {
       tag: true,
       locking: true,
       missiled: true,
+      lock_cancelled: true,
       special: true,
       miss: true,
       resupply_ammo: true,
@@ -281,7 +282,6 @@ describe('RoundsService', () => {
       movement: true,
       base_capture: true,
       combo_resupply: true,
-      missile_dodge: true,
     };
     expect(Object.keys(all)).toHaveLength(15);
   });
@@ -315,9 +315,9 @@ describe('RoundsService', () => {
   it('GETs the Missile log and returns it unwrapped', async () => {
     const body: RoundMissileLog = {
       round_id: 21,
-      fired: 1,
-      hit: 1,
-      efficiency: 100,
+      locks: 2,
+      missiles: 1,
+      conversion: 50,
       rows: [
         {
           timestamp: 125,

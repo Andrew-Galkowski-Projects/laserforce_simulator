@@ -169,7 +169,7 @@ python manage.py seed_browser_check --clean  # delete both Accounts, every row t
 
 **`--syracuse`** (for reviewing real pathing, CAL-02 retro) loads `data/maps/syracuse.json` as "Browser Check Syracuse", with its own copy of the drawing from `DEFAULT_MAPS_DIR` (`maps/browser_check_Syracuse_Laser_Tag_Map_cropped.png`), so `--clean` leaves any default "Syracuse Laser Tag" and its image alone. It simulates one full-fidelity Single Round between A's first two Teams and prints its `/rounds/<id>/playback`, `/events` and `/heatmap` paths. It adds about 50 s to the seed's 20 s.
 
-**Reproducible (RV-07 retro).** The seed starts with `random.seed(BROWSER_CHECK_SEED)`, so the generated Players are the same every time, and the review Round plays `REVIEW_ROUND_SEED` (`create_sandbox_round(..., rng_seed=...)`): every worktree's review Round is the same game, so a spec or ticket can name a tick in it. The summary ends `Review ticks: mutual tag 66, capture 47, nuke 200, rapid fire 225, lock hit 196, lock dodge -, lock lost 85` (`review_ticks`: the first tag-and-tag-back within a tick, active base capture, nuke activation and Scout rapid fire; `-` when the Round has none). The three lock ticks (RV-08 retro) are the `locking` tick of the first missile Lock that runs its full 3 ticks and ends in a hit, a dodge or nothing, by the Playback map's own cut rule (the shooter's next lock, tag, miss or active capture cuts a lock; a cut lock is none of the three): watch it from that tick to three after. The review Round has no full-length dodge; the mapped Single Round's summary line does not print these ticks, so find a dodge there with the Event log's Missile filter. A change to the engine changes the game and these ticks: read them off the summary, never from an old spec.
+**Reproducible (RV-07 retro).** The seed starts with `random.seed(BROWSER_CHECK_SEED)`, so the generated Players are the same every time, and the review Round plays `REVIEW_ROUND_SEED` (`create_sandbox_round(..., rng_seed=...)`): every worktree's review Round is the same game, so a spec or ticket can name a tick in it. The summary ends `Review ticks: mutual tag 66, capture 47, nuke 150, rapid fire 211, lock hit 125, lock dodge 120, lock lost 85` (`review_ticks`: the first tag-and-tag-back within a tick, active base capture, nuke activation and Scout rapid fire; `-` when the Round has none). The three lock ticks (RV-08 retro, MECH-21) are the `locking` tick of the first missile Lock that ends in a `missiled` (hit), a `lock_cancelled reason=dodge` (dodge), or a `lock_cancelled` with any other reason (lost), read by `lock_ending` from the engine's own rows, the Playback map's rule: the shooter's first such row later in log order (`(timestamp, id)`, so a retarget's cancel of the old lock is not the new lock's). A lock still open at round end is none of the three. Watch a lock from its tick to its ending row (a launch or dodge is at `+ lock_ticks`, 2). A change to the engine changes the game and these ticks: read them off the summary, never from an old spec.
 
 Account A gets four valid Teams, a simulated sandbox Match, a map-less Single Round, a **mapped
 Single Round** and an unfinished Match (round 1 only, `is_completed=False`, no winner: what a League
@@ -177,11 +177,14 @@ Match looks like mid-Season). The mapped Single Round plays on "Browser Check Ar
 map (zone size 20) whose PNG is drawn in code with PIL (no `media/` file needed) and uploaded via
 `core/services.py::upload_map`, then given a confirmed zone config with red/blue bases, sight lines
 and base sight lines, so `load_map_context` resolves. The Round is upgraded to `fidelity="full"`
-(movement events) for Playback's map, the heatmap and map-editor checks. A real Round can fire no
-missile, so `create_mapped_round` simulates up to `MISSILE_ROUND_ATTEMPTS` (5) times. If none fires, it
-keeps the last Round and the summary prints a warning: a short Round (the Tournament tests' 40 ticks)
-fires none, and the rest of the seed must still run. Its first missile hit
-(or first missile) is flagged `friendly_fire` by `mark_friendly_fire_missile`, so the Missile log
+(movement events) for Playback's map, the heatmap and map-editor checks. A real Round can have no
+missile, no dodge or no other cancelled lock, so `create_mapped_round` simulates up to
+`MISSILE_ROUND_ATTEMPTS` (5) times, until `missing_lock_endings` finds a `missiled`, a
+`lock_cancelled reason=dodge` and a `lock_cancelled` with another reason (MECH-21). If one is still
+missing, it keeps the last Round and the summary prints `Warning: mapped Single Round <pk> has no
+<missile, dodge, cancel> in 5 attempts`, naming only the missing ones: a short Round (the Tournament
+tests' 40 ticks) fires none, and the rest of the seed must still run. Its first missile (every
+missile hits) is flagged `friendly_fire` by `mark_friendly_fire_missile`, so the Missile log
 shows one tinted Friendly-fire row; only the flag changes, actor and target stay as simulated
 (ANG-06-10 retro). The map-less Single Round
 is upgraded to `"full"` too, and the two share their Teams: they are the Compare Rounds pair, with a

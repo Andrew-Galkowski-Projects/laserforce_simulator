@@ -12,7 +12,9 @@ a nuke-ID for cancellation tracking) can be added in one place.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, get_args
+
+from .time_constants import LOCK_TICKS
 
 
 @dataclass
@@ -61,17 +63,21 @@ class PendingReaction:
     defender: Any
 
 
+#: MECH-21: why a Lock ended without a missile, the ``lock_cancelled`` row's
+#: ``metadata.reason``.
+LockCancelReason = Literal["sight", "dodge", "shot", "retarget", "down", "out"]
+LOCK_CANCEL_REASONS: tuple[LockCancelReason, ...] = get_args(LockCancelReason)
+
+
 @dataclass
 class PendingMissileLock:
-    """A missile lock in progress requiring 3 consecutive ticks of LOS.
+    """A Lock in progress (MECH-21, ADR-0050): nothing is spent yet.
 
-    Missile is consumed at lock initiation.  Each tick ``tick_missile_lock``
-    checks LOS; if broken without a special_usage save the lock fails and the
-    missile misses.  When all 3 ticks succeed a survival-based dodge roll is
-    applied before the missile lands.
+    ``tick_missile_lock`` counts it down once a tick; at 0 it launches, and a
+    failed ``special_usage`` save with no sight ends it on that tick. The
+    round's locks live in ``RoundContext.missile_locks``, one per locker.
     """
 
     attacker: Any
     defender: Any
-    ticks_remaining: int = 3
-    los_broken: bool = False
+    ticks_remaining: int = LOCK_TICKS

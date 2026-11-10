@@ -14,14 +14,15 @@ import { loadRouteRecord } from '../shared/route-record';
 /** The Missile log payload's load: loaded, or failed with the server's message. */
 type LogState = { status: 'loaded'; log: RoundMissileLog } | { status: 'error'; message: string };
 
-/** `hit / fired * 100` as the Django page showed it: one decimal place and `%`. */
-export function efficiencyLabel(efficiency: number): string {
-  return `${efficiency.toFixed(1)}%`;
+/** `missiles / locks * 100` (MECH-21): one decimal place and `%`. */
+export function conversionLabel(conversion: number): string {
+  return `${conversion.toFixed(1)}%`;
 }
 
 /**
- * `/rounds/:id/missile-log` (ANG-06-10): the Round's **Missile log**, its fired / hit / efficiency
- * summary and one row per **Missiled event**, Friendly-fire rows highlighted. The Round loads
+ * `/rounds/:id/missile-log` (ANG-06-10, MECH-21): the Round's **Missile log**, its locks /
+ * missiles / conversion summary (every launched missile hits, ADR-0050) and one row per
+ * **Missiled event**, Friendly-fire rows highlighted. The Round loads
  * first (for the heading and the not-found case), then its Missile log.
  */
 @Component({
@@ -35,7 +36,7 @@ export class MissileLog {
 
   protected readonly load = loadRouteRecord('Round', (id) => this.rounds.get(id));
   protected readonly roleLabel = roleLabel;
-  protected readonly efficiencyLabel = efficiencyLabel;
+  protected readonly conversionLabel = conversionLabel;
 
   /** The Missile log for the loaded Round; `null` until it answers (the loading state). */
   private readonly logState = toSignal(

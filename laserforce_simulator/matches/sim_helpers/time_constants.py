@@ -122,3 +122,10 @@ HELD_GOAL_EXPIRY: int = TICKS_PER_ROUND + 1
 #: How long a ``hold`` roll commits the player to Overwatch on a map round: it draws
 #: no Action until then, unless the Hold ends early. Tunable by ``round_probe``.
 HOLD_TICKS: int = 7
+
+# --- Missile Lock (MECH-21, ADR-0050) --------------------------------------
+
+#: How long a Lock runs before its missile launches (1.0 s): a lock started at
+#: tick T launches at the top of tick T + LOCK_TICKS. The only lock length:
+#: ``PendingMissileLock``'s default and the ``locking`` row's metadata read it.
+LOCK_TICKS: int = 2

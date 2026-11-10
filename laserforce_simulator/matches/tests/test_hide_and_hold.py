@@ -746,8 +746,12 @@ class TestMapLessRoundsAreUnchanged:
     # (the values before were 4c638ab236715605 and 5f130a9800c7c5ac). Measured
     # per decision on the CAL-02b worktree: the Medic weight alone moves both
     # seeds; the defender-learns-attacker switch and the Attack table leave a
-    # map-less round untouched, as spec #563 D4 requires.
-    PINNED = {7: "1dc64a3eb8fe381c", 21: "d0bee54c85ccea54"}
+    # map-less round untouched, as spec #563 D4 requires. Re-pinned 2026-11-09
+    # for MECH-21 (#584): a Lock spends nothing at its start, launches after 2
+    # ticks (was 3), ends on the locker's shot or a Down, and a dodge no longer
+    # spends the missile, so every map-less round with a missile redraws (the
+    # values before were 1dc64a3eb8fe381c and d0bee54c85ccea54).
+    PINNED = {7: "37d480f60120d7c6", 21: "0e47203824f659b1"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

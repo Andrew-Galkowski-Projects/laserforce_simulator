@@ -150,6 +150,7 @@ export type GameEventType =
   | 'tag'
   | 'locking'
   | 'missiled'
+  | 'lock_cancelled'
   | 'special'
   | 'miss'
   | 'resupply_ammo'
@@ -175,11 +176,10 @@ export interface GameEvent {
 }
 
 /**
- * Every `event_type` the engine emits: the 11 `GameEvent.EVENT_TYPES` keys
- * plus the four emitted but unlisted ones. The `timeline/` vocabulary.
+ * Every `event_type` the engine emits: the 12 `GameEvent.EVENT_TYPES` keys
+ * plus the three emitted but unlisted ones. The `timeline/` vocabulary.
  */
-export type TimelineEventType =
-  GameEventType | 'movement' | 'base_capture' | 'combo_resupply' | 'missile_dodge';
+export type TimelineEventType = GameEventType | 'movement' | 'base_capture' | 'combo_resupply';
 
 /** One **Event log** row of `GET rounds/{id}/timeline/` (`matches/services.py` `round_timeline`). */
 export interface TimelineEvent {
@@ -260,7 +260,7 @@ export interface PlaybackSnapshot {
   score: number;
   lives: number;
   shots: number;
-  /** Drops by one at each `locking`: the sim spends the missile when the lock starts. */
+  /** Drops by one at each `missiled`: the sim spends the missile at the launch (MECH-21). */
   missiles: number;
   sp: number;
   tags: number;
@@ -329,7 +329,7 @@ export interface MissileLogRow {
   timestamp_mmss: string;
   actor_role: string;
   target_role: string;
-  /** `'hit'` or `'miss'`. */
+  /** `'hit'`: MECH-21 launches only missiles that hit (ADR-0050). */
   result: string;
   friendly_fire: boolean;
   description: string;
@@ -341,11 +341,12 @@ export interface MissileLogRow {
 /** `GET rounds/{id}/missile-log/`: the summary and every Missiled event in time order. */
 export interface RoundMissileLog {
   round_id: number;
-  fired: number;
-  /** Friendly-fire hits included. */
-  hit: number;
-  /** `hit / fired * 100`, unrounded; 0 when nothing was fired. */
-  efficiency: number;
+  /** The Round's `locking` rows. */
+  locks: number;
+  /** The Round's `missiled` rows, Friendly-fire ones included; every one is a hit. */
+  missiles: number;
+  /** `missiles / locks * 100`, unrounded; 0 when there were no locks. */
+  conversion: number;
   rows: MissileLogRow[];
 }
 
