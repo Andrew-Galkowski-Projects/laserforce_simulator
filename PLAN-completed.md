@@ -9710,4 +9710,71 @@ gives one back. The frontend knows none of these limits today.
     the playback payload, the lives / shots arcs and the missile pips; RV-07b the special bar with
     lap ticks, the rapid-fire roll, the rolling nuke fuse and the frame loop.
 
+### RV-08 · [DONE] Playback map: animate a missile (owner, 2026-11-09)
+
+Spec: #580
+
+**[DONE] Shipped (2026-11-09).** Spec #580. The Playback map animates each missile Lock from the
+timeline alone (new pure playback-missiles.ts: lockSpans, lockOverlaysAt): a dotted --lf-ev-locking
+line and a reticle closing on the target over the 3 lock ticks, at the cursor's positions; a hit
+bursts, a dodge splits the reticle, a lost lock fizzles in a dashed ring. The shooter's next lock,
+tag, miss or active capture cuts a lock (one Lock at a time); results always draw. Departure: the
+reticle closes to 0.8 marker sizes and the lost ring to about 0.8 (the spec's 0.6 sat under the
+RV-07 gauge arcs). Found: the sim's lockers shoot during most locks (13 of 20 in the review round)
+and still land the missile, so the map shows a fizzle then a hit; MECH-21 makes the engine follow
+the real Lock.
+
+From RV-07's grill: the Playback map draws a missile as a Tag line in the missile colour (RV-06),
+but a missile in the arena is a lock held over several ticks before it fires, and the replay shows
+none of that. Animate it: the lock building on the target (the `locking` event and the pending
+missile's ticks), the launch, and the hit or the dodge (`missiled` `result`, `missile_dodge`). RV-07
+has shipped the missile pips under each Commander and Heavy, which count down as missiles fire. **Open for the grill:** what the
+event log records of a lock (its start tick, target and length), what a cancelled lock looks like,
+how long each stage shows at 1x and 8x, and whether the animation reads from events alone or needs
+a new field.
+
+**Grill (2026-11-09).** Settled facts: a lock writes `locking` at tick T and spends the missile
+then; it resolves at T+3 (a literal 3 in `start_missile_lock`). A hit writes `missiled`
+`result="hit"`; a dodge writes `missile_dodge` then `missiled` `result="miss"`, both at T+3. A lock
+that loses sight (at T+1..T+3), or whose players are out, or whose shooter is Downed at T+3, writes
+**no event**. No event carries a lock id or coordinates; a `missiled` pairs with its `locking` by
+shooter + target at `locking.tick + 3`. A 12-seed Syracuse probe: 213 locks, 14 (6.6%) started while
+the same shooter already held one (the engine has no one-lock guard).
+
+1. The animation reads the existing `/timeline/` events alone: no engine, API or model change.
+2. A lock with no `missiled` by T+3 draws its full 3 ticks, then a short "lost lock" fizzle at T+3
+   (the break tick is not in the log). A follow-up task adds an engine cancel event.
+3. A lock draws from T to T+3 as a dotted line in `--lf-ev-locking` from shooter to target, firming
+   as it builds, plus a reticle closing on the target from wide to icon size. Both ends track the
+   players' current positions (unlike Tag lines, frozen at the event tick).
+4. No projectile flight (the engine has none). At T+3 the lock gives way to the result: a hit keeps
+   RV-06's solid missile Tag line plus a burst on the target; a dodge keeps the dashed missile-miss
+   line plus the reticle breaking; a cancel the fizzle. Each fades over `LINE_TICKS` (2).
+5. Every stage is timed in ticks (lock 3, result 2), no wall-clock minimum at 8x; pause / scrub show
+   the cursor's exact state; reduced motion draws the same frames with no extra pulsing.
+6. **A player holds one lock at a time (owner): a new `locking` by the same shooter removes the old
+   lock** from the map.
+7. Scope: the Playback map canvas only. Feed, Event log, missile log, API and RV-07 pips unchanged.
+   The docs sweep fixes the glossary's Locking-event metadata, `sim-helpers.md`'s
+   `PendingMissile(complete_time…)` and the stale "can read -1" comment on `PlaybackSnapshot.missiles`.
+8. RV-08 stays frontend-only; the engine's one-lock rule and cancel event are **MECH-21** (below).
+9. A lock the map replaces (a new `locking` by its shooter) ends at the replacing tick with the same
+   fizzle as a cancel.
+10. Results always draw: a `missiled` for a lock the map already dropped still draws its RV-06 line
+    and burst. Only the lock stage is dropped.
+11. A Tag or miss by the locker during the lock ends that lock on the map with the fizzle (pulling
+    the trigger early abandons a real Lock).
+12. RV-08 draws today's engine: pips still drop at `locking` (the sim spends the missile at lock
+    start) even when the lock later fizzles. MECH-21 fixes the engine and the pips.
+
+**The real Lock (owner, 2026-11-09; GLOSSARY *Lock*).** Holding the sights on a target without
+firing; three tones; only then does a trigger pull launch the missile, and only then is it spent.
+A trigger pull before the third tone fires a normal shot (a real tag after a lock is the target
+dodging out of the sights, or the locker dropping the lock on purpose to tag before the target gets
+behind a wall). Aiming at someone else for more than 0.5 s, or a player walking into the line,
+breaks the lock. Real TDF (165 Internationals games): 2617 `0300` locks; 1377 (53%) became a `0306`
+missile, always on the locked target, 613-1319 ms later (median 804 ms, which includes the trigger
+pull); 1063 (41%) were followed by the locker's own shot (773 Downs, 141 shield hits, 132 misses, 17
+base zaps); 142 (5%) by a new lock (78 another target, 64 the same).
+
 ---
