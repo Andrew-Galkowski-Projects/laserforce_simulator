@@ -9777,4 +9777,78 @@ missile, always on the locked target, 613-1319 ms later (median 804 ms, which in
 pull); 1063 (41%) were followed by the locker's own shot (773 Downs, 141 shield hits, 132 misses, 17
 base zaps); 142 (5%) by a new lock (78 another target, 64 the same).
 
+### MECH-21 · [DONE] One Lock at a time, the missile spent at launch (owner, 2026-11-09)
+
+Spec: #583 (tickets #584 engine, #585 readers).
+
+**[DONE] Shipped (2026-11-10).** One Lock per player (RoundContext.missile_locks, keyed by
+player_id); nothing is spent at the Lock, the missile is spent at launch LOCK_TICKS (2) ticks later
+and always hits; every other ending writes a lock_cancelled row with reason sight / dodge / shot /
+retarget / down / out (migration 0066), and missile_dodge and result=miss are retired (ADR-0050).
+Playback drops the missile pip at the launch, the Missile log reads Locks / Missiles / Conversion,
+and seed_browser_check prints each lock's ending. Departures from the spec, all on #583: a Resupply
+(_reset_resupplied) cancels with down; a may_tag Chase ban gates the Lock start and the launch, a
+refused launch writing one row (owner's ruling). 12 Syracuse seeds: 31.83 locks and 9.58 missiles a
+round (Commander 5.42, Heavy 4.17), 30% of locks launch, against LFstats' 53%.
+
+From RV-08's grill (decisions above; GLOSSARY *Lock*). Make the engine's missile follow the real
+Lock: the missile is spent when it launches, not at lock start; a dodge breaks the lock with no
+missile spent and no `missiled` row (`missile_dodge` becomes a lock-break reason); a shot by the
+locker abandons the lock; a new target replaces the lock for free (one lock per player; 6.6% of the
+sim's locks overlap today, 12-seed Syracuse probe); a cancel event records the break tick and its
+reason (sight, dodge, shot, retarget, down, out). Playback's missile count then drops at the
+missile, not at `locking`. **Open for the grill:** the lock length (the sim's 3 ticks = 1.5 s, while
+the real `0300` to `0306` gap, trigger pull included, is as short as 0.6 s), the 0.5 s look-away
+grace against the sim's `special_usage` save, when an AI locker chooses to drop a lock for a tag,
+and the calibration shift (seeded games change).
+
+**Grill (2026-11-09).** Settled facts: the missile is spent at lock start (`combat.py:773`); the
+lock is a literal 3 ticks (`combat.py:781`, `pending_events.py:76`; frontend `LOCK_TICKS = 3`); a
+dodge (`min(20, survival/5)`) writes `missile_dodge` + `missiled result=miss`; a lost lock
+(`special_usage` save failed, or a player at 0 lives) writes nothing; nothing stops a second lock,
+and the locker's weighted action roll runs every lock tick. Real (LFstats TDF, 165 games): 2617
+locks, 53% become a missile (median 804 ms after the lock), 41% end in the locker's own shot, 5% in
+a new lock.
+
+**Grill decisions (owner, 2026-11-09):**
+
+1. `LOCK_TICKS = 2` (1.0 s) in `sim_helpers/time_constants.py`, one source; the missile launches at
+   the top of tick T+2.
+2. Rows: `locking` at T (no missile spent); at launch `missiled result="hit"` (a launched missile
+   always hits, as a real `0306` does); on a break a new `lock_cancelled` row at the break tick,
+   `metadata.reason` in `sight | dodge | shot | retarget | down | out`. `missile_dodge` and
+   `result="miss"` retire; `lock_cancelled` joins `EVENT_TYPES` (choices migration).
+3. Dodge keeps `min(20, survival/5)`, one roll at the launch tick; success = `lock_cancelled
+   reason=dodge`, no missile spent. SM5-04 stays out.
+4. Sight keeps the per-tick `special_usage` save; a failed save = `reason=sight`. The 0.5 s grace
+   needs no code (a retarget on any 0.5 s tick is past it). Body blocking stays out.
+5. While holding, the usual weighted roll runs: a tag or shot = `reason=shot`; a missile roll on a
+   different visible enemy = `reason=retarget` and the new lock starts that tick; a missile roll on
+   the same target or any other action holds. No new constant; the probe reports the mix beside the
+   real 41 / 5 / 53, and a tuning constant comes only if the owner asks.
+6. `reason=down`: either player Downed (not active / not taggable) at a lock tick; `reason=out`:
+   either player eliminated. A lock pending at round end writes no row.
+7. `final_missiles` drops and `missiles_landed` rises at launch; `missiles_used` (=
+   `missiles_landed`) then counts launches, unchanged. Starting missiles stay 5.
+8. Playback: `playback.py` drops the pip at `missiled`; RV-08's `lockSpans` ends a span at the
+   engine's row (`missiled` burst, `lock_cancelled reason=dodge` split, other reasons fizzle),
+   replacing the T+3 pairing, `cutsLock` and the frontend `LOCK_TICKS`. No back-compat for stored
+   rounds (ADR-0004).
+9. Missile log summary: locks (`locking` rows), missiles (`missiled` rows), conversion = missiles /
+   locks. `missiles_fired` stays the `missiled` count (now launches). No per-reason breakdown.
+10. Acceptance is the rules (no overlapping locks; missile spent only at launch; every lock ends in
+    exactly one `missiled` or `lock_cancelled`, bar locks pending at round end). The 12-seed
+    Syracuse probe reports launch / shot / retarget mix and missiles per Commander and Heavy, before
+    and after, beside the real figures: reported, not gating; tuning is CAL-03's.
+11. `TestRes03Determinism` covers the RNG reorder. Out: new endpoints, new `PlayerRoundState`
+    counters, friendly-fire changes, lock "tones" UI.
+12. The timeline's Missile group (`event-groups.ts`) becomes `['missiled', 'lock_cancelled']`;
+    `locking` keeps its own group.
+13. ADR-0050 (*A Lock is not a launch*) supersedes ADR-0011's fire-tick meaning of `locking`.
+14. GLOSSARY: Locking event = lock start, nothing spent; Missiled event = launch, always a hit,
+    missile-log conversion = missiles / locks; new *Lock cancelled event*; a dodge is a Lock-end
+    reason, not a missile miss.
+15. `seed_browser_check.py` looks for `lock_cancelled reason=dodge` instead of `missile_dodge`, and
+    still guarantees a hit, a dodge and another cancel.
+
 ---
