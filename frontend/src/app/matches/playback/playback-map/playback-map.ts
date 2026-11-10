@@ -39,6 +39,7 @@ import {
   BaseMarker,
   CaptureBurst,
   Overlays,
+  Point,
   TagLine,
   baseMarkers,
   overlaysAt,
@@ -403,11 +404,7 @@ function drawLocks(
 }
 
 /** A ring of radius `r` round `at`, with four crosshair notches across it. */
-function drawReticle(
-  ctx: CanvasRenderingContext2D,
-  at: readonly [number, number],
-  r: number,
-): void {
+function drawReticle(ctx: CanvasRenderingContext2D, at: Point, r: number): void {
   ctx.beginPath();
   ctx.arc(at[0], at[1], r, 0, 2 * Math.PI);
   for (let k = 0; k < 4; k++) {
@@ -427,14 +424,15 @@ function drawLockMark(
   colours: Palette,
 ): void {
   const [x, y] = mark.at;
-  const fade = 1 - mark.alpha;
+  // How far the mark has faded: 0 when it appears, rising as it goes.
+  const elapsed = 1 - mark.alpha;
   ctx.globalAlpha = mark.alpha;
   ctx.beginPath();
   switch (mark.kind) {
     case 'hit': {
       // Twelve spikes flying out from the icon's edge, in the missile colour.
       const r0 = 0.55 * icon;
-      const r1 = icon * (1 + 0.8 * fade);
+      const r1 = icon * (1 + 0.8 * elapsed);
       ctx.strokeStyle = colours.missile;
       for (let k = 0; k < 12; k++) {
         const angle = (k * Math.PI) / 6;
@@ -447,7 +445,7 @@ function drawLockMark(
     case 'dodge': {
       // The locked reticle's ring in four arcs, drifting apart.
       const r = LOCKED_RING * icon;
-      const drift = 0.6 * icon * fade;
+      const drift = 0.6 * icon * elapsed;
       ctx.strokeStyle = colours.locking;
       for (let k = 0; k < 4; k++) {
         const mid = (k * Math.PI) / 2 + Math.PI / 4;

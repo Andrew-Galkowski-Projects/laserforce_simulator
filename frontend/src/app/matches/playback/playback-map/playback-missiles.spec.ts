@@ -22,6 +22,31 @@ describe('lockSpans', () => {
     expect(lockSpans([locking(10), dodge]).map((s) => s.ending)).toEqual(['result']);
   });
 
+  it('a missile by the same pair off T+3 does not resolve this lock', () => {
+    expect(lockSpans([locking(10), missiled(12, 'hit')]).map((s) => s.ending)).toEqual(['lost']);
+    expect(lockSpans([locking(10), missiled(14, 'hit')]).map((s) => s.ending)).toEqual(['lost']);
+  });
+
+  it("another shooter's missile on the target at T+3 does not resolve this lock", () => {
+    const other = missiled(13, 'hit', { actor_id: 102 });
+    expect(lockSpans([locking(10), other]).map((s) => s.ending)).toEqual(['lost']);
+  });
+
+  it.each([
+    ['a dodge by someone other than the target', { actor_id: 202, target_id: 101 }],
+    ['a dodge of another shooter', { actor_id: 201, target_id: 102 }],
+    ['a dodge off T+3', { tick: 12 }],
+  ])('%s does not resolve this lock', (_, overrides) => {
+    const dodge = ev({
+      event_type: 'missile_dodge',
+      tick: 13,
+      actor_id: 201,
+      target_id: 101,
+      ...overrides,
+    });
+    expect(lockSpans([locking(10), dodge]).map((s) => s.ending)).toEqual(['lost']);
+  });
+
   it("the shooter's missile on another player at T+3 does not resolve this lock", () => {
     const other = missiled(13, 'hit', { target_id: 202 });
     expect(lockSpans([locking(10), other]).map((s) => s.ending)).toEqual(['lost']);
@@ -84,6 +109,13 @@ describe('lockSpans', () => {
     expect(spans.map((s) => [s.start, s.end, s.ending])).toEqual([
       [10, 11, 'lost'],
       [11, 14, 'result'],
+    ]);
+  });
+
+  it('a locking event with no target is no Lock, so it cuts nothing either', () => {
+    const targetless = locking(11, { target_id: null, target_side: null });
+    expect(lockSpans([locking(10), targetless])).toEqual([
+      { shooterId: 101, targetId: 201, side: 'red', start: 10, end: 13, ending: 'lost' },
     ]);
   });
 

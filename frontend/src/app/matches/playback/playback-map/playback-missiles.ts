@@ -1,7 +1,7 @@
 // The Playback map's missile Locks (RV-08): pure, so the canvas painting in playback-map.ts
 // only draws what these return. A Lock is read from the timeline alone (spec #580).
 import { Side, TimelineEvent } from '../../../api/rounds.models';
-import { LINE_TICKS } from './playback-overlays';
+import { LINE_TICKS, Point, fadeAlpha } from './playback-overlays';
 
 /** The engine's lock length: a lock started at tick T resolves at T + LOCK_TICKS. */
 export const LOCK_TICKS = 3;
@@ -19,8 +19,6 @@ export interface LockSpan {
   /** `result`: a hit or a dodge paired with it at full length; `lost`: anything else. */
   ending: 'result' | 'lost';
 }
-
-type Point = readonly [number, number];
 
 /** A lock building at the cursor, between where both players stand at the cursor. */
 export interface BuildingLock {
@@ -76,7 +74,7 @@ export function lockOverlaysAt(
     const age = cursor - tick;
     const at = age >= 0 && age <= LINE_TICKS ? positionAt(id, tick) : null;
     if (at) {
-      marks.push({ kind, side, at, alpha: 1 - age / (LINE_TICKS + 0.5), tick });
+      marks.push({ kind, side, at, alpha: fadeAlpha(age, LINE_TICKS), tick });
     }
   };
   for (const span of spans) {
@@ -151,6 +149,8 @@ export function lockSpans(events: readonly TimelineEvent[]): LockSpan[] {
 function cutsLock(event: TimelineEvent): boolean {
   switch (event.event_type) {
     case 'locking':
+      // A lock with no target is no Lock (`lockSpans` skips it), so it cuts nothing.
+      return event.target_id !== null;
     case 'tag':
     case 'miss':
       return true;

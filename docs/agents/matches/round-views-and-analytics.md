@@ -331,7 +331,9 @@ after LFstats's Replay tab, within ADR-0043.
     a dotted line (a Tag line's width) firming with `progress`, a reticle closing from `1.6` to
     `LOCKED_RING` (0.8) marker sizes, just outside the gauge arcs that are drawn over it; a hit
     is a 12-spike burst in `--lf-ev-missile`, a dodge the locked reticle split into four
-    drifting arcs, a lost lock a dashed ring shrinking from 1.0 to 0.75 marker sizes. No frame loop of its own: the map redraws on each
+    drifting arcs, a lost lock a dashed ring shrinking from 1.0 to about 0.8 marker sizes
+    (`0.75 + 0.25 alpha`; the fade stops at alpha 0.2). Both fades use `fadeAlpha`, the Tag
+    lines' own (`playback-overlays.ts`). No frame loop of its own: the map redraws on each
     cursor step. The RV-07 pips still drop at `locking` (the sim spends the missile at lock
     start); MECH-21 moves that to the launch.
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
