@@ -113,6 +113,34 @@ class FindHitsTests(TestCase):
         hits = check_glossary_avoid.find_hits(["standalone round"], diff)
         self.assertEqual([h.line for h in hits], [2])
 
+    def test_skips_a_use_the_old_line_already_had(self) -> None:
+        """MECH-21 retro: README's one-line feature list changed for another
+        reason, and the avoid-word it already held was flagged as new."""
+        diff = (
+            "diff --git a/README.md b/README.md\n"
+            "--- a/README.md\n"
+            "+++ b/README.md\n"
+            "@@ -5 +5 @@\n"
+            "-a standalone round list and fired / hit\n"
+            "+a standalone round list and locks / missiles\n"
+        )
+        self.assertEqual(check_glossary_avoid.find_hits(["standalone round"], diff), [])
+
+    def test_flags_a_use_the_old_line_did_not_have(self) -> None:
+        diff = (
+            "diff --git a/README.md b/README.md\n"
+            "--- a/README.md\n"
+            "+++ b/README.md\n"
+            "@@ -5 +5 @@\n"
+            "-a standalone round list\n"
+            "+a standalone round list, one standalone round each\n"
+            "@@ -9 +9 @@\n"
+            "-a Single Round list\n"
+            "+a standalone round list\n"
+        )
+        hits = check_glossary_avoid.find_hits(["standalone round"], diff)
+        self.assertEqual([h.line for h in hits], [5, 9])
+
     def test_needs_a_word_start(self) -> None:
         diff = (
             "diff --git a/x.py b/x.py\n"

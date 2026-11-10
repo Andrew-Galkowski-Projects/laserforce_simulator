@@ -45,6 +45,7 @@ when its branch applies, at the step it names:
 - `special-tasks.md` — performance or CI time, deploy or serving, a CI job or release ref,
   removal, prototype / spike / proposal, Desktop App.
 - `browser-check.md` — Step 7's browser check, when anything a person sees changed.
+- `after-pr.md` — Step 9 once the PR is open: CI, the merge, cleanup.
 
 ## Step 1: Pick the task
 
@@ -177,6 +178,9 @@ Every guard the spec defines (a filter or pairing rule that ANDs conditions) get
 Testing Decision fixture per condition, failing that condition alone (`CODING_STANDARDS.md`,
 Tests). RV-08's result pairing ANDed four conditions and the spec listed one; review found
 the other three untested.
+An invariant that every X ends in exactly one Y lists each early `return` on X's
+existing code path, each with a fixture: MECH-21's "every Lock ends in one row" missed
+`_complete_missile`'s `may_tag` return, so a Chase ban at launch ended the Lock with no row.
 
 A criterion measured over seeded rounds states its number, its seeds, its per-seed
 spread and its standard error, taken from a baseline `round_probe` before the spec is published
@@ -256,10 +260,12 @@ comment on the spec issue when it is decided, by you or an implementer, so the
 Spec reviewer reads it there: DESK-01's four reached the issue only through the
 PR body.
 
-A ticket that changes a documented value (a default, a constant, a limit)
-greps the docs for the old value (`git grep -n "<old value>" -- ":/*.md"`) and
-fixes every statement of it in the same commit: LFS-01 moved the preferred-role
-boost from 1.2 to 1.0, and three docs still said ×1.2 until review.
+A ticket that changes a documented value (a default, a constant, a limit) or retires
+a name (an event verb, a metadata key or value, an API field) greps the docs for each
+old one (`git grep -n "<old>" -- ":/*.md"`) and fixes every statement of it in the
+same commit: LFS-01 moved the preferred-role boost from 1.2 to 1.0, and three docs
+still said ×1.2 until review; MECH-21 retired `"miss"` and `fired / hit / efficiency`,
+and `simulation-engine.md` still described them as current until review.
 
 For more tickets, starting implementers, preparing the integration tip and merging each
 ticket follow `parallel-tickets.md`.
@@ -385,7 +391,9 @@ opened). When the code diff
 changed lines, spawn both reviewers with `model: sonnet`: TEST-01's two default
 reviewers spent 138k tokens on 60 lines for one nit. Show both reports. Fix the
 findings the owner agrees with in one implementer pass, re-run the affected
-tests, and review again only if a fix changed behaviour. A fix that changes
+tests, and review again only if a fix changed behaviour. A doc fix that states what
+code does quotes the code line it read: MECH-21's fix wrote "`missiled` has no
+`result`" from a summary, and `event_log.py` still writes `result="hit"`. A fix that changes
 what a screen shows re-takes that screen's Step 7 screenshots before Step 9
 (ANG-06g's chart font). The fix pass is
 the orchestrator's own work, not a ticket: tell its agent to **stage** its
@@ -427,46 +435,9 @@ A migration that drops or rewrites data is a one-way door. Say so plainly.
 
 **Stop and show the owner the commit summary and PR body.** Commit, push and
 `gh pr create --body-file` only on their "go" (`CLAUDE.md`, *Git Workflow*).
-Then wait for the PR's CI in the background with
-`<main checkout>/.venv/Scripts/python.exe scripts/watch_pr_ci.py <n>`: one plain command that
-waits until every check and workflow run has settled, then prints each check,
-a `run: <workflow> <id>` line per run (pass that id to `ci_timings.py` and the next
-`--after-run`), the mergeable state and `result: pass|fail` (exit 0 / 1; 2 = timeout).
-Every job must have **started**: a timeout, a
-run with no jobs, or one GitHub reports as "a workflow file issue", is a
-broken guardrail, not a pass (ANG-04 found CI rejected for months). Triage a
-red job as in Step 7 and report it to the owner with the PR link. When the
-owner reports a red or unmergeable PR, run `ci_timings.py <run-id>` (each
-shard's pytest line) and `gh pr view <n> --json mergeable,mergeStateStatus`
-first: a raw shard log mixes in the Postgres service's expected
-`duplicate key` errors (DESK-01).
-A task that changes CI time claims its timing as `special-tasks.md` says.
-Then stop again: the owner reviews and says when to merge. PRs are
-**squash-merged**, so after the merge `git fetch origin` and confirm `git diff
-<integration tip> origin/main -- <the paths the PR touched>` is empty: the work
-is in `main` under a new hash (other PRs that merged meanwhile show up in an
-unscoped diff). Then wait for the `main` run (`gh run list --branch main --workflow CI --limit 1`, then
-`gh run watch <id>`; start it after leaving the worktree, since a background command keeps its
-working directory and Windows then refuses to delete the folder: BUG-WV-01), run `gh release view desktop-latest --json tagName,url,assets`, confirm
-`git ls-remote origin refs/tags/desktop-latest` is `origin/main`'s commit, and give the owner the
-download link (`.../releases/download/desktop-latest/LaserforceSimulator-windows-x64.zip`). A red
-or skipped `desktop-publish` means the Latest desktop build is still the previous merge's: say so
-(DESK-02). Then, for every implementer and fix-pass worktree, stop its servers with
-`scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
-tool), `git -c core.longpaths=true worktree remove -f -f <path>` (a finished agent's lock
-outlives it, and one `--force` refuses a locked worktree; without long paths a frontend
-worktree's `node_modules` fails half way with "Filename too long", leaving the folder
-unregistered: finish it with `Remove-Item -LiteralPath "\\?\<path>" -Recurse -Force`), and `git branch -D` its branch
-and its `worktree-agent-*` branch. `python scripts/prune_agent_branches.py
---delete` then clears any older agent branches already merged into
-`origin/main`, and lists every `agent-*` worktree still on disk with its
-state: remove each one this pipeline left. Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
-`discard_changes: true`, after stopping its servers too). One entered by
-`path` survives `remove`: `ExitWorktree` with `keep`, then `git -c core.longpaths=true worktree
-remove --force <path>` and `git branch -D <task>`. GitHub deletes the remote branch on
-merge. If the main checkout is on `main`, `git pull --ff-only` there.
-Otherwise run `git fetch origin main:main` (moves the local ref without a
-checkout), leave the checkout alone, and tell the owner which branch it is on.
+**Once the PR is open, read `after-pr.md` and run it in order:** CI, the owner's merge,
+then the squash check, cleanup, the `main` run and the desktop build. Read it then, even if
+you remember it: a compacted session keeps only part of this file.
 
 ## Step 10: Retro
 

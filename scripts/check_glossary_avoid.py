@@ -2,7 +2,7 @@
 
 GLOSSARY.md lists, under each term, the names to avoid (``_Avoid_: "standalone
 round", ...``). This check reads the quoted multi-word ones and flags added diff
-lines that use them, in any case and joined by a space, ``_``, ``-`` or nothing
+lines that use them more often than the hunk's removed lines did, in any case and joined by a space, ``_``, ``-`` or nothing
 (``standalone_round``, ``standaloneRound``). Text inside a backtick code span is
 skipped: it names an identifier (an event type, a field), not the wording. Single
 words ("game") are skipped:
@@ -56,31 +56,43 @@ def _pattern(term: str) -> re.Pattern[str]:
 
 
 def find_hits(terms: list[str], diff: str) -> list[Hit]:
-    """Added lines of a unified ``diff`` that use any of ``terms``."""
+    """Added lines of a unified ``diff`` that use any of ``terms`` more often than
+    the hunk's removed lines did: a use the old line already had is not new
+    (MECH-21 retro: README's one-line feature list)."""
     patterns = [(t, _pattern(t)) for t in terms]
     hits: list[Hit] = []
     path = ""
     line = 0
+    # Per hunk: how many uses of each term its removed lines held.
+    removed: dict[str, int] = {}
     for raw in diff.splitlines():
         if raw.startswith("+++ "):
             path = raw[4:].removeprefix("b/")
             continue
+        if raw.startswith("--- "):
+            continue
         match = _HUNK.match(raw)
         if match:
             line = int(match.group(1))
+            removed = {}
             continue
         if raw.startswith("+"):
             if not path.startswith(_SKIPPED):
                 text = raw[1:]
                 # A `code span` names an identifier (`missile_dodge`), not the wording.
                 prose = _CODE_SPAN.sub(" ", text)
-                hits.extend(
-                    Hit(path, line, term, text.strip())
-                    for term, pattern in patterns
-                    if pattern.search(prose)
-                )
+                for term, pattern in patterns:
+                    uses = len(pattern.findall(prose))
+                    carried = min(uses, removed.get(term, 0))
+                    removed[term] = removed.get(term, 0) - carried
+                    if uses > carried:
+                        hits.append(Hit(path, line, term, text.strip()))
             line += 1
-        elif not raw.startswith("-"):
+        elif raw.startswith("-"):
+            prose = _CODE_SPAN.sub(" ", raw[1:])
+            for term, pattern in patterns:
+                removed[term] = removed.get(term, 0) + len(pattern.findall(prose))
+        else:
             line += 1
     return hits
 
