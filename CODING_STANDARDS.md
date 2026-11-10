@@ -89,6 +89,7 @@ Read by the **Standards** reviewer in `/code-review`, not by the implementing ag
 - Tests go through public seams with real in-memory objects or Django `TestCase`. Flag a test that only checks that a mock returned what it was told to return.
 - Simulation tests use a fixed seed or injected deterministic stats. Flag an exact point-total assertion on an unseeded run.
 - Test placement follows the root `CLAUDE.md` ("Test placement").
+- A frontend module that caches across calls at module level (a `Map` of loaded images, a memo) exports a reset, and every spec that fills the cache calls it in `beforeEach`. Spec files share a Vitest worker, so a cache one file fills reaches the next: RV-06's role-icon cache held a never-loading jsdom image, and another file's test failed only at CI's core count (`clearRoleIconCache`). Stubs and spies need no reset of their own: `vitest-base.config.mts` undoes `vi.stubGlobal` and `vi.spyOn` after each test, but a stub written straight onto a global (`Object.defineProperty(window, ...)`) is restored by the spec that wrote it.
 - Teardown deletes only a path the same code created and kept in a variable. Flag a delete (`rmtree`, `unlink`, `delete`) whose target is read back from settings or the environment: if setup failed, that value can still be the real directory (TEST-01's first `pytest_unconfigure` would have removed the real `media/`).
 
 ## Naming

@@ -448,15 +448,17 @@ download link (`.../releases/download/desktop-latest/LaserforceSimulator-windows
 or skipped `desktop-publish` means the Latest desktop build is still the previous merge's: say so
 (DESK-02). Then, for every implementer and fix-pass worktree, stop its servers with
 `scripts/stop_worktree_servers.ps1 -Worktree <path>` (through the PowerShell
-tool), `git worktree remove -f -f <path>` (a finished agent's lock outlives it,
-and one `--force` refuses a locked worktree), and `git branch -D` its branch
+tool), `git -c core.longpaths=true worktree remove -f -f <path>` (a finished agent's lock
+outlives it, and one `--force` refuses a locked worktree; without long paths a frontend
+worktree's `node_modules` fails half way with "Filename too long", leaving the folder
+unregistered: finish it with `Remove-Item -LiteralPath "\\?\<path>" -Recurse -Force`), and `git branch -D` its branch
 and its `worktree-agent-*` branch. `python scripts/prune_agent_branches.py
 --delete` then clears any older agent branches already merged into
 `origin/main`, and lists every `agent-*` worktree still on disk with its
 state: remove each one this pipeline left. Leave the integration worktree with `ExitWorktree` (`action: "remove"`,
 `discard_changes: true`, after stopping its servers too). One entered by
-`path` survives `remove`: `ExitWorktree` with `keep`, then `git worktree remove
---force <path>` and `git branch -D <task>`. GitHub deletes the remote branch on
+`path` survives `remove`: `ExitWorktree` with `keep`, then `git -c core.longpaths=true worktree
+remove --force <path>` and `git branch -D <task>`. GitHub deletes the remote branch on
 merge. If the main checkout is on `main`, `git pull --ff-only` there.
 Otherwise run `git fetch origin main:main` (moves the local ref without a
 checkout), leave the checkout alone, and tell the owner which branch it is on.

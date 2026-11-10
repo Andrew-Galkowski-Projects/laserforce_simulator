@@ -520,3 +520,38 @@ class TestRosterSnapshotFaithfulness:
             "the mutated live Player stats"
         )
         assert upgraded.fidelity == "full"
+
+
+@pytest.mark.django_db
+class TestExplicitRoundSeed:
+    """RV-07 retro: a caller may give a single Round its seed (``seed_browser_check``
+    does, so every worktree's review Round is the same game); with none, a fresh one."""
+
+    def _round(self, prefix: str, seed: int | None) -> GameRound:
+        red, _ = make_team_with_slots(f"{prefix}R")
+        blue, _ = make_team_with_slots(f"{prefix}B")
+        with patch.object(BatchSimulator, "ROUND_TICKS", _FAST_TICKS):
+            return BatchSimulator().simulate_single_round_detailed(
+                red, blue, fidelity="combat", rng_seed=seed
+            )
+
+    def _game(self, gr: GameRound) -> list[tuple[str, int, int]]:
+        return [
+            (e.event_type, e.timestamp, e.points_awarded)
+            for e in GameEvent.objects.filter(game_round=gr).order_by("timestamp", "id")
+        ]
+
+    def test_the_given_seed_is_stored(self) -> None:
+        assert self._round("SeedStoredA", 123).rng_seed == 123
+
+    def test_the_same_seed_plays_the_same_game(self) -> None:
+        first = self._game(self._round("SeedSameA", 456))
+        assert first, "the round logged no events"
+        assert self._game(self._round("SeedSameB", 456)) == first
+
+    def test_without_one_each_round_draws_its_own(self) -> None:
+        random.seed(7)
+        a = self._round("SeedFreshA", None).rng_seed
+        random.seed(7)
+        b = self._round("SeedFreshB", None).rng_seed
+        assert a != b

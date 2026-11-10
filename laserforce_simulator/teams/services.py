@@ -480,8 +480,10 @@ def run_player_generation(
     # stat-draw / role-draw seam stays deterministic when callers seed it.
     # The service's own ``random.shuffle`` / ``random.randint`` calls are purely
     # presentation-layer (name-pool order, "Random (...)" marker resolution)
-    # and never cross the pure-module boundary.
-    rng = random.Random()
+    # and never cross the pure-module boundary. ``rng`` is seeded from the global
+    # stream, so a caller that seeds ``random`` gets the same Players every run
+    # (``seed_browser_check``, RV-07 retro); an unseeded caller still gets fresh ones.
+    rng = random.Random(random.getrandbits(64))
     team_names_pool = list(TEAM_NAMES)
     random.shuffle(team_names_pool)
     player_names_pool = list(PLAYER_NAMES)

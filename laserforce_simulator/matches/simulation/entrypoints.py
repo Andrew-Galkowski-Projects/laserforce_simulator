@@ -589,8 +589,9 @@ class BatchSimulator:
         arena_map,
         zone_size: int | None,
         fidelity: str = "scores",
+        rng_seed: int | None = None,
     ) -> "GameRound":
-        """Draw a fresh 63-bit seed, ``random.seed()`` it, simulate one round
+        """Draw a fresh 63-bit seed (or take ``rng_seed``), ``random.seed()`` it, simulate one round
         in-memory via ``_simulate_round``, and persist it through
         ``_flush_to_db``.
 
@@ -606,7 +607,9 @@ class BatchSimulator:
         red_roster = list(team_red.active_roster)
         blue_roster = list(team_blue.active_roster)
 
-        seed = random.Random().getrandbits(63)
+        # RV-07 retro: a caller may pin the seed (seed_browser_check's review Round);
+        # otherwise each Round draws its own, independent of the global stream.
+        seed = rng_seed if rng_seed is not None else random.Random().getrandbits(63)
         random.seed(seed)
 
         # GEN-01: the scores tier collects NO event buffer (the tick loop
@@ -748,7 +751,13 @@ class BatchSimulator:
 
     @transaction.atomic
     def simulate_single_round_detailed(
-        self, team_red, team_blue, *, arena_map=None, fidelity: str = "scores"
+        self,
+        team_red,
+        team_blue,
+        *,
+        arena_map=None,
+        fidelity: str = "scores",
+        rng_seed: int | None = None,
     ) -> "GameRound":
         """Simulate a single standalone round (no parent Match) and
         persist it to the DB.
@@ -767,6 +776,7 @@ class BatchSimulator:
             arena_map=arena_map,
             zone_size=zone_size,
             fidelity=fidelity,
+            rng_seed=rng_seed,
         )
 
     # ------------------------------------------------------------------ #

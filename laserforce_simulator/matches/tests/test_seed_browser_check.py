@@ -18,7 +18,11 @@ from rest_framework.test import APIClient
 
 from core.map_test_fixtures import ClassTempMediaMixin, TempMediaMixin
 from core.models import ArenaMap
-from matches.management.commands.seed_browser_check import MISSILE_ROUND_ATTEMPTS
+from matches.management.commands.seed_browser_check import (
+    MISSILE_ROUND_ATTEMPTS,
+    REVIEW_ROUND_SEED,
+    review_ticks,
+)
 from matches.models import (
     Conference,
     GameRound,
@@ -353,6 +357,106 @@ class SeedBrowserCheckSyracuseTests(ClassTempMediaMixin, TestCase):
     def test_seeding_twice_is_refused(self) -> None:
         with self.assertRaises(CommandError):
             _seed("--syracuse")
+
+    def test_the_round_plays_the_pinned_seed(self) -> None:
+        self.assertEqual(self._round().rng_seed, REVIEW_ROUND_SEED)
+
+    def test_the_summary_names_the_review_ticks_and_each_is_real(self) -> None:
+        """RV-07 retro: the summary says where to look, so a spec can name a tick."""
+        game_round = self._round()
+        events = list(
+            game_round.events.values(
+                "event_type",
+                "timestamp",
+                "actor_id",
+                "target_id",
+                "description",
+                "metadata",
+            )
+        )
+        ticks = review_ticks(events)
+        line = next(
+            l for l in self.output.splitlines() if l.startswith("Review ticks:")
+        )
+        for name, tick in ticks.items():
+            self.assertIn(f"{name} {tick if tick is not None else '-'}", line)
+        if ticks["capture"] is not None:
+            self.assertTrue(
+                game_round.events.filter(
+                    event_type="base_capture", timestamp=ticks["capture"]
+                ).exists()
+            )
+
+
+def _event(
+    tick: int, kind: str, actor: int, target: int | None = None, **meta: Any
+) -> dict:
+    return {
+        "event_type": kind,
+        "timestamp": tick,
+        "actor_id": actor,
+        "target_id": target,
+        "description": meta.pop("description", ""),
+        "metadata": meta,
+    }
+
+
+class ReviewTicksTests(TestCase):
+    """``review_ticks``: the first tick of each sight worth a browser check."""
+
+    def test_finds_the_first_of_each(self) -> None:
+        events = [
+            _event(16, "base_capture", 3, shots_remaining=27, base_id=15),
+            _event(18, "tag", 1, 2),
+            _event(19, "miss", 2, 1),
+            _event(30, "special", 4, fires_at=44, description="X activates nuke"),
+            _event(40, "special", 5, description="Y activates rapid fire"),
+            _event(50, "tag", 1, 2),
+            _event(51, "tag", 2, 1),
+        ]
+        self.assertEqual(
+            review_ticks(events),
+            {"mutual tag": 19, "capture": 16, "nuke": 30, "rapid fire": 40},
+        )
+
+    def test_an_awarded_capture_and_a_one_way_tag_do_not_count(self) -> None:
+        events = [
+            _event(10, "tag", 1, 2),
+            _event(14, "tag", 3, 1),
+            _event(
+                1799,
+                "base_capture",
+                3,
+                base_id=15,
+                description="X awarded neutral base",
+            ),
+        ]
+        self.assertEqual(
+            review_ticks(events),
+            {"mutual tag": None, "capture": None, "nuke": None, "rapid fire": None},
+        )
+
+    def test_a_reply_two_ticks_later_is_not_mutual(self) -> None:
+        events = [_event(10, "tag", 1, 2), _event(12, "tag", 2, 1)]
+        self.assertIsNone(review_ticks(events)["mutual tag"])
+
+
+class SeedBrowserCheckReproducibleTests(TempMediaMixin, TestCase):
+    """RV-07 retro: two seeds make the same Players, so the same Rounds."""
+
+    def _players(self) -> list[tuple[str, int, int]]:
+        return list(
+            Player.objects.filter(team__manager__email=_A)
+            .order_by("team__name", "name")
+            .values_list("name", "accuracy", "survival")
+        )
+
+    def test_a_second_seed_makes_the_same_players(self) -> None:
+        _seed()
+        first = self._players()
+        _seed("--clean")
+        _seed()
+        self.assertEqual(self._players(), first)
 
 
 class SeedBrowserCheckWithoutSyracuseTests(ClassTempMediaMixin, TestCase):

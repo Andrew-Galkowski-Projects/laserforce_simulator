@@ -10,7 +10,10 @@ to its `/api/` route before round 1: grep `api_urls.py` and the viewsets'
 backend ticket. PLAN.md said ANG-01 covered every ANG-06 item; ANG-06-9's
 Team match history had no endpoint. Also grep `frontend/src` for each feature
 PLAN.md lists: one already shipped is a settled fact, not a ticket (ANG-06-10's
-Export PDF came with ANG-06d).
+Export PDF came with ANG-06d). An asset (an icon, an image, a template) missing from the
+tree may only be deleted: ANG-08 (`dc7ef302`) removed the Django templates and their
+`assets/`. Search `git log --all --diff-filter=D --name-only` before reporting it absent
+(RV-06's role icons came back from `dc7ef302^`).
 
 ## Spec (Step 4)
 
