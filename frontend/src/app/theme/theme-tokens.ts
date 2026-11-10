@@ -88,6 +88,26 @@ export const LF_COLOUR_TOKENS = [
   // The Playback map's deactivated player marker (RV-06): one mid grey, the same in light and
   // dark, since it is painted over the always-white processed image. Not a map editor token.
   '--lf-map-marker-off',
+  // The Playback map's lives / shots arcs and missile pips (RV-07a): the same in light and dark,
+  // for the same reason.
+  '--lf-gauge-full',
+  '--lf-gauge-mid',
+  '--lf-gauge-empty',
+  '--lf-gauge-track',
+  // The Playback map's special bar (RV-07b): one colour per lap of SP, green, orange, red, then
+  // ever darker reds up to 99 SP; the same in light and dark, for the same reason.
+  '--lf-special-lap-1',
+  '--lf-special-lap-2',
+  '--lf-special-lap-3',
+  '--lf-special-lap-4',
+  '--lf-special-lap-5',
+  '--lf-special-lap-6',
+  '--lf-special-lap-7',
+  '--lf-special-lap-8',
+  '--lf-special-lap-9',
+  '--lf-special-lap-10',
+  // A running special's rolling stripes over its bar (RV-07b): white in light and dark.
+  '--lf-special-stripe',
   ...LF_MAP_TOKENS,
 ] as const;
 

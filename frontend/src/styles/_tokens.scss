@@ -83,6 +83,25 @@
   --lf-map-heat-high: rgb(249 6 6);
   // The Playback map's deactivated marker: a mid grey on the always-white image (4.8:1).
   --lf-map-marker-off: #6b7280;
+  // The Playback map's lives / shots arcs (RV-07a): green when full, amber, dark red when empty,
+  // over a faint track that also paints unlit missile pips.
+  --lf-gauge-full: #1e9e3e;
+  --lf-gauge-mid: #e3a008;
+  --lf-gauge-empty: #7f1010;
+  --lf-gauge-track: rgb(27 34 48 / 0.18);
+  // The Playback map's special bar (RV-07b): one colour per lap of SP toward 99.
+  --lf-special-lap-1: #22a046;
+  --lf-special-lap-2: #f08c00;
+  --lf-special-lap-3: #d62828;
+  --lf-special-lap-4: #a51c1c;
+  --lf-special-lap-5: #7d1414;
+  --lf-special-lap-6: #5c0e0e;
+  --lf-special-lap-7: #430a0a;
+  --lf-special-lap-8: #320707;
+  --lf-special-lap-9: #260505;
+  --lf-special-lap-10: #1c0404;
+  // A running special's rolling stripes over its bar.
+  --lf-special-stripe: #ffffff;
 
   // Fonts and shape (shared by both modes). JetBrains Mono is self-hosted (`@fontsource`).
   --lf-font-body: 'JetBrains Mono', ui-monospace, 'Cascadia Mono', Menlo, Consolas, monospace;
@@ -163,5 +182,21 @@
     --lf-map-heat-high: rgb(245 40 40);
     // The same grey as light mode: the processed image stays white in dark mode.
     --lf-map-marker-off: #6b7280;
+    // The same gauge colours as light mode, for the same reason.
+    --lf-gauge-full: #1e9e3e;
+    --lf-gauge-mid: #e3a008;
+    --lf-gauge-empty: #7f1010;
+    --lf-gauge-track: rgb(27 34 48 / 0.18);
+    --lf-special-lap-1: #22a046;
+    --lf-special-lap-2: #f08c00;
+    --lf-special-lap-3: #d62828;
+    --lf-special-lap-4: #a51c1c;
+    --lf-special-lap-5: #7d1414;
+    --lf-special-lap-6: #5c0e0e;
+    --lf-special-lap-7: #430a0a;
+    --lf-special-lap-8: #320707;
+    --lf-special-lap-9: #260505;
+    --lf-special-lap-10: #1c0404;
+    --lf-special-stripe: #ffffff;
   }
 }

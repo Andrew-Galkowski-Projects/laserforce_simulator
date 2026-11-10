@@ -216,6 +216,11 @@ computed this way.
 - `build_playback_map(game_round) -> dict | None` (see **Round-playback map** above) adds
   `arena_map: {id, name}`. Players come in state-id
   order and moves in (tick, event id) order.
+  - RV-07a: each map player carries its role's limits right after `role`, so the SPA keeps no
+    copy of the role table: `max_lives` (`MAX_LIVES`), `max_shots` (`MAX_SHOTS`), `special_cost`
+    (`SPECIAL_COST.get(role)`: `null` for a Heavy), all from `sim_helpers/role_constants.py` and
+    case-insensitive on `role`, and `max_missiles` (the state's `starting_missiles`). They come
+    from rows already loaded, so the query count is unchanged.
 - **Final-state invariant:** each player's last snapshot equals their `PlayerRoundState`. The fields
   compared are score, lives, shots, missiles, sp, eliminated, `tags_made` and `shots_missed`.
 - The action upgrades the round to `full` fidelity. Its query count does not grow with the number of
@@ -259,7 +264,8 @@ after LFstats's Replay tab, within ADR-0043.
   - The Playback scoreboard's Pos cell and the feed's actor / target names show
     `<app-role-icon [role] [side]>` (`role-icon-img.ts`), whose `alt` / `title` is the role's
     name; it tints from `--lf-side-<side>` and re-tints when `side` changes (the feed reuses rows,
-    and tracks them by event).
+    and tracks them by event). A feed row's actor and target wrap onto two lines when they don't
+    fit (RV-07 review: at 768px a long target name was clipped), each name kept on one line.
   - RV-06c: it takes the timeline's `events` too, and draws a **Tag line** for each tag, miss,
     missile, resupply and active base capture, from the pure `playback-overlays.ts`
     (`overlaysAt`, `baseMarkers`; its spec is the test seam). A line joins where both players
@@ -272,6 +278,42 @@ after LFstats's Replay tab, within ADR-0043.
   - On first open it also fetches `MapsService.zoneConfig` and draws each base as an R / B / N
     diamond. A failed fetch, or no bases, draws none and shows no notice. Draw order: bases,
     trails, lines and bursts, markers.
+  - RV-07a: each marker carries what the player holds, from the pure `playback-gauges.ts`
+    (`playerGauges(player, snapshots, tick)` reads the snapshot at the tick through
+    `snapshotAt`: `lives` / `shots` as 0..1 of `max_lives` / `max_shots`, clamped, and
+    `missiles` or `null` when `max_missiles` is 0; `gaugeColour` blends `--lf-gauge-empty` ->
+    `--lf-gauge-mid` below 0.5 and mid -> `--lf-gauge-full` from 0.5, each token read through
+    `resolveColor` and `parseRgb` (any `#rgb` / `#rrggbb` / `rgb()` value; an unreadable one
+    falls back to the token's default, never black); its spec is the test
+    seam). `drawGauges` paints, after the icon: a lives arc on the left (`0.55 pi` to
+    `1.45 pi`) and a shots arc on the right (`0.45 pi` back to `-0.45 pi`), each at radius
+    `1.12 h` (`h` = half the marker size), width `max(3, 0.1 size)`, filling from the bottom
+    over a `--lf-gauge-track` arc; then, for a Commander or Heavy, `max_missiles` pips of radius
+    `0.055 size` under the arcs, lit in `--lf-ev-missile` per missile left, unlit in the track.
+    A deactivated player's gauges are drawn at the icon's 0.35 alpha and keep their colours. The
+    four gauge tokens are the same in light and dark (the map image is white in both).
+  - RV-07b: every player with a special (not a Heavy) gets a **special bar** under the pips.
+    `playerGauges` fills `special` (`SpecialBar`, `null` when `special_cost` is null): SP is
+    capped at `MAX_SP` (99), `lap = floor(sp / cost)` the completed laps and
+    `fill = (sp % cost) / cost` the current one; `running` is `'nuke'` on `nuking`,
+    `'rapid-fire'` on `rapid_fire`, else `'none'`; `fuse` is `fuseProgress(snapshots, tick)`
+    while nuking. `fuseProgress` lights the fuse at the first snapshot of the latest `nuking` run
+    at or before the tick and ends it at the next snapshot that clears `nuking` (detonation or
+    cancel), else lit + 14; the end tick reads 1, later ticks `null`. `drawSpecialBar` paints it
+    `1.15 size` wide and `max(4, 0.13 size)` high, centred `1.12 h` + `0.3 size` (with missiles,
+    else `0.18 size`) under the player: the previous lap's colour (`lapColour(lap - 1)`, or the
+    track before the first lap) with the current lap's fill over it, and one tick per completed
+    lap above the bar in that lap's colour. `lapColour(lap, laps)` takes the ten
+    `--lf-special-lap-*` tokens (green, orange, red, then darker reds; the same in both themes)
+    and clamps to the last. **Rapid fire** rolls stripes (`--lf-special-stripe`, white in both themes)
+    across the whole bar over the Side colour; a **nuke** turns the bar into its fuse, the first
+    `fuse` of the track rolling the same stripes, with no label. The bar dims with the icon.
+  - **Frame loop:** while the map is open and `anySpecialRunning(players, snapshots, cursor)`,
+    an effect runs a `requestAnimationFrame` loop that sets `performance.now()` for the stripe
+    phase, so the stripes roll while paused. It is cancelled when no special runs, the map
+    closes or the component is destroyed. Under `prefers-reduced-motion: reduce` it never starts
+    and the stripes stand at phase 0. `playback-map.spec.ts` drives it with fake rAF
+    (`POLL_TIMERS`).
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
 
 Tests:
@@ -280,7 +322,7 @@ Tests:
   **Replay**), unit cases on hand-built
   events, and the special-kind check.
 - `test_api_round_playback.py`: shape, map, ownership, fidelity and query count.
-- `test_playback_map.py`: the map and its order.
+- `test_playback_map.py`: the map and its order, and each role's limits (RV-07a).
 - The Vitest specs beside each component.
 
 ## ANG-06g Event charts

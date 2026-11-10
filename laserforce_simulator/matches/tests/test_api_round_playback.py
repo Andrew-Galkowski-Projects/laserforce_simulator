@@ -134,6 +134,24 @@ class TestPlaybackShape(_PlaybackApiCase):
             sorted([self.red_players["commander"].pk, self.blue_players["scout"].pk]),
         )
 
+    def test_map_players_carry_role_limits(self) -> None:
+        """RV-07a: the four role limits reach the client through the API."""
+        arena_map, zone_size = _make_arena_map("PbApiLimits")
+        game_round = self.make_round(arena_map=arena_map, zone_size=zone_size)
+        players = {p["role"]: p for p in self.data(game_round)["map"]["players"]}
+        self.assertEqual(
+            {
+                role: [
+                    p["max_lives"],
+                    p["max_shots"],
+                    p["special_cost"],
+                    p["max_missiles"],
+                ]
+                for role, p in players.items()
+            },
+            {"commander": [30, 60, 20, 5], "scout": [30, 60, 10, 0]},
+        )
+
 
 class TestPlaybackQueryCount(_PlaybackApiCase):
     def test_query_count_does_not_grow_with_events(self) -> None:

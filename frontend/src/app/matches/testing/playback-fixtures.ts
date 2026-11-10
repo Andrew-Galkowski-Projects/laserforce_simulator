@@ -47,13 +47,20 @@ export const PLAYBACK_PLAYERS: PlaybackPlayer[] = [
   playbackPlayer(202, [playbackSnapshot({ lives: 10, shots: 15 })]),
 ];
 
-/** Ace on the map: spawns at (0, 0), walks to (0, 2) at tick 10. */
+/**
+ * Ace on the map: a red Commander (30 lives, 60 shots, 20 SP nuke, 5 missiles) who
+ * spawns at (0, 0) and walks to (0, 2) at tick 10.
+ */
 export function playbackMapPlayer(overrides: Partial<PlaybackMapPlayer> = {}): PlaybackMapPlayer {
   return {
     id: 101,
     name: 'Ace',
     team: 'red',
     role: 'commander',
+    max_lives: 30,
+    max_shots: 60,
+    special_cost: 20,
+    max_missiles: 5,
     scout: 0,
     spawn: [0, 0],
     moves: [

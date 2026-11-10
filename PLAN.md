@@ -143,30 +143,23 @@ BUG-SL-01 (Sight-line compute fails after a saved zone config) is **[DONE]**; se
 ## Playback debugging aids, before more calibration (owner, 2026-11-09)
 
 The owner moved RV-06 and RV-07 ahead of CAL-03: reading tags, bases and each player's resources
-off the Playback map is the debugging aid the next calibration passes need. RV-06 shipped
-(2026-11-09); RV-07 is next, then CAL-03.
+off the Playback map is the debugging aid the next calibration passes need. RV-06 and RV-07
+shipped (2026-11-09); RV-08 (added by RV-07's grill) is next, then CAL-03.
 
 RV-06 (Playback map: position icons, tag lines and bases) is **[DONE]**; see `PLAN-completed.md`.
 
-### RV-07 · Playback map: shots, lives and special beside the moving icon (owner, 2026-11-08)
+RV-07 (Playback map: shots, lives and special beside the moving icon) is **[DONE]**; see `PLAN-completed.md`.
 
-The owner wants to read a player's state off the map as it moves: how full its shots and lives
-are (a scale from green at full to dark red at empty) and whether it holds enough SP for its
-special (the Commander's nuke at 20 SP, the Scout's rapid fire, the Ammo's and Medic's team
-resupply), beside the position icon of RV-06. The Playback snapshots already carry `lives`,
-`shots`, `sp`, `missiles`, `rapid_fire` and `nuking` per player per tick, and the role maxima and
-special costs are in `role_constants`, so this is a rendering task.
+### RV-08 · Playback map: animate a missile (owner, 2026-11-09)
 
-**The task produces three to five display options** as a prototype (`mattpocock-skills:prototype`),
-each drawn on the same round for the owner to pick from, before anything ships: for example
-(a) two thin arcs around the ring, lives on the left and shots on the right, coloured by the
-green-to-dark-red scale, with a small star when the special is ready; (b) a two-segment bar under
-the icon; (c) the ring itself coloured by lives and a dot by shots, special as a pulsing outline;
-(d) a compact `L S` pair of tiny vertical gauges beside the icon; (e) the icon's fill by shots and
-its border by lives. The owner's pick is the spec; the rest are recorded with screenshots in the
-spec issue. RV-06 has shipped the icon the indicators sit beside: the marker is the Side-tinted
-role icon with **no ring**, at 1.5x the old ring's size (owner's prototype pick), so an option
-drawn on the ring would bring a ring back.
+From RV-07's grill: the Playback map draws a missile as a Tag line in the missile colour (RV-06),
+but a missile in the arena is a lock held over several ticks before it fires, and the replay shows
+none of that. Animate it: the lock building on the target (the `locking` event and the pending
+missile's ticks), the launch, and the hit or the dodge (`missiled` `result`, `missile_dodge`). RV-07
+has shipped the missile pips under each Commander and Heavy, which count down as missiles fire. **Open for the grill:** what the
+event log records of a lock (its start tick, target and length), what a cancelled lock looks like,
+how long each stage shows at 1x and 8x, and whether the animation reads from events alone or needs
+a new field.
 
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
@@ -376,7 +369,6 @@ and MECH-19, then the SM5 talk follow-ups** (from LFS-02's proposal), in order (
 shipped 2026-11-08):
 
 ```
-RV-07           Playback map: shots, lives and special beside the moving icon (3-5 options to pick from)
 MOVE-10         A Downed player in view keeps moving
 MECH-18         Re-engage a known enemy the tick it comes back into sight
 MECH-09         Reset re-tag action/goal (refreshed with the 2026-11-08 review)
