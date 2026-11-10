@@ -74,16 +74,22 @@ export function overlaysAt(
     }
     const side = event.actor_side;
     if (age <= LINE_TICKS) {
-      lines.push({ kind, side, ...ends, alpha: 1 - age / (LINE_TICKS + 0.5), tick: event.tick });
+      lines.push({ kind, side, ...ends, alpha: fadeAlpha(age, LINE_TICKS), tick: event.tick });
     }
     if (kind === 'capture') {
-      bursts.push({ side, at: to, alpha: 1 - age / (BURST_TICKS + 0.5), tick: event.tick });
+      bursts.push({ side, at: to, alpha: fadeAlpha(age, BURST_TICKS), tick: event.tick });
     }
   }
   return { lines, bursts };
 }
 
-type Point = readonly [number, number];
+/** A spot on the map image, in px. */
+export type Point = readonly [number, number];
+
+/** An overlay's opacity `age` ticks after its event, shown for `ticks`: 1 down to ~0.2. */
+export function fadeAlpha(age: number, ticks: number): number {
+  return 1 - age / (ticks + 0.5);
+}
 
 /** The `base_capture` event's `base_id`s (`matches/sim_helpers`): 15 is any neutral base. */
 const RED_BASE_ID = 13;
