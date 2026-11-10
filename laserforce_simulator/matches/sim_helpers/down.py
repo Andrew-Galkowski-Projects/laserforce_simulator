@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .combat import cancel_missile_locks_involving
 from .downed_option import choose_downed_option
 from .follow_rule import round_map, start_trail
 from .round_context import RoundContext
@@ -115,6 +116,12 @@ def record_down(
     # not a fuse and survives.
     if player.role == "commander" and player.special_active_until > tick:
         player.special_active_until = 0
+
+    # MECH-21: a Down ends the player's own Lock and every Lock on them, at
+    # the Down tick ("out" once eliminated, else "down"). The caller has
+    # already taken the lives.
+    if ctx is not None:
+        cancel_missile_locks_involving(ctx, player, tick)
 
     # 7. RV-02 nuke cancellation — only Commanders scan the queue
     if player.role == "commander" and ctx is not None and ctx.pending_nukes:

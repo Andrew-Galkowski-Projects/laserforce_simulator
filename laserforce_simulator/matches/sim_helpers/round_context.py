@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .event_log import EventLog
+from .pending_events import PendingMissileLock
 
 
 @dataclass
@@ -57,6 +58,12 @@ class RoundContext:
         movement_ctx: ``MapContext | None``. ``resolve_shot`` reads
             elevation, line-of-sight, and base-in-range gates via this;
             ``None`` on the 3-zone fallback path.
+        missile_locks: ``dict[int, PendingMissileLock]`` — the round's
+            Locks keyed by the locker's ``player_id`` (MECH-21: the key is
+            the one-lock rule). Insertion order is the resolution order;
+            a retarget deletes the old key first, so the new lock goes to
+            the end. Written by ``combat.start_missile_lock`` /
+            ``cancel_missile_lock``; drained by the tick loop.
     """
 
     events: EventLog = field(default_factory=lambda: EventLog(persist=False))
@@ -65,3 +72,4 @@ class RoundContext:
     pending_reactions: list = field(default_factory=list)
     all_alive: list = field(default_factory=list)
     movement_ctx: Any = None  # MapContext | None — typed as Any to avoid the import
+    missile_locks: dict[int, PendingMissileLock] = field(default_factory=dict)

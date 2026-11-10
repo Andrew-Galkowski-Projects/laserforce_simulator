@@ -24,6 +24,7 @@ from ..sim_helpers.combat import (
     attempt_resupply as _attempt_resupply_shared,
     capture_base as _capture_base_shared,
     award_bases as _award_bases_shared,
+    cancel_missile_lock,
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
@@ -44,7 +45,6 @@ from ..sim_helpers.pathfinding import (
     choose_goal_cell,
 )
 from ..sim_helpers.pending_events import (
-    PendingMissileLock,
     PendingNuke,
     PendingFollowup,
     PendingReaction,
@@ -1182,7 +1182,6 @@ class BatchSimulator:
             team_spawn_pools=team_spawn_pools,
         )
 
-        pending_missile_locks: list[PendingMissileLock] = []
         pending_nukes: list[PendingNuke] = []
         pending_followups: list[PendingFollowup] = []
         pending_reactions: list[PendingReaction] = []
@@ -1233,35 +1232,8 @@ class BatchSimulator:
             # retained only to avoid a 50-site mechanical rename in this
             # SIM-09-doomed engine; no value here is in real seconds.
             second = tick
-            # --- process missile locks (LOS-check per tick for 3 ticks) ---
-            still_locking_b: list[PendingMissileLock] = []
-            for lock in pending_missile_locks:
-                result = _tick_missile_lock_shared(lock, second, movement_ctx)
-                if result == "pending":
-                    still_locking_b.append(lock)
-                elif result == "hit":
-                    survival = getattr(lock.defender, "survival", 50)
-                    dodge_pct = min(20.0, survival / 5.0)
-                    if random.random() * 100 < dodge_pct:
-                        ctx.events.missile_dodge(lock.defender, lock.attacker, second)
-                        # RES-03: also emit a 'missiled' resolution row so
-                        # the missile log records this fired missile as a
-                        # miss (dodged).
-                        ctx.events.missiled(
-                            lock.attacker,
-                            lock.defender,
-                            second,
-                            result="miss",
-                            friendly_fire=(
-                                lock.attacker.team_color == lock.defender.team_color
-                            ),
-                        )
-                    else:
-                        self._complete_missile(
-                            lock.attacker, lock.defender, second, ctx
-                        )
-                # "miss": missile already consumed, no further action
-            pending_missile_locks = still_locking_b
+            # --- advance the Locks (MECH-21): sight, launch, dodge ---
+            self._advance_missile_locks(second, ctx)
 
             # --- process pending reactions (deferred by shot cooldown) ---
             # Shot-resolver consolidation: each queued reaction dispatches to
@@ -1434,18 +1406,15 @@ class BatchSimulator:
                         movement_ctx=plan.get("movement_ctx"),
                     )
                 elif ptype == "missile":
-                    # RES-03: emit a 'locking' event on lock start via the
-                    # ctx.events.locking verb (collapsed from the legacy
-                    # emit_event callable seam by the EventLog candidate).
-                    scheduled = self._start_missile_lock(
+                    # MECH-21: start, hold or retarget the actor's one Lock;
+                    # start_missile_lock stores it in ctx.missile_locks.
+                    self._start_missile_lock(
                         actor,
                         plan["target"],
                         second,
                         movement_ctx,
                         ctx=ctx,
                     )
-                    if scheduled:
-                        pending_missile_locks.append(scheduled)
                 elif ptype == "use_special":
                     scheduled = self._use_special(actor, second, all_alive, ctx)
                     if scheduled and scheduled[0] == "nuke":
@@ -1909,6 +1878,33 @@ class BatchSimulator:
             attacker, defender, second, movement_ctx, ctx=ctx
         )
 
+    def _advance_missile_locks(self, tick: int, ctx: RoundContext) -> None:
+        """MECH-21: advance every Lock once, at the top of the tick.
+
+        Over a copy of ``ctx.missile_locks`` (insertion order), skipping a
+        lock an earlier launch this pass already cancelled: ``"sight"``
+        cancels; ``"launch"`` rolls the one dodge, ``min(20, survival / 5)``
+        percent. A dodge cancels (``"dodge"``, nothing spent, no
+        ``missiled``); otherwise the lock is removed, then
+        ``_complete_missile`` spends the missile and lands it.
+        """
+        for lock in list(ctx.missile_locks.values()):
+            # An earlier launch this pass can Down a player and so cancel a
+            # lock further down the copy (record_down); skip it.
+            if ctx.missile_locks.get(lock.attacker.player_id) is not lock:
+                continue
+            result = _tick_missile_lock_shared(lock, tick, ctx.movement_ctx)
+            if result == "sight":
+                cancel_missile_lock(ctx, lock.attacker, tick, "sight")
+            elif result == "launch":
+                survival = getattr(lock.defender, "survival", 50)
+                dodge_pct = min(20.0, survival / 5.0)
+                if random.random() * 100 < dodge_pct:
+                    cancel_missile_lock(ctx, lock.attacker, tick, "dodge")
+                else:
+                    del ctx.missile_locks[lock.attacker.player_id]
+                    self._complete_missile(lock.attacker, lock.defender, tick, ctx)
+
     def _complete_missile(
         self,
         attacker,
@@ -1916,10 +1912,9 @@ class BatchSimulator:
         second,
         ctx: RoundContext | None = None,
     ):
-        # RES-03: always emit a 'missiled' resolution event when the missile
-        # reaches resolution (gate below filters by active/taggable just like
-        # the legacy path). result='hit' here; the dodge/los-broken paths emit
-        # result='miss' from the caller.
+        # MECH-21 (ADR-0050): the launch. It spends the missile and always
+        # hits, writing ``missiled`` at the launch tick (lock start +
+        # LOCK_TICKS); a dodge was rolled, and cancelled the lock, before.
         if (
             attacker.is_active_at(second)
             and defender.is_taggable_at(second)
@@ -1941,8 +1936,9 @@ class BatchSimulator:
 
             attacker.counters.points_scored += 500
             attacker.counters.missile_points += 500
-            # The missile was consumed when the lock started (start_missile_lock);
-            # taking a second one here capped a 5-missile player at 3 landed (#560).
+            # MECH-21: the missile is spent here, at launch, and only here (a
+            # second spend once capped a 5-missile player at 3 landed, #560).
+            attacker.final_missiles -= 1
             attacker.counters.missiles_landed += 1
             if attacker.role != "heavy":
                 attacker.final_special = min(
@@ -1953,7 +1949,6 @@ class BatchSimulator:
                     attacker,
                     defender,
                     int(second),
-                    result="hit",
                     friendly_fire=(attacker.team_color == defender.team_color),
                 )
 

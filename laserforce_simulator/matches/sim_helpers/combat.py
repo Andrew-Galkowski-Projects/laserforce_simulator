@@ -9,7 +9,7 @@ importable without the ORM.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from .map_context import MapContext
@@ -570,7 +570,10 @@ def _reset_resupplied(teammate, second: float, ctx: RoundContext) -> None:
     MECH-10: it also starts a Follow rule Trail, as a Down does (before the
     ``last_downed_time`` stamp), and stamps ``last_resupplied_at``.
     MOVE-08: then the receiver may Make a trail (``choose_resupply_trail``).
+    MECH-21: the reset ends the receiver's Lock and every Lock on them
+    (``reason=down``: no longer Active or Taggable, so no launch could land).
     """
+    cancel_missile_locks_involving(ctx, teammate, int(second))
     start_trail(teammate, second, round_map(ctx))
     teammate.last_downed_time = second
     teammate.last_resupplied_at = second
@@ -664,6 +667,9 @@ def capture_base(
             return False
 
     if player.final_shots >= BASE_CAPTURE_SHOTS or player.role == "ammo":
+        # MECH-21: an active capture is a trigger pull, so it ends the
+        # player's Lock (a round-end ``award_bases`` does not).
+        cancel_missile_lock(ctx, player, int(second), "shot")
         if player.role != "ammo":
             player.final_shots -= BASE_CAPTURE_SHOTS
         player.last_tagged_id = base_id
@@ -730,29 +736,44 @@ def start_missile_lock(
     *,
     ctx: RoundContext,
 ) -> "PendingMissileLock | None":
-    """Initiate a 3-tick missile lock on defender.
+    """Start a Lock on defender (MECH-21, ADR-0050); nothing is spent.
 
-    Validates state and requires initial LOS.  Consumes one missile immediately.
-    Returns a ``PendingMissileLock`` on success, or ``None`` if the attempt is
-    invalid (bad state or no initial LOS).
+    Gates: attacker Active, defender Taggable, a missile left, defender not
+    hiding, and sight at the start. A player holds at most one Lock, keyed
+    by ``player_id`` in ``ctx.missile_locks``:
 
-    The lock is resolved by calling ``tick_missile_lock`` once per simulation
-    tick.  The old 45% instant-dodge is replaced by per-tick LOS checks and a
-    survival-based dodge roll at the moment of impact.
+    - a lock already on this defender holds: ``None``, no row;
+    - a lock on another defender is cancelled (``"retarget"``) only once the
+      new gates pass, then the new lock starts on this tick; if they fail,
+      the old lock holds.
 
-    RES-03 + EventLog candidate: on a successful lock start, emits via
-    ``ctx.events.locking(attacker, defender, second)`` so the missile-log
-    surface can render fired-but-not-yet-resolved missiles.
+    On a start, writes ``locking`` and stores the lock. The lock is advanced
+    by ``tick_missile_lock`` at the top of each tick and launches at
+    ``second + LOCK_TICKS``, where the missile is spent.
     """
+    held = ctx.missile_locks.get(attacker.player_id)
+    if held is not None and held.defender is defender:
+        return None
     if not (
         attacker.is_active_at(second)
         and defender.is_taggable_at(second)
         and attacker.final_missiles > 0
         and not defender.is_hiding
+        and _lock_has_sight(attacker, defender, movement_ctx)
     ):
         return None
+    if held is not None:
+        cancel_missile_lock(ctx, attacker, int(second), "retarget")
 
-    # Require LOS at lock initiation
+    ctx.events.locking(attacker, defender, int(second))
+    lock = PendingMissileLock(attacker=attacker, defender=defender)
+    ctx.missile_locks[attacker.player_id] = lock
+    return lock
+
+
+def _lock_has_sight(attacker, defender, movement_ctx: "MapContext | None") -> bool:
+    """Sight between locker and target: the map's sight set, or the same zone
+    on a map-less round."""
     if (
         movement_ctx is not None
         and attacker.cell_row is not None
@@ -761,70 +782,63 @@ def start_missile_lock(
         sight_data = movement_ctx.sight_data
         actor_key = f"{attacker.cell_row},{attacker.cell_col}"
         def_key = f"{defender.cell_row},{defender.cell_col}"
-        has_los = sight_data is not None and def_key in sight_data.get(
+        return sight_data is not None and def_key in sight_data.get(
             actor_key, frozenset()
         )
-    else:
-        has_los = attacker.current_zone == defender.current_zone
+    return attacker.current_zone == defender.current_zone
 
-    if not has_los:
-        return None
 
-    # Consume the missile immediately; if the lock breaks the shot is still used
-    attacker.final_missiles -= 1
+def cancel_missile_lock(
+    ctx: RoundContext, locker, tick: int, reason: str
+) -> "PendingMissileLock | None":
+    """End the locker's Lock without a missile: remove it from
+    ``ctx.missile_locks`` and write ``lock_cancelled`` with ``reason``.
 
-    ctx.events.locking(attacker, defender, second)
+    Returns the lock, or ``None`` (and writes nothing) when the locker held
+    none. Draws no RNG.
+    """
+    lock = ctx.missile_locks.pop(locker.player_id, None)
+    if lock is not None:
+        ctx.events.lock_cancelled(locker, lock.defender, tick, reason=reason)
+    return lock
 
-    return PendingMissileLock(
-        attacker=attacker,
-        defender=defender,
-        ticks_remaining=3,
-        los_broken=False,
-    )
+
+def cancel_missile_locks_involving(ctx: RoundContext, player, tick: int) -> int:
+    """Cancel the player's own Lock and every Lock on them; return how many.
+
+    The reason is ``"out"`` when ``player.final_lives <= 0`` and ``"down"``
+    otherwise. Called by ``down.record_down``, so every Down (Tag, Missile,
+    Nuke) ends the locks at the Down tick. Locks keep their insertion order.
+    """
+    reason = "out" if player.final_lives <= 0 else "down"
+    lockers = [
+        lock.attacker
+        for lock in ctx.missile_locks.values()
+        if lock.attacker is player or lock.defender is player
+    ]
+    for locker in lockers:
+        cancel_missile_lock(ctx, locker, tick, reason)
+    return len(lockers)
 
 
 def tick_missile_lock(
     lock: "PendingMissileLock",
     second: float,
     movement_ctx: "MapContext | None",
-) -> str:
-    """Advance a missile lock by one tick and return its status.
+) -> Literal["pending", "launch", "sight"]:
+    """Advance a Lock by one tick, at the top of the tick, before planning.
 
-    Returns one of:
-      ``"pending"`` — lock still in progress; keep in the queue.
-      ``"hit"``     — all 3 ticks completed with LOS; caller should apply
-                      survival-based dodge then call ``_complete_missile``.
-      ``"miss"``    — lock failed (LOS broken without special_usage save, or a
-                      participant died); missile already consumed, no damage.
+    With no sight, a failed ``special_usage`` save returns ``"sight"`` (the
+    caller cancels the lock on this tick). Otherwise the lock counts down, and
+    at 0 it returns ``"launch"``. Lives are not read: a Down cancels the lock
+    through ``record_down``.
     """
-    if lock.attacker.final_lives <= 0 or lock.defender.final_lives <= 0:
-        return "miss"
-
-    # LOS check for this tick
-    if (
-        movement_ctx is not None
-        and lock.attacker.cell_row is not None
-        and lock.defender.cell_row is not None
-    ):
-        sight_data = movement_ctx.sight_data
-        actor_key = f"{lock.attacker.cell_row},{lock.attacker.cell_col}"
-        def_key = f"{lock.defender.cell_row},{lock.defender.cell_col}"
-        has_los = sight_data is not None and def_key in sight_data.get(
-            actor_key, frozenset()
-        )
-    else:
-        has_los = lock.attacker.current_zone == lock.defender.current_zone
-
-    if not has_los:
-        # special_usage gives a chance to hold lock through broken LOS
+    if not _lock_has_sight(lock.attacker, lock.defender, movement_ctx):
         special_usage = getattr(lock.attacker, "special_usage", 50)
         if random.random() * 100 >= special_usage:
-            lock.los_broken = True
+            return "sight"
 
     lock.ticks_remaining -= 1
-
-    if lock.los_broken:
-        return "miss"
     if lock.ticks_remaining > 0:
         return "pending"
-    return "hit"
+    return "launch"

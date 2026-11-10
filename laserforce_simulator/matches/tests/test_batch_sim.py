@@ -229,9 +229,12 @@ class TestLfs01aCancelledNukesCounted:
     CAL-02a (2026-11-08): seed 0 cancelled one until Reactions and Follow-ups
     started to fire and the Heavy's cooldown became 2 ticks, which redraw the
     map-less round; the invariant is unchanged, so the seed was re-pinned to 1.
+    MECH-21 (the Lock spends its missile at launch, one Lock per player) redrew
+    the round again and seed 1 cancels none; re-pinned to 4 (seeds 0, 4, 7, 8
+    and 11 of 0-11 cancel one), the invariant unchanged.
     """
 
-    SEED = 1
+    SEED = 4
 
     def setup_method(self):
         red_team, _ = make_team_with_slots("NukeCntR")

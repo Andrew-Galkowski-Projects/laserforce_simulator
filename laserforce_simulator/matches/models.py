@@ -809,6 +809,7 @@ class GameEvent(models.Model):
         ("tag", "Tag"),
         ("locking", "Missile Lock Start"),
         ("missiled", "Missile Resolved"),
+        ("lock_cancelled", "Missile Lock Cancelled"),
         ("special", "Special Activated"),
         ("miss", "Missed Shot"),
         ("resupply_ammo", "Ammo Resupply"),
