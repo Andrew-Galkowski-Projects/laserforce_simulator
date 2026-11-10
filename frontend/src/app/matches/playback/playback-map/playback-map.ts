@@ -33,7 +33,14 @@ import {
   playerGauges,
 } from './playback-gauges';
 import { resolveColor } from '../../../shared/read-token';
-import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
+import {
+  GAUGE_RING,
+  GAUGE_WIDTH,
+  MARKER_DIM,
+  MARKER_FOOTPRINT,
+  markerLook,
+  markerSize,
+} from './playback-markers';
 import { LockMark, LockOverlays, lockOverlaysAt, lockSpans } from './playback-missiles';
 import {
   BaseMarker,
@@ -357,8 +364,8 @@ function drawBurst(
   ctx.stroke();
 }
 
-/** A locked reticle's radius, in marker sizes: clear of the gauge arcs. */
-const LOCKED_RING = 0.8;
+/** A locked reticle's radius, in marker sizes: clear of the gauge arcs (0.8). */
+export const LOCKED_RING = MARKER_FOOTPRINT + 0.19;
 
 /**
  * The missile Locks (RV-08): each building lock as a dotted line, firming with its progress,
@@ -393,7 +400,7 @@ function drawLocks(
       ctx.stroke();
       ctx.setLineDash([]);
     }
-    // Closes to LOCKED_RING, just outside the gauge arcs (drawn over it, at ~0.56 icon).
+    // Closes to LOCKED_RING, just outside the marker's footprint (its arcs paint over it).
     drawReticle(ctx, lock.to, icon * (1.6 - (1.6 - LOCKED_RING) * lock.progress));
   }
   for (const mark of locks.marks) {
@@ -543,9 +550,8 @@ function drawGauges(
   maxMissiles: number,
   colours: Palette,
 ): void {
-  const h = size / 2;
-  const radius = 1.12 * h;
-  ctx.lineWidth = Math.max(3, 0.1 * size);
+  const radius = GAUGE_RING * size;
+  ctx.lineWidth = Math.max(3, GAUGE_WIDTH * size);
   ctx.lineCap = 'butt';
   const arc = (from: number, sweep: number, ccw: boolean, colour: string): void => {
     ctx.beginPath();

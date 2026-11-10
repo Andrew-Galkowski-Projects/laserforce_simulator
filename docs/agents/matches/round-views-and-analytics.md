@@ -287,7 +287,7 @@ after LFstats's Replay tab, within ADR-0043.
     falls back to the token's default, never black); its spec is the test
     seam). `drawGauges` paints, after the icon: a lives arc on the left (`0.55 pi` to
     `1.45 pi`) and a shots arc on the right (`0.45 pi` back to `-0.45 pi`), each at radius
-    `1.12 h` (`h` = half the marker size), width `max(3, 0.1 size)`, filling from the bottom
+    `GAUGE_RING` (0.56 size, i.e. `1.12 h`), width `max(3, GAUGE_WIDTH size)`, filling from the bottom
     over a `--lf-gauge-track` arc; then, for a Commander or Heavy, `max_missiles` pips of radius
     `0.055 size` under the arcs, lit in `--lf-ev-missile` per missile left, unlit in the track.
     A deactivated player's gauges are drawn at the icon's 0.35 alpha and keep their colours. The
@@ -333,7 +333,12 @@ after LFstats's Replay tab, within ADR-0043.
     is a 12-spike burst in `--lf-ev-missile`, a dodge the locked reticle split into four
     drifting arcs, a lost lock a dashed ring shrinking from 1.0 to about 0.8 marker sizes
     (`0.75 + 0.25 alpha`; the fade stops at alpha 0.2). Both fades use `fadeAlpha`, the Tag
-    lines' own (`playback-overlays.ts`). No frame loop of its own: the map redraws on each
+    lines' own (`playback-overlays.ts`). **Marker footprint** (RV-08 retro):
+    `playback-markers.ts` names the arcs' radius `GAUGE_RING` (0.56) and width `GAUGE_WIDTH`
+    (0.1) in marker sizes, and `MARKER_FOOTPRINT` (0.61), their outer edge. The markers paint
+    last, so anything drawn round a player sits outside `MARKER_FOOTPRINT` or hides under the
+    arcs; `LOCKED_RING` is `MARKER_FOOTPRINT + 0.19`, and `playback-map.spec.ts` pins it
+    outside. No frame loop of its own: the map redraws on each
     cursor step. The RV-07 pips still drop at `locking` (the sim spends the missile at lock
     start); MECH-21 moves that to the launch.
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).

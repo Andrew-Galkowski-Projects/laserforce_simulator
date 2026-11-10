@@ -1,4 +1,10 @@
-import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
+import { MARKER_DIM, MARKER_FOOTPRINT, markerLook, markerSize } from './playback-markers';
+
+describe('MARKER_FOOTPRINT', () => {
+  it("is the gauge arcs' outer edge: radius 0.56 plus half their 0.1 width", () => {
+    expect(MARKER_FOOTPRINT).toBeCloseTo(0.61);
+  });
+});
 
 describe('markerSize', () => {
   it('is 1.5 times max(18, zone * 1.3) image px', () => {

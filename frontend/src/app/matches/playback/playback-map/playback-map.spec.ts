@@ -6,7 +6,8 @@ import { authInterceptor } from '../../../auth/auth.interceptor';
 import { PlaybackMap as PlaybackMapData, PlaybackSnapshot } from '../../../api/rounds.models';
 import { POLL_TIMERS } from '../../../shared/testing/poll-timers';
 import { playbackMap, playbackMapPlayer, playbackSnapshot } from '../../testing/playback-fixtures';
-import { PlaybackMap, readPalette } from './playback-map';
+import { LOCKED_RING, PlaybackMap, readPalette } from './playback-map';
+import { MARKER_FOOTPRINT } from './playback-markers';
 
 const BASE = environment.apiBaseUrl;
 
@@ -299,6 +300,12 @@ describe('PlaybackMap (beta, contract only)', () => {
       await seek(12);
       expect(await pendingFrames()).toBe(0);
     });
+  });
+});
+
+describe('overlays round a marker (RV-08 retro)', () => {
+  it("draws the locked reticle outside the marker's footprint, where the arcs cannot hide it", () => {
+    expect(LOCKED_RING).toBeGreaterThan(MARKER_FOOTPRINT);
   });
 });
 

@@ -3,7 +3,9 @@
 GLOSSARY.md lists, under each term, the names to avoid (``_Avoid_: "standalone
 round", ...``). This check reads the quoted multi-word ones and flags added diff
 lines that use them, in any case and joined by a space, ``_``, ``-`` or nothing
-(``standalone_round``, ``standaloneRound``). Single words ("game") are skipped:
+(``standalone_round``, ``standaloneRound``). Text inside a backtick code span is
+skipped: it names an identifier (an event type, a field), not the wording. Single
+words ("game") are skipped:
 they collide with too many legitimate names. GLOSSARY.md, ADRs and the PLAN
 files are skipped too, since they record the avoided names on purpose.
 
@@ -26,6 +28,7 @@ _REPO = Path(__file__).resolve().parent.parent
 _QUOTED = re.compile(r'"([A-Za-z][A-Za-z -]*[A-Za-z])"')
 _HUNK = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@")
 _SKIPPED = ("GLOSSARY.md", "PLAN.md", "PLAN-completed.md", "docs/adr/")
+_CODE_SPAN = re.compile(r"`[^`]*`")
 
 
 class Hit(NamedTuple):
@@ -69,10 +72,12 @@ def find_hits(terms: list[str], diff: str) -> list[Hit]:
         if raw.startswith("+"):
             if not path.startswith(_SKIPPED):
                 text = raw[1:]
+                # A `code span` names an identifier (`missile_dodge`), not the wording.
+                prose = _CODE_SPAN.sub(" ", text)
                 hits.extend(
                     Hit(path, line, term, text.strip())
                     for term, pattern in patterns
-                    if pattern.search(text)
+                    if pattern.search(prose)
                 )
             line += 1
         elif not raw.startswith("-"):

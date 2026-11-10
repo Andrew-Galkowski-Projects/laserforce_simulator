@@ -107,6 +107,11 @@ def review_ticks(events: Iterable[dict[str, Any]]) -> dict[str, int | None]:
       award carries none).
     - ``nuke``: a nuke activation (a ``special`` whose metadata has ``fires_at``).
     - ``rapid fire``: a Scout's rapid-fire activation.
+    - ``lock hit`` / ``lock dodge`` / ``lock lost`` (RV-08 retro): the ``locking`` tick of
+      the first missile Lock that runs its full ``LOCK_TICKS`` and ends in a hit, a dodge,
+      or nothing; a review watches it from that tick to three after. The Playback map's own
+      rule (``playback-missiles.ts``): the shooter's next lock, tag, miss or active capture
+      before then cuts a lock, and a cut lock is none of the three.
     """
     ordered = sorted(events, key=lambda e: e["timestamp"])
     found: dict[str, int | None] = {
@@ -134,6 +139,61 @@ def review_ticks(events: Iterable[dict[str, Any]]) -> dict[str, int | None]:
             found["rapid fire"] = (
                 found["rapid fire"] if found["rapid fire"] is not None else tick
             )
+    found.update(_lock_ticks(ordered))
+    return found
+
+
+# The engine's literal lock length (``combat.start_missile_lock``); RV-08's ``LOCK_TICKS``.
+LOCK_TICKS = 3
+
+
+def _cuts_lock(event: dict[str, Any]) -> bool:
+    """Whether the shooter acting this way ends their own lock (``cutsLock`` in RV-08)."""
+    kind = event["event_type"]
+    if kind == "locking":
+        return event["target_id"] is not None
+    if kind == "base_capture":
+        return "shots_remaining" in (event["metadata"] or {})
+    return kind in ("tag", "miss")
+
+
+def _lock_ticks(ordered: list[dict[str, Any]]) -> dict[str, int | None]:
+    """The start of the first full-length lock ending in a hit, a dodge, or nothing."""
+    found: dict[str, int | None] = {
+        "lock hit": None,
+        "lock dodge": None,
+        "lock lost": None,
+    }
+    for lock in ordered:
+        if lock["event_type"] != "locking" or lock["target_id"] is None:
+            continue
+        shooter, target, start = lock["actor_id"], lock["target_id"], lock["timestamp"]
+        end = start + LOCK_TICKS
+        if any(
+            e["actor_id"] == shooter and start < e["timestamp"] < end and _cuts_lock(e)
+            for e in ordered
+        ):
+            continue
+        at_end = [e for e in ordered if e["timestamp"] == end]
+        if any(
+            e["event_type"] == "missile_dodge"
+            and e["actor_id"] == target
+            and e["target_id"] == shooter
+            for e in at_end
+        ):
+            name = "lock dodge"
+        elif any(
+            e["event_type"] == "missiled"
+            and e["actor_id"] == shooter
+            and e["target_id"] == target
+            and (e["metadata"] or {}).get("result") == "hit"
+            for e in at_end
+        ):
+            name = "lock hit"
+        else:
+            name = "lock lost"
+        if found[name] is None:
+            found[name] = start
     return found
 
 

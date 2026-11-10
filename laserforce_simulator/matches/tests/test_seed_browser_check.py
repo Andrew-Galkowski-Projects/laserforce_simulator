@@ -416,7 +416,16 @@ class ReviewTicksTests(TestCase):
         ]
         self.assertEqual(
             review_ticks(events),
-            {"mutual tag": 19, "capture": 16, "nuke": 30, "rapid fire": 40},
+            {
+                "mutual tag": 19,
+                "capture": 16,
+                "nuke": 30,
+                "rapid fire": 40,
+                # No locking events here (RV-08 retro's lock keys have their own tests).
+                "lock hit": None,
+                "lock dodge": None,
+                "lock lost": None,
+            },
         )
 
     def test_an_awarded_capture_and_a_one_way_tag_do_not_count(self) -> None:
@@ -433,12 +442,71 @@ class ReviewTicksTests(TestCase):
         ]
         self.assertEqual(
             review_ticks(events),
-            {"mutual tag": None, "capture": None, "nuke": None, "rapid fire": None},
+            {
+                "mutual tag": None,
+                "capture": None,
+                "nuke": None,
+                "rapid fire": None,
+                "lock hit": None,
+                "lock dodge": None,
+                "lock lost": None,
+            },
         )
 
     def test_a_reply_two_ticks_later_is_not_mutual(self) -> None:
         events = [_event(10, "tag", 1, 2), _event(12, "tag", 2, 1)]
         self.assertIsNone(review_ticks(events)["mutual tag"])
+
+    def test_finds_the_start_of_the_first_full_lock_ending_each_way(self) -> None:
+        """RV-08 retro: the Playback map's lock rule, so a check seeks start..start+3."""
+        events = [
+            # Cut by the shooter's own tag at 11: not a review "lost".
+            _event(10, "locking", 1, 2),
+            _event(11, "tag", 1, 2),
+            _event(20, "locking", 1, 2),
+            _event(23, "missiled", 1, 2, result="hit"),
+            _event(30, "locking", 3, 4),
+            _event(33, "missile_dodge", 4, 3),
+            _event(33, "missiled", 3, 4, result="miss"),
+            _event(40, "locking", 1, 3),
+        ]
+        ticks = review_ticks(events)
+        self.assertEqual(
+            (ticks["lock hit"], ticks["lock dodge"], ticks["lock lost"]),
+            (20, 30, 40),
+        )
+
+    def test_a_missed_missile_is_no_hit_and_a_targetless_lock_cuts_nothing(
+        self,
+    ) -> None:
+        events = [
+            # A full lock whose missile missed with no dodge: lost, not hit.
+            _event(10, "locking", 1, 2),
+            _event(13, "missiled", 1, 2, result="miss"),
+            # A targetless locking at 21 is no Lock, so lock 20 runs full and hits.
+            _event(20, "locking", 3, 4),
+            _event(21, "locking", 3, None),
+            _event(23, "missiled", 3, 4, result="hit"),
+        ]
+        ticks = review_ticks(events)
+        self.assertEqual((ticks["lock hit"], ticks["lock lost"]), (20, 10))
+
+    def test_a_lock_cut_by_its_shooter_or_paired_wrongly_is_none_of_them(self) -> None:
+        events = [
+            # The shooter re-locks at 11: the first lock is cut, the second is lost.
+            _event(10, "locking", 1, 2),
+            _event(11, "locking", 1, 2),
+            # A hit at 13 belongs to neither: the first lock was cut, the second ends at 14.
+            _event(13, "missiled", 1, 2, result="hit"),
+            # A dodge the wrong way round does not pair with lock 20 (1 -> 3).
+            _event(20, "locking", 1, 3),
+            _event(23, "missile_dodge", 1, 3),
+        ]
+        ticks = review_ticks(events)
+        self.assertEqual(
+            (ticks["lock hit"], ticks["lock dodge"], ticks["lock lost"]),
+            (None, None, 11),
+        )
 
 
 class SeedBrowserCheckReproducibleTests(TempMediaMixin, TestCase):
