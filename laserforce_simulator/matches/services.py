@@ -119,12 +119,17 @@ def create_sandbox_round(
     *,
     arena_map: "ArenaMap | None",
     user: "AbstractBaseUser | None",
+    rng_seed: int | None = None,
 ) -> GameRound:
-    """Validate, simulate and persist a standalone sandbox Round, stamped to ``user``."""
+    """Validate, simulate and persist a standalone sandbox Round, stamped to ``user``.
+
+    ``rng_seed`` pins the Round's seed (``seed_browser_check``'s review Round); the
+    API never passes one, so each Round it creates draws its own.
+    """
     check_matchup(team_red, team_blue)
     try:
         game_round = BatchSimulator().simulate_single_round_detailed(
-            team_red, team_blue, arena_map=arena_map
+            team_red, team_blue, arena_map=arena_map, rng_seed=rng_seed
         )
     except ValueError as exc:
         raise MatchSetupError(str(exc)) from exc

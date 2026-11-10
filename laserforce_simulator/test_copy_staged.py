@@ -78,7 +78,10 @@ class CopyStagedTests(_TwoWorktrees):
 
         lines = out.getvalue().splitlines()
         self.assertEqual(lines[0], "kept.txt")
-        self.assertEqual(lines[-1], f'git worktree remove --force "{self.src}"')
+        self.assertEqual(
+            lines[-1],
+            f'git -c core.longpaths=true worktree remove --force "{self.src}"',
+        )
 
 
 class CopyWorktreeTests(_TwoWorktrees):
@@ -157,7 +160,10 @@ class CopyWorktreeTests(_TwoWorktrees):
 
         self.assertEqual(code, 0)
         self.assertEqual(lines[0], "kept.txt")
-        self.assertEqual(lines[-1], f'git worktree remove --force "{self.src}"')
+        self.assertEqual(
+            lines[-1],
+            f'git -c core.longpaths=true worktree remove --force "{self.src}"',
+        )
 
     def test_main_keeps_the_source_and_exits_1_when_a_path_was_skipped(self) -> None:
         Path(self.src, "kept.txt").write_text("source\n")

@@ -134,8 +134,10 @@ def main(argv: list[str] | None = None) -> None:
     if skipped:
         sys.exit(1)
     # The fix worktree's job ends here; its staged files would otherwise
-    # linger on disk until someone audits them (PERF-01 retro).
-    print(f'git worktree remove --force "{args.source}"')
+    # linger on disk until someone audits them (PERF-01 retro). Long paths on: a worktree's
+    # node_modules passes Windows' 260-character limit, and a plain remove fails half way
+    # with "Filename too long" (RV-07 retro).
+    print(f'git -c core.longpaths=true worktree remove --force "{args.source}"')
 
 
 if __name__ == "__main__":

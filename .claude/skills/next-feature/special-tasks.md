@@ -67,6 +67,13 @@ integration branch. It is pushed but never merged, and the PR still says
 holds the screenshots and records the owner's choice on the issue. The tickets
 that build on that choice are blocked by the pick.
 
+A **look** choice (how a screen or the Playback map draws something) is picked inside the
+grill instead, with no prototype or pick tickets: build one self-contained page on real data,
+publish it as a private Artifact with a bar that switches the options, and iterate on the
+owner's picks until the frontier is empty; the spec links it and lists the rejected options
+(RV-06, RV-07). For the Playback map, `seed_browser_check --syracuse` then
+`export_playback_round --round <id> --out <scratchpad file>` gives the data to inline.
+
 A **spike** task (an investigation whose deliverable is an ADR, no merged code)
 is one ticket the orchestrator does itself, on a `spike/<task>` branch cut
 from the integration branch, pushed and never merged; the PR merges the docs.

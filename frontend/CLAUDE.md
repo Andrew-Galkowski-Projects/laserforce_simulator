@@ -28,6 +28,8 @@ auth** below.
   `vitest-base.config.mts` (wired by `runnerConfig` in `angular.json`) raises `testTimeout`
   to 15 s (under the full parallel run a heavy route spec's first render passed 5 s, ANG-06c) and
   pins `TZ` to `America/Los_Angeles`, so a date shown in the wrong zone fails on a UTC CI runner too.
+  It also sets `unstubGlobals` and `restoreMocks`, so each `vi.stubGlobal` / `vi.spyOn` is undone
+  before the next test (`shared/testing/test-isolation.spec.ts` pins it).
   `src/test-setup.ts` (`setupFiles`) resets the TestBed before each test, so a spec whose
   `afterEach(verify)` throws fails alone instead of failing every later test in its file.
 - **ESLint** (`angular-eslint`, `eslint.config.js`) and **Prettier** (`.prettierrc`, print width
@@ -421,6 +423,8 @@ Built in ANG-05 (spec #257). The server contract is ADR-0039 (envelope) and ADR-
     main checkout's `.venv` Python with a relative path carries no worktree path (ANG-06-10).
   - Run `npm --prefix frontend run start:worktree`. Its `worktree` configuration serves on 4201
     and swaps in `environment.worktree.ts`, which points at `:8001`. No committed file is edited.
+    4201 is often held by a server from another checkout: then serve on 4202
+    (`start:worktree -- --port 4202`) and list `http://localhost:4202` in `CORS_ALLOWED_ORIGINS`.
   - In dev mode, reach a service from DevTools through `ng.ɵgetInjectorProviders`.
   - Sign in from the MCP (on `/login`, a `seed_browser_check` Account) with one `evaluate_script`.
     Set each value through the native setter, so Angular's forms see the `input` event:

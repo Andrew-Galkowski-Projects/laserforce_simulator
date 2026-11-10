@@ -12,5 +12,10 @@ export default defineConfig({
     // A zone west of UTC-2 on every machine: CI runs in UTC, where a date shown in the
     // browser's zone instead of the server's UTC still passes (ANG-06-15's Game Log date).
     env: { TZ: 'America/Los_Angeles' },
+    // Every vi.stubGlobal and vi.spyOn is undone before the next test, so a stub cannot leak into
+    // another spec file sharing the worker: RV-07b's matchMedia stub failed 329 later tests, and
+    // only at CI's core count, where the files share workers differently.
+    unstubGlobals: true,
+    restoreMocks: true,
   },
 });

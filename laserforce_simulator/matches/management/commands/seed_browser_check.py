@@ -22,6 +22,8 @@ their Matches, the maps and their media files. For a worktree's disposable datab
 """
 
 import io
+import random
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +86,55 @@ BLUE_BASE_CELL = (9, 26)
 BASE_SIGHT_RADIUS = 3
 #: How many times to simulate the mapped Round: a real one can fire no missile.
 MISSILE_ROUND_ATTEMPTS = 5
+#: Seeds Python's ``random`` before anything is generated, so every seed makes the same
+#: Players and the same Rounds: a spec can name a tick in the review Round and every
+#: worktree finds it there (RV-07 retro: one "Round 5" nuked at tick 79, 140 and 179).
+BROWSER_CHECK_SEED = 20261109
+#: The ``--syracuse`` review Round's own seed: a Round draws its seed apart from the
+#: global stream, so this pins it (with the Players above, the same game every seed).
+REVIEW_ROUND_SEED = 20261110
+
+
+def review_ticks(events: Iterable[dict[str, Any]]) -> dict[str, int | None]:
+    """The first tick of each sight a Playback review looks for, ``None`` when absent.
+
+    ``events`` are GameEvent rows as dicts (``event_type``, ``timestamp``, ``actor_id``,
+    ``target_id``, ``description``, ``metadata``), in any order:
+
+    - ``mutual tag``: two players tagging (or missing) each other within one tick; the
+      later of the pair.
+    - ``capture``: an active base capture (one carrying ``shots_remaining``; a round-end
+      award carries none).
+    - ``nuke``: a nuke activation (a ``special`` whose metadata has ``fires_at``).
+    - ``rapid fire``: a Scout's rapid-fire activation.
+    """
+    ordered = sorted(events, key=lambda e: e["timestamp"])
+    found: dict[str, int | None] = {
+        "mutual tag": None,
+        "capture": None,
+        "nuke": None,
+        "rapid fire": None,
+    }
+    last_shot: dict[tuple[int, int], int] = {}
+    for e in ordered:
+        tick, kind, meta = e["timestamp"], e["event_type"], e["metadata"] or {}
+        if kind in ("tag", "miss") and e["target_id"] is not None:
+            pair = (e["actor_id"], e["target_id"])
+            back = last_shot.get((pair[1], pair[0]))
+            if found["mutual tag"] is None and back is not None and tick - back <= 1:
+                found["mutual tag"] = tick
+            last_shot[pair] = tick
+        elif kind == "base_capture" and "shots_remaining" in meta:
+            found["capture"] = (
+                found["capture"] if found["capture"] is not None else tick
+            )
+        elif kind == "special" and "fires_at" in meta:
+            found["nuke"] = found["nuke"] if found["nuke"] is not None else tick
+        elif kind == "special" and e["description"].endswith("activates rapid fire"):
+            found["rapid fire"] = (
+                found["rapid fire"] if found["rapid fire"] is not None else tick
+            )
+    return found
 
 
 def _zone_grid() -> list[list[int]]:
@@ -287,6 +338,7 @@ class Command(BaseCommand):
         ):
             raise CommandError("Already seeded: run seed_browser_check --clean first.")
 
+        random.seed(BROWSER_CHECK_SEED)
         a = user_model.objects.create_user(email=EMAIL_A, password=PASSWORD)
         user_model.objects.create_user(email=EMAIL_B, password=PASSWORD)
 
@@ -356,12 +408,36 @@ class Command(BaseCommand):
         if syracuse:
             syracuse_map = create_syracuse_map()
             review = BatchSimulator().ensure_fidelity(
-                create_sandbox_round(red, blue, arena_map=syracuse_map, user=a), "full"
+                create_sandbox_round(
+                    red,
+                    blue,
+                    arena_map=syracuse_map,
+                    user=a,
+                    rng_seed=REVIEW_ROUND_SEED,
+                ),
+                "full",
             )
             self.stdout.write(
                 f"Map {syracuse_map.pk} ({SYRACUSE_MAP_NAME}), review Round {review.pk}: "
                 f"/rounds/{review.pk}/playback, /rounds/{review.pk}/events, "
                 f"/rounds/{review.pk}/heatmap"
+            )
+            ticks = review_ticks(
+                review.events.values(
+                    "event_type",
+                    "timestamp",
+                    "actor_id",
+                    "target_id",
+                    "description",
+                    "metadata",
+                )
+            )
+            self.stdout.write(
+                "Review ticks: "
+                + ", ".join(
+                    f"{name} {tick if tick is not None else '-'}"
+                    for name, tick in ticks.items()
+                )
             )
 
     @transaction.atomic
