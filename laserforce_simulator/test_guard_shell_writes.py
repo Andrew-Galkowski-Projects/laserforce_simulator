@@ -77,6 +77,63 @@ class TestRefusesCd(TestCase):
                 self.assertIsNone(guard.refusal(command))
 
 
+class TestRefusesGitDashC(TestCase):
+    """CLAUDE.md, *Tooling*: no `-C` before git (MECH-21 retro: a `git -C
+    <other worktree> status` ran unchecked through the PowerShell tool)."""
+
+    def test_refuses_git_dash_c_in_bash(self) -> None:
+        for command in (
+            "git -C ../other status --short",
+            "git fetch; git -C C:/repo/.claude/worktrees/x log -1",
+            "git -c core.longpaths=true -C ../x worktree list",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.refusal(command), guard.GIT_C_MESSAGE)
+
+    def test_allows_lowercase_config_flag_and_other_tools(self) -> None:
+        for command in (
+            "git -c core.longpaths=true worktree remove -f -f ../x",
+            "git commit -F msg.txt",
+            "make -C frontend",
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(guard.refusal(command))
+
+
+class TestPowerShellTool(TestCase):
+    """The PowerShell tool's cwd persists too, so it gets the `cd` and `git -C`
+    checks; its file writes are not this hook's business."""
+
+    def _decide(self, command: str) -> tuple[int, str]:
+        return guard.decide(
+            {"tool_name": "PowerShell", "tool_input": {"command": command}}
+        )
+
+    def test_refuses_cd_and_set_location(self) -> None:
+        for command in (
+            "cd frontend; npm test",
+            "Set-Location laserforce_simulator",
+            "git fetch; Push-Location ..",
+            "if ($?) { sl frontend }",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._decide(command), (2, guard.CD_MESSAGE))
+
+    def test_refuses_git_dash_c(self) -> None:
+        code, message = self._decide("git -C C:/repo/x status --short")
+        self.assertEqual((code, message), (2, guard.GIT_C_MESSAGE))
+
+    def test_allows_everyday_commands(self) -> None:
+        for command in (
+            "git status --short; git log --oneline -3",
+            "git add a.py; if ($?) { git commit -F msg.txt }",
+            "npm --prefix frontend run lint",
+            "Get-Content x.txt | Select-Object -Last 5 > out.txt",
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(self._decide(command), (0, ""))
+
+
 class TestAllowsEverydayCommands(TestCase):
     def test_allows_reads_and_stream_edits(self) -> None:
         for command in (
