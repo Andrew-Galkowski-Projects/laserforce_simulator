@@ -1897,6 +1897,19 @@ class BatchSimulator:
             if result == "sight":
                 cancel_missile_lock(ctx, lock.attacker, tick, "sight")
             elif result == "launch":
+                # Every lock ends in exactly one row (spec #583): a launch the
+                # gates refuse cancels before any dodge roll. ``record_down``
+                # already ends most of these; this catches the rest.
+                if not (
+                    lock.attacker.is_active_at(tick)
+                    and lock.defender.is_taggable_at(tick)
+                ):
+                    cancel_missile_lock(ctx, lock.attacker, tick, "down")
+                    continue
+                if not may_tag(lock.attacker, lock.defender, tick):
+                    # The Follow rule takes the target off the locker's sights.
+                    cancel_missile_lock(ctx, lock.attacker, tick, "sight")
+                    continue
                 survival = getattr(lock.defender, "survival", 50)
                 dodge_pct = min(20.0, survival / 5.0)
                 if random.random() * 100 < dodge_pct:

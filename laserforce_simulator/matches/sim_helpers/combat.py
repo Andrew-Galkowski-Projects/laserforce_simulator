@@ -739,7 +739,7 @@ def start_missile_lock(
     """Start a Lock on defender (MECH-21, ADR-0050); nothing is spent.
 
     Gates: attacker Active, defender Taggable, a missile left, defender not
-    hiding, and sight at the start. A player holds at most one Lock, keyed
+    hiding, no MECH-10 Chase ban (``may_tag``), and sight at the start. A player holds at most one Lock, keyed
     by ``player_id`` in ``ctx.missile_locks``:
 
     - a lock already on this defender holds: ``None``, no row;
@@ -759,6 +759,7 @@ def start_missile_lock(
         and defender.is_taggable_at(second)
         and attacker.final_missiles > 0
         and not defender.is_hiding
+        and may_tag(attacker, defender, second)  # MECH-10 Follow rule
         and _lock_has_sight(attacker, defender, movement_ctx)
     ):
         return None

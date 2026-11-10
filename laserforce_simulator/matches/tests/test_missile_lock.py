@@ -88,6 +88,13 @@ def _cancels(ctx: RoundContext) -> list[tuple[int, int, int, str]]:
     ]
 
 
+def _chase_ban(banned: bool, module: str = "matches.sim_helpers.combat"):
+    """Patch ``may_tag`` in ``module``: False (a MECH-10 Chase ban on the
+    target) when ``banned``, else True, as these Follow-rule-free fixtures
+    already read it."""
+    return patch(f"{module}.may_tag", return_value=not banned)
+
+
 def _locked() -> tuple[PlayerState, PlayerState, RoundContext]:
     """A red Heavy (1) holding a lock on a blue Scout (2) started at T."""
     locker = _ps(1)
@@ -191,7 +198,14 @@ class TestOneLockRule:
 
     @pytest.mark.parametrize(
         "failed_gate",
-        ["inactive_attacker", "untaggable_defender", "no_missiles", "hiding", "sight"],
+        [
+            "inactive_attacker",
+            "untaggable_defender",
+            "no_missiles",
+            "hiding",
+            "sight",
+            "chased",
+        ],
     )
     def test_failed_gate_on_other_target_holds_the_old_lock(
         self, failed_gate: str
@@ -209,18 +223,26 @@ class TestOneLockRule:
             locker.final_missiles = 0
         elif failed_gate == "hiding":
             other.is_hiding = True
-        else:
+        elif failed_gate == "sight":
             other.current_zone = locker.current_zone + 1
         before = len(ctx.events.entries)
 
-        assert start_missile_lock(locker, other, tick, None, ctx=ctx) is None
+        with _chase_ban(failed_gate == "chased"):
+            assert start_missile_lock(locker, other, tick, None, ctx=ctx) is None
 
         assert ctx.missile_locks == {locker.player_id: old}
         assert len(ctx.events.entries) == before
 
     @pytest.mark.parametrize(
         "failed_gate",
-        ["inactive_attacker", "untaggable_defender", "no_missiles", "hiding", "sight"],
+        [
+            "inactive_attacker",
+            "untaggable_defender",
+            "no_missiles",
+            "hiding",
+            "sight",
+            "chased",
+        ],
     )
     def test_each_gate_alone_refuses_a_first_lock(self, failed_gate: str) -> None:
         locker = _ps(1)
@@ -234,10 +256,11 @@ class TestOneLockRule:
             locker.final_missiles = 0
         elif failed_gate == "hiding":
             target.is_hiding = True
-        else:
+        elif failed_gate == "sight":
             target.current_zone = locker.current_zone + 1
 
-        assert start_missile_lock(locker, target, T, None, ctx=ctx) is None
+        with _chase_ban(failed_gate == "chased"):
+            assert start_missile_lock(locker, target, T, None, ctx=ctx) is None
         assert ctx.missile_locks == {}
         assert ctx.events.entries == []
 
@@ -421,6 +444,45 @@ class TestLaunch:
         ]
         assert _cancels(ctx) == [(T + LOCK_TICKS, 2, 3, "down")]
         assert ctx.missile_locks == {}
+
+    @pytest.mark.parametrize(
+        "failed_gate,reason",
+        [
+            ("inactive_attacker", "down"),
+            ("untaggable_defender", "down"),
+            ("chased", "sight"),
+        ],
+    )
+    def test_a_refused_launch_ends_the_lock_with_a_row(
+        self, failed_gate: str, reason: str
+    ) -> None:
+        """Spec #583 gap (owner, 2026-11-09): a launch-tick gate that fails
+        without a ``record_down`` (state set directly here) still writes
+        exactly one ``lock_cancelled``, before any dodge roll, with nothing
+        spent: ``down`` for the activity gates, ``sight`` for a Chase ban."""
+        locker, target, ctx = _locked()
+        launch = T + LOCK_TICKS
+        if failed_gate == "inactive_attacker":
+            locker.last_downed_time = launch - 10
+        elif failed_gate == "untaggable_defender":
+            target.last_downed_time = launch - 1
+        draws: list[float] = []
+
+        def draw() -> float:
+            draws.append(0.99)
+            return 0.99
+
+        with (
+            _chase_ban(failed_gate == "chased", "matches.simulation.entrypoints"),
+            patch("random.random", side_effect=draw),
+        ):
+            _advance(ctx, range(T + 1, launch + 1))
+
+        assert _cancels(ctx) == [(launch, 1, 2, reason)]
+        assert _rows(ctx, "missiled") == []
+        assert locker.final_missiles == 5
+        assert ctx.missile_locks == {}
+        assert draws == []  # no dodge roll for a refused launch
 
     def test_launch_removes_the_lock_before_the_down_cancels(self) -> None:
         """The missile Downs the target; the launching lock must not also end
