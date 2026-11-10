@@ -260,7 +260,7 @@ export interface PlaybackSnapshot {
   score: number;
   lives: number;
   shots: number;
-  /** Can read −1 while MECH-16 spends a hit missile twice. */
+  /** Drops by one at each `locking`: the sim spends the missile when the lock starts. */
   missiles: number;
   sp: number;
   tags: number;

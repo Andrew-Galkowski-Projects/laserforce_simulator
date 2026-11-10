@@ -277,7 +277,7 @@ after LFstats's Replay tab, within ADR-0043.
     captures (no `shots_remaining`) draw nothing.
   - On first open it also fetches `MapsService.zoneConfig` and draws each base as an R / B / N
     diamond. A failed fetch, or no bases, draws none and shows no notice. Draw order: bases,
-    trails, lines and bursts, markers.
+    trails, lines and bursts, missile Locks (RV-08), markers.
   - RV-07a: each marker carries what the player holds, from the pure `playback-gauges.ts`
     (`playerGauges(player, snapshots, tick)` reads the snapshot at the tick through
     `snapshotAt`: `lives` / `shots` as 0..1 of `max_lives` / `max_shots`, clamped, and
@@ -314,6 +314,26 @@ after LFstats's Replay tab, within ADR-0043.
     closes or the component is destroyed. Under `prefers-reduced-motion: reduce` it never starts
     and the stripes stand at phase 0. `playback-map.spec.ts` drives it with fake rAF
     (`POLL_TIMERS`).
+  - RV-08 (spec #580): each missile **Lock** is animated from the timeline alone, by the pure
+    `playback-missiles.ts` (its spec is the test seam). `lockSpans(events)` (a `computed`, once
+    per timeline) gives one `LockSpan` per `locking` with a target: `start` = its tick, `end` =
+    `start + LOCK_TICKS` (3, the engine's literal), cut short to the first tick strictly inside
+    the window at which the shooter locks again, tags, misses or makes an active base capture (one
+    Lock at a time; an early trigger pull drops it). An uncut span's `ending` is `'result'` when
+    a `missiled` (shooter -> target) or a `missile_dodge` (target -> shooter: the dodger is the
+    actor) lands at its `end`, else `'lost'` (a broken lock writes no event, so it fizzles at
+    T+3). `lockOverlaysAt(spans, events, cursor, positionAt)` gives the building locks
+    (`start <= cursor < end`, `progress` 0..1, both ends at the **cursor's** positions, unlike a
+    Tag line) and the marks, each shown for `LINE_TICKS` with the Tag lines' fade: `hit` on
+    every `missiled` hit, `dodge` on every `missile_dodge` (at the dodger), `lost` at the target
+    at a lost span's `end`. Hits and dodges come from the events, so a cut lock's late hit still
+    bursts. `drawLocks` paints after the Tag lines and before the markers, in `--lf-ev-locking`:
+    a dotted line (a Tag line's width) firming with `progress`, a reticle closing from `1.6` to
+    `LOCKED_RING` (0.8) marker sizes, just outside the gauge arcs that are drawn over it; a hit
+    is a 12-spike burst in `--lf-ev-missile`, a dodge the locked reticle split into four
+    drifting arcs, a lost lock a dashed ring shrinking from 1.0 to 0.75 marker sizes. No frame loop of its own: the map redraws on each
+    cursor step. The RV-07 pips still drop at `locking` (the sim spends the missile at lock
+    start); MECH-21 moves that to the launch.
 - Shared helpers are `matches/shared/role-label.ts` (`roleLabel`) and `side-tag.ts` (`sideTag`).
 
 Tests:

@@ -34,6 +34,7 @@ import {
 } from './playback-gauges';
 import { resolveColor } from '../../../shared/read-token';
 import { MARKER_DIM, markerLook, markerSize } from './playback-markers';
+import { LockMark, LockOverlays, lockOverlaysAt, lockSpans } from './playback-missiles';
 import {
   BaseMarker,
   CaptureBurst,
@@ -79,6 +80,8 @@ interface Palette {
   border: string;
   font: string;
   missile: string;
+  /** A building Lock, and a dodged or lost one (RV-08). */
+  locking: string;
   resupply: string;
   baseNeutral: string;
   baseOutline: string;
@@ -119,6 +122,7 @@ export function readPalette(el: Element): Palette {
     border: token('--lf-border'),
     font: token('--lf-font-body'),
     missile: token('--lf-ev-missile'),
+    locking: token('--lf-ev-locking'),
     resupply: token('--lf-ev-resupply'),
     baseNeutral: token('--lf-map-base-neutral'),
     baseOutline: token('--lf-map-base-outline'),
@@ -146,10 +150,14 @@ interface Scene {
   /** The real-time clock in ms: the rolling stripes' phase. */
   now: number;
   overlays: Overlays;
+  locks: LockOverlays;
   bases: readonly BaseMarker[];
 }
 
-/** Draws bases, trails, Tag lines and bursts, then markers; ported from the Django overlay. */
+/**
+ * Draws bases, trails, Tag lines and bursts, missile Locks, then markers; ported from the
+ * Django overlay.
+ */
 function drawMap(ctx: CanvasRenderingContext2D, scene: Scene, colours: Palette): void {
   const { width: w, height: h } = ctx.canvas;
   ctx.clearRect(0, 0, w, h);
@@ -161,6 +169,7 @@ function drawMap(ctx: CanvasRenderingContext2D, scene: Scene, colours: Palette):
   drawBases(ctx, scene.bases, scene.zone, colours);
   drawTrails(ctx, scene.routes, scene.zone, scene.t, colours);
   drawOverlays(ctx, scene.overlays, scene.zone, colours);
+  drawLocks(ctx, scene.locks, scene.zone, colours);
   drawMarkers(ctx, scene.routes, scene.zone, scene.t, scene.now, colours);
 }
 
@@ -345,6 +354,119 @@ function drawBurst(
     ctx.lineTo(burst.at[0] + cx * r1, burst.at[1] + cy * r1);
   }
   ctx.stroke();
+}
+
+/** A locked reticle's radius, in marker sizes: clear of the gauge arcs. */
+const LOCKED_RING = 0.8;
+
+/**
+ * The missile Locks (RV-08): each building lock as a dotted line, firming with its progress,
+ * and a reticle closing on the target; then each ending mark, told apart by shape (a spiked
+ * burst for a hit, the reticle split apart for a dodge, a dashed shrinking ring for a lost lock).
+ */
+function drawLocks(
+  ctx: CanvasRenderingContext2D,
+  locks: LockOverlays,
+  zone: number,
+  colours: Palette,
+): void {
+  const icon = markerSize(zone);
+  const trim = icon * 0.4;
+  // A Tag line's width, so the dots read as clearly as the lines.
+  const width = Math.max(1.5, 0.14 * zone);
+  ctx.lineCap = 'round';
+  ctx.lineWidth = width;
+  ctx.strokeStyle = colours.locking;
+  for (const lock of locks.locks) {
+    ctx.globalAlpha = 0.35 + 0.65 * lock.progress;
+    const dx = lock.to[0] - lock.from[0];
+    const dy = lock.to[1] - lock.from[1];
+    const length = Math.hypot(dx, dy);
+    if (length > 2 * trim) {
+      const [ux, uy] = [dx / length, dy / length];
+      // Round caps on near-zero dashes: a dotted line.
+      ctx.setLineDash([0.01, width * 2.5]);
+      ctx.beginPath();
+      ctx.moveTo(lock.from[0] + ux * trim, lock.from[1] + uy * trim);
+      ctx.lineTo(lock.to[0] - ux * trim, lock.to[1] - uy * trim);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    // Closes to LOCKED_RING, just outside the gauge arcs (drawn over it, at ~0.56 icon).
+    drawReticle(ctx, lock.to, icon * (1.6 - (1.6 - LOCKED_RING) * lock.progress));
+  }
+  for (const mark of locks.marks) {
+    drawLockMark(ctx, mark, icon, colours);
+  }
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+}
+
+/** A ring of radius `r` round `at`, with four crosshair notches across it. */
+function drawReticle(
+  ctx: CanvasRenderingContext2D,
+  at: readonly [number, number],
+  r: number,
+): void {
+  ctx.beginPath();
+  ctx.arc(at[0], at[1], r, 0, 2 * Math.PI);
+  for (let k = 0; k < 4; k++) {
+    const angle = (k * Math.PI) / 2;
+    const [cx, cy] = [Math.cos(angle), Math.sin(angle)];
+    ctx.moveTo(at[0] + cx * r * 0.7, at[1] + cy * r * 0.7);
+    ctx.lineTo(at[0] + cx * r * 1.3, at[1] + cy * r * 1.3);
+  }
+  ctx.stroke();
+}
+
+/** One lock's ending, fading with its `alpha`; `icon` is the marker size. */
+function drawLockMark(
+  ctx: CanvasRenderingContext2D,
+  mark: LockMark,
+  icon: number,
+  colours: Palette,
+): void {
+  const [x, y] = mark.at;
+  const fade = 1 - mark.alpha;
+  ctx.globalAlpha = mark.alpha;
+  ctx.beginPath();
+  switch (mark.kind) {
+    case 'hit': {
+      // Twelve spikes flying out from the icon's edge, in the missile colour.
+      const r0 = 0.55 * icon;
+      const r1 = icon * (1 + 0.8 * fade);
+      ctx.strokeStyle = colours.missile;
+      for (let k = 0; k < 12; k++) {
+        const angle = (k * Math.PI) / 6;
+        const [cx, cy] = [Math.cos(angle), Math.sin(angle)];
+        ctx.moveTo(x + cx * r0, y + cy * r0);
+        ctx.lineTo(x + cx * r1, y + cy * r1);
+      }
+      break;
+    }
+    case 'dodge': {
+      // The locked reticle's ring in four arcs, drifting apart.
+      const r = LOCKED_RING * icon;
+      const drift = 0.6 * icon * fade;
+      ctx.strokeStyle = colours.locking;
+      for (let k = 0; k < 4; k++) {
+        const mid = (k * Math.PI) / 2 + Math.PI / 4;
+        const [cx, cy] = [x + Math.cos(mid) * drift, y + Math.sin(mid) * drift];
+        ctx.moveTo(cx + Math.cos(mid - 0.55) * r, cy + Math.sin(mid - 0.55) * r);
+        ctx.arc(cx, cy, r, mid - 0.55, mid + 0.55);
+      }
+      break;
+    }
+    case 'lost': {
+      // A dashed ring shrinking into the target as it fades.
+      ctx.strokeStyle = colours.locking;
+      ctx.setLineDash([ctx.lineWidth * 1.5, ctx.lineWidth * 1.5]);
+      ctx.arc(x, y, icon * (0.75 + 0.25 * mark.alpha), 0, 2 * Math.PI);
+      break;
+    }
+  }
+  ctx.stroke();
+  ctx.setLineDash([]);
 }
 
 /**
@@ -611,6 +733,9 @@ export class PlaybackMap {
 
   private readonly baseMarks = computed(() => baseMarkers(this.bases()));
 
+  /** Every missile Lock in the round (RV-08), found once per timeline. */
+  private readonly spans = computed(() => lockSpans(this.events()));
+
   /** The OS asks for reduced motion: no frame loop, and the stripes stand still. */
   private readonly reducedMotion =
     window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches ?? false;
@@ -644,6 +769,7 @@ export class PlaybackMap {
       const zone = this.map()?.zone_size ?? 0;
       const routes = this.routes();
       const events = this.events();
+      const spans = this.spans();
       const bases = this.bases();
       const marks = this.baseMarks();
       // Redraw when a role icon's PNG arrives, so a paused map swaps its dots for icons.
@@ -667,7 +793,9 @@ export class PlaybackMap {
         return kf ? cellToPixel(...positionAt(kf, tick / TICKS_PER_SECOND), zone) : null;
       };
       const overlays = overlaysAt(events, cursor, at, bases);
-      const scene = { routes, zone, t: cursor / TICKS_PER_SECOND, now, overlays, bases: marks };
+      const locks = lockOverlaysAt(spans, events, cursor, at);
+      const t = cursor / TICKS_PER_SECOND;
+      const scene = { routes, zone, t, now, overlays, locks, bases: marks };
       drawMap(ctx, scene, readPalette(canvas));
     });
     this.destroyRef.onDestroy(() => {

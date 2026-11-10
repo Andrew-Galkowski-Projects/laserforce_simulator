@@ -690,12 +690,12 @@ Typed `@dataclass` classes for the four pending-event queues used by `BatchSimul
 
 | Class | Fields | Replaces |
 |-------|--------|---------|
-| `PendingMissile` | `complete_time`, `attacker`, `defender` | `(float, player, player)` |
+| `PendingMissileLock` | `attacker`, `defender`, `ticks_remaining` (3), `los_broken` | `(float, player, player)` |
 | `PendingNuke` | `complete_time`, `player`, `cancel_logged` | `(float, player)` |
 | `PendingFollowup` | `fire_at`, `attacker`, `defender`, `chain_depth` | `(float, player, player, int)` |
 | `PendingReaction` | `fire_at`, `attacker`, `defender` | `(float, player, player)` |
 
-`combat.py::start_missile_lock` returns a `PendingMissile` (was a raw 3-tuple).
+`combat.py::start_missile_lock` returns a `PendingMissileLock` (was a raw 3-tuple); `tick_missile_lock` counts it down once a tick, so a lock started at tick T resolves at T+3.
 
 **CAL-02a bug A (2026-11-08):** `RoundContext.pending_followups` / `.pending_reactions` are the very lists `BatchSimulator._simulate_round` drains, and `shot.resolve_shot` appends to them, so the drain filters them in place (`queue[:] = [...]`) instead of rebinding the local name, which left every queued `PendingReaction` / `PendingFollowup` in an orphan list. `pending_nukes` is still rebound each tick, as the LFS-01a drain note relies on.
 

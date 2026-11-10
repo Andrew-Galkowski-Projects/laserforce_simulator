@@ -351,4 +351,9 @@ describe('readPalette', () => {
     });
     expect(palette.stripe).toBe('#ffffff');
   });
+
+  it('draws a missile Lock in --lf-ev-locking, apart from the missile colour (RV-08)', () => {
+    const palette = paletteWith({ '--lf-ev-locking': '#b4235a', '--lf-ev-missile': '#a8480a' });
+    expect(palette.locking).toBe('#b4235a');
+  });
 });

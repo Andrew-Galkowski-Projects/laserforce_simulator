@@ -193,7 +193,10 @@ src/
                           playerGauges gives a player's lives / shots levels and missiles
                           at a tick, gaugeColour the arcs' colour; RV-07b: SpecialBar, MAX_SP,
                           fuseProgress, lapColour, anySpecialRunning for the special bar and
-                          its rAF loop); from `rounds/:id/playback/` + the
+                          its rAF loop), playback-missiles.ts (RV-08, pure: lockSpans
+                          finds each missile Lock and how it ended, lockOverlaysAt the
+                          building locks and hit / dodge / lost marks at a cursor);
+                          from `rounds/:id/playback/` + the
                           timeline),
                           /rounds/:id/charts (round-charts/: ANG-06g, event-charts.ts
                           (pure data + OVERLAY_KINDS), chart-colors.ts, the RoundCharts page;
