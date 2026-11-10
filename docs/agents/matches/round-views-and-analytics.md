@@ -264,7 +264,8 @@ after LFstats's Replay tab, within ADR-0043.
   - The Playback scoreboard's Pos cell and the feed's actor / target names show
     `<app-role-icon [role] [side]>` (`role-icon-img.ts`), whose `alt` / `title` is the role's
     name; it tints from `--lf-side-<side>` and re-tints when `side` changes (the feed reuses rows,
-    and tracks them by event).
+    and tracks them by event). A feed row's actor and target wrap onto two lines when they don't
+    fit (RV-07 review: at 768px a long target name was clipped), each name kept on one line.
   - RV-06c: it takes the timeline's `events` too, and draws a **Tag line** for each tag, miss,
     missile, resupply and active base capture, from the pure `playback-overlays.ts`
     (`overlaysAt`, `baseMarkers`; its spec is the test seam). A line joins where both players
@@ -281,7 +282,9 @@ after LFstats's Replay tab, within ADR-0043.
     (`playerGauges(player, snapshots, tick)` reads the snapshot at the tick through
     `snapshotAt`: `lives` / `shots` as 0..1 of `max_lives` / `max_shots`, clamped, and
     `missiles` or `null` when `max_missiles` is 0; `gaugeColour` blends `--lf-gauge-empty` ->
-    `--lf-gauge-mid` below 0.5 and mid -> `--lf-gauge-full` from 0.5; its spec is the test
+    `--lf-gauge-mid` below 0.5 and mid -> `--lf-gauge-full` from 0.5, each token read through
+    `resolveColor` and `parseRgb` (any `#rgb` / `#rrggbb` / `rgb()` value; an unreadable one
+    falls back to the token's default, never black); its spec is the test
     seam). `drawGauges` paints, after the icon: a lives arc on the left (`0.55 pi` to
     `1.45 pi`) and a shots arc on the right (`0.45 pi` back to `-0.45 pi`), each at radius
     `1.12 h` (`h` = half the marker size), width `max(3, 0.1 size)`, filling from the bottom
@@ -302,7 +305,7 @@ after LFstats's Replay tab, within ADR-0043.
     track before the first lap) with the current lap's fill over it, and one tick per completed
     lap above the bar in that lap's colour. `lapColour(lap, laps)` takes the ten
     `--lf-special-lap-*` tokens (green, orange, red, then darker reds; the same in both themes)
-    and clamps to the last. **Rapid fire** rolls stripes (`--lf-map-base-outline`, near white)
+    and clamps to the last. **Rapid fire** rolls stripes (`--lf-special-stripe`, white in both themes)
     across the whole bar over the Side colour; a **nuke** turns the bar into its fuse, the first
     `fuse` of the track rolling the same stripes, with no label. The bar dims with the icon.
   - **Frame loop:** while the map is open and `anySpecialRunning(players, snapshots, cursor)`,

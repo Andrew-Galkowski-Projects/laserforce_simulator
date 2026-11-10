@@ -143,94 +143,20 @@ BUG-SL-01 (Sight-line compute fails after a saved zone config) is **[DONE]**; se
 ## Playback debugging aids, before more calibration (owner, 2026-11-09)
 
 The owner moved RV-06 and RV-07 ahead of CAL-03: reading tags, bases and each player's resources
-off the Playback map is the debugging aid the next calibration passes need. RV-06 shipped
-(2026-11-09); RV-07 is next, then CAL-03.
+off the Playback map is the debugging aid the next calibration passes need. RV-06 and RV-07
+shipped (2026-11-09); RV-08 (added by RV-07's grill) is next, then CAL-03.
 
 RV-06 (Playback map: position icons, tag lines and bases) is **[DONE]**; see `PLAN-completed.md`.
 
-### RV-07 · Playback map: shots, lives and special beside the moving icon (owner, 2026-11-08)
-
-Spec: #575
-
-The owner wants to read a player's state off the map as it moves: how full its shots and lives
-are (a scale from green at full to dark red at empty) and whether it holds enough SP for its
-special (the Commander's nuke at 20 SP, the Scout's rapid fire, the Ammo's and Medic's team
-resupply), beside the position icon of RV-06. The Playback snapshots already carry `lives`,
-`shots`, `sp`, `missiles`, `rapid_fire` and `nuking` per player per tick, and the role maxima and
-special costs are in `role_constants`, so this is a rendering task.
-
-**The task produces three to five display options** as a prototype (`mattpocock-skills:prototype`),
-each drawn on the same round for the owner to pick from, before anything ships: for example
-(a) two thin arcs around the ring, lives on the left and shots on the right, coloured by the
-green-to-dark-red scale, with a small star when the special is ready; (b) a two-segment bar under
-the icon; (c) the ring itself coloured by lives and a dot by shots, special as a pulsing outline;
-(d) a compact `L S` pair of tiny vertical gauges beside the icon; (e) the icon's fill by shots and
-its border by lives. The owner's pick is the spec; the rest are recorded with screenshots in the
-spec issue. RV-06 has shipped the icon the indicators sit beside: the marker is the Side-tinted
-role icon with **no ring**, at 1.5x the old ring's size (owner's prototype pick), so an option
-drawn on the ring would bring a ring back.
-
-**Grill facts (2026-11-09).** Role limits (`role_constants.py`): max lives Commander 30, Heavy 20,
-Scout 30, Medic 20, Ammo 20; max shots 60 / 40 / 60 / 30 / 15; special cost Commander 20 SP (nuke),
-Scout 10 (rapid fire), Medic 10, Ammo 15, Heavy none. Starting values sit below the maximum
-(a Commander starts at 15 lives, 30 shots). Missiles start at 5 for a Commander or Heavy and 0
-otherwise (`entrypoints.py` role starting resources, persisted as `starting_missiles`), and nothing
-gives one back. The frontend knows none of these limits today.
-
-**Grill decisions (owner, 2026-11-09):**
-
-1. A gauge measures against the role's **maximum** (a Commander at 15 of 30 lives reads half).
-2. Each player in the playback payload gains `max_lives`, `max_shots`, `special_cost` (null for a
-   Heavy) from `role_constants`, and `max_missiles` (its `starting_missiles`): one source of truth.
-   `test_api_round_playback.py` and `test_playback_map.py` pin key sets and change with it.
-3. Special: "ready" is `sp >= special_cost` (an outline star); an active special (`rapid_fire`,
-   `nuking`) is a filled star; a Heavy shows none.
-4. Colour: a continuous blend from green (full) through amber to dark red (empty), from new tokens
-   with the same value in both themes (the map image is white in both). Each option also shows the
-   level by length, angle or count, so colour is never the only cue.
-5. The prototype is a published page on the seeded Syracuse round with today's look (no ring, 1.5x
-   icon, Tag lines) and five options: (a) arcs around the icon, (b) a segment bar under it,
-   (c) a thin ring coloured by lives plus a shots dot (brings a ring back), (d) tiny vertical gauges
-   beside it, (e) pip rows. All carry the star.
-6. A deactivated player's gauges dim with its icon (35%, grey), not hide.
-7. **A missile gauge** for the players who carry missiles (Commander, Heavy), beside lives and
-   shots. Out: gauges anywhere but the map, a legend, any engine change. A missile animation is
-   its own task, RV-08.
-8. The pick happens in the grill (as RV-06), not as prototype and pick tickets; then likely one
-   implementation ticket.
-9. **Gauge pick: (a) arcs**, lives on the left of the icon and shots on the right, with missile
-   pips under it (prototype https://claude.ai/artifact/YYqAdyqdgpaJVwkTE37xGt). The star is
-   replaced by a **special bar** under the player: SP out of the special's cost, filling green,
-   then wrapping to orange over the green, then red, then ever darker reds toward 99 SP. A running
-   special (a nuke fuse, a Scout's rapid fire) flashes, rolls white over the Side colour like the
-   arena scoreboard, or shows the fuse filling; version 2 of the prototype carries three bar
-   styles and three running styles for the owner to pick. Flashing and rolling animate in real
-   time, so the map needs a frame loop while one runs (today it redraws only on a cursor change).
-   The sim's SP rarely passes one special (no player banks two in the seeded round), so the wrap
-   colours show mostly in a preview.
-10. **Special bar pick: "3 Wrap + lap ticks"** (one small tick above the bar per completed lap,
-    in that lap's colour). **Running pick: "C"**: a Scout's rapid fire rolls white stripes over
-    the Side colour across the whole bar; a Commander's nuke turns the bar into its fuse, which
-    fills from the tick it was lit to the tick `nuking` clears (the next snapshot), and the filled
-    part rolls white over the Side colour too. No "NUKE" label. Rejected: the plain wrap, the
-    "x2" count chip, the on / off flash, and a plain red fuse.
-11. Colours: **a token per lap**, `--lf-special-lap-1` .. `-10` (green, orange, red, then seven
-    ever darker reds; a Scout at 99 SP is on its tenth lap), plus `--lf-gauge-full` / `-mid` /
-    `-empty` / `-track`; each the same value in light and dark (the map image is white in both).
-12. Animation: a frame loop runs only while the map is open and some player's special is running
-    at the cursor; otherwise the map redraws on the cursor as today. Under `prefers-reduced-motion`
-    the stripes are drawn still.
-13. Two tickets in sequence (both change the marker drawing): RV-07a the four role-limit fields in
-    the playback payload, the lives / shots arcs and the missile pips; RV-07b the special bar with
-    lap ticks, the rapid-fire roll, the rolling nuke fuse and the frame loop.
+RV-07 (Playback map: shots, lives and special beside the moving icon) is **[DONE]**; see `PLAN-completed.md`.
 
 ### RV-08 · Playback map: animate a missile (owner, 2026-11-09)
 
 From RV-07's grill: the Playback map draws a missile as a Tag line in the missile colour (RV-06),
 but a missile in the arena is a lock held over several ticks before it fires, and the replay shows
 none of that. Animate it: the lock building on the target (the `locking` event and the pending
-missile's ticks), the launch, and the hit or the dodge (`missiled` `result`, `missile_dodge`). Follows
-RV-07 (the missile gauge then counts down as the missile fires). **Open for the grill:** what the
+missile's ticks), the launch, and the hit or the dodge (`missiled` `result`, `missile_dodge`). RV-07
+has shipped the missile pips under each Commander and Heavy, which count down as missiles fire. **Open for the grill:** what the
 event log records of a lock (its start tick, target and length), what a cancelled lock looks like,
 how long each stage shows at 1x and 8x, and whether the animation reads from events alone or needs
 a new field.
@@ -443,7 +369,6 @@ and MECH-19, then the SM5 talk follow-ups** (from LFS-02's proposal), in order (
 shipped 2026-11-08):
 
 ```
-RV-07           Playback map: shots, lives and special beside the moving icon (3-5 options to pick from)
 MOVE-10         A Downed player in view keeps moving
 MECH-18         Re-engage a known enemy the tick it comes back into sight
 MECH-09         Reset re-tag action/goal (refreshed with the 2026-11-08 review)
