@@ -144,13 +144,16 @@ BUG-SL-01 (Sight-line compute fails after a saved zone config) is **[DONE]**; se
 
 The owner moved RV-06 and RV-07 ahead of CAL-03: reading tags, bases and each player's resources
 off the Playback map is the debugging aid the next calibration passes need. RV-06 and RV-07
-shipped (2026-11-09); RV-08 (added by RV-07's grill) is next, then CAL-03.
+shipped (2026-11-09); RV-08 (added by RV-07's grill) is next, then MECH-21 (added by RV-08's grill:
+the engine's missile follows the real Lock), then CAL-03.
 
 RV-06 (Playback map: position icons, tag lines and bases) is **[DONE]**; see `PLAN-completed.md`.
 
 RV-07 (Playback map: shots, lives and special beside the moving icon) is **[DONE]**; see `PLAN-completed.md`.
 
 ### RV-08 · Playback map: animate a missile (owner, 2026-11-09)
+
+Spec: #580
 
 From RV-07's grill: the Playback map draws a missile as a Tag line in the missile colour (RV-06),
 but a missile in the arena is a lock held over several ticks before it fires, and the replay shows
@@ -160,6 +163,63 @@ has shipped the missile pips under each Commander and Heavy, which count down as
 event log records of a lock (its start tick, target and length), what a cancelled lock looks like,
 how long each stage shows at 1x and 8x, and whether the animation reads from events alone or needs
 a new field.
+
+**Grill (2026-11-09).** Settled facts: a lock writes `locking` at tick T and spends the missile
+then; it resolves at T+3 (a literal 3 in `start_missile_lock`). A hit writes `missiled`
+`result="hit"`; a dodge writes `missile_dodge` then `missiled` `result="miss"`, both at T+3. A lock
+that loses sight (at T+1..T+3), or whose players are out, or whose shooter is Downed at T+3, writes
+**no event**. No event carries a lock id or coordinates; a `missiled` pairs with its `locking` by
+shooter + target at `locking.tick + 3`. A 12-seed Syracuse probe: 213 locks, 14 (6.6%) started while
+the same shooter already held one (the engine has no one-lock guard).
+
+1. The animation reads the existing `/timeline/` events alone: no engine, API or model change.
+2. A lock with no `missiled` by T+3 draws its full 3 ticks, then a short "lost lock" fizzle at T+3
+   (the break tick is not in the log). A follow-up task adds an engine cancel event.
+3. A lock draws from T to T+3 as a dotted line in `--lf-ev-locking` from shooter to target, firming
+   as it builds, plus a reticle closing on the target from wide to icon size. Both ends track the
+   players' current positions (unlike Tag lines, frozen at the event tick).
+4. No projectile flight (the engine has none). At T+3 the lock gives way to the result: a hit keeps
+   RV-06's solid missile Tag line plus a burst on the target; a dodge keeps the dashed missile-miss
+   line plus the reticle breaking; a cancel the fizzle. Each fades over `LINE_TICKS` (2).
+5. Every stage is timed in ticks (lock 3, result 2), no wall-clock minimum at 8x; pause / scrub show
+   the cursor's exact state; reduced motion draws the same frames with no extra pulsing.
+6. **A player holds one lock at a time (owner): a new `locking` by the same shooter removes the old
+   lock** from the map.
+7. Scope: the Playback map canvas only. Feed, Event log, missile log, API and RV-07 pips unchanged.
+   The docs sweep fixes the glossary's Locking-event metadata, `sim-helpers.md`'s
+   `PendingMissile(complete_time…)` and the stale "can read -1" comment on `PlaybackSnapshot.missiles`.
+8. RV-08 stays frontend-only; the engine's one-lock rule and cancel event are **MECH-21** (below).
+9. A lock the map replaces (a new `locking` by its shooter) ends at the replacing tick with the same
+   fizzle as a cancel.
+10. Results always draw: a `missiled` for a lock the map already dropped still draws its RV-06 line
+    and burst. Only the lock stage is dropped.
+11. A Tag or miss by the locker during the lock ends that lock on the map with the fizzle (pulling
+    the trigger early abandons a real Lock).
+12. RV-08 draws today's engine: pips still drop at `locking` (the sim spends the missile at lock
+    start) even when the lock later fizzles. MECH-21 fixes the engine and the pips.
+
+**The real Lock (owner, 2026-11-09; GLOSSARY *Lock*).** Holding the sights on a target without
+firing; three tones; only then does a trigger pull launch the missile, and only then is it spent.
+A trigger pull before the third tone fires a normal shot (a real tag after a lock is the target
+dodging out of the sights, or the locker dropping the lock on purpose to tag before the target gets
+behind a wall). Aiming at someone else for more than 0.5 s, or a player walking into the line,
+breaks the lock. Real TDF (165 Internationals games): 2617 `0300` locks; 1377 (53%) became a `0306`
+missile, always on the locked target, 613-1319 ms later (median 804 ms, which includes the trigger
+pull); 1063 (41%) were followed by the locker's own shot (773 Downs, 141 shield hits, 132 misses, 17
+base zaps); 142 (5%) by a new lock (78 another target, 64 the same).
+
+### MECH-21 · One Lock at a time, the missile spent at launch (owner, 2026-11-09)
+
+From RV-08's grill (decisions above; GLOSSARY *Lock*). Make the engine's missile follow the real
+Lock: the missile is spent when it launches, not at lock start; a dodge breaks the lock with no
+missile spent and no `missiled` row (`missile_dodge` becomes a lock-break reason); a shot by the
+locker abandons the lock; a new target replaces the lock for free (one lock per player; 6.6% of the
+sim's locks overlap today, 12-seed Syracuse probe); a cancel event records the break tick and its
+reason (sight, dodge, shot, retarget, down, out). Playback's missile count then drops at the
+missile, not at `locking`. **Open for the grill:** the lock length (the sim's 3 ticks = 1.5 s, while
+the real `0300` to `0306` gap, trigger pull included, is as short as 0.6 s), the 0.5 s look-away
+grace against the sim's `special_usage` save, when an AI locker chooses to drop a lock for a tag,
+and the calibration shift (seeded games change).
 
 ## Phase 3.5 — LFstats realism (added 2026-10-21)
 
