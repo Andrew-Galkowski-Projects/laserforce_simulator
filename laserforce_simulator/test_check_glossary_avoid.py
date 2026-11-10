@@ -101,6 +101,18 @@ class FindHitsTests(TestCase):
         )
         self.assertEqual(check_glossary_avoid.find_hits(["standalone round"], diff), [])
 
+    def test_skips_a_code_span_but_not_the_prose_around_it(self) -> None:
+        """RV-08 retro: an identifier in backticks names code, not the avoided wording."""
+        diff = (
+            "diff --git a/docs/x.md b/docs/x.md\n"
+            "+++ b/docs/x.md\n"
+            "@@ -0,0 +1,2 @@\n"
+            "+each `standalone_round` row is read once\n"
+            "+a `Round` played as a standalone round\n"
+        )
+        hits = check_glossary_avoid.find_hits(["standalone round"], diff)
+        self.assertEqual([h.line for h in hits], [2])
+
     def test_needs_a_word_start(self) -> None:
         diff = (
             "diff --git a/x.py b/x.py\n"

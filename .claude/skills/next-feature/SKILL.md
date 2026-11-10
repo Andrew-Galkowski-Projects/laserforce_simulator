@@ -173,6 +173,11 @@ section that carries it. A decision with no section is a missing Implementation
 Decision: DESK-03's spec named the no-WebView2 fallback but not decision 2's
 "pywebview raises" case, and the ticket shipped an exit-1 box there.
 
+Every guard the spec defines (a filter or pairing rule that ANDs conditions) gets one
+Testing Decision fixture per condition, failing that condition alone (`CODING_STANDARDS.md`,
+Tests). RV-08's result pairing ANDed four conditions and the spec listed one; review found
+the other three untested.
+
 A criterion measured over seeded rounds states its number, its seeds, its per-seed
 spread and its standard error, taken from a baseline `round_probe` before the spec is published
 (`matches/management/commands/CLAUDE.md`). MECH-07's decision 13 said "closer", and all
@@ -338,7 +343,7 @@ not a judgement call. (ANG-05: the one real bug was such a reported gap.)
    Repeat until 0 failed. Report the exact counts.
 2. **Mutation-test** the test that matters most: put the bug back on purpose
    and check the test catches it. Mutate the feature code (a route, a
-   formula, a condition), never an auth or permission guard: the auto-mode
+   formula, a condition; each condition of a spec guard dropped on its own), never an auth or permission guard: the auto-mode
    classifier refuses a run against a removed guard. Run each mutation with
    `python scripts/mutate.py <file> <mutations.json> -- <pytest args>` (JSON
    `[name, old, new]` triples in the scratchpad): it restores the file and

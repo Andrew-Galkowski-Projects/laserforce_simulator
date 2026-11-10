@@ -10,6 +10,17 @@ export function markerSize(zone: number): number {
   return 1.5 * Math.max(18, zone * 1.3);
 }
 
+/** The lives / shots arcs' radius (RV-07), in marker sizes (`markerSize`). */
+export const GAUGE_RING = 0.56;
+/** The arcs' stroke width, in marker sizes. */
+export const GAUGE_WIDTH = 0.1;
+/**
+ * How far a marker reaches round its centre, in marker sizes: the arcs' outer edge. The
+ * markers paint last, so an overlay drawn round a player (a reticle, a ring) sits outside this
+ * or is hidden under the arcs (RV-08 retro).
+ */
+export const MARKER_FOOTPRINT = GAUGE_RING + GAUGE_WIDTH / 2;
+
 /** The marker's tint and opacity: the Side colour while active, dimmed grey when deactivated. */
 export function markerLook(
   side: Side,

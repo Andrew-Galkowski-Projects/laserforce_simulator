@@ -22,7 +22,13 @@ sandbox League whose draft Season splits four Teams into two Conferences
 Tournament features: one sandbox Tournament per format and stage; `--syracuse`
 when the owner reviews real pathing: a full-fidelity Single Round on the committed
 Syracuse map, with its Playback, event log and heatmap paths in the summary) and
-remove it with `--clean` when done.
+remove it with `--clean` when done. Pass every flag the check needs on the first seed: a
+second seed is refused until `--clean`, which renumbers every Round and signs the browser
+out (RV-08 added `--syracuse` late for a dodge).
+
+Seek a Playback check to the summary's `Review ticks:` (`seed_browser_check.py`
+`review_ticks`), not to ticks read off the Event log: the feed hides misses, and RV-08's
+first "lost lock" tick was a lock its shooter had already cut.
 
 ## Assert and screenshot
 
