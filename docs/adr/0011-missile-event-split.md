@@ -1,7 +1,8 @@
 # Missile event split: locking + missiled
 
 **Status:** Accepted (RES-03, 2026-05-20). The fire-tick meaning of `locking`, the
-`result="miss"` row and the Down-before-resolution rule are superseded by
+`result="miss"` row, the Down-before-resolution rule and decision 4's efficiency summary
+(now Locks / Missiles / Conversion) are superseded by
 [ADR-0050](0050-a-lock-is-not-a-launch.md) (MECH-21).
 
 ## Context

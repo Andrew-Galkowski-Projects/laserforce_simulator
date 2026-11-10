@@ -95,14 +95,7 @@ export function lockSpans(events: readonly TimelineEvent[]): LockSpan[] {
     const lockTicks = Number(event.metadata['lock_ticks']);
     // Later in log order, not by tick: a retarget logs the old lock's cancel just before the
     // new `locking`, on the same tick.
-    const ended = events
-      .slice(index + 1)
-      .find(
-        (e) =>
-          e.actor_id === shooterId &&
-          ((e.event_type === 'missiled' && e.target_id === targetId) ||
-            e.event_type === 'lock_cancelled'),
-      );
+    const ended = endingRow(events, index + 1, shooterId, targetId);
     const span = { shooterId, targetId, side: event.actor_side, start, lockTicks };
     spans.push(
       ended
@@ -111,6 +104,26 @@ export function lockSpans(events: readonly TimelineEvent[]): LockSpan[] {
     );
   });
   return spans;
+}
+
+/** The first row from `from` on that ends the shooter's lock on `targetId`, without copying. */
+function endingRow(
+  events: readonly TimelineEvent[],
+  from: number,
+  shooterId: number,
+  targetId: number,
+): TimelineEvent | undefined {
+  for (let i = from; i < events.length; i++) {
+    const e = events[i];
+    if (
+      e.actor_id === shooterId &&
+      ((e.event_type === 'missiled' && e.target_id === targetId) ||
+        e.event_type === 'lock_cancelled')
+    ) {
+      return e;
+    }
+  }
+  return undefined;
 }
 
 /** The ending a lock's `missiled` or `lock_cancelled` row gives it. */

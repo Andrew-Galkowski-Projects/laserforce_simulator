@@ -32,7 +32,7 @@ from .mechanics import (
     choose_resupply_target,
     choose_zone_change,
 )
-from .pending_events import PendingMissileLock
+from .pending_events import LockCancelReason, PendingMissileLock
 from .weights import (
     BASELINE_ACTION_WEIGHTS,
     _get_medic_weights,
@@ -790,7 +790,7 @@ def _lock_has_sight(attacker, defender, movement_ctx: "MapContext | None") -> bo
 
 
 def cancel_missile_lock(
-    ctx: RoundContext, locker, tick: int, reason: str
+    ctx: RoundContext, locker, tick: int, reason: LockCancelReason
 ) -> "PendingMissileLock | None":
     """End the locker's Lock without a missile: remove it from
     ``ctx.missile_locks`` and write ``lock_cancelled`` with ``reason``.
@@ -811,7 +811,7 @@ def cancel_missile_locks_involving(ctx: RoundContext, player, tick: int) -> int:
     otherwise. Called by ``down.record_down``, so every Down (Tag, Missile,
     Nuke) ends the locks at the Down tick. Locks keep their insertion order.
     """
-    reason = "out" if player.final_lives <= 0 else "down"
+    reason: LockCancelReason = "out" if player.final_lives <= 0 else "down"
     lockers = [
         lock.attacker
         for lock in ctx.missile_locks.values()

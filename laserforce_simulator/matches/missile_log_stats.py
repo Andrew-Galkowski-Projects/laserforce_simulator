@@ -30,6 +30,18 @@ class MissileRow:
     row_class: str
 
 
+@dataclass(frozen=True)
+class MissileLogSummary:
+    """One round's missile log (MECH-21, ADR-0050): every launched missile
+    hits, so ``conversion`` is ``missiles / locks * 100``, 0.0 with no locks.
+    ``rows`` are the ``MissileRow`` dicts (9 keys, fully flat)."""
+
+    locks: int
+    missiles: int
+    conversion: float
+    rows: list[dict]
+
+
 def _format_mmss(timestamp_ticks: int) -> str:
     """Tick → MM:SS at the HTML display boundary (TIME-01 ``÷2``)."""
     seconds_total = int(timestamp_ticks) // 2
@@ -38,7 +50,9 @@ def _format_mmss(timestamp_ticks: int) -> str:
     return f"{minutes:02d}:{seconds:02d}"
 
 
-def summarize_missile_log(events: Iterable[Mapping], *, locks: int) -> dict:
+def summarize_missile_log(
+    events: Iterable[Mapping], *, locks: int
+) -> MissileLogSummary:
     """Build the locks/missiles/conversion summary plus per-event display rows.
 
     ``events`` is a list of missiled-event dicts with keys ``timestamp``
@@ -47,10 +61,6 @@ def summarize_missile_log(events: Iterable[Mapping], *, locks: int) -> dict:
     by the caller — only missiled rows cross the seam; the caller counts
     the round's ``locking`` rows into ``locks``.
 
-    Returns ``{"locks": int, "missiles": int, "conversion": float,
-    "rows": list[dict]}`` where each row is the ``MissileRow`` dict (9
-    keys, fully flat). MECH-21 (ADR-0050): every launched missile hits, so
-    ``conversion`` is ``missiles / locks * 100``, 0.0 when ``locks`` is 0.
     Friendly-fire missiles count — preserves the GLOSSARY.md
     **Friendly fire** contract (the missile landed; FF is qualitative).
     """
@@ -76,9 +86,6 @@ def summarize_missile_log(events: Iterable[Mapping], *, locks: int) -> dict:
         )
         rows.append(asdict(row))
 
-    return {
-        "locks": locks,
-        "missiles": missiles,
-        "conversion": conversion,
-        "rows": rows,
-    }
+    return MissileLogSummary(
+        locks=locks, missiles=missiles, conversion=conversion, rows=rows
+    )

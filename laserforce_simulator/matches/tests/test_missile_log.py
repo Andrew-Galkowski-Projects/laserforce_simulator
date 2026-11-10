@@ -609,7 +609,13 @@ class TestRes03Determinism:
 # ===== Missile-log stats surface =====
 import unittest
 
-from matches.missile_log_stats import MissileRow, summarize_missile_log
+from dataclasses import fields
+
+from matches.missile_log_stats import (
+    MissileLogSummary,
+    MissileRow,
+    summarize_missile_log,
+)
 from laserforce_simulator.testing import run_project_python
 
 
@@ -636,7 +642,7 @@ def _ev(
     }
 
 
-def _summary(events: list[dict], locks: int | None = None) -> dict:
+def _summary(events: list[dict], locks: int | None = None) -> MissileLogSummary:
     """``summarize_missile_log`` with ``locks`` defaulting to one per missile."""
     return summarize_missile_log(events, locks=len(events) if locks is None else locks)
 
@@ -645,13 +651,13 @@ class TestSummarizeMissileLogEmpty(unittest.TestCase):
     def test_empty_input(self) -> None:
         out = summarize_missile_log([], locks=0)
         self.assertEqual(
-            out, {"locks": 0, "missiles": 0, "conversion": 0.0, "rows": []}
+            out, MissileLogSummary(locks=0, missiles=0, conversion=0.0, rows=[])
         )
 
     def test_zero_locks_gives_zero_conversion(self) -> None:
         # MECH-21: 0 locks short-circuits the 0/0 conversion cleanly.
         out = summarize_missile_log([], locks=0)
-        self.assertEqual(out["conversion"], 0.0)
+        self.assertEqual(out.conversion, 0.0)
 
 
 class TestSummarizeMissileLogCounts(unittest.TestCase):
@@ -660,77 +666,79 @@ class TestSummarizeMissileLogCounts(unittest.TestCase):
 
     def test_four_locks_two_missiles_is_fifty_percent(self) -> None:
         out = summarize_missile_log([_ev(), _ev()], locks=4)
-        self.assertEqual(out["locks"], 4)
-        self.assertEqual(out["missiles"], 2)
-        self.assertEqual(out["conversion"], 50.0)
+        self.assertEqual(out.locks, 4)
+        self.assertEqual(out.missiles, 2)
+        self.assertEqual(out.conversion, 50.0)
 
     def test_locks_with_no_missile_give_zero_conversion(self) -> None:
         out = summarize_missile_log([], locks=3)
-        self.assertEqual((out["locks"], out["missiles"]), (3, 0))
-        self.assertEqual(out["conversion"], 0.0)
+        self.assertEqual((out.locks, out.missiles), (3, 0))
+        self.assertEqual(out.conversion, 0.0)
 
     def test_old_keys_are_gone(self) -> None:
         out = summarize_missile_log([_ev()], locks=1)
-        self.assertEqual(set(out), {"locks", "missiles", "conversion", "rows"})
+        self.assertEqual(
+            {f.name for f in fields(out)}, {"locks", "missiles", "conversion", "rows"}
+        )
 
 
 class TestFriendlyFireRows(unittest.TestCase):
     def test_friendly_fire_missile_counted(self) -> None:
         # GLOSSARY.md: the missile landed; FF is qualitative, not discount.
         out = _summary([_ev(friendly_fire=True), _ev()])
-        self.assertEqual(out["missiles"], 2)
+        self.assertEqual(out.missiles, 2)
 
     def test_row_class_marks_friendly_fire(self) -> None:
         out = _summary([_ev(result="hit", friendly_fire=True)])
-        self.assertIn("friendly-fire", out["rows"][0]["row_class"])
+        self.assertIn("friendly-fire", out.rows[0]["row_class"])
 
     def test_row_class_default_when_not_friendly(self) -> None:
         out = _summary([_ev(result="hit", friendly_fire=False)])
-        self.assertEqual(out["rows"][0]["row_class"], "missile-row")
+        self.assertEqual(out.rows[0]["row_class"], "missile-row")
 
 
 class TestMmssFormatting(unittest.TestCase):
     def test_zero_tick(self) -> None:
         out = _summary([_ev(timestamp=0)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "00:00")
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "00:00")
 
     def test_tick_2_is_one_second(self) -> None:
         # TIME-01: 2 ticks = 1 second.
         out = _summary([_ev(timestamp=2)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "00:01")
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "00:01")
 
     def test_round_end_tick_1800(self) -> None:
         # 1800 ticks = 900 seconds = 15:00.
         out = _summary([_ev(timestamp=1800)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "15:00")
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "15:00")
 
     def test_mid_round_tick(self) -> None:
         # 245 ticks // 2 = 122 s = 2:02.
         out = _summary([_ev(timestamp=245)])
-        self.assertEqual(out["rows"][0]["timestamp_mmss"], "02:02")
+        self.assertEqual(out.rows[0]["timestamp_mmss"], "02:02")
 
 
 class TestRowShape(unittest.TestCase):
     def test_no_event_orm_ref_in_row(self) -> None:
         out = _summary([_ev()])
-        self.assertNotIn("event", out["rows"][0])
+        self.assertNotIn("event", out.rows[0])
 
     def test_row_carries_description_and_points_flat(self) -> None:
         out = _summary([_ev(description="missile detonates", points_awarded=500)])
-        self.assertEqual(out["rows"][0]["description"], "missile detonates")
-        self.assertEqual(out["rows"][0]["points"], 500)
+        self.assertEqual(out.rows[0]["description"], "missile detonates")
+        self.assertEqual(out.rows[0]["points"], 500)
 
     def test_null_points_coalesce_to_zero(self) -> None:
         out = _summary([_ev(points_awarded=None)])
-        self.assertEqual(out["rows"][0]["points"], 0)
+        self.assertEqual(out.rows[0]["points"], 0)
 
     def test_missing_metadata_keys_default_to_empty_str(self) -> None:
         ev = {"timestamp": 10, "metadata": {}, "description": "", "points_awarded": 0}
         out = _summary([ev])
-        self.assertEqual(out["rows"][0]["actor_role"], "")
-        self.assertEqual(out["rows"][0]["target_role"], "")
-        self.assertEqual(out["rows"][0]["result"], "")
-        self.assertFalse(out["rows"][0]["friendly_fire"])
+        self.assertEqual(out.rows[0]["actor_role"], "")
+        self.assertEqual(out.rows[0]["target_role"], "")
+        self.assertEqual(out.rows[0]["result"], "")
+        self.assertFalse(out.rows[0]["friendly_fire"])
 
     def test_missile_row_dataclass_is_frozen(self) -> None:
         row = MissileRow(

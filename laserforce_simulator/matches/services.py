@@ -9,6 +9,7 @@ Sandbox create validation, batch-team resolution, and the six read-only
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import asdict
 from datetime import date
 from typing import TYPE_CHECKING
 
@@ -816,7 +817,7 @@ def build_missile_log(game_round: GameRound) -> dict:
         }
         for e in events_qs
     ]
-    return missile_log_stats.summarize_missile_log(events, locks=locks)
+    return asdict(missile_log_stats.summarize_missile_log(events, locks=locks))
 
 
 def build_heatmap(game_round: GameRound) -> dict:

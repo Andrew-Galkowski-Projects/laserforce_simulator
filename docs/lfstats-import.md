@@ -525,7 +525,10 @@ Commander-round):
   teammate first fired fewer nukes and cancelled no fewer, alone or with the hide, so it was not
   kept. The remaining cancels are the enemy rush; the broadcast itself was not changed.
 
-**Where missiles died** (same counter, per round, both players of the role; Commander / Heavy):
+**Where missiles died** (same counter, per round, both players of the role; Commander / Heavy).
+This is the pre-MECH-21 engine: the lock is now `LOCK_TICKS` = 2 ticks, nothing is spent until
+launch, and every lock that ends without one writes a `lock_cancelled` row
+([ADR-0050](adr/0050-a-lock-is-not-a-launch.md)).
 
 | Stage | Commander | Heavy |
 |---|---|---|

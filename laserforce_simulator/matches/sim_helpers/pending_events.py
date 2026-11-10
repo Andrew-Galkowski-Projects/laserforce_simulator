@@ -12,7 +12,7 @@ a nuke-ID for cancellation tracking) can be added in one place.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, get_args
 
 from .time_constants import LOCK_TICKS
 
@@ -65,14 +65,8 @@ class PendingReaction:
 
 #: MECH-21: why a Lock ended without a missile, the ``lock_cancelled`` row's
 #: ``metadata.reason``.
-LOCK_CANCEL_REASONS: tuple[str, ...] = (
-    "sight",
-    "dodge",
-    "shot",
-    "retarget",
-    "down",
-    "out",
-)
+LockCancelReason = Literal["sight", "dodge", "shot", "retarget", "down", "out"]
+LOCK_CANCEL_REASONS: tuple[LockCancelReason, ...] = get_args(LockCancelReason)
 
 
 @dataclass

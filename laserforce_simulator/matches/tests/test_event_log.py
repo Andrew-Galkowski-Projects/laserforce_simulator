@@ -540,7 +540,9 @@ class TestLockCancelledVerb(unittest.TestCase):
     def test_unknown_reason_raises(self) -> None:
         log = EventLog()
         with self.assertRaises(ValueError):
-            log.lock_cancelled(_attacker(), _defender(), 40, reason="bored")
+            log.lock_cancelled(
+                _attacker(), _defender(), 40, reason="bored"  # type: ignore[arg-type]
+            )
         self.assertEqual(len(log), 0)
 
     def test_null_log_writes_nothing(self) -> None:

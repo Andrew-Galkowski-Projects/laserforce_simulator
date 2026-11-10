@@ -35,7 +35,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from .pending_events import LOCK_CANCEL_REASONS
+from .pending_events import LOCK_CANCEL_REASONS, LockCancelReason
 from .time_constants import LOCK_TICKS
 
 # ---------------------------------------------------------------------------
@@ -434,7 +434,9 @@ class EventLog:
             }
         )
 
-    def lock_cancelled(self, locker, defender, tick: int, *, reason: str) -> None:
+    def lock_cancelled(
+        self, locker, defender, tick: int, *, reason: LockCancelReason
+    ) -> None:
         """Emit ``event_type='lock_cancelled'``: a Lock ended without a
         missile (MECH-21). points_awarded=0; ``metadata.reason`` is one of
         ``LOCK_CANCEL_REASONS``, and any other reason raises ``ValueError``
