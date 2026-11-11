@@ -137,7 +137,11 @@ def choose_resupply_target(
             if p.team_color == player.team_color
             and p is not player
             and p.final_lives > 0
-            and p.is_resupplyable_at(second)
+            and (
+                p.is_resupplyable_at(second)
+                # CAL-03 rule 1: the second kind of a double.
+                or support_survival.double_window_open(p, player, second)
+            )
         ],
         movement_ctx,
     )

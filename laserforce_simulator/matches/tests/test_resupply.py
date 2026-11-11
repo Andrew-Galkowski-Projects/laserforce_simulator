@@ -548,6 +548,26 @@ class TestResolveResupplyRequests(unittest.TestCase):
         self.assertIn("resupply_lives", event_types)
         self.assertIn("resupply_ammo", event_types)
         self.assertEqual(requestor.counters.combo_resupply_count, 1)
+        # CAL-03: the second half lands through the double window, not through a
+        # restored last_downed_time, so the pair is recorded as used.
+        self.assertTrue(requestor.last_single.paired)
+
+    def test_a_combo_whose_resupplies_fail_counts_no_combo(self):
+        """CAL-03 regression (resupply_queue.py:202): a combo roll whose
+        Resupplies did not land is no combo. The requestor was Downed after it
+        asked, so neither support's Resupply lands."""
+        requestor = _ps("scout", final_lives=5, final_shots=5, last_downed_time=98)
+        medic = _ps("medic")
+        ammo = _ps("ammo")
+        ctx = self._los_ctx(can_see=True)
+
+        events = self._run(
+            [requestor], [requestor, medic, ammo], movement_ctx=ctx, rng_value=0.10
+        )
+
+        self.assertEqual(requestor.counters.combo_resupply_count, 0)
+        self.assertEqual((requestor.final_lives, requestor.final_shots), (5, 5))
+        self.assertNotIn("resupply_lives", [e["event_type"] for e in events])
 
     # --- Test 4: Both supports, combo roll fails ---
 
@@ -1218,3 +1238,66 @@ class TestAttemptResupplyActiveGate(unittest.TestCase):
         tagger = _ps("medic", last_downed_time=100)
         mate, _ = self._attempt(tagger, 103)
         self.assertIsNone(mate.last_resupplied_at)
+
+
+class TestDoubleResupply(unittest.TestCase):
+    """CAL-03 rule 1 (#588): the other support's Resupply lands inside
+    ``DOUBLE_WINDOW_TICKS`` of a single, although the single reset the pack."""
+
+    def setUp(self):
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        self.ctx = RoundContext(events=EventLog(persist=True))
+        self.medic = _ps("medic")
+        self.ammo = _ps("ammo")
+        self.mate = _ps("scout", final_lives=5, final_shots=5)
+
+    def _attempt(self, tagger, tick):
+        from matches.sim_helpers.combat import attempt_resupply
+
+        attempt_resupply(tagger, self.mate, tick, ctx=self.ctx)
+
+    def test_a_second_resupply_in_the_same_tick_lands_despite_the_reset(self):
+        self._attempt(self.medic, 100)
+        self.assertFalse(self.mate.is_resupplyable_at(100))  # the reset started
+
+        self._attempt(self.ammo, 100)
+
+        self.assertEqual((self.mate.final_lives, self.mate.final_shots), (10, 15))
+        self.assertEqual(self.ammo.counters.resupplies_given, 1)
+
+    def test_the_next_tick_is_inside_the_window(self):
+        self._attempt(self.ammo, 100)
+        self._attempt(self.medic, 101)
+        self.assertEqual(self.medic.counters.resupplies_given, 1)
+
+    def test_two_ticks_later_the_reset_blocks_it(self):
+        self._attempt(self.ammo, 100)
+        self._attempt(self.medic, 102)
+        self.assertEqual(self.medic.counters.resupplies_given, 0)
+
+    def test_the_single_is_recorded_and_the_double_uses_it(self):
+        from matches.sim_helpers.support_survival import LastSingle
+
+        self._attempt(self.medic, 100)
+        self.assertEqual(
+            self.mate.last_single, LastSingle("lives", 100, self.medic.tag_id_key)
+        )
+        self._attempt(self.ammo, 100)
+        self.assertTrue(self.mate.last_single.paired)
+
+    def test_a_used_pair_lets_no_third_resupply_land(self):
+        second_medic = _ps("medic", tag_id="red_medic_2")
+        self._attempt(self.medic, 100)
+        self._attempt(self.ammo, 100)
+        self._attempt(second_medic, 100)
+        self.assertEqual(second_medic.counters.resupplies_given, 0)
+
+    def test_the_resupply_target_honours_the_window(self):
+        from matches.sim_helpers.mechanics import choose_resupply_target
+
+        self._attempt(self.medic, 100)
+        same_zone = [self.ammo, self.mate]
+        self.assertIs(choose_resupply_target(self.ammo, same_zone, 101), self.mate)
+        self.assertIsNone(choose_resupply_target(self.ammo, same_zone, 102))

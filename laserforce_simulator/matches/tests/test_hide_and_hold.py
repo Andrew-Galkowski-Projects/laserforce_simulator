@@ -750,8 +750,12 @@ class TestMapLessRoundsAreUnchanged:
     # for MECH-21 (#584): a Lock spends nothing at its start, launches after 2
     # ticks (was 3), ends on the locker's shot or a Down, and a dodge no longer
     # spends the missile, so every map-less round with a missile redraws (the
-    # values before were 1dc64a3eb8fe381c and d0bee54c85ccea54).
-    PINNED = {7: "37d480f60120d7c6", 21: "0e47203824f659b1"}
+    # values before were 1dc64a3eb8fe381c and d0bee54c85ccea54). Re-pinned
+    # 2026-11-10 for CAL-03a (#589): the other support's Resupply lands inside the
+    # double window although the first one's reset started, so map-less rounds
+    # with a Medic and an Ammo resupplying one teammate together redraw (the
+    # values before were 37d480f60120d7c6 and 0e47203824f659b1).
+    PINNED = {7: "83eb21969580daee", 21: "7e3eee0498ef99ba"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

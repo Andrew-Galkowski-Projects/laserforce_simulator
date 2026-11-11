@@ -435,3 +435,64 @@ class TestTeamworkCallouts:
         )
         assert pathfinding._cell_from_memory(scout, "blue_medic", 131, "ticks") is None
         assert modes._fresh_entry(scout, "blue_medic", 131, "ticks") is None
+
+
+class TestDoubleWindowOpen:
+    """CAL-03 rule 1 (#588): the other support may land the second kind while the
+    receiver's last single is at most ``DOUBLE_WINDOW_TICKS`` old. One fixture per
+    condition, each failing that condition alone."""
+
+    def _receiver(self, **single: Any) -> PlayerState:
+        # The Medic's single at tick 100 reset the Scout's pack (last_downed_time).
+        record = {"kind": "lives", "tick": 100, "supporter": "red_medic", **single}
+        return _player(
+            "scout",
+            last_downed_time=100,
+            last_single=support_survival.LastSingle(**record),
+        )
+
+    def test_the_other_support_in_the_same_tick(self) -> None:
+        ammo = _player("ammo")
+        assert support_survival.double_window_open(self._receiver(), ammo, 100)
+
+    def test_open_at_the_window_edge(self) -> None:
+        edge = 100 + support_survival.DOUBLE_WINDOW_TICKS
+        assert support_survival.double_window_open(
+            self._receiver(), _player("ammo"), edge
+        )
+
+    def test_closed_one_tick_past_the_window(self) -> None:
+        past = 100 + support_survival.DOUBLE_WINDOW_TICKS + 1
+        assert not support_survival.double_window_open(
+            self._receiver(), _player("ammo"), past
+        )
+
+    def test_closed_for_the_same_kind(self) -> None:
+        # A second Medic owes lives, the kind already given.
+        other_medic = _player("medic", tag_id="red_medic_2")
+        assert not support_survival.double_window_open(
+            self._receiver(), other_medic, 100
+        )
+
+    def test_closed_for_the_same_supporter(self) -> None:
+        ammo = _player("ammo")
+        receiver = self._receiver(supporter=ammo.tag_id_key)
+        assert not support_survival.double_window_open(receiver, ammo, 100)
+
+    def test_closed_once_the_pair_is_used(self) -> None:
+        receiver = self._receiver(paired=True)
+        assert not support_survival.double_window_open(receiver, _player("ammo"), 100)
+
+    def test_closed_for_a_role_that_gives_nothing(self) -> None:
+        assert not support_survival.double_window_open(
+            self._receiver(), _player("commander"), 100
+        )
+
+    def test_closed_after_a_down_since_the_single(self) -> None:
+        receiver = self._receiver()
+        receiver.last_downed_time = 101
+        assert not support_survival.double_window_open(receiver, _player("ammo"), 101)
+
+    def test_closed_with_no_single(self) -> None:
+        receiver = _player("scout", last_downed_time=100)
+        assert not support_survival.double_window_open(receiver, _player("ammo"), 100)

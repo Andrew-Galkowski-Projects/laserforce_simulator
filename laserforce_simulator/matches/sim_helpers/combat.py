@@ -9,11 +9,12 @@ importable without the ORM.
 from __future__ import annotations
 
 import random
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from .map_context import MapContext
 
+from . import support_survival
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
 from .map_context import _NEUTRAL_BASE_TYPES
@@ -603,27 +604,37 @@ def attempt_resupply(
     directly. Replaces the pre-refactor ``emit_event=None`` callable seam.
 
     SM5-02: a tagger that is not Active gives nothing (a Downed pack is dark).
+    CAL-03 rule 1: while ``double_window_open`` the other support's Resupply
+    lands although the first one's reset has started; every landed Resupply
+    updates the receiver's ``last_single``.
     """
     if not tagger.is_active_at(second):
         return
-    if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
+    in_window = support_survival.double_window_open(teammate, tagger, second)
+    receivable = in_window or teammate.is_resupplyable_at(second)
+    if tagger.role == "ammo" and receivable:
         amount = _AMMO_CHART.get(teammate.role, 5)
         teammate.final_shots = min(teammate.max_shots, teammate.final_shots + amount)
-        _reset_resupplied(teammate, second, ctx)
-        tagger.last_tagged_id = teammate.tag_id_key
-        tagger.counters.resupplies_given += 1
+        _landed(tagger, teammate, second, in_window, ctx)
         ctx.events.resupply_ammo(tagger, teammate, second, amount=amount)
-    elif (
-        tagger.role == "medic"
-        and tagger.final_shots > 0
-        and teammate.is_resupplyable_at(second)
-    ):
+    elif tagger.role == "medic" and tagger.final_shots > 0 and receivable:
         amount = _MEDIC_CHART.get(teammate.role, 3)
         teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
-        _reset_resupplied(teammate, second, ctx)
-        tagger.last_tagged_id = teammate.tag_id_key
-        tagger.counters.resupplies_given += 1
+        _landed(tagger, teammate, second, in_window, ctx)
         ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
+
+
+def _landed(
+    tagger: Any, teammate: Any, second: float, in_window: bool, ctx: RoundContext
+) -> None:
+    """The bookkeeping of a landed Resupply, before its event: the pack reset,
+    the receiver's ``last_single`` (CAL-03) and the supporter's counters."""
+    _reset_resupplied(teammate, second, ctx)
+    teammate.last_single = support_survival.resupply_landed(
+        teammate, tagger, second, in_window
+    )
+    tagger.last_tagged_id = teammate.tag_id_key
+    tagger.counters.resupplies_given += 1
 
 
 def capture_base(

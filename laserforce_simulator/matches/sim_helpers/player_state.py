@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from matches.sim_helpers.modes import Mode, default_mode
 from matches.sim_helpers.player_counters import PlayerCounters
+from matches.sim_helpers.support_survival import LastSingle
 from matches.sim_helpers.role_constants import (
     MAX_LIVES as _MAX_LIVES,
     MAX_SHOTS as _MAX_SHOTS,
@@ -195,6 +196,9 @@ class PlayerState:
     # counts every Down in ``downs_taken`` and a Down within
     # ``RESPAWN_TICKS`` of that Resupply in ``downs_in_resupply_cooldown``.
     last_resupplied_at: Optional[int] = None
+    # CAL-03 rule 1: the last single Resupply received (kind, tick, supporter),
+    # read by ``support_survival.double_window_open``; None before the first.
+    last_single: Optional[LastSingle] = None
     downs_taken: int = 0
     downs_in_resupply_cooldown: int = 0
 

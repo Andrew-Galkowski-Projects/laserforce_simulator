@@ -419,6 +419,18 @@ class TestEngagementGuard:
     # fire, the cooldown counts ticks) the floor holds again (the value is in
     # PLAN.md's CAL-02 section). A later change that fails this re-measures both
     # sides with ``scripts/mutate.py --measure`` before touching the floor.
+    # CAL-03a (2026-11-10, #589): the doubles unblock lands the second Resupply of a
+    # pair, and each landed Resupply restarts the receiver's reset, so Scouts plan
+    # fewer Shots. Re-measured: as built 31.6 +/- 5.5 on seeds 1-4 (36.6 +/- 2.5 on
+    # 1-12); with the empty-roll bug 41.1 +/- 2.0 (37.3 +/- 1.9); with the doubles
+    # window removed 49.2 +/- 5.3 (42.7 +/- 3.0). No floor separates the bug on this
+    # tree, so the guard is an expected failure until CAL-03's later tickets move the
+    # supports and the Scouts again; strict, so the XPASS that day forces the
+    # re-measure (comment on spec #588).
+    @pytest.mark.xfail(
+        strict=True,
+        reason="CAL-03a: no Scout floor separates the empty-roll bug (#588)",
+    )
     def test_scouts_keep_shooting_on_syracuse(self) -> None:
         result = run_probe(_syracuse(), [1, 2, 3, 4])
         assert result.roles["scout"].tags_per_round >= 40

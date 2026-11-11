@@ -9,10 +9,16 @@ switches 3 + 4 are the pair that moves the Medic (eliminated 1.00 -> 0.83, uptim
 -> 0.63) and the Ammo (eliminated 0.89 -> 0.80); 1 adds a little on top and 2 costs
 nothing. Switch 5 changed no cell once 3 + 4 were on, so it stays off.
 
+CAL-03 (#588) adds permanent rules with no switch; their tunable values are the
+module constants below (``DOUBLE_WINDOW_TICKS``, the doubles window of rule 1).
+
 Pure Python; imports only ``time_constants`` so it is safe anywhere.
 """
 
 from __future__ import annotations
+
+from dataclasses import dataclass, replace
+from typing import Any, Optional
 
 from .time_constants import _stale_table
 
@@ -66,6 +72,57 @@ def callout_chance(actor) -> float:
     if TEAMWORK_CALLOUTS:
         chance *= getattr(actor, "teamwork", 50) / 100
     return chance
+
+
+#: CAL-03 rule 1 (#588), doubles: after one support's single, the other support
+#: may land the other kind for this many ticks although the receiver's pack reset
+#: has started (``attempt_resupply``, ``choose_resupply_target``).
+DOUBLE_WINDOW_TICKS: int = 1
+
+#: The kind of Resupply each support role gives.
+RESUPPLY_KIND: dict[str, str] = {"medic": "lives", "ammo": "shots"}
+
+
+@dataclass(frozen=True)
+class LastSingle:
+    """The last Resupply a player received outside a double: its kind (``lives``
+    or ``shots``), its tick and the supporter's ``tag_id_key``. ``paired`` is True
+    once the other kind landed inside the window (the pair is used)."""
+
+    kind: str
+    tick: int
+    supporter: str
+    paired: bool = False
+
+
+def double_window_open(teammate: Any, supporter: Any, tick: float) -> bool:
+    """True while *teammate*'s last single is at most ``DOUBLE_WINDOW_TICKS`` old,
+    it was the other kind from another supporter, no Down came after it, and its
+    pair is unused: then *supporter* may deliver the second kind. No RNG."""
+    single: Optional[LastSingle] = getattr(teammate, "last_single", None)
+    kind = RESUPPLY_KIND.get(supporter.role)
+    if single is None or kind is None or single.paired:
+        return False
+    if kind == single.kind or supporter.tag_id_key == single.supporter:
+        return False
+    if teammate.last_downed_time != single.tick:
+        return False
+    return 0 <= tick - single.tick <= DOUBLE_WINDOW_TICKS
+
+
+def resupply_landed(
+    teammate: Any, supporter: Any, tick: float, in_window: bool
+) -> LastSingle:
+    """The receiver's ``last_single`` after *supporter*'s Resupply landed at *tick*:
+    the old one marked paired when it completed a double (``in_window``), else a
+    new single."""
+    if in_window:
+        return replace(teammate.last_single, paired=True)
+    return LastSingle(
+        kind=RESUPPLY_KIND[supporter.role],
+        tick=int(tick),
+        supporter=supporter.tag_id_key,
+    )
 
 
 def hide_gate_open(role: str) -> bool:
