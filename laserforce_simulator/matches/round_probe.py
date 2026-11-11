@@ -6,9 +6,12 @@ to the Role's target, mean points, what the Role does with its Actions, Tags mad
 Eliminations, plus goal sharing per seed. CAL-02 (#567) added the tag measures: times
 tagged, shots fired, Downs given and taken, Active share, Tags per Active minute,
 Reaction and Follow-up shots, enemies on the floor per Active roll, shot cadence, and the
-who-tags-whom and who-Downs-whom matrices. Each measure is pooled over the rounds and
-kept per round. Read-only: it observes ``plan_action``, ``choose_goal_cell``, the
-capture and ``resolve_shot`` without drawing from the RNG, so a seed plays the same
+who-tags-whom and who-Downs-whom matrices. CAL-03a (#589) added the support measures:
+survival by minute, minutes in play, Tag Downs per minute in play, lives lost by
+cause, life Resupplies received, doubles, hit ratio, shot-first, Resupply visits and
+Tags per round. Each measure is pooled over the rounds and kept per round. Read-only:
+it observes ``plan_action``, ``choose_goal_cell``, the capture, ``resolve_shot``, the
+missile launch and the two Resupply events without drawing from the RNG, so a seed plays the same
 round as it would unobserved. One round is one task, so ``workers`` processes give
 the serial numbers.
 """
@@ -25,7 +28,8 @@ from typing import Iterable, Mapping, Sequence
 from matches.sim_helpers import shot as shot_module
 from matches.sim_helpers.combat import _CHOICES
 from matches.sim_helpers.parallel_worker import worker_django_init
-from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
+from matches.sim_helpers.event_log import EventLog
+from matches.sim_helpers.time_constants import SURVIVED_SENTINEL, TICK_SECONDS
 from matches.simulation import BatchSimulator, entrypoints
 from matches.simulation.entrypoints import _SIMULATION_STATS, _PlayerData
 from teams.models import Player
@@ -61,6 +65,11 @@ _CADENCE_BINS: tuple[tuple[int, str], ...] = (
     (10**9, "120t+"),
 )
 TICKS_PER_MINUTE = 120
+# CAL-03a (#589) measure windows, in ticks (a tick is 0.5 s).
+SURVIVAL_MINUTES = (5, 7, 9, 11)
+DOUBLE_PAIR_TICKS = 2  # a life + shot pair to one receiver within 1 s is a double
+VISIT_GAP_TICKS = 30  # Resupplies with no gap above 15 s are one visit
+SHOT_FIRST_TICKS = 4  # the defender Tagged its attacker in the 2 s before the Down
 
 
 @dataclass(frozen=True)
@@ -80,6 +89,20 @@ class Cadence:
     median: float | None
     bin_share: dict[str, float]
     gaps: int
+
+
+@dataclass(frozen=True)
+class VisitMeasures:
+    """CAL-03a: a receiver's Resupply visits (Resupplies with no gap above
+    ``VISIT_GAP_TICKS``). ``per_round`` is over player-rounds, the per-visit
+    numbers over visits and the gap (seconds, to the next visit) over gaps;
+    ``median_gap_seconds`` is None with no gap."""
+
+    per_round: Measure
+    resupplies_per_visit: Measure
+    doubles_per_visit: Measure
+    gap_seconds: Measure
+    median_gap_seconds: float | None
 
 
 @dataclass(frozen=True)
@@ -118,6 +141,22 @@ class RoleMeasures:
     # Mode ticks over the round's ticks (``mode_share`` is over the Mode ticks).
     mode_round_share: dict[str, float]
     cadence: Cadence
+    # CAL-03a (#589), per player-round: % still in play at each minute of
+    # ``SURVIVAL_MINUTES``; minutes in play (to the Elimination or the team wipe);
+    # Tag Downs given per minute in play; lives lost per cause (``tag``,
+    # ``missile``, ``nuke``); life Resupplies received.
+    survival: dict[int, Measure]
+    minutes_in_play: Measure
+    tag_downs_per_minute_in_play: Measure
+    lives_lost: dict[str, Measure]
+    life_resupplies: Measure
+    # Ratios over player-rounds with a cluster standard error: doubles as a % of
+    # the Resupply episodes received (a double is one), Tags made on enemies over
+    # times Tagged by enemies, and the % of enemy Tag Downs taken shot first.
+    doubles_share: Measure
+    hit_ratio: Measure
+    shot_first_share: Measure
+    visits: VisitMeasures
 
 
 @dataclass(frozen=True)
@@ -134,6 +173,10 @@ class ProbeResult:
     team_captures_by_seed: dict[int, dict[str, int]]
     who_tags_whom: dict[str, dict[str, float]] = field(default_factory=dict)
     who_downs_whom: dict[str, dict[str, float]] = field(default_factory=dict)
+    # CAL-03a: Tags made per round, both teams (se over the rounds), and doubles
+    # as a % of every Resupply episode received, all roles pooled.
+    round_tags: Measure = Measure(0.0, 0.0)
+    doubles_share: Measure = Measure(0.0, 0.0)
 
 
 @dataclass
@@ -151,6 +194,44 @@ class _PlayerRound:
     follow_up_shots: int = 0
     active_rolls: int = 0
     enemies_on_floor: int = 0
+    # CAL-03a: the Elimination tick (None survived), the ticks in play, lives lost
+    # to missiles and nukes, enemy Tags made and taken, enemy Tag Downs taken and
+    # how many of them this player shot first, and each Resupply received as
+    # (tick, "lives" | "shots") in arrival order.
+    eliminated_at: int | None = None
+    in_play_ticks: int = 0
+    lives_missile: int = 0
+    lives_nuke: int = 0
+    enemy_tags_made: int = 0
+    enemy_times_tagged: int = 0
+    enemy_downs_taken: int = 0
+    shot_first: int = 0
+    resupplies: list[tuple[int, str]] = field(default_factory=list)
+
+    def survived(self, minute: int) -> float:
+        """100.0 unless Eliminated before ``minute``'s tick, else 0.0."""
+        out_at = self.eliminated_at
+        if out_at is not None and out_at < minute * TICKS_PER_MINUTE:
+            return 0.0
+        return 100.0
+
+    @property
+    def minutes_in_play(self) -> float:
+        return self.in_play_ticks / TICKS_PER_MINUTE
+
+    @property
+    def life_resupplies(self) -> int:
+        return sum(1 for _, kind in self.resupplies if kind == "lives")
+
+    def visits(self) -> list[list[tuple[int, str]]]:
+        """The Resupplies grouped into visits: no gap above ``VISIT_GAP_TICKS``."""
+        groups: list[list[tuple[int, str]]] = []
+        for resupply in self.resupplies:
+            if groups and resupply[0] - groups[-1][-1][0] <= VISIT_GAP_TICKS:
+                groups[-1].append(resupply)
+            else:
+                groups.append([resupply])
+        return groups
 
     @property
     def active_share(self) -> float:
@@ -222,6 +303,7 @@ class _RoundTally:
     team_captures: dict[str, int]
     tags_by_pair: Counter = field(default_factory=Counter)
     downs_by_pair: Counter = field(default_factory=Counter)
+    tags: int = 0  # Tags made in the round, both teams
 
 
 def goal_sharing_share(goals_by_team_tick: Mapping) -> float:
@@ -284,6 +366,68 @@ def _measure(values: Sequence[float]) -> Measure:
     mean = _ratio(sum(values), len(values))
     se = stdev(values) / sqrt(len(values)) if len(values) > 1 else 0.0
     return Measure(mean=mean, se=se)
+
+
+def _ratio_measure(pairs: Sequence[tuple[float, float]], scale: float = 1.0) -> Measure:
+    """``sum(y) / sum(x)`` over ``(y, x)`` pairs with its cluster-robust standard
+    error (each pair one cluster), times ``scale``; 0.0 with no ``x``."""
+    whole = sum(x for _, x in pairs)
+    if not whole:
+        return Measure(mean=0.0, se=0.0)
+    ratio = sum(y for y, _ in pairs) / whole
+    n = len(pairs)
+    if n < 2:
+        return Measure(mean=ratio * scale, se=0.0)
+    spread = sum((y - ratio * x) ** 2 for y, x in pairs) * n / (n - 1)
+    return Measure(mean=ratio * scale, se=sqrt(spread) / whole * scale)
+
+
+def _double_count(resupplies: Sequence[tuple[int, str]]) -> int:
+    """Doubles among a receiver's Resupplies in arrival order: each one pairs with
+    the first unpaired one of the other kind at most ``DOUBLE_PAIR_TICKS`` later."""
+    used = [False] * len(resupplies)
+    pairs = 0
+    for i, (tick, kind) in enumerate(resupplies):
+        if used[i]:
+            continue
+        for j in range(i + 1, len(resupplies)):
+            if resupplies[j][0] - tick > DOUBLE_PAIR_TICKS:
+                break
+            if not used[j] and resupplies[j][1] != kind:
+                used[i] = used[j] = True
+                pairs += 1
+                break
+    return pairs
+
+
+def _doubles_share(rows: Sequence[_PlayerRound]) -> Measure:
+    """Doubles as a % of the Resupply episodes received (a double is one)."""
+    pairs = []
+    for row in rows:
+        doubles = _double_count(row.resupplies)
+        pairs.append((float(doubles), float(len(row.resupplies) - doubles)))
+    return _ratio_measure(pairs, 100.0)
+
+
+def _visit_measures(rows: Sequence[_PlayerRound]) -> VisitMeasures:
+    per_round, sizes, doubles, gaps = [], [], [], []
+    for row in rows:
+        visits = row.visits()
+        per_round.append(float(len(visits)))
+        for visit in visits:
+            sizes.append(float(len(visit)))
+            doubles.append(float(_double_count(visit)))
+        gaps += [
+            (after[0][0] - before[-1][0]) * TICK_SECONDS
+            for before, after in zip(visits, visits[1:])
+        ]
+    return VisitMeasures(
+        per_round=_measure(per_round),
+        resupplies_per_visit=_measure(sizes),
+        doubles_per_visit=_measure(doubles),
+        gap_seconds=_measure(gaps),
+        median_gap_seconds=float(median(gaps)) if gaps else None,
+    )
 
 
 def _cadence(gaps: Sequence[int]) -> Cadence:
@@ -356,6 +500,28 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
             for mode, ticks in sorted(tally.modes.items())
         },
         cadence=_cadence(tally.gaps),
+        survival={
+            minute: _measure([row.survived(minute) for row in rows])
+            for minute in SURVIVAL_MINUTES
+        },
+        minutes_in_play=measure("minutes_in_play"),
+        tag_downs_per_minute_in_play=_measure(
+            [row.downs_given / row.minutes_in_play for row in rows if row.in_play_ticks]
+        ),
+        lives_lost={
+            "tag": measure("downs_taken"),
+            "missile": measure("lives_missile"),
+            "nuke": measure("lives_nuke"),
+        },
+        life_resupplies=measure("life_resupplies"),
+        doubles_share=_doubles_share(rows),
+        hit_ratio=_ratio_measure(
+            [(row.enemy_tags_made, row.enemy_times_tagged) for row in rows]
+        ),
+        shot_first_share=_ratio_measure(
+            [(row.shot_first, row.enemy_downs_taken) for row in rows], 100.0
+        ),
+        visits=_visit_measures(rows),
     )
 
 
@@ -391,6 +557,35 @@ def _probe_round(task: tuple) -> _RoundTally:
     # or Follow-up with no cooldown fires through the resolver's own module.
     real_resolve = entrypoints.resolve_shot
     real_shot_resolve = shot_module.resolve_shot
+    # CAL-03a: the missile's lives and every Resupply received, read off the
+    # class attributes the engine calls through.
+    real_missile = BatchSimulator._complete_missile
+    real_resupply_lives = EventLog.resupply_lives
+    real_resupply_ammo = EventLog.resupply_ammo
+    # The tick of the latest enemy Tag per (attacker, defender), for shot-first.
+    last_enemy_tag: dict[tuple[int, int], int] = {}
+
+    def observe_enemy_tag(attacker, defender, tick: int, downed: bool) -> None:
+        rows[id(attacker)].enemy_tags_made += 1
+        rows[id(defender)].enemy_times_tagged += 1
+        if downed:
+            rows[id(defender)].enemy_downs_taken += 1
+            back = last_enemy_tag.get((id(defender), id(attacker)))
+            if back is not None and tick - back <= SHOT_FIRST_TICKS:
+                rows[id(defender)].shot_first += 1
+        last_enemy_tag[(id(attacker), id(defender))] = tick
+
+    def observed_missile(sim, attacker, defender, second, ctx=None):
+        lives = defender.final_lives
+        real_missile(sim, attacker, defender, second, ctx)
+        rows[id(defender)].lives_missile += lives - defender.final_lives
+
+    def observed_resupply(real, kind: str):
+        def observe(log, supporter, requestor, tick, *, amount=None):
+            rows[id(requestor)].resupplies.append((int(tick), kind))
+            return real(log, supporter, requestor, tick, amount=amount)
+
+        return observe
 
     def observed_resolve(real):
         def observe(attacker, defender, tick, *, kind, ctx, chain_depth=0):
@@ -415,6 +610,8 @@ def _probe_round(task: tuple) -> _RoundTally:
                     downs_by_pair[(attacker.role, defender.role)] += 1
                     rows[id(attacker)].downs_given += 1
                     rows[id(defender)].downs_taken += 1
+                if attacker.team_color != defender.team_color:
+                    observe_enemy_tag(attacker, defender, tick, outcome.downed)
             return outcome
 
         return observe
@@ -513,11 +710,24 @@ def _probe_round(task: tuple) -> _RoundTally:
     entrypoints._capture_base_shared = observed_capture
     entrypoints.resolve_shot = observed_resolve(real_resolve)
     shot_module.resolve_shot = observed_resolve(real_shot_resolve)
+    BatchSimulator._complete_missile = observed_missile  # type: ignore[method-assign]
+    EventLog.resupply_lives = observed_resupply(  # type: ignore[method-assign]
+        real_resupply_lives, "lives"
+    )
+    EventLog.resupply_ammo = observed_resupply(  # type: ignore[method-assign]
+        real_resupply_ammo, "shots"
+    )
     try:
         random.seed(seed)
-        _, reds, blues = BatchSimulator()._simulate_round(
+        result, reds, blues = BatchSimulator()._simulate_round(
             list(red), list(blue), movement_ctx=movement_ctx
         )
+        # Minutes in play stop at a team wipe (decision 3): the engine credits a
+        # survivor the rest of the round as Active, the probe does not.
+        round_end = min(
+            result.get("eliminated_at", SURVIVED_SENTINEL), BatchSimulator.ROUND_TICKS
+        )
+        round_tags = 0
         for player in reds + blues:
             close_run(player)
             tally = tallies[player.role]
@@ -536,6 +746,11 @@ def _probe_round(task: tuple) -> _RoundTally:
             row.reaction_shots = counters.reaction_shots
             row.follow_up_shots = counters.follow_up_shots
             row.ticks_active = player.ticks_active
+            eliminated = player.was_eliminated_at < SURVIVED_SENTINEL
+            row.eliminated_at = player.was_eliminated_at if eliminated else None
+            row.in_play_ticks = min(player.was_eliminated_at, round_end)
+            row.lives_nuke = counters.lives_lost_to_nukes
+            round_tags += counters.tags_made
             tally.rows.append(row)
     finally:
         entrypoints.choose_goal_cell = real_choose
@@ -543,6 +758,9 @@ def _probe_round(task: tuple) -> _RoundTally:
         entrypoints._capture_base_shared = real_capture
         entrypoints.resolve_shot = real_resolve
         shot_module.resolve_shot = real_shot_resolve
+        BatchSimulator._complete_missile = real_missile  # type: ignore[method-assign]
+        EventLog.resupply_lives = real_resupply_lives  # type: ignore[method-assign]
+        EventLog.resupply_ammo = real_resupply_ammo  # type: ignore[method-assign]
     return _RoundTally(
         seed=seed,
         roles=dict(tallies),
@@ -550,6 +768,7 @@ def _probe_round(task: tuple) -> _RoundTally:
         team_captures=team_captures,
         tags_by_pair=tags_by_pair,
         downs_by_pair=downs_by_pair,
+        tags=round_tags,
     )
 
 
@@ -609,4 +828,8 @@ def run_probe(
         team_captures_by_seed={played.seed: played.team_captures for played in rounds},
         who_tags_whom=_per_round_matrix(tags_by_pair, len(rounds)),
         who_downs_whom=_per_round_matrix(downs_by_pair, len(rounds)),
+        round_tags=_measure([float(played.tags) for played in rounds]),
+        doubles_share=_doubles_share(
+            [row for tally in pooled.values() for row in tally.rows]
+        ),
     )
