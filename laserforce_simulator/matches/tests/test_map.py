@@ -463,17 +463,17 @@ class TestMap02CellMovement:
     # ``TestMove01CompactMovementEvent`` below.
 
     def test_player_advances_toward_enemy_base(self):
-        import random
-
-        random.seed(42)
-
+        # The round draws its own seed unless one is passed, so ``random.seed``
+        # never pinned it. Unpinned, about 0.65% of seeds (13 of 2000, after
+        # CAL-03) let blue Down red within a tick on this open 10x10 floor, and
+        # red's trails end back on spawn at tick 40. Seed 42 is not one of them.
         arena_map = self._make_map("Test10x10", _FLOOR_10X10)
         team_red, _ = make_team_with_slots("ReachR")
         team_blue, _ = make_team_with_slots("ReachB")
 
         with patch.object(BatchSimulator, "ROUND_TICKS", 40):
             game_round = BatchSimulator().simulate_single_round_detailed(
-                team_red, team_blue, arena_map=arena_map
+                team_red, team_blue, arena_map=arena_map, rng_seed=42
             )
 
         red_spawn = (0, 0)
