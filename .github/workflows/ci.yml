@@ -22,7 +22,7 @@ jobs:
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
@@ -57,19 +57,18 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
       SECRET_KEY: ${{ secrets.DJANGO_CI_SECRET_KEY || 'django-insecure-ci-only-not-a-real-secret' }}
       DEBUG: "True"
       DATABASE_URL: postgres://laserforce:laserforce@localhost:5432/laserforce_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           # The mypy step diffs against the merge-base with origin/main.
           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -146,7 +145,6 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       DJANGO_SETTINGS_MODULE: laserforce_simulator.settings
       SECRET_KEY: ${{ secrets.DJANGO_CI_SECRET_KEY || 'django-insecure-ci-only-not-a-real-secret' }}
       DEBUG: "True"
@@ -155,10 +153,10 @@ jobs:
       # sys.settrace default. Line coverage only, as before.
       COVERAGE_CORE: sysmon
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -196,7 +194,7 @@ jobs:
           fi
 
       - name: Keep this shard's coverage data
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-shard-${{ matrix.group }}
           path: laserforce_simulator/.coverage.shard${{ matrix.group }}
@@ -207,7 +205,7 @@ jobs:
       - name: Keep this shard's test durations
         # Only on success (the default): a red run never feeds the file.
         # 30 days, so a refresh can pick runs from weeks ago.
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: durations-shard-${{ matrix.group }}
           path: laserforce_simulator/.test_durations
@@ -219,13 +217,11 @@ jobs:
     # Combines the shards' coverage data and uploads one report to Codecov.
     needs: test
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
 
@@ -235,7 +231,7 @@ jobs:
         run: python -m pip install "$(grep -E '^coverage==' laserforce_simulator/requirements.txt)"
 
       - name: Download the shards' coverage data
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: coverage-shard-*
           merge-multiple: true
@@ -249,7 +245,7 @@ jobs:
           coverage report --format=total
 
       - name: Upload coverage reports to Codecov
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           name: coverage-report
@@ -277,16 +273,14 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     defaults:
       run:
         working-directory: ./frontend
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
@@ -315,18 +309,16 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: windows-latest
-    env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
     defaults:
       run:
         # bash stops at the first failed command; a multi-line pwsh step
         # reports only the last command's exit code.
         shell: bash
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -335,7 +327,7 @@ jobs:
             laserforce_simulator/requirements-runtime.txt
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version-file: frontend/.nvmrc
           cache: npm
@@ -365,7 +357,7 @@ jobs:
           --summary "$GITHUB_STEP_SUMMARY"
 
       - name: Keep the Desktop build
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: desktop-build
           path: build-out/${{ env.ZIP }}
@@ -388,13 +380,12 @@ jobs:
       group: desktop-latest
       cancel-in-progress: false
     env:
-      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Download the Desktop build
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: desktop-build
 
@@ -455,7 +446,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build Docker image
         run: docker build -t laserforce-simulator .
