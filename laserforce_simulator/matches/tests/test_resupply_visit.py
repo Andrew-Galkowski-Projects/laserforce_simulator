@@ -157,11 +157,15 @@ class TestTheVisitEnds:
         _step(scout, everyone, ctx)
         assert scout.visit is not None
 
-    def test_the_player_downed_mid_visit(self) -> None:
+    def test_the_player_downed_mid_visit_goes_on(self) -> None:
+        # Departure on #588: a Down does not end a visit (the R7 prototype; the
+        # spec's Down exit took Tags to 395.8, out of range). It walks on Downed.
         scout, _, _, everyone, ctx = _scene()
         _on_a_visit(scout)
         record_down(scout, NOW, None)
-        _ended_once_at(scout, everyone, ctx)
+        assert scout.visit is not None and scout.visit_next_tick == 0
+        assert _step(scout, everyone, ctx, NOW + 1) == "move"
+        assert scout.visit is not None and scout.visit.phase == "go"
 
     def test_the_player_eliminated_mid_visit(self) -> None:
         scout, _, _, everyone, ctx = _scene()

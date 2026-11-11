@@ -96,11 +96,26 @@ def active_before_nuke(player) -> bool:
 
 def overrides_stay_hidden(player, tick: float, all_alive: list) -> bool:
     """True when a goal-selection override beats Stay hidden's hide: the nuke
-    reaction while Active in time (decision 13). Decision 14's critical-resource
-    seek went with ``choose_goal_cell``'s step 1 (CAL-03, #591): a Resupply visit
-    replaced it, and a Down ends a visit, so a Downed player has none."""
-    return bool(getattr(player, "reacting_to_nuke", False)) and active_before_nuke(
-        player
+    reaction while Active in time (decision 13), or the critical-resource
+    seek for a non-support player with that support alive (decision 14; the
+    30% rule at which CAL-03 starts a Resupply visit, ``VISIT_SEEK_SHARE``,
+    whose goal then walks the player)."""
+    if getattr(player, "reacting_to_nuke", False) and active_before_nuke(player):
+        return True
+    if player.role in ("medic", "ammo"):
+        return False
+    if player.final_lives <= player.max_lives * 0.3:
+        support = "medic"
+    elif player.final_shots <= player.max_shots * 0.3:
+        support = "ammo"
+    else:
+        return False
+    return any(
+        p.team_color == player.team_color
+        and p.role == support
+        and p.final_lives > 0
+        and p.cell_row is not None
+        for p in all_alive
     )
 
 

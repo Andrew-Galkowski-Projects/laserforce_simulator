@@ -100,8 +100,9 @@ def record_down(
     if resupplied_at is not None and tick - resupplied_at < RESPAWN_TICKS:
         player.downs_in_resupply_cooldown += 1
 
-    # CAL-03 rule 6: a Down (an Elimination too) ends a Resupply visit.
-    if getattr(player, "visit", None) is not None:
+    # CAL-03 rule 6: an Elimination ends a Resupply visit. A Down does not: the
+    # visit goes on through the Respawn cooldown, as in the R7 prototype (#588).
+    if player.final_lives <= 0 and getattr(player, "visit", None) is not None:
         end_visit(player, tick)
 
     # 2-4. simple state mutations

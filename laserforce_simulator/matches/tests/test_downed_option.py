@@ -29,6 +29,7 @@ from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.time_constants import RESPAWN_TICKS
 
 
@@ -292,9 +293,16 @@ class TestGoalSelectionOverrides(unittest.TestCase):
                     self._goal(downed, [downed, tagger, commander], 101), goal
                 )
 
-    def test_low_lives_no_longer_beat_the_downed_option(self) -> None:
-        # CAL-03c (#591): step 1's critical-resource walk to the Medic is gone (a
-        # Resupply visit replaced it, and a Down ends a visit), so the trail holds.
+    def test_a_visit_goal_beats_the_downed_option(self) -> None:
+        # CAL-03c (#591): step 1's walk to the Medic is a Resupply visit's goal.
+        downed, tagger = self._trailing()
+        medic = _ps("blue_medic", "blue", (1, 1), role="medic")
+        downed.final_lives = 2
+        downed.visit = Visit(phase="go", started=90, goal=(1, 1))
+        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (1, 1))
+
+    def test_low_lives_alone_no_longer_beat_the_downed_option(self) -> None:
+        # With no visit (none starts while Downed) the trail holds.
         downed, tagger = self._trailing()
         medic = _ps("blue_medic", "blue", (1, 1), role="medic")
         downed.final_lives = 2
@@ -471,18 +479,20 @@ class TestStationaryWhileDowned(unittest.TestCase):
         BatchSimulator()._advance_player(downed, [downed, tagger], 101, OPEN, "")
         self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 14))
 
-    def test_low_lives_keep_stay_hidden(self) -> None:
-        """CAL-03c (#591): decision 14's critical-resource seek went with step 1,
-        so at 30% lives or less a Downed player keeps its Stay hidden."""
+    def test_critical_resource_moves_a_stay_hidden_player(self) -> None:
+        """Decision 14 reaches Stay hidden too: at 30% lives or less a Downed
+        non-support player leaves the hide for their Medic. CAL-03c (#591): the
+        walk is its Resupply visit's goal, which goes on through a Down."""
         from matches.simulation import BatchSimulator
 
         downed = _ps("blue_scout_1", "blue", (7, 2))
         _down(downed, None, 100, OPEN, 0.0)
         medic = _ps("blue_medic", "blue", (7, 20), role="medic")
         downed.final_lives = 2
+        downed.visit = Visit(phase="go", started=90, goal=(7, 20))
         BatchSimulator()._advance_player(downed, [downed, medic], 101, OPEN, "")
-        self.assertTrue(downed.is_hiding)
-        self.assertEqual((downed.cell_row, downed.cell_col), (7, 2))
+        self.assertFalse(downed.is_hiding)
+        self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 2))
 
     def test_no_medic_alive_keeps_stay_hidden(self) -> None:
         from matches.simulation import BatchSimulator
