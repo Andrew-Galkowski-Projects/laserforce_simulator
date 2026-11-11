@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from matches.sim_helpers.modes import Mode, default_mode
 from matches.sim_helpers.player_counters import PlayerCounters
-from matches.sim_helpers.support_survival import LastSingle
+from matches.sim_helpers.support_survival import LastSingle, Visit
 from matches.sim_helpers.role_constants import (
     MAX_LIVES as _MAX_LIVES,
     MAX_SHOTS as _MAX_SHOTS,
@@ -199,6 +199,12 @@ class PlayerState:
     # CAL-03 rule 1: the last single Resupply received (kind, tick, supporter),
     # read by ``support_survival.double_window_open``; None before the first.
     last_single: Optional[LastSingle] = None
+    # CAL-03 rule 9: the tick the Ammo left its Medic (``medic_with_ammo`` turned
+    # False), None while with it; set and cleared by ``combat._support_link``.
+    link_left_at: Optional[int] = None
+    # CAL-03 rule 6: the current Resupply visit, or None (#591 fills it); read by
+    # ``support_survival.hold_allows``.
+    visit: Optional[Visit] = None
     downs_taken: int = 0
     downs_in_resupply_cooldown: int = 0
 

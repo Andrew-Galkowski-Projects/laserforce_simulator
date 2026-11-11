@@ -145,6 +145,12 @@ def choose_resupply_target(
         ],
         movement_ctx,
     )
+    # CAL-03 rule 8: a support holds a single nobody but it could give a double to.
+    teammates = [
+        t
+        for t in teammates
+        if support_survival.hold_allows(player, t, all_alive, second, movement_ctx)
+    ]
     if not teammates:
         return None
     all_full = True

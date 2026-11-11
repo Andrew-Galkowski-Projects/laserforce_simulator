@@ -438,14 +438,14 @@ def _control_value(
 def _defense_value(
     player, heavy_cell: Cell, movement_ctx: MapContext
 ) -> Callable[[Cell], float]:
-    """The Defense value rule: hidden cells for a Medic, open ones for an Ammo, and
-    the player's ``teamwork`` pulls them toward the Heavy. Support-survival switch 2:
-    hidden cells for both."""
-    hidden_for_both = support_survival.HIDDEN_SUPPORT_CELLS
+    """The Ammo's Defense value rule: open cells, and the player's ``teamwork``
+    pulls them toward the Heavy. Support-survival switch 2: hidden cells. The Medic
+    values its cells by ``_back_value`` (CAL-03 rule 5)."""
+    hidden = support_survival.HIDDEN_SUPPORT_CELLS
 
     def value_of(cell: Cell) -> float:
         rank = movement_ctx.los_rank(cell)
-        base = 1.0 - rank if player.role == "medic" or hidden_for_both else rank
+        base = 1.0 - rank if hidden else rank
         squares = max(abs(cell[0] - heavy_cell[0]), abs(cell[1] - heavy_cell[1]))
         feet = squares * movement_ctx.feet_per_square
         closeness = max(0.0, 1.0 - feet / DEFENSE_CLOSENESS_FEET)
@@ -552,10 +552,21 @@ def _defense_goal(
     time_domain: str,
 ) -> Cell | None:
     """A cell that sees the remembered Heavy, or None to fall back on Control.
-    Support-survival switch 2: a cell within ``SUPPORT_CELL_REACH`` steps of one."""
+    Support-survival switch 2: a cell within ``SUPPORT_CELL_REACH`` steps of one.
+    CAL-03: a low Ammo anchors on its Medic first (rule 3), and the Medic's cells
+    reach ``MEDIC_BACK_REACH`` and are valued by ``_back_value`` (rule 5)."""
+    if (
+        player.role == "ammo"
+        and player.final_lives <= support_survival.AMMO_ANCHOR_LIVES
+    ):
+        medic_cell = _fresh_teammate_cell(player, "medic", all_alive, tick, time_domain)
+        if medic_cell is not None:
+            return _back_goal(player, medic_cell, all_alive, movement_ctx, tick)
     heavy_cell = _fresh_teammate_cell(player, "heavy", all_alive, tick, time_domain)
     if heavy_cell is None:
         return None
+    if player.role == "medic":
+        return _back_goal(player, heavy_cell, all_alive, movement_ctx, tick)
     candidates = movement_ctx.cells_visible_from(heavy_cell)
     if support_survival.HIDDEN_SUPPORT_CELLS:
         candidates = _within_reach(
@@ -572,6 +583,53 @@ def _defense_goal(
     if goal is not None:
         player.mode_hold_until = None
     return goal
+
+
+def _back_goal(
+    player: PlayerState,
+    seen_cell: Cell,
+    all_alive: list,
+    movement_ctx: MapContext,
+    tick: float,
+) -> Cell | None:
+    """CAL-03 rules 3 and 5: a drawn cell within ``MEDIC_BACK_REACH`` steps of a cell
+    that sees *seen_cell* (the Medic's Heavy, or the low Ammo's Medic), valued by
+    ``_back_value``. Ends any hold when it draws one."""
+    candidates = _within_reach(
+        movement_ctx.cells_visible_from(seen_cell),
+        support_survival.MEDIC_BACK_REACH,
+        movement_ctx,
+    )
+    value_of = _back_value(player, candidates, movement_ctx)
+    goal = _draw(player, candidates, value_of, all_alive, movement_ctx, tick)
+    if goal is not None:
+        player.mode_hold_until = None
+    return goal
+
+
+def _back_value(
+    player, candidates: list[Cell], movement_ctx: MapContext
+) -> Callable[[Cell], float]:
+    """``MEDIC_BACK_HIDDEN_WEIGHT x (1 - los_rank) + MEDIC_BACK_DEPTH_WEIGHT x
+    depth``, depth being a candidate's Chebyshev squares from the enemy Base cell
+    scaled 0..1 over *candidates* (1 = farthest back; 0 for all when they tie or
+    the map has no enemy Base). No pull toward the Heavy."""
+    base = movement_ctx.get_spawn_cells().get(_enemy_color(player))
+    far = (
+        {c: max(abs(c[0] - base[0]), abs(c[1] - base[1])) for c in candidates}
+        if base is not None and candidates
+        else {}
+    )
+    lo = min(far.values(), default=0)
+    span = max(far.values(), default=0) - lo
+    hidden_w = support_survival.MEDIC_BACK_HIDDEN_WEIGHT
+    depth_w = support_survival.MEDIC_BACK_DEPTH_WEIGHT
+
+    def value_of(cell: Cell) -> float:
+        depth = (far.get(cell, lo) - lo) / span if span else 0.0
+        return hidden_w * (1.0 - movement_ctx.los_rank(cell)) + depth_w * depth
+
+    return value_of
 
 
 def _within_reach(

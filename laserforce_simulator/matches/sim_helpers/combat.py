@@ -8,6 +8,7 @@ importable without the ORM.
 
 from __future__ import annotations
 
+import math
 import random
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -292,6 +293,9 @@ def plan_action(
         check_stamina_penalty(player, second)
 
     is_active = player.is_active_at(second)
+    # CAL-03 rule 9: the support link, before a Hold can return (no RNG).
+    if movement_ctx is not None and player.role in _SUPPORT_ROLES:
+        _support_link(player, all_alive, movement_ctx, second)
     # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
     # tick spends no RNG; anything else ends it, and this tick then rolls as usual.
     hold_until = getattr(player, "hold_until", None)
@@ -491,6 +495,8 @@ def plan_action(
         if teammate:
             rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
             plans.append({"type": rtype, "actor": player, "target": teammate})
+        else:
+            plans.extend(_idle_trade(player, all_alive, second, movement_ctx, cooldown))
     elif choice == "missile_player":
         if player.final_missiles > 0:
             candidates = [
@@ -552,7 +558,17 @@ def plan_action(
         if player.can_use_special and player.final_lives > 0 and is_active:
             plans.append({"type": "use_special", "actor": player})
     elif choice == "hide":
-        plans.append({"type": "hide", "actor": player})
+        trade = (
+            _idle_trade(player, all_alive, second, movement_ctx, cooldown)
+            if is_active and not plan_is_live(player, second)
+            else []
+        )
+        if trade:
+            # CAL-03 rule 2: the hiding support comes out to shoot.
+            player.is_hiding = False
+            plans.extend(trade)
+        else:
+            plans.append({"type": "hide", "actor": player})
     elif choice == "request_resupply":
         plans.append({"type": "request_resupply", "actor": player})
     elif choice == "hold":
@@ -562,6 +578,76 @@ def plan_action(
         plans.append({"type": "hold", "actor": player})
 
     return plans
+
+
+def _support_link(
+    player: Any, all_alive: list, movement_ctx: "MapContext", second: float
+) -> None:
+    """CAL-03 rule 9, once per plan of a Medic or Ammo. No RNG.
+
+    Within comms range (half the map diagonal, as ``_broadcast_communication``) the
+    support writes its partner's true cell into its memory. The Ammo stamps
+    ``link_left_at`` when ``medic_with_ammo`` turns False and clears it once the
+    Medic is with it again."""
+    other_role = "ammo" if player.role == "medic" else "medic"
+    other = next(
+        (
+            p
+            for p in all_alive
+            if p.team_color == player.team_color
+            and p.role == other_role
+            and p.final_lives > 0
+        ),
+        None,
+    )
+    if other is None or player.cell_row is None or other.cell_row is None:
+        return
+    here, there = (player.cell_row, player.cell_col), (other.cell_row, other.cell_col)
+    zone = movement_ctx.get_zone_data()
+    reach = math.hypot(len(zone), len(zone[0])) / 2 if zone else math.inf
+    if math.dist(here, there) <= reach:
+        if not other.is_taggable_at(second):
+            status = "downed"
+        elif not other.is_active_at(second):
+            status = "reset_window"
+        else:
+            status = "active"
+        player.player_memory[other.tag_id_key] = {
+            "cell": there,
+            "timestamp": second,
+            "role": other.role,
+            "status": status,
+        }
+    if player.role == "ammo":
+        if support_survival.medic_with_ammo(player, other, movement_ctx):
+            player.link_left_at = None
+        elif player.link_left_at is None:
+            player.link_left_at = int(second)
+
+
+def _idle_trade(
+    player: Any,
+    all_alive: list,
+    second: float,
+    movement_ctx: "MapContext | None",
+    cooldown: float,
+) -> list:
+    """CAL-03 rule 2: an Active Medic or Ammo whose roll planned nothing Tags an
+    enemy in sight (``choose_tag_target``) with probability ``IDLE_TRADE_RATE``, its
+    gun off cooldown. The rate draw is made only once a target is in sight; ``[]``
+    otherwise (and on a map-less round)."""
+    if player.role not in _SUPPORT_ROLES or movement_ctx is None:
+        return []
+    if player.final_shots <= 0 or not player.is_active_at(second):
+        return []
+    if cooldown > 0 and (second - player.last_shot_time) < cooldown:
+        return []
+    target = choose_tag_target(
+        player, all_alive, second, movement_ctx, los_filter=_get_los_targets
+    )
+    if target is None or random.random() >= support_survival.IDLE_TRADE_RATE:
+        return []
+    return [{"type": "tag", "actor": player, "target": target}]
 
 
 def _reset_resupplied(teammate, second: float, ctx: RoundContext) -> None:

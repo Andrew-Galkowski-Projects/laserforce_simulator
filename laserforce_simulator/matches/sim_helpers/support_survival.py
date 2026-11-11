@@ -10,9 +10,10 @@ switches 3 + 4 are the pair that moves the Medic (eliminated 1.00 -> 0.83, uptim
 nothing. Switch 5 changed no cell once 3 + 4 were on, so it stays off.
 
 CAL-03 (#588) adds permanent rules with no switch; their tunable values are the
-module constants below (``DOUBLE_WINDOW_TICKS``, the doubles window of rule 1).
+module constants below (``DOUBLE_WINDOW_TICKS`` for rule 1, then rules 2-9).
 
-Pure Python; imports only ``time_constants`` so it is safe anywhere.
+Pure Python; imports only ``time_constants`` at module level so it is safe anywhere
+(``hold_allows`` imports ``resupply_queue._is_in_los`` when called).
 """
 
 from __future__ import annotations
@@ -122,6 +123,123 @@ def resupply_landed(
         kind=RESUPPLY_KIND[supporter.role],
         tick=int(tick),
         supporter=supporter.tag_id_key,
+    )
+
+
+#: CAL-03 rule 2, idle trade: the chance an idle support's roll (an empty
+#: ``resupply_ally`` or a ``hide``) Tags an enemy in sight instead.
+IDLE_TRADE_RATE: float = 0.4
+#: CAL-03 rule 3: at this many lives or fewer the Ammo's Defense cell anchors on its
+#: Medic (``modes._ammo_anchor_goal``) ...
+AMMO_ANCHOR_LIVES: int = 15
+#: ... and at this many or fewer it walks to its Medic (``choose_goal_cell`` step 1).
+AMMO_SEEK_MEDIC_LIVES: int = 6
+#: CAL-03 rule 5, Medic back: the Medic's Defense candidates reach this many steps
+#: from a cell that sees the Heavy, and a cell is valued ``HIDDEN x (1 - los_rank) +
+#: DEPTH x depth from the enemy Base``. The Ammo's anchor cells use the same rule.
+MEDIC_BACK_REACH: int = 3
+MEDIC_BACK_HIDDEN_WEIGHT: float = 0.5
+MEDIC_BACK_DEPTH_WEIGHT: float = 0.5
+#: CAL-03 rules 7 and 8: a player at this many lives or fewer is critical.
+CALLOUT_LIVES: int = 3
+#: CAL-03 rule 9, support link: the Medic is "with" the Ammo within this many
+#: squares (Chebyshev) or in its sight ...
+LINK_SQUARES: int = 6
+#: ... the Ammo goes back this many ticks after leaving it ...
+LINK_RETURN_TICKS: int = 60
+#: ... and its memory of the Medic is lost once older than this (the HOLD singles
+#: case).
+LINK_STALE_TICKS: int = 60
+
+_SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
+
+
+@dataclass(frozen=True)
+class Visit:
+    """A Resupply visit (CAL-03 rule 6, filled by #591): its ``phase`` (``wait``,
+    ``go`` or ``at``), the tick it ``started``, the ``arrived`` tick and its
+    ``goal`` cell."""
+
+    phase: str
+    started: int
+    arrived: Optional[int] = None
+    goal: Optional[tuple[int, int]] = None
+
+
+def _cell(player: Any) -> Optional[tuple[int, int]]:
+    if player.cell_row is None:
+        return None
+    return (player.cell_row, player.cell_col)
+
+
+def medic_with_ammo(ammo: Any, medic: Any, movement_ctx: Any) -> bool:
+    """True when *medic* is in *ammo*'s sight, or within ``LINK_SQUARES`` of it
+    (Chebyshev, true cells). No RNG."""
+    a, m = _cell(ammo), _cell(medic)
+    if a is None or m is None:
+        return False
+    if max(abs(a[0] - m[0]), abs(a[1] - m[1])) <= LINK_SQUARES:
+        return True
+    return movement_ctx is not None and movement_ctx.can_see(a, m)
+
+
+def _own(player: Any, role: str, all_alive: list) -> Any:
+    """*player*'s living teammate in *role* (not *player*), or None."""
+    return next(
+        (
+            p
+            for p in all_alive
+            if p.team_color == player.team_color
+            and p.role == role
+            and p is not player
+            and p.final_lives > 0
+        ),
+        None,
+    )
+
+
+def _ammo_singles_case(
+    ammo: Any, all_alive: list, second: float, movement_ctx: Any
+) -> bool:
+    """The Ammo gives singles as before HOLD: its Medic is Eliminated, or the Medic
+    is not with it and its memory of the Medic is missing or older than
+    ``LINK_STALE_TICKS``. No RNG."""
+    medic = _own(ammo, "medic", all_alive)
+    if medic is None:
+        return True
+    if medic_with_ammo(ammo, medic, movement_ctx):
+        return False
+    entry = ammo.player_memory.get(medic.tag_id_key)
+    return (
+        entry is None
+        or entry.get("cell") is None
+        or second - entry.get("timestamp", 0) > LINK_STALE_TICKS
+    )
+
+
+def hold_allows(
+    support: Any, teammate: Any, all_alive: list, second: float, movement_ctx: Any
+) -> bool:
+    """CAL-03 rule 8, HOLD: may *support* give *teammate* a Resupply? True for a
+    support teammate, a teammate on a visit or at ``CALLOUT_LIVES`` or fewer, one
+    the other living support sees while Active, and anyone under the Ammo's
+    singles case (``_ammo_singles_case``). No RNG."""
+    from .resupply_queue import _is_in_los  # noqa: PLC0415 (resupply_queue -> here)
+
+    if teammate.role in _SUPPORT_ROLES or teammate.visit is not None:
+        return True
+    if 0 < teammate.final_lives <= CALLOUT_LIVES:
+        return True
+    if support.role == "ammo" and _ammo_singles_case(
+        support, all_alive, second, movement_ctx
+    ):
+        return True
+    other = _own(support, "ammo" if support.role == "medic" else "medic", all_alive)
+    return (
+        other is not None
+        and other is not teammate
+        and other.is_active_at(second)
+        and _is_in_los(teammate, other, movement_ctx)
     )
 
 

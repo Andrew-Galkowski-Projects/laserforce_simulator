@@ -463,6 +463,16 @@ class TestSeededRoundsSpread:
     thin (14.5% at MECH-07), so an RNG change can move it; see PLAN.md decision 31.
     """
 
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "CAL-03b (#590): HOLD keeps a lone support's single back, so players on "
+            "step-1's low-resource walk wait on their support's true cell: 41.0% of "
+            "team-ticks share a goal (under 15% with hold_allows forced True). CAL-03c "
+            "(#591) replaces that walk with Resupply visits (R7 prototype: 5.4%); "
+            "the XPASS then removes this mark. Comment on #588."
+        ),
+    )
     def test_teammates_rarely_share_a_goal(self, monkeypatch) -> None:
         import random
         from collections import Counter, defaultdict

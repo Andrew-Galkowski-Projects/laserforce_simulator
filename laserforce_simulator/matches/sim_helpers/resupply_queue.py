@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
+from . import support_survival
 from .mechanics import shot_cooldown
 from .round_context import RoundContext
 
@@ -235,6 +236,13 @@ def resolve_resupply_requests(
             prior_request_count += 1
             continue
 
+        # CAL-03 rule 8: HOLD keeps back a single (the double above is always
+        # allowed).
+        if not support_survival.hold_allows(
+            support, requestor, all_alive, second, movement_ctx
+        ):
+            prior_request_count += 1
+            continue
         attempt_resupply(support, requestor, second, ctx=ctx)
         support.last_shot_time = second
         prior_request_count += 1

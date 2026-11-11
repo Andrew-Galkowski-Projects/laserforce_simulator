@@ -249,7 +249,8 @@ class TestChooseResupplyTarget:
 
     def test_returns_teammate_with_deficit(self):
         medic = self._medic()
-        scout = self._scout(final_lives=5, starting_lives=30)
+        # CAL-03 HOLD: with no Ammo, the Medic's single needs 3 lives or fewer.
+        scout = self._scout(final_lives=3, starting_lives=30)
         with patch("random.choices", return_value=[scout]):
             result = choose_resupply_target(medic, [medic, scout], 0.0)
         assert result is scout

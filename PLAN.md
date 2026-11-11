@@ -516,6 +516,13 @@ median visit gap 40/41/63 s (real 84/52/111), goal sharing 5.4%, C/S walking to 
     and the spawned tasks (RV-09, MECH-22). Acceptance is the R7 run reproduced within its se;
     C s9 (94.9 against <= 90, real 85), visit pacing and doubles per visit are CAL-04's.
 
+**CAL-03b built (#590, 2026-11-10; rules 1-5, 8, 9 without visits; 128 Test games, seed 42, 3
+workers).** A s5/7/9 98.8/91.4/72.7, M s5/7/9 93.4/63.7/46.1, C s9 75.8, round Tags 343.7(6.9),
+hit ratio A/M 1.18/1.24, shot-first A/M 10.2/10.9, doubles 21.9% of Resupplies, doubles per visit
+.50/.50/.42 (C/H/S), Resupplies per visit 1.95/1.97/1.56, C life Resupplies 4.8, goal sharing
+45.6%. Without visits HOLD keeps lone singles back, so C/H/S on step 1's walk park on a support's
+true cell (sharing up, Tags and C survival down); #591's visits replace that walk.
+
 ### CAL-04 · Resupply visits stick together, supports last the round (owner, 2026-11-10)
 
 Follow-up to CAL-03 (its PLAN section and the R7 run hold every number). After CAL-03:

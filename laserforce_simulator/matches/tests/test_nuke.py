@@ -940,7 +940,8 @@ class TestNukeArmingRules(unittest.TestCase):
         from matches.sim_helpers.mechanics import choose_resupply_target
 
         medic = _ps("medic")
-        cmd = _ps("commander", lives=10, special_active_until=110)
+        # CAL-03 HOLD: with no Ammo, the Medic's single needs 3 lives or fewer.
+        cmd = _ps("commander", lives=3, special_active_until=110)
         self.assertIsNone(choose_resupply_target(medic, [medic, cmd], 100))
         self.assertIs(choose_resupply_target(medic, [medic, cmd], 110), cmd)
 
