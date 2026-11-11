@@ -260,6 +260,13 @@ comment on the spec issue when it is decided, by you or an implementer, so the
 Spec reviewer reads it there: DESK-01's four reached the issue only through the
 PR body.
 
+**A spec's acceptance run (a probe or measurement of the finished feature) runs
+once, after Step 8.** The last ticket checks only that the run starts and
+reports every figure. The Spec review then runs on the integration tip, its
+fixes land, and the acceptance run follows on the final code. Its out-of-range
+figures are posted on the spec before the PR. CAL-03's review fixes changed the
+behaviour the 128-game probe had measured, so the 20-minute probe ran twice.
+
 A ticket that changes a documented value (a default, a constant, a limit) or retires
 a name (an event verb, a metadata key or value, an API field) greps the docs for each
 old one (`git grep -n "<old>" -- ":/*.md"`) and fixes every statement of it in the
@@ -305,6 +312,12 @@ criterion met a "no docs" constraint and was skipped).
   `checkout` outside your own worktree.
 - Run `python -m black` on the files you touched. Run `makemigrations` for
   model changes and commit the migration with the model.
+- **Checkpoint around every long run** (a probe, a `--measure` mutation, the
+  full suite: anything past about 5 minutes). Before it, commit what is green.
+  After it, comment on the ticket issue: what is committed, what is uncommitted
+  and why, the output file's path, and the next step. CAL-03c's session ended
+  after two 20-minute acceptance probes with the rule change they tested still
+  uncommitted, and the results only in a scratchpad file.
 - Right before each commit, run `/verify --mode branch` and fix every FAIL,
   mypy included: CI's lint job fails the PR on a mypy error on a changed line,
   and LFS-01's review spent a pass on 19 of them from four tickets.
@@ -404,6 +417,7 @@ or `git -C` into that worktree is refused). Review the result with `git diff`,
 re-run the frontend / Python checks there, and commit them yourself. Then
 remove the fix worktree with the command `copy_staged.py` prints: its staged
 files outlive the copy and otherwise sit on disk until someone audits them.
+Once the fixes are in, run the spec's acceptance run (Step 6) on the final tip.
 
 ## Step 9: PR
 
