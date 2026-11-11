@@ -567,6 +567,14 @@ MECH-10 Trail length) and the CAL-02 counter (times tagged per role): a moving D
 tagged less in its Reset window and leaves a longer Trail for the Follow rule. Keep the MOVE-08
 formula's three options as the choice when no enemy sees the player.
 
+**Ticket to carry (owner, 2026-11-11): #596** pins the 11 `simulate_single_round_detailed` calls in
+`test_map.py` that pass no `rng_seed`. Without a seed the round draws its own from OS entropy, so the
+tests' `random.seed` never reaches it. Attach #596 as a sub-issue when MOVE-10's spec issue is
+created. Run it early: MOVE-10 changes the Downed options, which caused the #595 failure. Since
+CAL-03, about 0.65% of seeds let blue Down red within a tick on the open 10×10 floor, and red's Stay
+hidden and trail-back-to-spot left the whole team on spawn at tick 40. Re-measure that rate under
+the new rule.
+
 ### MECH-18 · Re-engage a known enemy the tick it comes back into sight (owner, 2026-11-08)
 
 **From CAL-03 (2026-11-10):** in the sim a defender's planned Shot never lands before its
