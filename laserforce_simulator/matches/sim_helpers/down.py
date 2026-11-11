@@ -27,6 +27,7 @@ from typing import Any, Optional
 from .combat import cancel_missile_locks_involving
 from .downed_option import choose_downed_option
 from .follow_rule import round_map, start_trail
+from .resupply_visit import end_visit
 from .round_context import RoundContext
 from .time_constants import RESPAWN_TICKS
 
@@ -98,6 +99,10 @@ def record_down(
     resupplied_at = player.last_resupplied_at
     if resupplied_at is not None and tick - resupplied_at < RESPAWN_TICKS:
         player.downs_in_resupply_cooldown += 1
+
+    # CAL-03 rule 6: a Down (an Elimination too) ends a Resupply visit.
+    if getattr(player, "visit", None) is not None:
+        end_visit(player, tick)
 
     # 2-4. simple state mutations
     player.last_downed_time = tick

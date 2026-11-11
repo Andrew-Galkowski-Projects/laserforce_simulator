@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Literal
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-from . import support_survival
+from . import resupply_visit, support_survival
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
 from .map_context import _NEUTRAL_BASE_TYPES
@@ -293,9 +293,11 @@ def plan_action(
         check_stamina_penalty(player, second)
 
     is_active = player.is_active_at(second)
-    # CAL-03 rule 9: the support link, before a Hold can return (no RNG).
+    # CAL-03 rules 9 and 10: the support link and the backline position, before a
+    # Hold can return (no RNG).
     if movement_ctx is not None and player.role in _SUPPORT_ROLES:
         _support_link(player, all_alive, movement_ctx, second)
+    resupply_visit.update_backline(player, all_alive, movement_ctx)
     # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
     # tick spends no RNG; anything else ends it, and this tick then rolls as usual.
     hold_until = getattr(player, "hold_until", None)
@@ -402,6 +404,11 @@ def plan_action(
         weights, getattr(player, "decision_making", 50)
     )
 
+    # CAL-03 rule 6: on a map a non-support asks for a Resupply only on a visit.
+    visit = resupply_visit.visit_step(player, all_alive, movement_ctx, second)
+    if movement_ctx is not None and player.role not in _SUPPORT_ROLES and not visit:
+        weights[_ACTION_IDX["request_resupply"]] = 0
+
     # SIM-12 / UXP-23: finalize_action_weights clamps every slot to >= 0 (a
     # negative bucket would skew its neighbours in random.choices' cumulative
     # bisect) and then applies the UXP-23 fallback: the role weight functions
@@ -412,7 +419,11 @@ def plan_action(
     # ticks replay byte-identically.
     weights = finalize_action_weights(weights)
 
-    choice = random.choices(_CHOICES, weights)[0]
+    choice = _visit_choice(visit, random.choices(_CHOICES, weights)[0], player, second)
+    # CAL-03 rule 7: at 1-3 lives with no own support in sight, hide and call out.
+    called_out = resupply_visit.call_out(player, all_alive, movement_ctx, second)
+    if called_out and choice != "tag_player":
+        choice = "hide"
     player.last_chosen_action = choice
 
     # MECH-17: on a map an only_move roll takes an Active non-support out of its hide.
@@ -580,6 +591,19 @@ def plan_action(
     return plans
 
 
+def _visit_choice(
+    visit: "resupply_visit.VisitAction | None", choice: str, player: Any, second: float
+) -> str:
+    """CAL-03 rule 6: what a Resupply visit makes of the rolled *choice*. A Tag roll
+    stands, except that a player the visit has at its supports requests while it
+    can be resupplied (and hides otherwise)."""
+    if visit == "request" and player.is_resupplyable_at(second):
+        return "request_resupply"
+    if visit is None or choice == "tag_player":
+        return choice
+    return "only_move" if visit == "move" else "hide"
+
+
 def _support_link(
     player: Any, all_alive: list, movement_ctx: "MapContext", second: float
 ) -> None:
@@ -692,7 +716,8 @@ def attempt_resupply(
     SM5-02: a tagger that is not Active gives nothing (a Downed pack is dark).
     CAL-03 rule 1: while ``double_window_open`` the other support's Resupply
     lands although the first one's reset has started; every landed Resupply
-    updates the receiver's ``last_single``.
+    updates the receiver's ``last_single``. Rule 6: a single to a player on a
+    visit is followed by the partner's (``_partner_follows``).
     """
     if not tagger.is_active_at(second):
         return
@@ -708,6 +733,31 @@ def attempt_resupply(
         teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
         _landed(tagger, teammate, second, in_window, ctx)
         ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
+    else:
+        return
+    if not in_window:
+        _partner_follows(tagger, teammate, second, ctx)
+
+
+def _partner_follows(
+    tagger: Any, teammate: Any, second: float, ctx: RoundContext
+) -> None:
+    """CAL-03 decision 43: a single Resupply to a player on a visit is followed in
+    the same tick by the other support's, when that support is available (Active,
+    with Shots, off its shot cooldown) and sees the player; the double window lets
+    it land. No RNG."""
+    from .resupply_queue import _is_available  # noqa: PLC0415 (resupply_queue -> here)
+
+    if getattr(teammate, "visit", None) is None:
+        return
+    other = "ammo" if tagger.role == "medic" else "medic"
+    partner = support_survival._own(teammate, other, ctx.all_alive)
+    if partner is None or not _is_available(
+        partner, second, ctx.movement_ctx, teammate
+    ):
+        return
+    attempt_resupply(partner, teammate, second, ctx=ctx)
+    partner.last_shot_time = second
 
 
 def _landed(

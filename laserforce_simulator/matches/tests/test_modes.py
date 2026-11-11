@@ -17,6 +17,7 @@ import pytest
 
 from matches.sim_helpers import combat, modes, pathfinding, support_survival
 from matches.sim_helpers.goal_scoring import enemy_base_cells
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.modes import (
     Mode,
@@ -1156,11 +1157,11 @@ class TestChooseGoalCellUsesModes:
         ctx = _grid_map()
         assert _choose(scout, [scout], ctx) in enemy_base_cells("blue", ctx)
 
-    def test_a_critical_override_stays_above_it(self) -> None:
+    def test_a_visit_goal_stays_above_it(self) -> None:
+        # CAL-03c (#591): a Resupply visit's goal replaced step 1's critical walk.
         cmdr, everyone, ctx = _attack_scene()
-        cmdr.final_lives = 1
-        medic = _placed("medic", (7, 7))
-        assert _choose(cmdr, [*everyone, medic], ctx) == (7, 7)
+        cmdr.visit = Visit(phase="go", started=99, goal=(7, 7))
+        assert _choose(cmdr, everyone, ctx) == (7, 7)
 
     def test_the_enemy_medic_goal_is_gone(self) -> None:
         assert not hasattr(pathfinding, "_enemy_medic_goal")
@@ -1440,9 +1441,9 @@ class TestHoldingThroughChooseGoalCell:
     def test_a_reactive_override_interrupts(self) -> None:
         heavy, ctx = self._at_goal()
         assert _choose(heavy, [heavy], ctx, 105) == (1, 5)
-        heavy.final_lives = 1
-        medic = _placed("medic", (7, 7))
-        assert _choose(heavy, [heavy, medic], ctx, 106) == (7, 7)
+        # CAL-03c (#591): a Resupply visit's goal (was step 1's critical walk).
+        heavy.visit = Visit(phase="go", started=106, goal=(7, 7))
+        assert _choose(heavy, [heavy], ctx, 106) == (7, 7)
 
 
 def _attack_scene() -> tuple[PlayerState, list[PlayerState], MapContext]:

@@ -11,6 +11,7 @@ from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.pending_events import PendingNuke
 from matches.sim_helpers.pathfinding import choose_goal_cell
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.role_constants import SPECIAL_COST
 from matches.sim_helpers.weights import (
     _commander_nuke_gate,
@@ -248,8 +249,8 @@ class TestMech04GoalOverride(unittest.TestCase):
         """reacting_to_nuke=False → step 0 is skipped; step 1 handles critical lives.
 
         Scout with critical lives (9/30 = 30%) but NOT reacting to nuke:
-        step 0 must not fire.  The critical-resource override in step 1 still
-        seeks the allied medic for non-support roles at ≤ 30% lives.
+        step 0 must not fire. Since CAL-03c (#591) step 1 is the Resupply visit's
+        goal (here the Medic's cell), which replaced the critical-resource walk.
         Confirms goal reaches medic via step 1, not MECH-04 path.
         """
         scout = _ps(
@@ -260,12 +261,13 @@ class TestMech04GoalOverride(unittest.TestCase):
             cell_row=0,
             cell_col=0,
         )
+        scout.visit = Visit(phase="go", started=0, goal=(4, 4))
         medic = _ps("medic", "red", cell_row=4, cell_col=4)
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
         ctx = _minimal_ctx(spawn_cells=spawn_cells)
 
         goal = choose_goal_cell(scout, [scout, medic], spawn_cells, ctx)
-        # Critical-resource override (step 1) should still direct to medic
+        # The visit goal (step 1) directs it to the medic
         self.assertEqual(
             goal,
             (4, 4),

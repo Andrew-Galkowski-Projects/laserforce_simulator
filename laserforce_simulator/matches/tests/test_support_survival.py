@@ -938,9 +938,45 @@ class TestIdleTrade:
         assert self._kinds(plans) == [("hide", None)]
 
 
+class TestVisitShare:
+    """CAL-03 rule 6 (#588): ``VISIT_BASE_SHARE + VISIT_SPREAD x (decision_making -
+    50) / 50``, clamped to [``VISIT_SHARE_MIN``, ``VISIT_SHARE_MAX``]."""
+
+    @pytest.mark.parametrize(
+        ("decision_making", "share"),
+        [(0, 1 / 3 - 0.1), (50, 1 / 3), (100, 1 / 3 + 0.1)],
+    )
+    def test_the_spread_around_a_third(
+        self, decision_making: int, share: float
+    ) -> None:
+        scout = _player("scout", decision_making=decision_making)
+        assert support_survival.visit_share(scout) == pytest.approx(share)
+
+    def test_clamped_at_the_low_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(support_survival, "VISIT_SPREAD", 1.0)
+        scout = _player("scout", decision_making=0)
+        assert support_survival.visit_share(scout) == support_survival.VISIT_SHARE_MIN
+
+    def test_clamped_at_the_high_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(support_survival, "VISIT_SPREAD", 1.0)
+        scout = _player("scout", decision_making=100)
+        assert support_survival.visit_share(scout) == support_survival.VISIT_SHARE_MAX
+
+    def test_draws_no_rng(self) -> None:
+        random.seed(3)
+        before = random.getstate()
+        support_survival.visit_share(_player("scout"))
+        assert random.getstate() == before
+
+
 class TestNewPlayerFields:
     """CAL-03 (#588): the typed fields the support rules keep, default None."""
 
     def test_defaults(self) -> None:
         player = _player("ammo")
         assert (player.link_left_at, player.visit) == (None, None)
+
+    def test_the_visit_fields_default_to_none(self) -> None:
+        player = _player("scout")
+        assert (player.visit_next_tick, player.backline_cell) == (0, None)
+        assert player.support_callouts == []

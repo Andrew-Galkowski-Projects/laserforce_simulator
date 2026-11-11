@@ -292,11 +292,13 @@ class TestGoalSelectionOverrides(unittest.TestCase):
                     self._goal(downed, [downed, tagger, commander], 101), goal
                 )
 
-    def test_critical_resource_seek_medic_wins(self) -> None:
+    def test_low_lives_no_longer_beat_the_downed_option(self) -> None:
+        # CAL-03c (#591): step 1's critical-resource walk to the Medic is gone (a
+        # Resupply visit replaced it, and a Down ends a visit), so the trail holds.
         downed, tagger = self._trailing()
         medic = _ps("blue_medic", "blue", (1, 1), role="medic")
         downed.final_lives = 2
-        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (1, 1))
+        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (7, 4))
 
 
 class TestResupplyTrail(unittest.TestCase):
@@ -469,9 +471,9 @@ class TestStationaryWhileDowned(unittest.TestCase):
         BatchSimulator()._advance_player(downed, [downed, tagger], 101, OPEN, "")
         self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 14))
 
-    def test_critical_resource_moves_a_stay_hidden_player(self) -> None:
-        """Decision 14 reaches Stay hidden too: at 30% lives or less a Downed
-        non-support player leaves the hide for their Medic."""
+    def test_low_lives_keep_stay_hidden(self) -> None:
+        """CAL-03c (#591): decision 14's critical-resource seek went with step 1,
+        so at 30% lives or less a Downed player keeps its Stay hidden."""
         from matches.simulation import BatchSimulator
 
         downed = _ps("blue_scout_1", "blue", (7, 2))
@@ -479,8 +481,8 @@ class TestStationaryWhileDowned(unittest.TestCase):
         medic = _ps("blue_medic", "blue", (7, 20), role="medic")
         downed.final_lives = 2
         BatchSimulator()._advance_player(downed, [downed, medic], 101, OPEN, "")
-        self.assertFalse(downed.is_hiding)
-        self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 2))
+        self.assertTrue(downed.is_hiding)
+        self.assertEqual((downed.cell_row, downed.cell_col), (7, 2))
 
     def test_no_medic_alive_keeps_stay_hidden(self) -> None:
         from matches.simulation import BatchSimulator

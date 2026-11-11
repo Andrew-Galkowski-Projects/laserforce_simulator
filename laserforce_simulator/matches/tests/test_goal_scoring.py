@@ -22,6 +22,7 @@ from matches.sim_helpers.goal_scoring import (
 )
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.pathfinding import astar_path
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.player_state import PlayerState
 
 
@@ -338,7 +339,8 @@ class TestGoalSelectionDraws(unittest.TestCase):
         medic.role = "medic"
         with mock.patch.object(goal_scoring.random, "random", lambda: 0.0):
             self._goal(a, [a, medic], mc, 10)
-        a.final_lives = 2
+        # CAL-03c (#591): a Resupply visit's goal, which replaced step 1's walk.
+        a.visit = Visit(phase="go", started=11, goal=(0, 0))
         self.assertEqual(self._goal(a, [a, medic], mc, 11), (0, 0))
 
     def test_the_enemy_base_default_spreads_players(self) -> None:
@@ -463,16 +465,8 @@ class TestSeededRoundsSpread:
     thin (14.5% at MECH-07), so an RNG change can move it; see PLAN.md decision 31.
     """
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason=(
-            "CAL-03b (#590): HOLD keeps a lone support's single back, so players on "
-            "step-1's low-resource walk wait on their support's true cell: 41.0% of "
-            "team-ticks share a goal (under 15% with hold_allows forced True). CAL-03c "
-            "(#591) replaces that walk with Resupply visits (R7 prototype: 5.4%); "
-            "the XPASS then removes this mark. Comment on #588."
-        ),
-    )
+    # CAL-03b (#590) read 41.0% (HOLD with step 1's walk to a support's true cell);
+    # CAL-03c (#591) replaced that walk with Resupply visits and it passes again.
     def test_teammates_rarely_share_a_goal(self, monkeypatch) -> None:
         import random
         from collections import Counter, defaultdict

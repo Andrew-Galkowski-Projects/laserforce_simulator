@@ -50,6 +50,7 @@ from ..sim_helpers.pending_events import (
     PendingReaction,
 )
 from ..sim_helpers.resupply_queue import resolve_resupply_requests
+from ..sim_helpers.resupply_visit import end_open_visits
 from ..sim_helpers.role_constants import ROLE_STATS
 from ..sim_helpers.round_context import RoundContext
 from ..sim_helpers.shot import (
@@ -1516,6 +1517,9 @@ class BatchSimulator:
                     for p in red_alive:
                         self._award_bases(p, ctx, second)
                 break
+
+        # CAL-03 rule 6: the round's end ends every Resupply visit still open.
+        end_open_visits(red_players + blue_players, self.ROUND_TICKS)
 
         # TIME-01: guarantee uptime reconciles to exactly TICKS_PER_ROUND per
         # player. If the loop broke early on a team wipe, survivors are credited

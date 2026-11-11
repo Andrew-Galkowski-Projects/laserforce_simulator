@@ -9,6 +9,7 @@ SIM-09: migrated from RBS static helpers to sim_helpers.map_loader free function
 import pytest
 
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.map_loader import load_map_context, resolve_map_data
 
 # ---------------------------------------------------------------------------
@@ -139,6 +140,9 @@ class TestMap05RoleAwareGoal:
         medic = _make_player("red_medic", "red", "medic", cell_row=4, cell_col=4)
         strong_spots = [(3, 3)]
         ctx = _base_ctx(strong_spots=strong_spots, spawn_cells=spawn_cells)
+        # CAL-03c (#591): step 1 is a Resupply visit's goal, which replaced the
+        # walk to the Medic's true cell.
+        heavy.visit = Visit(phase="go", started=0, goal=(4, 4))
 
         goal = choose_goal_cell(heavy, [heavy, medic], spawn_cells, ctx)
         assert goal == (4, 4)
@@ -155,6 +159,7 @@ class TestMap05RoleAwareGoal:
         ammo = _make_player("red_ammo", "red", "ammo", cell_row=5, cell_col=5)
         strong_spots = [(3, 3)]
         ctx = _base_ctx(strong_spots=strong_spots, spawn_cells=spawn_cells)
+        heavy.visit = Visit(phase="go", started=0, goal=(5, 5))  # CAL-03c (#591)
 
         goal = choose_goal_cell(heavy, [heavy, ammo], spawn_cells, ctx)
         assert goal == (5, 5)
@@ -451,6 +456,8 @@ class TestMap05RoleAwareGoal:
         medic = _make_player("red_medic", "red", "medic", cell_row=4, cell_col=4)
         enemy = _make_player("blue_heavy", "blue", "heavy", cell_row=1, cell_col=1)
         ctx = _base_ctx(spawn_cells=spawn_cells)
+        # CAL-03c (#591): the Resupply visit a critical player starts.
+        scout.visit = Visit(phase="go", started=0, goal=(4, 4))
 
         # Even with tag_player action, critical lives → seek medic
         goal = choose_goal_cell(

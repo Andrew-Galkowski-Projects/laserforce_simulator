@@ -19,6 +19,7 @@ Paths are relative to the repo root.
 - action weights, weight layout, role baselines, weight-safety rules — `docs/agents/matches/sim-helpers.md#weightspy`
 - movement, A*, path and goal commitment, goal selection, memory — `docs/agents/matches/sim-helpers.md#pathfindingpy`
 - Support-survival switches: target priority, hidden support cells, the Medic holding position, the Ammo hiding freely, teamwork call-outs (2026-11-06); CAL-03's permanent support rules (doubles window, idle trade, Ammo anchor, Medic back, HOLD `hold_allows`, the support link `medic_with_ammo`) — `docs/agents/matches/sim-helpers.md#support_survivalpy`
+- CAL-03's Resupply visits (`visit_step`, the wait / go / at phases, the cooldown, partner follows), the 1-3 lives call-out, the backline position (#591) — `docs/agents/matches/sim-helpers.md#resupply_visitpy`
 - Nuke arming: the 20 SP gate, the Commander hides while the fuse runs, the distance and enemy-3-hit-down gates (switches, off), no resupply while arming, the per-nuke SP bank draw, the after-Down boost (CAL #558, 2026-11-06/07) — `docs/agents/matches/sim-helpers.md#nuke_armingpy`
 - Engagement switches: the defender learns the attacker at every Hit on a map (CAL-02 D4, 2026-11-08); the Attack table for every role and the Medic's tag weight are under `modes.py` and `weights.py` — `docs/agents/matches/sim-helpers.md#engagementpy`
 - shot cooldown, tag / resupply target choice — `docs/agents/matches/sim-helpers.md#mechanicspy`

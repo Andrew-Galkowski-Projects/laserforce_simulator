@@ -427,10 +427,12 @@ class TestEngagementGuard:
     # tree, so the guard is an expected failure until CAL-03's later tickets move the
     # supports and the Scouts again; strict, so the XPASS that day forces the
     # re-measure (comment on spec #588).
-    @pytest.mark.xfail(
-        strict=True,
-        reason="CAL-03a: no Scout floor separates the empty-roll bug (#588)",
-    )
+    # CAL-03c (#591, 2026-11-11) re-measured with ``scripts/mutate.py --measure``:
+    # as built 58.4 +/- 13.0 on seeds 1-4 (58.8 +/- 5.8 on 1-12); with the empty-roll
+    # bug 91.8 +/- 10.6 (74.2 +/- 6.1). With Resupply visits the bug now raises the
+    # Scouts' planned Shots, so no floor separates it: the strict xfail is gone and
+    # the floor of 40 stays as a plain engagement floor (the game must not quietly
+    # stop). The bug itself is caught by ``test_an_empty_tag_roll_sets_an_action_goal``.
     def test_scouts_keep_shooting_on_syracuse(self) -> None:
         result = run_probe(_syracuse(), [1, 2, 3, 4])
         assert result.roles["scout"].tags_per_round >= 40

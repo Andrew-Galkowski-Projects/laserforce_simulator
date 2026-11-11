@@ -142,6 +142,8 @@ MEDIC_BACK_HIDDEN_WEIGHT: float = 0.5
 MEDIC_BACK_DEPTH_WEIGHT: float = 0.5
 #: CAL-03 rules 7 and 8: a player at this many lives or fewer is critical.
 CALLOUT_LIVES: int = 3
+#: CAL-03 rule 7: a support forgets a call-out this many ticks after it was made.
+CALLOUT_TICKS: int = 40
 #: CAL-03 rule 9, support link: the Medic is "with" the Ammo within this many
 #: squares (Chebyshev) or in its sight ...
 LINK_SQUARES: int = 6
@@ -151,19 +153,45 @@ LINK_RETURN_TICKS: int = 60
 #: case).
 LINK_STALE_TICKS: int = 60
 
+#: CAL-03 rule 6, Resupply visits: a Commander, Heavy or Scout starts one when its
+#: lives or shots fall to ``visit_share`` of the cap ...
+VISIT_BASE_SHARE: float = 1 / 3
+VISIT_SPREAD: float = 0.1
+VISIT_SHARE_MIN: float = 0.15
+VISIT_SHARE_MAX: float = 0.5
+#: ... waits at the supports this many ticks for both before it takes a single ...
+VISIT_WAIT_TICKS: int = 20
+#: ... ends this many ticks after it arrived, or after it started ...
+VISIT_TIMEOUT_TICKS: int = 60
+VISIT_MAX_TICKS: int = 120
+#: ... starts no new visit for this many ticks after one ends ...
+VISIT_COOLDOWN_TICKS: int = 160
+#: ... except at this share of the cap or less (step 1's old seek threshold).
+VISIT_SEEK_SHARE: float = 0.3
+
 _SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
+
+
+def visit_share(player: Any) -> float:
+    """CAL-03 rule 6: the share of its lives or shots cap at which *player* starts a
+    Resupply visit, ``VISIT_BASE_SHARE + VISIT_SPREAD x (decision_making - 50) /
+    50`` clamped to [``VISIT_SHARE_MIN``, ``VISIT_SHARE_MAX``]. No RNG."""
+    share = VISIT_BASE_SHARE + VISIT_SPREAD * (player.decision_making - 50) / 50
+    return min(VISIT_SHARE_MAX, max(VISIT_SHARE_MIN, share))
 
 
 @dataclass(frozen=True)
 class Visit:
-    """A Resupply visit (CAL-03 rule 6, filled by #591): its ``phase`` (``wait``,
-    ``go`` or ``at``), the tick it ``started``, the ``arrived`` tick and its
-    ``goal`` cell."""
+    """A Resupply visit (CAL-03 rule 6, ``resupply_visit``): its ``phase``
+    (``wait``, ``go`` or ``at``), the tick it ``started``, the ``arrived`` tick (a
+    support first saw the player) and its ``goal`` cell. ``backline_done`` is True
+    once the walk reached the player's ``backline_cell``."""
 
     phase: str
     started: int
     arrived: Optional[int] = None
     goal: Optional[tuple[int, int]] = None
+    backline_done: bool = False
 
 
 def _cell(player: Any) -> Optional[tuple[int, int]]:
