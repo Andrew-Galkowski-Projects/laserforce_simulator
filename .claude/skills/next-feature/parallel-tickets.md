@@ -140,8 +140,12 @@ Add these to each implementer prompt, beside `SKILL.md`'s shared constraints:
 ## An implementer that stops reporting
 
 An agent's session can end with no report and no commit (CAL-02b finished every
-criterion and died before `git commit`). Before restarting a ticket, compare its
-worktree with `git log <its branch>` and `diff` against the integration branch.
+criterion and died before `git commit`). Before restarting a ticket, run
+`python scripts/worktree_status.py` (read-only: every worktree's branch, last
+commit, commits not in `origin/main` and uncommitted files), then read the
+ticket's last comment for the checkpoint it left. The guard refuses
+`git -C <worktree> status`, and CAL-03c's resume found its uncommitted
+acceptance fix only by hashing each file against its commit.
 Bring finished work over with `python scripts/copy_staged.py <worktree> --worktree`:
 it takes everything uncommitted and prints any path that also changed on the
 integration branch as `CHANGED ON BOTH SIDES`, for you to merge by hand. Re-run the

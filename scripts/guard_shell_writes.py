@@ -35,8 +35,9 @@ CD_MESSAGE = (
 GIT_C_MESSAGE = (
     "Refused: no `git -C` (CLAUDE.md, Tooling). Every worktree shares this .git, "
     "and a git command aimed at another one has corrupted a working tree before. "
-    "Run `git ...` from the current directory; for another worktree's state use "
-    "`git worktree list` or that worktree's own session."
+    "Run `git ...` from the current directory; for every worktree's branch, last "
+    "commit and uncommitted files run `python scripts/worktree_status.py` "
+    "(read-only), or work in that worktree's own session."
 )
 
 # `cd` as a command: at the start, or after `;`, `&&`, `||`, `|` or `(`.
