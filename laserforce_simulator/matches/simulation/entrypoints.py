@@ -2110,6 +2110,8 @@ class BatchSimulator:
                     continue
                 lives_taken = min(opp.final_lives, 3)
                 opp.final_lives -= lives_taken
+                # CAL-03: a Downed enemy loses its lives too, and they count.
+                opp.counters.lives_lost_to_nukes += lives_taken
                 record_down(opp, second, ctx, tagger=player)
                 opp.shields = opp.max_shields
                 if opp.role == "commander" and opp.special_active_until > second:

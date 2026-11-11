@@ -1341,3 +1341,41 @@ class TestMech05NukeCancellation(unittest.TestCase):
 
         self.assertEqual(nuke.complete_time, 107.0)
         self.assertIs(nuke.player, commander)
+
+
+class TestLivesLostToNukes(unittest.TestCase):
+    """CAL-03 (#588): every nuke adds the lives it takes to each enemy's
+    ``lives_lost_to_nukes``, a Downed one included, and ``lives_lost`` follows."""
+
+    def test_a_nuke_on_three_players_counts_three_lives_on_each(self) -> None:
+        from dataclasses import asdict
+
+        from matches.models import PlayerRoundState
+        from matches.simulation import BatchSimulator
+
+        commander = _ps("commander", "red")
+        heavy = _ps("heavy", "blue", lives=20)
+        scout = _ps("scout", "blue", lives=10)
+        # Downed two ticks ago: not Active, still on the floor with lives.
+        medic = _ps("medic", "blue", lives=8, last_downed_time=98)
+        self.assertFalse(medic.is_active_at(100))
+
+        BatchSimulator()._complete_nuke(commander, 100, [heavy, scout, medic])
+
+        for victim, lives in ((heavy, 17), (scout, 7), (medic, 5)):
+            with self.subTest(role=victim.role):
+                self.assertEqual(victim.final_lives, lives)
+                self.assertEqual(victim.counters.lives_lost_to_nukes, 3)
+                state = PlayerRoundState(**asdict(victim.counters))
+                self.assertEqual(state.lives_lost, 3)
+
+    def test_a_nuke_counts_only_the_lives_a_player_had(self) -> None:
+        from matches.simulation import BatchSimulator
+
+        last_two = _ps("ammo", "blue", lives=2)
+        out = _ps("scout", "blue", lives=0)
+
+        BatchSimulator()._complete_nuke(_ps("commander", "red"), 100, [last_two, out])
+
+        self.assertEqual(last_two.counters.lives_lost_to_nukes, 2)
+        self.assertEqual(out.counters.lives_lost_to_nukes, 0)
