@@ -48,7 +48,46 @@ _REAL_METRIC: dict[str, tuple[str, float]] = {
     "active_share": ("active_share", 100.0),
     "tags_per_active_minute": ("tags_per_active_min", 1.0),
     "enemies_on_floor_per_active_roll": ("enemies_on_floor", 1.0),
+    "elimination_tick": ("elim_minute", 120.0),
 }
+# CAL-03a (#589): the real figures the targets file does not hold, from the CAL-03
+# section of PLAN.md (164 TDF games); printed only beside a targets run.
+_CAL03_REAL: dict[str, dict[str, float]] = {
+    "survival_5": {"ammo": 97, "medic": 95},
+    "survival_7": {"ammo": 92, "medic": 78},
+    "survival_9": {"commander": 85, "ammo": 80, "medic": 62},
+    "tag_downs_per_minute_in_play": {
+        "commander": 2.32,
+        "heavy": 1.88,
+        "scout": 2.92,
+        "ammo": 2.11,
+        "medic": 1.19,
+    },
+    "lives_nuke": {"medic": 6.5},
+    "life_resupplies": {"ammo": 10.2, "medic": 0.0},
+    "doubles_share": {"commander": 44, "heavy": 39, "scout": 46},
+    "hit_ratio": {
+        "commander": 0.95,
+        "heavy": 0.93,
+        "scout": 1.12,
+        "ammo": 0.99,
+        "medic": 0.87,
+    },
+    "shot_first_share": {
+        "commander": 24,
+        "heavy": 8,
+        "scout": 18,
+        "ammo": 19,
+        "medic": 20,
+    },
+    "visits_per_round": {"commander": 6.2, "heavy": 8.3, "scout": 4.6},
+    "resupplies_per_visit": {"commander": 2.82, "heavy": 2.30, "scout": 2.77},
+    "doubles_per_visit": {"commander": 0.86, "heavy": 0.64, "scout": 0.87},
+    "median_gap_seconds": {"commander": 84, "heavy": 52, "scout": 111},
+}
+# Team-wide real figures (PLAN.md CAL-03): Tags per round, doubles % of Resupplies.
+_CAL03_REAL_ROUND_TAGS = 403.0
+_CAL03_REAL_DOUBLES = 32.1
 
 
 def calibration_lineups(limit: int | None = None) -> list[Lineup]:
@@ -109,6 +148,113 @@ def _measure_spread(
         f"{pooled.mean * scale:.1f} +/- {pooled.se * scale:.1f} "
         f"({min(means):.1f}-{max(means):.1f})"
     )
+
+
+def _cal03_real(targets: Mapping | None, role: str, key: str, form: str) -> str:
+    """`` | real 2.32`` from ``_CAL03_REAL`` beside a targets run, else nothing."""
+    real = _CAL03_REAL.get(key, {}).get(role)
+    if targets is None or real is None:
+        return ""
+    return f" | real {real:{form}}"
+
+
+def _measure_line(
+    label: str, pooled: Measure, per_seed: list[Measure], form: str = ".1f"
+) -> str:
+    """``  label: mean +/- se (min-max)``: the error is the measure's own, the
+    range across the seeds' means."""
+    means = [seed.mean for seed in per_seed]
+    return (
+        f"  {label}: {pooled.mean:{form}} +/- {pooled.se:{form}} "
+        f"({min(means):{form}}-{max(means):{form}})"
+    )
+
+
+def _cal03_lines(
+    role: str,
+    pooled: RoleMeasures,
+    seeds: list[RoleMeasures],
+    targets: Mapping | None = None,
+) -> list[str]:
+    """CAL-03a (#589): survival, minutes in play, lives by cause, Resupplies,
+    doubles, hit ratio, shot-first and Resupply visits, each with its standard
+    error and the real figure beside it when there is one."""
+
+    def line(
+        label: str, key: str, read: Callable[[RoleMeasures], Measure], form=".1f"
+    ) -> str:
+        return _measure_line(
+            label, read(pooled), [read(seed) for seed in seeds], form
+        ) + _cal03_real(targets, role, key, form)
+
+    def survival_at(minute: int) -> str:
+        return _measure_line(
+            f"Survival % at minute {minute}",
+            pooled.survival[minute],
+            [seed.survival[minute] for seed in seeds],
+        ) + _cal03_real(targets, role, f"survival_{minute}", ".1f")
+
+    lines = [survival_at(minute) for minute in pooled.survival]
+    lines += [
+        line("Minutes in play", "minutes_in_play", lambda m: m.minutes_in_play),
+        line(
+            "Tag Downs per minute in play",
+            "tag_downs_per_minute_in_play",
+            lambda m: m.tag_downs_per_minute_in_play,
+            ".2f",
+        ),
+        line("Lives lost to Tags", "lives_tag", lambda m: m.lives_lost["tag"]),
+        line(
+            "Lives lost to missiles", "lives_missile", lambda m: m.lives_lost["missile"]
+        ),
+        line("Lives lost to nukes", "lives_nuke", lambda m: m.lives_lost["nuke"]),
+        line(
+            "Life Resupplies received", "life_resupplies", lambda m: m.life_resupplies
+        ),
+        line(
+            "Doubles % of Resupplies received",
+            "doubles_share",
+            lambda m: m.doubles_share,
+        ),
+        line(
+            "Hit ratio (Tags made / times tagged)",
+            "hit_ratio",
+            lambda m: m.hit_ratio,
+            ".2f",
+        ),
+        line(
+            "Shot-first % of Tag Downs",
+            "shot_first_share",
+            lambda m: m.shot_first_share,
+        ),
+        line(
+            "Resupply visits per round",
+            "visits_per_round",
+            lambda m: m.visits.per_round,
+        ),
+        line(
+            "Resupplies per visit",
+            "resupplies_per_visit",
+            lambda m: m.visits.resupplies_per_visit,
+            ".2f",
+        ),
+        line(
+            "Doubles per visit",
+            "doubles_per_visit",
+            lambda m: m.visits.doubles_per_visit,
+            ".2f",
+        ),
+    ]
+    visits = pooled.visits
+    if visits.median_gap_seconds is None:
+        gap = "none"
+    else:
+        gap = (
+            f"median {visits.median_gap_seconds:.1f} (mean "
+            f"{visits.gap_seconds.mean:.1f} +/- {visits.gap_seconds.se:.1f})"
+        )
+    real_gap = _cal03_real(targets, role, "median_gap_seconds", ".0f")
+    return lines + [f"  Gap to the next visit, s: {gap}" + real_gap]
 
 
 def _real_cadence(targets: Mapping | None, role: str) -> str:
@@ -224,7 +370,8 @@ def _role_lines(
         f"  Live captures per round: {number(lambda m: m.captures_per_round)}",
         f"  Eliminated %: {percent(lambda m: m.eliminated_share)}"
         + _real(targets, role, "eliminated_share"),
-        f"  Elimination tick: {elimination_tick}",
+        f"  Elimination tick: {elimination_tick}"
+        + _real(targets, role, "elimination_tick"),
         f"  Times tagged per round: {measure('times_tagged')}",
         f"  Shots fired per round: {measure('shots_fired')}",
         f"  Misses at a hiding target per round: {measure('hiding_misses')}",
@@ -237,6 +384,7 @@ def _role_lines(
         "  Enemies on the floor per Active roll: "
         f"{measure('enemies_on_floor_per_active_roll')}",
         _cadence_line(pooled, role, targets),
+        *_cal03_lines(role, pooled, seeds, targets),
     ]
 
 
@@ -293,6 +441,17 @@ def format_result(result: ProbeResult, targets: Mapping | None = None) -> list[s
             result.who_downs_whom,
             targets.get("who_downs_whom") if targets else None,
         )
+    real = targets is not None
+    lines.append(
+        f"Tags per round, both teams: {result.round_tags.mean:.1f} +/- "
+        f"{result.round_tags.se:.1f}"
+        + (f" | real {_CAL03_REAL_ROUND_TAGS:.1f}" if real else "")
+    )
+    lines.append(
+        f"Doubles % of all Resupplies received: {result.doubles_share.mean:.1f} +/- "
+        f"{result.doubles_share.se:.1f}"
+        + (f" | real {_CAL03_REAL_DOUBLES:.1f}" if real else "")
+    )
     lines.append(
         "Live captures per round: "
         f"{_team_captures(result, 'red')}, {_team_captures(result, 'blue')}"

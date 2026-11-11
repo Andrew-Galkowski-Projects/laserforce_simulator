@@ -3,6 +3,7 @@ from typing import Any, Optional
 
 from matches.sim_helpers.modes import Mode, default_mode
 from matches.sim_helpers.player_counters import PlayerCounters
+from matches.sim_helpers.support_survival import LastSingle, Visit
 from matches.sim_helpers.role_constants import (
     MAX_LIVES as _MAX_LIVES,
     MAX_SHOTS as _MAX_SHOTS,
@@ -195,6 +196,22 @@ class PlayerState:
     # counts every Down in ``downs_taken`` and a Down within
     # ``RESPAWN_TICKS`` of that Resupply in ``downs_in_resupply_cooldown``.
     last_resupplied_at: Optional[int] = None
+    # CAL-03 rule 1: the last single Resupply received (kind, tick, supporter),
+    # read by ``support_survival.double_window_open``; None before the first.
+    last_single: Optional[LastSingle] = None
+    # CAL-03 rule 9: the tick the Ammo left its Medic (``medic_with_ammo`` turned
+    # False), None while with it; set and cleared by ``combat._support_link``.
+    link_left_at: Optional[int] = None
+    # CAL-03 rule 6: the current Resupply visit, or None (``resupply_visit``); read
+    # by ``support_survival.hold_allows`` and ``choose_goal_cell``.
+    visit: Optional[Visit] = None
+    # CAL-03 rule 6: the earliest tick a new visit may start (the cooldown).
+    visit_next_tick: int = 0
+    # CAL-03 rule 10: a Commander's or Scout's last known backline position.
+    backline_cell: Optional[tuple[int, int]] = None
+    # CAL-03 rule 7 (supports): call-outs from teammates at 1-3 lives, freshest
+    # first (``resupply_visit.Callout``).
+    support_callouts: list = field(default_factory=list)
     downs_taken: int = 0
     downs_in_resupply_cooldown: int = 0
 

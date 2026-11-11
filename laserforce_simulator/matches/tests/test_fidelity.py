@@ -315,6 +315,12 @@ class TestFidelityEquivalence:
             round_number=1,
             red_points=gr_full.red_points,
             blue_points=gr_full.blue_points,
+            # A scores round keeps the outcome scalars too; the team_elimination
+            # highlight is rebuilt from them (CAL-03b: a 400-tick round on the
+            # minimal map now sometimes ends in a wipe).
+            red_team_eliminated=gr_full.red_team_eliminated,
+            blue_team_eliminated=gr_full.blue_team_eliminated,
+            eliminated_at=gr_full.eliminated_at,
             rng_seed=gr_full.rng_seed,
             arena_map=arena_map,
             zone_size=gr_full.zone_size,

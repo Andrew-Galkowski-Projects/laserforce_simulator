@@ -15,8 +15,9 @@ from unittest import mock
 
 import pytest
 
-from matches.sim_helpers import combat, modes, pathfinding
+from matches.sim_helpers import combat, modes, pathfinding, support_survival
 from matches.sim_helpers.goal_scoring import enemy_base_cells
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.modes import (
     Mode,
@@ -1156,11 +1157,11 @@ class TestChooseGoalCellUsesModes:
         ctx = _grid_map()
         assert _choose(scout, [scout], ctx) in enemy_base_cells("blue", ctx)
 
-    def test_a_critical_override_stays_above_it(self) -> None:
+    def test_a_visit_goal_stays_above_it(self) -> None:
+        # CAL-03c (#591): a Resupply visit's goal replaced step 1's critical walk.
         cmdr, everyone, ctx = _attack_scene()
-        cmdr.final_lives = 1
-        medic = _placed("medic", (7, 7))
-        assert _choose(cmdr, [*everyone, medic], ctx) == (7, 7)
+        cmdr.visit = Visit(phase="go", started=99, goal=(7, 7))
+        assert _choose(cmdr, everyone, ctx) == (7, 7)
 
     def test_the_enemy_medic_goal_is_gone(self) -> None:
         assert not hasattr(pathfinding, "_enemy_medic_goal")
@@ -1183,10 +1184,13 @@ class TestSupportsThroughChooseGoalCell:
         )
         return support, [support, heavy], ctx
 
-    def test_a_medic_takes_a_hidden_cell_the_heavy_sees(self) -> None:
+    def test_a_medic_takes_a_back_cell_near_one_the_heavy_sees(self) -> None:
+        # CAL-03 rule 5: within MEDIC_BACK_REACH of a seeing cell, held until reached.
         medic, everyone, ctx = self._scene("medic")
-        assert _choose(medic, everyone, ctx) == (2, 1)
-        assert medic._committed_goal == ((2, 1), False, HELD_GOAL_EXPIRY)
+        goal = _choose(medic, everyone, ctx)
+        reach = support_survival.MEDIC_BACK_REACH
+        assert goal in modes._within_reach([(2, 1), (2, 3)], reach, ctx)
+        assert medic._committed_goal == (goal, False, HELD_GOAL_EXPIRY)
 
     def test_an_ammo_takes_an_open_cell_the_heavy_sees(self) -> None:
         ammo, everyone, ctx = self._scene("ammo")
@@ -1214,7 +1218,9 @@ class TestSupportsThroughChooseGoalCell:
         ctx.sight_data = {**(ctx.sight_data or {}), "8,8": frozenset({"9,9"})}
         everyone.append(_placed("scout", (8, 8)))
         goal = _choose(medic, everyone, ctx)
-        assert goal in {(2, 1), (2, 3)}
+        reach = support_survival.MEDIC_BACK_REACH  # CAL-03 rule 5
+        assert goal in modes._within_reach([(2, 1), (2, 3)], reach, ctx)
+        assert goal != (9, 9)
         assert medic._committed_goal == (goal, False, HELD_GOAL_EXPIRY)
 
     def test_the_teamwork_bias_is_gone(self) -> None:
@@ -1334,8 +1340,10 @@ class TestDefenseResupplyGoal:
         monkeypatch.setattr(combat.random, "choices", roll_resupply)
         # MECH-17: a map round's Resupply needs line of sight, so the ally is in sight.
         # The invariant is unchanged: the share only decides where the support walks.
-        ctx = _grid_map(sight={"0,0": {"0,1"}})
-        plans = combat.plan_action(support, [support, ally], 100, ctx)
+        # CAL-03 HOLD: the other support also sees the ally, so the single may land.
+        other = _placed("ammo" if role == "medic" else "medic", (0, 2))
+        ctx = _grid_map(sight={"0,0": {"0,1"}, "0,1": {"0,2"}})
+        plans = combat.plan_action(support, [support, ally, other], 100, ctx)
         assert [(p["type"], p["target"]) for p in plans] == [(plan_type, ally)]
 
 
@@ -1433,9 +1441,9 @@ class TestHoldingThroughChooseGoalCell:
     def test_a_reactive_override_interrupts(self) -> None:
         heavy, ctx = self._at_goal()
         assert _choose(heavy, [heavy], ctx, 105) == (1, 5)
-        heavy.final_lives = 1
-        medic = _placed("medic", (7, 7))
-        assert _choose(heavy, [heavy, medic], ctx, 106) == (7, 7)
+        # CAL-03c (#591): a Resupply visit's goal (was step 1's critical walk).
+        heavy.visit = Visit(phase="go", started=106, goal=(7, 7))
+        assert _choose(heavy, [heavy], ctx, 106) == (7, 7)
 
 
 def _attack_scene() -> tuple[PlayerState, list[PlayerState], MapContext]:
@@ -1635,57 +1643,73 @@ def _defense_scene(
 
 @pytest.mark.usefixtures("best_draw")
 class TestDefenseGoal:
-    """The Defense rule as built; the two-step reach and the Ammo's hidden value
-    (support_survival, default since 2026-11-06) are in ``test_support_survival``."""
+    """The Defense rule as built, measured on the Ammo: since CAL-03 rule 5 the
+    Medic's cells follow ``modes._back_value`` (``test_support_survival``). The
+    two-step reach and the Ammo's hidden value (support_survival, default since
+    2026-11-06) are in ``test_support_survival``; ``hidden`` turns switch 2 back on
+    for the value rows that measure it."""
 
     pytestmark = pytest.mark.usefixtures("switches_off")
+
+    @pytest.fixture
+    def hidden(self, switches_off: None, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(support_survival, "HIDDEN_SUPPORT_CELLS", True)
 
     def test_candidates_are_the_cells_that_see_the_remembered_heavy(
         self, draws: list
     ) -> None:
-        medic, everyone, ctx = _defense_scene()
-        goal = mode_goal(medic, everyone, "blue", ctx, 100)
+        ammo, everyone, ctx = _defense_scene("ammo")
+        goal = mode_goal(ammo, everyone, "blue", ctx, 100)
         assert draws[-1][0] == [(5, 2), (5, 3), (5, 6)]
         assert goal in draws[-1][0]
-        assert medic._goal_was_drawn is True
+        assert ammo._goal_was_drawn is True
 
     @pytest.mark.parametrize(
-        "role, teamwork, expected",
+        "hidden_cells, teamwork, expected",
         [
             # 0.7 x (1 - rank) + 0.3 x 1.0 x closeness
-            ("medic", 100, {(5, 2): 0.9, (5, 3): 0.5, (5, 6): 0.0}),
+            (True, 100, {(5, 2): 0.9, (5, 3): 0.5, (5, 6): 0.0}),
             # 0.7 x rank + 0.3 x 0.5 x closeness
-            ("ammo", 50, {(5, 2): 0.1, (5, 3): 0.425, (5, 6): 0.7}),
+            (False, 50, {(5, 2): 0.1, (5, 3): 0.425, (5, 6): 0.7}),
             # No teamwork, no closeness.
-            ("medic", 0, {(5, 2): 0.7, (5, 3): 0.35, (5, 6): 0.0}),
-            ("ammo", 0, {(5, 2): 0.0, (5, 3): 0.35, (5, 6): 0.7}),
+            (True, 0, {(5, 2): 0.7, (5, 3): 0.35, (5, 6): 0.0}),
+            (False, 0, {(5, 2): 0.0, (5, 3): 0.35, (5, 6): 0.7}),
         ],
     )
     def test_value_formula(
-        self, role: str, teamwork: int, expected: dict, draws: list
+        self,
+        hidden_cells: bool,
+        teamwork: int,
+        expected: dict,
+        draws: list,
+        monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        support, everyone, ctx = _defense_scene(role, teamwork)
+        monkeypatch.setattr(support_survival, "HIDDEN_SUPPORT_CELLS", hidden_cells)
+        support, everyone, ctx = _defense_scene("ammo", teamwork)
         mode_goal(support, everyone, "blue", ctx, 100)
         value_of = draws[-1][1]
         for cell, value in expected.items():
             assert value_of(cell) == pytest.approx(value)
 
+    @pytest.mark.usefixtures("hidden")
     def test_closeness_stops_at_zero_past_thirty_feet(self, draws: list) -> None:
-        medic, everyone, ctx = _defense_scene(teamwork=100)
-        mode_goal(medic, everyone, "blue", ctx, 100)
+        ammo, everyone, ctx = _defense_scene("ammo", teamwork=100)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
         # (5, 9) is 45 ft away, with rank 0 (not in the counts): base 1, closeness 0.
         assert draws[-1][1]((5, 9)) == pytest.approx(0.7)
 
+    @pytest.mark.usefixtures("hidden")
     def test_closeness_is_chebyshev(self, draws: list) -> None:
-        medic, everyone, ctx = _defense_scene(teamwork=100)
-        mode_goal(medic, everyone, "blue", ctx, 100)
+        ammo, everyone, ctx = _defense_scene("ammo", teamwork=100)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
         # 2 squares diagonally is 10 ft, not 20: closeness 2/3.
         assert draws[-1][1]((7, 2)) == pytest.approx(0.7 + 0.3 * 2 / 3)
 
+    @pytest.mark.usefixtures("hidden")
     def test_closeness_reads_the_maps_scale(self, draws: list) -> None:
-        medic, everyone, ctx = _defense_scene(teamwork=100)
+        ammo, everyone, ctx = _defense_scene("ammo", teamwork=100)
         ctx.feet_per_square = 10.0
-        mode_goal(medic, everyone, "blue", ctx, 100)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
         # 2 squares is 20 ft on this map: closeness 1/3.
         assert draws[-1][1]((5, 2)) == pytest.approx(0.7 + 0.3 / 3)
 
@@ -1733,8 +1757,9 @@ class TestDefenseFallsBackToControl:
         assert self._control_cells(medic, everyone, ctx) == (1, 1)
 
     def test_a_memory_at_the_staleness_limit_still_counts(self, draws: list) -> None:
-        medic, everyone, ctx = _defense_scene(heavy_seen=100 - 120)
-        mode_goal(medic, everyone, "blue", ctx, 100)
+        # The Ammo: the Medic's candidates reach further (CAL-03 rule 5).
+        ammo, everyone, ctx = _defense_scene("ammo", heavy_seen=100 - 120)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
         assert draws[-1][0] == [(5, 2), (5, 3), (5, 6)]
 
     def test_a_heavy_entry_without_a_cell(self) -> None:

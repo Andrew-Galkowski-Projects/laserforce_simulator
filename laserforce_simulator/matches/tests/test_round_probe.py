@@ -24,6 +24,7 @@ from matches.round_probe import (
     run_probe,
 )
 from matches.sim_helpers import shot
+from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_loader import load_map_context
 from matches.sim_helpers.modes import Mode
 from matches.sim_helpers.player_state import PlayerState
@@ -110,6 +111,7 @@ class TestRunProbeTotals(SimpleTestCase):
                     shots_missed=0,
                     reaction_shots=0,
                     follow_up_shots=0,
+                    lives_lost_to_nukes=0,
                 ),
                 ticks_active=active,
                 was_eliminated_at=SURVIVED_SENTINEL,
@@ -211,6 +213,7 @@ def _scripted(
             shots_missed=shots_missed,
             reaction_shots=reaction_shots,
             follow_up_shots=follow_up_shots,
+            lives_lost_to_nukes=0,
         ),
         ticks_active=sum(1 for step in ticks if step.active),
         was_eliminated_at=eliminated_at,
@@ -580,6 +583,25 @@ class TestRunProbe(TestCase):
                     if player.role == role
                 ]
                 self.assertEqual(measures.mean_points, sum(scores) / len(scores))
+        # CAL-03a: the missile and Resupply observers ran in that same round, and
+        # the counts they read match the players' own.
+        life_resupplies = sum(
+            m.life_resupplies.mean * self._count(reds + blues, role)
+            for role, m in observed.roles.items()
+        )
+        self.assertGreater(life_resupplies, 0)
+        missiled = sum(p.counters.times_missiled for p in reds + blues)
+        missile_lives = sum(
+            m.lives_lost["missile"].mean * self._count(reds + blues, role)
+            for role, m in observed.roles.items()
+        )
+        self.assertEqual(missile_lives > 0, missiled > 0)
+        self.assertEqual(EventLog.resupply_lives.__name__, "resupply_lives")
+        self.assertEqual(BatchSimulator._complete_missile.__name__, "_complete_missile")
+
+    @staticmethod
+    def _count(players: list, role: str) -> int:
+        return sum(1 for p in players if p.role == role)
 
     def test_every_role_measures_its_actions(self) -> None:
         # The real round feeds the Action measures, not just the scripted ones.
@@ -922,6 +944,221 @@ class TestShotCadence(SimpleTestCase):
         self.assertEqual(shot.resolve_shot.__name__, "resolve_shot")
 
 
+def _probe_round_of(players: list, wipe: int = SURVIVED_SENTINEL, play=None):
+    """One probed round whose players are ``players``; ``play(sim)`` runs inside
+    the round (the observers installed) and ``wipe`` is the round's team-wipe
+    tick."""
+
+    def fake_round(self, red, blue, movement_ctx=None):
+        if play is not None:
+            play(self)
+        return {"eliminated_at": wipe}, players, []
+
+    with patch.object(BatchSimulator, "_simulate_round", fake_round):
+        return run_probe(None, [1])
+
+
+class TestSurvivalAndMinutesInPlay(SimpleTestCase):
+    """CAL-03a (#589): survival by minute, minutes in play, Tag Downs per minute."""
+
+    def test_survival_is_the_share_still_in_play_at_each_minute(self) -> None:
+        result = _probe_scripted(
+            [
+                _scripted(_tick(), eliminated_at=500),
+                _scripted(_tick(), eliminated_at=900),
+                _scripted(_tick()),
+            ]
+        )
+        survival = result.roles["scout"].survival
+        self.assertEqual(sorted(survival), [5, 7, 9, 11])
+        self.assertAlmostEqual(survival[5].mean, 200 / 3)
+        self.assertAlmostEqual(survival[9].mean, 100 / 3)
+        # Eliminated on the minute's own tick: still in play at that minute.
+        at_the_tick = _probe_scripted([_scripted(_tick(), eliminated_at=600)])
+        self.assertEqual(at_the_tick.roles["scout"].survival[5].mean, 100.0)
+        self.assertEqual(at_the_tick.roles["scout"].survival[7].mean, 0.0)
+
+    def test_minutes_in_play_leave_out_the_time_after_a_wipe(self) -> None:
+        survivor = _scripted(_tick())
+        out = _scripted(_tick(), eliminated_at=600)
+        result = _probe_round_of([survivor, out], wipe=1200)
+        # The survivor plays to the wipe at 10 minutes, the other to minute 5.
+        self.assertEqual(result.roles["scout"].minutes_in_play.mean, 7.5)
+
+    def test_without_a_wipe_a_survivor_plays_the_whole_round(self) -> None:
+        result = _probe_round_of([_scripted(_tick())])
+        self.assertEqual(result.roles["scout"].minutes_in_play.mean, 15.0)
+
+    def test_tag_downs_per_minute_in_play(self) -> None:
+        heavy = _scripted(_tick(), role="heavy", team="red", eliminated_at=240)
+        scout = _scripted(_tick(), role="scout", team="blue")
+        result = _probe_shots([(heavy, scout, 10, "down"), (heavy, scout, 20, "down")])
+        # Two Downs in two minutes in play.
+        self.assertEqual(result.roles["heavy"].tag_downs_per_minute_in_play.mean, 1.0)
+
+
+def _resupplied(role: str = "scout", team: str = "red") -> PlayerState:
+    player = _capturer(role, team)
+    player.final_lives = 3
+    return player
+
+
+class TestLivesLostByCause(SimpleTestCase):
+    """CAL-03a (#589): the lives each player lost to Tags, missiles and nukes."""
+
+    def test_each_cause_counts_the_lives_it_took(self) -> None:
+        commander = _capturer("commander", "red")
+        scout = _resupplied("scout", "blue")  # 3 lives
+
+        def play(sim) -> None:
+            sim._complete_missile(commander, scout, 100)  # 3 -> 1
+            sim._complete_nuke(commander, 200, [scout])  # 1 -> 0
+
+        result = _probe_round_of([commander, scout], play=play)
+        lost = result.roles["scout"].lives_lost
+        self.assertEqual(sorted(lost), ["missile", "nuke", "tag"])
+        self.assertEqual((lost["missile"].mean, lost["nuke"].mean), (2.0, 1.0))
+        self.assertEqual(lost["tag"].mean, 0.0)
+
+    def test_a_tag_down_is_one_life(self) -> None:
+        commander = _scripted(_tick(), role="commander", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        result = _probe_shots(
+            [(commander, scout, 1, "down"), (commander, scout, 2, "hit")]
+        )
+        self.assertEqual(result.roles["scout"].lives_lost["tag"].mean, 1.0)
+
+    def test_the_missile_observer_is_put_back(self) -> None:
+        _probe_round_of([_scripted(_tick())])
+        self.assertEqual(BatchSimulator._complete_missile.__name__, "_complete_missile")
+
+
+class TestResupplyMeasures(SimpleTestCase):
+    """CAL-03a (#589): life Resupplies received, doubles and Resupply visits."""
+
+    def _result(self, resupplies: list[tuple[int, str]]) -> ProbeResult:
+        from matches.sim_helpers.event_log import EventLog
+
+        medic, ammo = _capturer("medic", "red"), _capturer("ammo", "red")
+        scout = _resupplied()
+
+        def play(sim) -> None:
+            log = EventLog()
+            for tick, kind in resupplies:
+                if kind == "lives":
+                    log.resupply_lives(medic, scout, tick, amount=3)
+                else:
+                    log.resupply_ammo(ammo, scout, tick, amount=10)
+
+        return _probe_round_of([medic, ammo, scout], play=play)
+
+    def test_life_resupplies_count_the_lives_kind_only(self) -> None:
+        result = self._result([(10, "lives"), (10, "shots"), (90, "lives")])
+        self.assertEqual(result.roles["scout"].life_resupplies.mean, 2.0)
+        self.assertEqual(result.roles["medic"].life_resupplies.mean, 0.0)
+
+    def test_doubles_pair_the_two_kinds_within_one_second(self) -> None:
+        # 10 + 12 pair (2 ticks); 50 and 53 are 3 ticks apart; 90 + 90 are one kind.
+        result = self._result(
+            [
+                (10, "lives"),
+                (12, "shots"),
+                (50, "lives"),
+                (53, "shots"),
+                (90, "lives"),
+                (90, "lives"),
+            ]
+        )
+        # One double among five Resupply episodes.
+        self.assertEqual(result.roles["scout"].doubles_share.mean, 20.0)
+        self.assertEqual(result.doubles_share.mean, 20.0)
+
+    def test_resupplies_within_15_seconds_are_one_visit(self) -> None:
+        result = self._result(
+            [
+                (100, "lives"),
+                (100, "shots"),
+                (130, "lives"),  # 30 ticks: the same visit
+                (200, "shots"),  # 70 ticks after: a new visit
+                (400, "lives"),
+            ]
+        )
+        visits = result.roles["scout"].visits
+        self.assertEqual(visits.per_round.mean, 3.0)
+        self.assertEqual(visits.resupplies_per_visit.mean, 5 / 3)
+        self.assertEqual(visits.doubles_per_visit.mean, 1 / 3)
+        # Gaps of 70 and 200 ticks: 35 and 100 seconds.
+        self.assertEqual(visits.gap_seconds.mean, 67.5)
+        self.assertEqual(visits.median_gap_seconds, 67.5)
+
+    def test_a_player_never_resupplied_has_no_visit(self) -> None:
+        visits = self._result([]).roles["scout"].visits
+        self.assertEqual(visits.per_round.mean, 0.0)
+        self.assertEqual(visits.resupplies_per_visit.mean, 0.0)
+        self.assertIsNone(visits.median_gap_seconds)
+
+    def test_the_resupply_observers_are_put_back(self) -> None:
+        from matches.sim_helpers.event_log import EventLog
+
+        self._result([(10, "lives")])
+        self.assertEqual(EventLog.resupply_lives.__name__, "resupply_lives")
+        self.assertEqual(EventLog.resupply_ammo.__name__, "resupply_ammo")
+
+
+class TestHitRatioAndShotFirst(SimpleTestCase):
+    """CAL-03a (#589): Tags made over times tagged, and the share of Tag Downs
+    whose defender Tagged its attacker in the 2 s before."""
+
+    def test_the_hit_ratio_counts_enemy_tags_only(self) -> None:
+        commander = _scripted(_tick(), role="commander", team="red")
+        heavy = _scripted(_tick(), role="heavy", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        result = _probe_shots(
+            [
+                (commander, scout, 1, "hit"),
+                (commander, scout, 2, "hit"),
+                (scout, commander, 3, "hit"),
+                (heavy, commander, 4, "hit"),  # a teammate: not counted
+                (commander, scout, 5, "miss"),
+            ]
+        )
+        self.assertEqual(result.roles["commander"].hit_ratio.mean, 2.0)
+        self.assertEqual(result.roles["scout"].hit_ratio.mean, 0.5)
+
+    def test_shot_first_is_a_tag_back_within_four_ticks(self) -> None:
+        commander = _scripted(_tick(), role="commander", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        result = _probe_shots(
+            [
+                (commander, scout, 10, "hit"),
+                (scout, commander, 14, "down"),  # 4 ticks after: shot first
+                (commander, scout, 20, "hit"),
+                (scout, commander, 25, "down"),  # 5 ticks after: not
+                (scout, commander, 40, "down"),  # never tagged back: not
+            ]
+        )
+        self.assertAlmostEqual(result.roles["commander"].shot_first_share.mean, 100 / 3)
+        self.assertEqual(result.roles["scout"].shot_first_share.mean, 0.0)
+
+    def test_a_tag_in_the_same_tick_before_the_down_counts(self) -> None:
+        commander = _scripted(_tick(), role="commander", team="red")
+        scout = _scripted(_tick(), role="scout", team="blue")
+        result = _probe_shots(
+            [(commander, scout, 10, "hit"), (scout, commander, 10, "down")]
+        )
+        self.assertEqual(result.roles["commander"].shot_first_share.mean, 100.0)
+
+
+class TestRoundTags(SimpleTestCase):
+    def test_tags_per_round_sum_both_teams(self) -> None:
+        result = _probe_scripted(
+            [_scripted(_tick(), tags_made=30), _scripted(_tick(), tags_made=10)],
+            [_scripted(_tick(), tags_made=20)],
+        )
+        self.assertEqual(result.round_tags.mean, 30.0)
+        self.assertEqual(result.round_tags.se, 10.0)
+
+
 class TestFormatResult(SimpleTestCase):
     def _lines(self) -> list[str]:
         low = _scripted(_tick("hold", holding=True), _tick(), points=100)
@@ -1214,6 +1451,94 @@ class TestFormatTagMeasures(SimpleTestCase):
         self.assertEqual(with_real[header + 4][:5], "heavy")
 
 
+class TestFormatCal03Measures(SimpleTestCase):
+    """CAL-03a (#589): each new measure prints ``mean +/- se (min-max)`` per role,
+    with the real figure beside it in a targets run."""
+
+    def _result(self) -> ProbeResult:
+        return _probe_scripted(
+            [_scripted(_tick(), role="ammo", eliminated_at=500), _scripted(_tick())],
+            [_scripted(_tick(), role="ammo"), _scripted(_tick())],
+        )
+
+    def test_every_role_prints_the_new_measures(self) -> None:
+        lines = format_result(self._result())
+        ammo = lines[lines.index("ammo") :]
+        for text in (
+            "  Survival % at minute 5: 50.0 +/- 50.0 (0.0-100.0)",
+            "  Survival % at minute 11: 50.0 +/- 50.0 (0.0-100.0)",
+            "  Minutes in play: 9.6 +/- 5.4 (4.2-15.0)",
+            "  Tag Downs per minute in play: 0.00 +/- 0.00 (0.00-0.00)",
+            "  Lives lost to Tags: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Lives lost to missiles: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Lives lost to nukes: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Life Resupplies received: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Doubles % of Resupplies received: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Hit ratio (Tags made / times tagged): 0.00 +/- 0.00 (0.00-0.00)",
+            "  Shot-first % of Tag Downs: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Resupply visits per round: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Resupplies per visit: 0.00 +/- 0.00 (0.00-0.00)",
+            "  Doubles per visit: 0.00 +/- 0.00 (0.00-0.00)",
+            "  Gap to the next visit, s: none",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, ammo)
+        self.assertIn("Tags per round, both teams: 0.0 +/- 0.0", lines)
+        self.assertIn("Doubles % of all Resupplies received: 0.0 +/- 0.0", lines)
+        self.assertFalse([line for line in lines if "real" in line])
+
+    def test_a_targets_run_prints_the_real_figure_beside_each(self) -> None:
+        lines = format_result(self._result(), targets=_TARGETS)
+        ammo = lines[lines.index("ammo") : lines.index("scout")]
+        for text in (
+            "  Survival % at minute 5: 50.0 +/- 50.0 (0.0-100.0) | real 97.0",
+            "  Survival % at minute 9: 50.0 +/- 50.0 (0.0-100.0) | real 80.0",
+            "  Tag Downs per minute in play: 0.00 +/- 0.00 (0.00-0.00) | real 2.11",
+            "  Life Resupplies received: 0.0 +/- 0.0 (0.0-0.0) | real 10.2",
+            "  Hit ratio (Tags made / times tagged): 0.00 +/- 0.00 (0.00-0.00) "
+            "| real 0.99",
+            "  Shot-first % of Tag Downs: 0.0 +/- 0.0 (0.0-0.0) | real 19.0",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, ammo)
+        # No real figure at minute 11, or for an Ammo's visits.
+        self.assertIn("  Survival % at minute 11: 50.0 +/- 50.0 (0.0-100.0)", ammo)
+        self.assertIn("  Resupply visits per round: 0.0 +/- 0.0 (0.0-0.0)", ammo)
+        scout = lines[lines.index("scout") :]
+        for text in (
+            "  Doubles % of Resupplies received: 0.0 +/- 0.0 (0.0-0.0) | real 46.0",
+            "  Resupply visits per round: 0.0 +/- 0.0 (0.0-0.0) | real 4.6",
+            "  Resupplies per visit: 0.00 +/- 0.00 (0.00-0.00) | real 2.77",
+            "  Doubles per visit: 0.00 +/- 0.00 (0.00-0.00) | real 0.87",
+            "  Gap to the next visit, s: none | real 111",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, scout)
+        self.assertIn("Tags per round, both teams: 0.0 +/- 0.0 | real 403.0", lines)
+        self.assertIn(
+            "Doubles % of all Resupplies received: 0.0 +/- 0.0 | real 32.1", lines
+        )
+
+    def test_the_elimination_tick_prints_the_real_minute_in_ticks(self) -> None:
+        targets = {"per_role": {"ammo": {"elim_minute": {"mean": 9.7, "se": 0.3}}}}
+        lines = format_result(self._result(), targets=targets)
+        self.assertIn("  Elimination tick: 500 +/- 0 (500-500) | real 1164.0", lines)
+
+    def test_a_visit_gap_prints_its_median_and_mean(self) -> None:
+        from matches.sim_helpers.event_log import EventLog
+
+        medic, scout = _capturer("medic", "red"), _resupplied()
+
+        def play(sim) -> None:
+            for tick in (100, 200, 400):
+                EventLog().resupply_lives(medic, scout, tick)
+
+        lines = format_result(_probe_round_of([medic, scout], play=play))
+        self.assertIn(
+            "  Gap to the next visit, s: median 75.0 (mean 75.0 +/- 25.0)", lines
+        )
+
+
 class TestCalibrationLineups(SimpleTestCase):
     """CAL-02 (#567): the Test games' rosters, built as the Calibration harness does."""
 
@@ -1262,6 +1587,10 @@ class TestLineupsProbe(TestCase):
         self.assertGreater(serial.roles["commander"].shots_fired.mean, 0.0)
         self.assertGreater(serial.who_tags_whom["commander"]["scout"], 0.0)
         self.assertIsNotNone(serial.roles["commander"].cadence.median)
+        # CAL-03a: the new measures come through the workers too.
+        self.assertGreater(serial.round_tags.mean, 0.0)
+        self.assertGreater(serial.roles["ammo"].life_resupplies.mean, 0.0)
+        self.assertGreater(serial.roles["commander"].visits.per_round.mean, 0.0)
 
 
 class TestRoundProbeCommand(TestCase):
@@ -1276,6 +1605,13 @@ class TestRoundProbeCommand(TestCase):
             "Who Downs whom per round",
             "  real",
             "Shot cadence, ticks",
+            # CAL-03a: the new measures, with the real figures beside them.
+            "Survival % at minute 7",
+            "Hit ratio (Tags made / times tagged)",
+            "Resupply visits per round",
+            "Tags per round, both teams",
+            "| real 403.0",
+            "| real 32.1",
         ):
             self.assertIn(text, output)
         self.assertTrue(output.isascii())

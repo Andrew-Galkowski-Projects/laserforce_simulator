@@ -8,12 +8,14 @@ importable without the ORM.
 
 from __future__ import annotations
 
+import math
 import random
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
     from .map_context import MapContext
 
+from . import resupply_visit, support_survival
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
 from .map_context import _NEUTRAL_BASE_TYPES
@@ -291,6 +293,11 @@ def plan_action(
         check_stamina_penalty(player, second)
 
     is_active = player.is_active_at(second)
+    # CAL-03 rules 9 and 10: the support link and the backline position, before a
+    # Hold can return (no RNG).
+    if movement_ctx is not None and player.role in _SUPPORT_ROLES:
+        _support_link(player, all_alive, movement_ctx, second)
+    resupply_visit.update_backline(player, all_alive, movement_ctx)
     # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
     # tick spends no RNG; anything else ends it, and this tick then rolls as usual.
     hold_until = getattr(player, "hold_until", None)
@@ -397,6 +404,11 @@ def plan_action(
         weights, getattr(player, "decision_making", 50)
     )
 
+    # CAL-03 rule 6: on a map a non-support asks for a Resupply only on a visit.
+    visit = resupply_visit.visit_step(player, all_alive, movement_ctx, second)
+    if movement_ctx is not None and player.role not in _SUPPORT_ROLES and not visit:
+        weights[_ACTION_IDX["request_resupply"]] = 0
+
     # SIM-12 / UXP-23: finalize_action_weights clamps every slot to >= 0 (a
     # negative bucket would skew its neighbours in random.choices' cumulative
     # bisect) and then applies the UXP-23 fallback: the role weight functions
@@ -407,7 +419,11 @@ def plan_action(
     # ticks replay byte-identically.
     weights = finalize_action_weights(weights)
 
-    choice = random.choices(_CHOICES, weights)[0]
+    choice = _visit_choice(visit, random.choices(_CHOICES, weights)[0], player, second)
+    # CAL-03 rule 7: at 1-3 lives with no own support in sight, hide and call out.
+    called_out = resupply_visit.call_out(player, all_alive, movement_ctx, second)
+    if called_out and choice != "tag_player":
+        choice = "hide"
     player.last_chosen_action = choice
 
     # MECH-17: on a map an only_move roll takes an Active non-support out of its hide.
@@ -490,6 +506,8 @@ def plan_action(
         if teammate:
             rtype = "resupply_ammo" if player.role == "ammo" else "resupply_lives"
             plans.append({"type": rtype, "actor": player, "target": teammate})
+        else:
+            plans.extend(_idle_trade(player, all_alive, second, movement_ctx, cooldown))
     elif choice == "missile_player":
         if player.final_missiles > 0:
             candidates = [
@@ -551,7 +569,17 @@ def plan_action(
         if player.can_use_special and player.final_lives > 0 and is_active:
             plans.append({"type": "use_special", "actor": player})
     elif choice == "hide":
-        plans.append({"type": "hide", "actor": player})
+        trade = (
+            _idle_trade(player, all_alive, second, movement_ctx, cooldown)
+            if is_active and not plan_is_live(player, second)
+            else []
+        )
+        if trade:
+            # CAL-03 rule 2: the hiding support comes out to shoot.
+            player.is_hiding = False
+            plans.extend(trade)
+        else:
+            plans.append({"type": "hide", "actor": player})
     elif choice == "request_resupply":
         plans.append({"type": "request_resupply", "actor": player})
     elif choice == "hold":
@@ -561,6 +589,89 @@ def plan_action(
         plans.append({"type": "hold", "actor": player})
 
     return plans
+
+
+def _visit_choice(
+    visit: "resupply_visit.VisitAction | None", choice: str, player: Any, second: float
+) -> str:
+    """CAL-03 rule 6: what a Resupply visit makes of the rolled *choice*. A Tag roll
+    stands, except that a player the visit has at its supports requests while it
+    can be resupplied (and hides otherwise)."""
+    if visit == "request" and player.is_resupplyable_at(second):
+        return "request_resupply"
+    if visit is None or choice == "tag_player":
+        return choice
+    return "only_move" if visit == "move" else "hide"
+
+
+def _support_link(
+    player: Any, all_alive: list, movement_ctx: "MapContext", second: float
+) -> None:
+    """CAL-03 rule 9, once per plan of a Medic or Ammo. No RNG.
+
+    Within comms range (half the map diagonal, as ``_broadcast_communication``) the
+    support writes its partner's true cell into its memory. The Ammo stamps
+    ``link_left_at`` when ``medic_with_ammo`` turns False and clears it once the
+    Medic is with it again."""
+    other_role = "ammo" if player.role == "medic" else "medic"
+    other = next(
+        (
+            p
+            for p in all_alive
+            if p.team_color == player.team_color
+            and p.role == other_role
+            and p.final_lives > 0
+        ),
+        None,
+    )
+    if other is None or player.cell_row is None or other.cell_row is None:
+        return
+    here, there = (player.cell_row, player.cell_col), (other.cell_row, other.cell_col)
+    zone = movement_ctx.get_zone_data()
+    reach = math.hypot(len(zone), len(zone[0])) / 2 if zone else math.inf
+    if math.dist(here, there) <= reach:
+        if not other.is_taggable_at(second):
+            status = "downed"
+        elif not other.is_active_at(second):
+            status = "reset_window"
+        else:
+            status = "active"
+        player.player_memory[other.tag_id_key] = {
+            "cell": there,
+            "timestamp": second,
+            "role": other.role,
+            "status": status,
+        }
+    if player.role == "ammo":
+        if support_survival.medic_with_ammo(player, other, movement_ctx):
+            player.link_left_at = None
+        elif player.link_left_at is None:
+            player.link_left_at = int(second)
+
+
+def _idle_trade(
+    player: Any,
+    all_alive: list,
+    second: float,
+    movement_ctx: "MapContext | None",
+    cooldown: float,
+) -> list:
+    """CAL-03 rule 2: an Active Medic or Ammo whose roll planned nothing Tags an
+    enemy in sight (``choose_tag_target``) with probability ``IDLE_TRADE_RATE``, its
+    gun off cooldown. The rate draw is made only once a target is in sight; ``[]``
+    otherwise (and on a map-less round)."""
+    if player.role not in _SUPPORT_ROLES or movement_ctx is None:
+        return []
+    if player.final_shots <= 0 or not player.is_active_at(second):
+        return []
+    if cooldown > 0 and (second - player.last_shot_time) < cooldown:
+        return []
+    target = choose_tag_target(
+        player, all_alive, second, movement_ctx, los_filter=_get_los_targets
+    )
+    if target is None or random.random() >= support_survival.IDLE_TRADE_RATE:
+        return []
+    return [{"type": "tag", "actor": player, "target": target}]
 
 
 def _reset_resupplied(teammate, second: float, ctx: RoundContext) -> None:
@@ -603,27 +714,63 @@ def attempt_resupply(
     directly. Replaces the pre-refactor ``emit_event=None`` callable seam.
 
     SM5-02: a tagger that is not Active gives nothing (a Downed pack is dark).
+    CAL-03 rule 1: while ``double_window_open`` the other support's Resupply
+    lands although the first one's reset has started; every landed Resupply
+    updates the receiver's ``last_single``. Rule 6: a single to a player on a
+    visit is followed by the partner's (``_partner_follows``).
     """
     if not tagger.is_active_at(second):
         return
-    if tagger.role == "ammo" and teammate.is_resupplyable_at(second):
+    in_window = support_survival.double_window_open(teammate, tagger, second)
+    receivable = in_window or teammate.is_resupplyable_at(second)
+    if tagger.role == "ammo" and receivable:
         amount = _AMMO_CHART.get(teammate.role, 5)
         teammate.final_shots = min(teammate.max_shots, teammate.final_shots + amount)
-        _reset_resupplied(teammate, second, ctx)
-        tagger.last_tagged_id = teammate.tag_id_key
-        tagger.counters.resupplies_given += 1
+        _landed(tagger, teammate, second, in_window, ctx)
         ctx.events.resupply_ammo(tagger, teammate, second, amount=amount)
-    elif (
-        tagger.role == "medic"
-        and tagger.final_shots > 0
-        and teammate.is_resupplyable_at(second)
-    ):
+    elif tagger.role == "medic" and tagger.final_shots > 0 and receivable:
         amount = _MEDIC_CHART.get(teammate.role, 3)
         teammate.final_lives = min(teammate.max_lives, teammate.final_lives + amount)
-        _reset_resupplied(teammate, second, ctx)
-        tagger.last_tagged_id = teammate.tag_id_key
-        tagger.counters.resupplies_given += 1
+        _landed(tagger, teammate, second, in_window, ctx)
         ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
+    else:
+        return
+    if not in_window:
+        _partner_follows(tagger, teammate, second, ctx)
+
+
+def _partner_follows(
+    tagger: Any, teammate: Any, second: float, ctx: RoundContext
+) -> None:
+    """CAL-03 decision 43: a single Resupply to a player on a visit is followed in
+    the same tick by the other support's, when that support is available (Active,
+    with Shots, off its shot cooldown) and sees the player; the double window lets
+    it land. No RNG."""
+    from .resupply_queue import _is_available  # noqa: PLC0415 (resupply_queue -> here)
+
+    if getattr(teammate, "visit", None) is None:
+        return
+    other = "ammo" if tagger.role == "medic" else "medic"
+    partner = support_survival._own(teammate, other, ctx.all_alive)
+    if partner is None or not _is_available(
+        partner, second, ctx.movement_ctx, teammate
+    ):
+        return
+    attempt_resupply(partner, teammate, second, ctx=ctx)
+    partner.last_shot_time = second
+
+
+def _landed(
+    tagger: Any, teammate: Any, second: float, in_window: bool, ctx: RoundContext
+) -> None:
+    """The bookkeeping of a landed Resupply, before its event: the pack reset,
+    the receiver's ``last_single`` (CAL-03) and the supporter's counters."""
+    _reset_resupplied(teammate, second, ctx)
+    teammate.last_single = support_survival.resupply_landed(
+        teammate, tagger, second, in_window
+    )
+    tagger.last_tagged_id = teammate.tag_id_key
+    tagger.counters.resupplies_given += 1
 
 
 def capture_base(

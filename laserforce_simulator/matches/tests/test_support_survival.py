@@ -221,16 +221,17 @@ class TestHiddenSupportCells:
         self, off: Callable[[str], None], draws: list
     ) -> None:
         off("HIDDEN_SUPPORT_CELLS")
-        medic, everyone, ctx = _defense_scene("medic")
-        mode_goal(medic, everyone, "blue", ctx, 100)
+        ammo, everyone, ctx = _defense_scene("ammo")
+        mode_goal(ammo, everyone, "blue", ctx, 100)
         assert draws[-1][0] == [(5, 2)]
 
     def test_on_the_candidates_reach_two_steps_from_a_seeing_cell(
         self, on: Callable[[str], None], draws: list
     ) -> None:
+        # The Ammo: the Medic's reach is MEDIC_BACK_REACH (CAL-03 rule 5).
         on("HIDDEN_SUPPORT_CELLS")
-        medic, everyone, ctx = _defense_scene("medic")
-        mode_goal(medic, everyone, "blue", ctx, 100)
+        ammo, everyone, ctx = _defense_scene("ammo")
+        mode_goal(ammo, everyone, "blue", ctx, 100)
         assert draws[-1][0] == sorted(
             {
                 (5, 2),
@@ -249,18 +250,18 @@ class TestHiddenSupportCells:
             }
         )
 
-    def test_on_both_roles_value_a_hidden_cell(
+    def test_on_the_ammo_values_a_hidden_cell(
         self, on: Callable[[str], None], draws: list
     ) -> None:
+        # The Medic's value is CAL-03 rule 5's (TestMedicBack).
         on("HIDDEN_SUPPORT_CELLS")
-        for role in ("medic", "ammo"):
-            support, everyone, ctx = _defense_scene(role)
-            mode_goal(support, everyone, "blue", ctx, 100)
-            value_of = draws[-1][1]
-            # Ranks: 5,1 -> 0, 5,3 -> 0.5, 5,2 -> 1; teamwork 0 so no closeness term.
-            assert value_of((5, 1)) == pytest.approx(0.7)
-            assert value_of((5, 3)) == pytest.approx(0.35)
-            assert value_of((5, 2)) == pytest.approx(0.0)
+        ammo, everyone, ctx = _defense_scene("ammo")
+        mode_goal(ammo, everyone, "blue", ctx, 100)
+        value_of = draws[-1][1]
+        # Ranks: 5,1 -> 0, 5,3 -> 0.5, 5,2 -> 1; teamwork 0 so no closeness term.
+        assert value_of((5, 1)) == pytest.approx(0.7)
+        assert value_of((5, 3)) == pytest.approx(0.35)
+        assert value_of((5, 2)) == pytest.approx(0.0)
 
     def test_off_the_ammo_values_an_open_cell(
         self, off: Callable[[str], None], draws: list
@@ -435,3 +436,547 @@ class TestTeamworkCallouts:
         )
         assert pathfinding._cell_from_memory(scout, "blue_medic", 131, "ticks") is None
         assert modes._fresh_entry(scout, "blue_medic", 131, "ticks") is None
+
+
+class TestDoubleWindowOpen:
+    """CAL-03 rule 1 (#588): the other support may land the second kind while the
+    receiver's last single is at most ``DOUBLE_WINDOW_TICKS`` old. One fixture per
+    condition, each failing that condition alone."""
+
+    def _receiver(self, **single: Any) -> PlayerState:
+        # The Medic's single at tick 100 reset the Scout's pack (last_downed_time).
+        record = {"kind": "lives", "tick": 100, "supporter": "red_medic", **single}
+        return _player(
+            "scout",
+            last_downed_time=100,
+            last_single=support_survival.LastSingle(**record),
+        )
+
+    def test_the_other_support_in_the_same_tick(self) -> None:
+        ammo = _player("ammo")
+        assert support_survival.double_window_open(self._receiver(), ammo, 100)
+
+    def test_open_at_the_window_edge(self) -> None:
+        edge = 100 + support_survival.DOUBLE_WINDOW_TICKS
+        assert support_survival.double_window_open(
+            self._receiver(), _player("ammo"), edge
+        )
+
+    def test_closed_one_tick_past_the_window(self) -> None:
+        past = 100 + support_survival.DOUBLE_WINDOW_TICKS + 1
+        assert not support_survival.double_window_open(
+            self._receiver(), _player("ammo"), past
+        )
+
+    def test_closed_for_the_same_kind(self) -> None:
+        # A second Medic owes lives, the kind already given.
+        other_medic = _player("medic", tag_id="red_medic_2")
+        assert not support_survival.double_window_open(
+            self._receiver(), other_medic, 100
+        )
+
+    def test_closed_for_the_same_supporter(self) -> None:
+        ammo = _player("ammo")
+        receiver = self._receiver(supporter=ammo.tag_id_key)
+        assert not support_survival.double_window_open(receiver, ammo, 100)
+
+    def test_closed_once_the_pair_is_used(self) -> None:
+        receiver = self._receiver(paired=True)
+        assert not support_survival.double_window_open(receiver, _player("ammo"), 100)
+
+    def test_closed_for_a_role_that_gives_nothing(self) -> None:
+        assert not support_survival.double_window_open(
+            self._receiver(), _player("commander"), 100
+        )
+
+    def test_closed_after_a_down_since_the_single(self) -> None:
+        receiver = self._receiver()
+        receiver.last_downed_time = 101
+        assert not support_survival.double_window_open(receiver, _player("ammo"), 101)
+
+    def test_closed_with_no_single(self) -> None:
+        receiver = _player("scout", last_downed_time=100)
+        assert not support_survival.double_window_open(receiver, _player("ammo"), 100)
+
+
+def _sight(*pairs: tuple[tuple[int, int], tuple[int, int]]) -> dict[str, set[str]]:
+    """Symmetric sight lines between each pair of cells."""
+    sight: dict[str, set[str]] = {}
+    for a, b in pairs:
+        sight.setdefault(f"{a[0]},{a[1]}", set()).add(f"{b[0]},{b[1]}")
+        sight.setdefault(f"{b[0]},{b[1]}", set()).add(f"{a[0]},{a[1]}")
+    return sight
+
+
+class TestMedicWithAmmo:
+    """CAL-03 rule 9 (#588): the Medic is "with" the Ammo in its sight or within
+    ``LINK_SQUARES`` (Chebyshev, true cells)."""
+
+    def _pair(self, medic_cell: tuple[int, int]) -> tuple[PlayerState, PlayerState]:
+        ammo = _player("ammo", cell_row=0, cell_col=0)
+        medic = _player("medic", cell_row=medic_cell[0], cell_col=medic_cell[1])
+        return ammo, medic
+
+    def test_in_sight(self) -> None:
+        ammo, medic = self._pair((0, 12))
+        ctx = _grid_map(sight=_sight(((0, 0), (0, 12))), size=16)
+        assert support_survival.medic_with_ammo(ammo, medic, ctx)
+
+    def test_at_link_squares(self) -> None:
+        ammo, medic = self._pair((3, support_survival.LINK_SQUARES))
+        assert support_survival.medic_with_ammo(ammo, medic, _grid_map(size=16))
+
+    def test_one_square_past_link_squares_out_of_sight(self) -> None:
+        ammo, medic = self._pair((0, support_survival.LINK_SQUARES + 1))
+        assert not support_survival.medic_with_ammo(ammo, medic, _grid_map(size=16))
+
+
+class TestHoldAllows:
+    """CAL-03 rule 8 (#588): a support Resupplies a non-support only on a visit, at
+    ``CALLOUT_LIVES`` or fewer, in the other Active support's sight, or (the Ammo)
+    when its Medic is gone or lost. The base scene fails every condition; each
+    fixture changes one thing."""
+
+    TICK = 500
+
+    def _scene(
+        self, *, sight: dict[str, set[str]] | None = None
+    ) -> tuple[PlayerState, PlayerState, PlayerState, list, MapContext]:
+        # The Ammo at (0, 0), its Medic 10 squares off and out of sight, the Scout
+        # at (8, 8) seen by neither; the Ammo remembers the Medic this tick.
+        ammo = _player("ammo", cell_row=0, cell_col=0)
+        medic = _player("medic", cell_row=0, cell_col=10)
+        scout = _player("scout", cell_row=8, cell_col=8)
+        scout.final_lives = support_survival.CALLOUT_LIVES + 1
+        ammo.player_memory["red_medic"] = {
+            "cell": (0, 10),
+            "timestamp": self.TICK,
+            "role": "medic",
+        }
+        ctx = _grid_map(sight=sight, size=16)
+        return ammo, medic, scout, [ammo, medic, scout], ctx
+
+    def _allows(self, support, teammate, everyone, ctx) -> bool:
+        return support_survival.hold_allows(support, teammate, everyone, self.TICK, ctx)
+
+    def test_support_to_support(self) -> None:
+        ammo, medic, _, everyone, ctx = self._scene()
+        assert self._allows(medic, ammo, everyone, ctx)
+
+    def test_on_a_visit(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene()
+        scout.visit = support_survival.Visit(phase="at", started=self.TICK - 10)
+        assert self._allows(ammo, scout, everyone, ctx)
+
+    def test_at_callout_lives(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene()
+        scout.final_lives = support_survival.CALLOUT_LIVES
+        assert self._allows(ammo, scout, everyone, ctx)
+
+    def test_held_one_life_above_callout_lives(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene()
+        assert not self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_other_support_active_and_seeing_the_teammate(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene(sight=_sight(((0, 10), (8, 8))))
+        assert self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_other_support_seeing_it_but_downed(self) -> None:
+        ammo, medic, scout, everyone, ctx = self._scene(sight=_sight(((0, 10), (8, 8))))
+        medic.last_downed_time = self.TICK - 1
+        assert not self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_medic_eliminated(self) -> None:
+        ammo, medic, scout, everyone, ctx = self._scene()
+        medic.final_lives = 0
+        assert self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_medic_away_with_memory_link_stale_ticks_old(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene()
+        ammo.player_memory["red_medic"]["timestamp"] = (
+            self.TICK - support_survival.LINK_STALE_TICKS
+        )
+        assert not self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_medic_away_with_memory_one_tick_past_stale(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene()
+        ammo.player_memory["red_medic"]["timestamp"] = (
+            self.TICK - support_survival.LINK_STALE_TICKS - 1
+        )
+        assert self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_medic_away_with_no_memory(self) -> None:
+        ammo, _, scout, everyone, ctx = self._scene()
+        ammo.player_memory.clear()
+        assert self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_medic_with_the_ammo(self) -> None:
+        # No memory, so only "with" holds the single back.
+        ammo, _, scout, everyone, ctx = self._scene(sight=_sight(((0, 0), (0, 10))))
+        ammo.player_memory.clear()
+        assert not self._allows(ammo, scout, everyone, ctx)
+
+    def test_the_singles_case_is_the_ammo_s_alone(self) -> None:
+        # The Medic with no memory of the Ammo still holds the single.
+        ammo, medic, scout, everyone, ctx = self._scene()
+        assert not self._allows(medic, scout, everyone, ctx)
+
+
+class TestTheAmmoWalk:
+    """CAL-03 rules 4 and 8 (#588): the Ammo's Resupply walk (``_goal_from_action``)
+    skips a teammate a remembered enemy can see, and one HOLD would not let it
+    Resupply."""
+
+    def _scene(
+        self, lives: int, sight: dict[str, set[str]]
+    ) -> tuple[PlayerState, list, MapContext]:
+        ammo = _player("ammo", cell_row=0, cell_col=0)
+        medic = _player("medic", cell_row=0, cell_col=1)
+        scout = _player("scout", cell_row=3, cell_col=3)
+        scout.final_lives, scout.final_shots = lives, 1
+        return ammo, [ammo, medic, scout], _grid_map(sight=sight)
+
+    def _walk(self, ammo, everyone, ctx) -> tuple[int, int] | None:
+        return _goal_from_action(
+            ammo, everyone, "blue", 0, 0, "resupply_ally", ctx, 100, "ticks"
+        )
+
+    def test_walks_to_a_teammate_out_of_enemy_sight(self) -> None:
+        ammo, everyone, ctx = self._scene(1, {"3,3": {"2,3"}})
+        assert self._walk(ammo, everyone, ctx) == (2, 3)
+
+    def test_no_walk_when_the_only_teammate_is_seen_by_a_remembered_enemy(
+        self,
+    ) -> None:
+        ammo, everyone, ctx = self._scene(1, {"3,3": {"2,3"}, "5,5": {"3,3"}})
+        ammo.player_memory["blue_heavy"] = {
+            "cell": (5, 5),
+            "timestamp": 100,
+            "role": "heavy",
+        }
+        assert self._walk(ammo, everyone, ctx) is None
+
+    def test_no_walk_to_a_teammate_hold_keeps_the_single_from(self) -> None:
+        # Four lives, and the Medic (with the Ammo) does not see the Scout.
+        ammo, everyone, ctx = self._scene(4, {"3,3": {"2,3"}})
+        assert self._walk(ammo, everyone, ctx) is None
+
+    def test_walks_to_a_teammate_the_medic_sees(self) -> None:
+        ammo, everyone, ctx = self._scene(4, _sight(((3, 3), (0, 1))))
+        assert self._walk(ammo, everyone, ctx) is not None
+
+
+class TestMedicBack:
+    """CAL-03 rule 5 (#588): the Medic's Defense candidates reach
+    ``MEDIC_BACK_REACH`` steps from a cell that sees the Heavy, valued by how hidden
+    and how far from the enemy Base they are, with no pull toward the Heavy."""
+
+    def test_the_candidates_reach_medic_back_reach(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene("medic")
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        reach = support_survival.MEDIC_BACK_REACH
+        assert draws[-1][0] == modes._within_reach([(5, 2)], reach, ctx)
+        assert (5, 2 + reach) in draws[-1][0]
+        assert (5, 3 + reach) not in draws[-1][0]
+
+    def test_the_ammo_keeps_support_cell_reach(self, draws: list) -> None:
+        ammo, everyone, ctx = _defense_scene("ammo")
+        mode_goal(ammo, everyone, "blue", ctx, 100)
+        reach = support_survival.SUPPORT_CELL_REACH
+        assert draws[-1][0] == modes._within_reach([(5, 2)], reach, ctx)
+
+    def test_the_deepest_most_hidden_cell_wins(self, draws: list) -> None:
+        medic, everyone, ctx = _defense_scene("medic")
+        medic.teamwork = 100  # no pull toward the Heavy whatever the teamwork
+        mode_goal(medic, everyone, "blue", ctx, 100)
+        candidates, value_of = draws[-1]
+        # The blue Base is (11, 11): column 0 is deepest; (5, 0) has no count.
+        assert max(candidates, key=value_of) == (4, 0)
+        assert value_of((4, 0)) == pytest.approx(1.0)
+        # (5, 5) is the shallowest candidate (6 squares) and is hidden.
+        assert value_of((5, 5)) == pytest.approx(
+            support_survival.MEDIC_BACK_HIDDEN_WEIGHT
+        )
+        # (5, 3): LOS rank 0.5 and 8 squares deep (2 of the 5-square span).
+        assert value_of((5, 3)) == pytest.approx(0.5 * 0.5 + 0.5 * 2 / 5)
+
+
+class TestAmmoAnchorAndSeek:
+    """CAL-03 rule 3 (#588): at ``AMMO_ANCHOR_LIVES`` or fewer the Ammo's Defense
+    cell is near a cell that sees its Medic's remembered cell; at
+    ``AMMO_SEEK_MEDIC_LIVES`` or fewer it walks to the Medic's true cell."""
+
+    def _anchor_scene(self, lives: int) -> tuple[PlayerState, list, MapContext]:
+        ammo, everyone, _ = _defense_scene("ammo")
+        ammo.final_lives = lives
+        medic = _player("medic", cell_row=9, cell_col=8)
+        ammo.player_memory["red_medic"] = {
+            "cell": (5, 8),
+            "timestamp": 100,
+            "role": "medic",
+        }
+        ctx = _grid_map(sight={"5,0": {"5,2"}, "5,8": {"2,8"}})
+        return ammo, [*everyone, medic], ctx
+
+    def test_the_anchor_holds_at_anchor_lives(self, draws: list) -> None:
+        ammo, everyone, ctx = self._anchor_scene(support_survival.AMMO_ANCHOR_LIVES)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
+        reach = support_survival.MEDIC_BACK_REACH
+        assert draws[-1][0] == modes._within_reach([(2, 8)], reach, ctx)
+
+    def test_one_life_above_the_heavy_rule_applies(self, draws: list) -> None:
+        ammo, everyone, ctx = self._anchor_scene(support_survival.AMMO_ANCHOR_LIVES + 1)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
+        reach = support_survival.SUPPORT_CELL_REACH
+        assert draws[-1][0] == modes._within_reach([(5, 2)], reach, ctx)
+
+    def test_the_anchor_cell_is_valued_like_the_medic_s(self, draws: list) -> None:
+        ammo, everyone, ctx = self._anchor_scene(support_survival.AMMO_ANCHOR_LIVES)
+        mode_goal(ammo, everyone, "blue", ctx, 100)
+        candidates, value_of = draws[-1]
+        # Hidden everywhere (no counts there); depth from the blue Base (11, 11)
+        # decides: row 0 is deepest.
+        assert max(candidates, key=value_of)[0] == 0
+        assert value_of(max(candidates, key=value_of)) == pytest.approx(1.0)
+
+    def _seek(self, lives: int) -> tuple[int, int] | None:
+        ammo = _player("ammo", cell_row=0, cell_col=0)
+        ammo.final_lives = lives
+        medic = _player("medic", cell_row=9, cell_col=9)
+        ctx = _grid_map()
+        return pathfinding.choose_goal_cell(
+            ammo, [ammo, medic], ctx.spawn_cells, ctx, "", 100, "ticks"
+        )
+
+    def test_the_seek_at_seek_lives(self) -> None:
+        assert self._seek(support_survival.AMMO_SEEK_MEDIC_LIVES) == (9, 9)
+
+    def test_no_seek_one_life_above(self) -> None:
+        assert self._seek(support_survival.AMMO_SEEK_MEDIC_LIVES + 1) != (9, 9)
+
+
+class TestSupportLink:
+    """CAL-03 rule 9 (#588): each plan the Medic and Ammo write each other's true
+    cell into memory within comms range (no RNG); the Ammo records when it left its
+    Medic and goes back after ``LINK_RETURN_TICKS``."""
+
+    def _holding(self, role: str, cell: tuple[int, int]) -> PlayerState:
+        # A standing Hold: plan_action returns before any Action roll.
+        return _player(role, cell_row=cell[0], cell_col=cell[1], hold_until=10**6)
+
+    def _plan(self, player: PlayerState, everyone: list, ctx, tick: int) -> None:
+        from matches.sim_helpers import combat
+
+        combat.plan_action(player, everyone, tick, ctx, time_domain="ticks")
+
+    def test_the_refresh_writes_both_cells_in_range(self) -> None:
+        medic, ammo = self._holding("medic", (0, 0)), self._holding("ammo", (0, 10))
+        ctx = _grid_map(size=16)
+        for player in (medic, ammo):
+            self._plan(player, [medic, ammo], ctx, 100)
+        assert medic.player_memory["red_ammo"]["cell"] == (0, 10)
+        assert ammo.player_memory["red_medic"]["cell"] == (0, 0)
+        assert ammo.player_memory["red_medic"]["timestamp"] == 100
+
+    def test_no_refresh_out_of_comms_range(self) -> None:
+        # Half the diagonal of a 4 x 4 grid is 2.83 squares; (3, 3) is 4.24 away.
+        medic, ammo = self._holding("medic", (0, 0)), self._holding("ammo", (3, 3))
+        ctx = _grid_map(size=16)
+        ctx.zone_data = [[1] * 4 for _ in range(4)]
+        self._plan(medic, [medic, ammo], ctx, 100)
+        assert "red_ammo" not in medic.player_memory
+
+    def test_the_refresh_draws_no_rng(self) -> None:
+        medic, ammo = self._holding("medic", (0, 0)), self._holding("ammo", (0, 10))
+        ctx = _grid_map(size=16)
+        random.seed(7)
+        before = random.getstate()
+        for player in (medic, ammo):
+            self._plan(player, [medic, ammo], ctx, 100)
+        assert random.getstate() == before
+        assert "red_ammo" in medic.player_memory
+
+    def test_leaving_sets_link_left_at_and_re_sync_clears_it(self) -> None:
+        medic, ammo = self._holding("medic", (0, 0)), self._holding("ammo", (0, 10))
+        ctx = _grid_map(size=16)
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        assert ammo.link_left_at == 100
+        self._plan(ammo, [medic, ammo], ctx, 130)
+        assert ammo.link_left_at == 100  # the first tick away is kept
+        medic.cell_col = 4
+        self._plan(ammo, [medic, ammo], ctx, 140)
+        assert ammo.link_left_at is None
+
+    def _return_goal(self, left_at: int, tick: int) -> tuple[int, int] | None:
+        ammo = _player("ammo", cell_row=0, cell_col=0, link_left_at=left_at)
+        medic = _player("medic", cell_row=11, cell_col=11)
+        ammo.player_memory["red_medic"] = {
+            "cell": (8, 8),
+            "timestamp": left_at,
+            "role": "medic",
+        }
+        ctx = _grid_map(sight={"8,8": {"6,8", "2,8"}})
+        return pathfinding.choose_goal_cell(
+            ammo, [ammo, medic], ctx.spawn_cells, ctx, "", tick, "ticks"
+        )
+
+    def test_the_return_goal_starts_at_link_return_ticks(self) -> None:
+        # The nearest cell that sees the remembered Medic: (2, 8), not (6, 8).
+        assert self._return_goal(40, 40 + support_survival.LINK_RETURN_TICKS) == (2, 8)
+
+    def test_no_return_goal_one_tick_before(self) -> None:
+        goal = self._return_goal(40, 40 + support_survival.LINK_RETURN_TICKS - 1)
+        assert goal != (2, 8)
+
+
+class TestIdleTrade:
+    """CAL-03 rule 2 (#588): an Active support whose roll plans nothing (a ``hide``,
+    or an empty ``resupply_ally``) Tags an enemy in sight with probability
+    ``IDLE_TRADE_RATE``, its gun off cooldown. The one draw comes after a target."""
+
+    def _plan(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        roll: str,
+        *,
+        enemy_in_sight: bool = True,
+        draw: float = 0.0,
+        **medic_fields: Any,
+    ) -> tuple[list, PlayerState, PlayerState, list[float]]:
+        from matches.sim_helpers import combat
+
+        medic = _player("medic", cell_row=0, cell_col=0, **medic_fields)
+        enemy = _player("heavy", "blue", cell_row=0, cell_col=3)
+        ctx = _grid_map(sight={"0,0": {"0,3"}} if enemy_in_sight else {})
+        real_choices = random.choices
+        draws: list[float] = []
+
+        def choices(population: list, *args: Any, **kwargs: Any) -> list:
+            if population is combat._CHOICES:
+                return [roll]
+            return real_choices(population, *args, **kwargs)
+
+        def one_draw() -> float:
+            draws.append(draw)
+            return draw
+
+        monkeypatch.setattr(combat.random, "choices", choices)
+        monkeypatch.setattr(combat.random, "random", one_draw)
+        plans = combat.plan_action(medic, [medic, enemy], 100, ctx, time_domain="ticks")
+        return plans, medic, enemy, draws
+
+    @staticmethod
+    def _kinds(plans: list) -> list:
+        return [(p["type"], p.get("target")) for p in plans]
+
+    def test_a_hide_roll_tags_an_enemy_in_sight(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plans, _, enemy, _ = self._plan(monkeypatch, "hide")
+        assert self._kinds(plans) == [("tag", enemy)]
+
+    def test_an_empty_resupply_roll_tags_an_enemy_in_sight(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plans, _, enemy, _ = self._plan(monkeypatch, "resupply_ally")
+        assert self._kinds(plans) == [("tag", enemy)]
+
+    def test_a_hiding_support_stops_hiding(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _, medic, _, _ = self._plan(monkeypatch, "hide", is_hiding=True)
+        assert medic.is_hiding is False
+
+    def test_not_with_the_gun_on_cooldown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plans, _, _, draws = self._plan(monkeypatch, "hide", last_shot_time=100)
+        assert self._kinds(plans) == [("hide", None)]
+        assert draws == []
+
+    def test_not_with_no_enemy_in_sight(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        plans, _, _, draws = self._plan(monkeypatch, "hide", enemy_in_sight=False)
+        assert self._kinds(plans) == [("hide", None)]
+        assert draws == []
+
+    def test_one_draw_with_a_target(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _, _, _, draws = self._plan(monkeypatch, "hide")
+        assert len(draws) == 1
+
+    def test_a_draw_at_the_rate_keeps_the_hide(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        plans, _, _, draws = self._plan(
+            monkeypatch, "hide", draw=support_survival.IDLE_TRADE_RATE
+        )
+        assert self._kinds(plans) == [("hide", None)]
+        assert len(draws) == 1
+
+    def test_a_non_support_does_not_trade(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from matches.sim_helpers import combat
+
+        scout = _player("scout", cell_row=0, cell_col=0)
+        enemy = _player("heavy", "blue", cell_row=0, cell_col=3)
+        real_choices = random.choices
+        monkeypatch.setattr(
+            combat.random,
+            "choices",
+            lambda pop, *a, **k: (
+                ["hide"] if pop is combat._CHOICES else real_choices(pop, *a, **k)
+            ),
+        )
+        monkeypatch.setattr(combat.random, "random", lambda: 0.0)  # a trade draw
+        plans = combat.plan_action(
+            scout,
+            [scout, enemy],
+            100,
+            _grid_map(sight={"0,0": {"0,3"}}),
+            time_domain="ticks",
+        )
+        assert self._kinds(plans) == [("hide", None)]
+
+
+class TestVisitShare:
+    """CAL-03 rule 6 (#588): ``VISIT_BASE_SHARE + VISIT_SPREAD x (decision_making -
+    50) / 50``, clamped to [``VISIT_SHARE_MIN``, ``VISIT_SHARE_MAX``]."""
+
+    @pytest.mark.parametrize(
+        ("decision_making", "share"),
+        [(0, 1 / 3 - 0.1), (50, 1 / 3), (100, 1 / 3 + 0.1)],
+    )
+    def test_the_spread_around_a_third(
+        self, decision_making: int, share: float
+    ) -> None:
+        scout = _player("scout", decision_making=decision_making)
+        assert support_survival.visit_share(scout) == pytest.approx(share)
+
+    def test_clamped_at_the_low_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(support_survival, "VISIT_SPREAD", 1.0)
+        scout = _player("scout", decision_making=0)
+        assert support_survival.visit_share(scout) == support_survival.VISIT_SHARE_MIN
+
+    def test_clamped_at_the_high_end(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(support_survival, "VISIT_SPREAD", 1.0)
+        scout = _player("scout", decision_making=100)
+        assert support_survival.visit_share(scout) == support_survival.VISIT_SHARE_MAX
+
+    def test_draws_no_rng(self) -> None:
+        random.seed(3)
+        before = random.getstate()
+        support_survival.visit_share(_player("scout"))
+        assert random.getstate() == before
+
+
+class TestNewPlayerFields:
+    """CAL-03 (#588): the typed fields the support rules keep, default None."""
+
+    def test_defaults(self) -> None:
+        player = _player("ammo")
+        assert (player.link_left_at, player.visit) == (None, None)
+
+    def test_the_visit_fields_default_to_none(self) -> None:
+        player = _player("scout")
+        assert (player.visit_next_tick, player.backline_cell) == (0, None)
+        assert player.support_callouts == []

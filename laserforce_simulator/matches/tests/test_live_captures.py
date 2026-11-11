@@ -15,6 +15,7 @@ from matches.round_probe import run_probe
 from matches.sim_helpers import combat, modes, pathfinding
 from matches.sim_helpers.combat import award_bases, capture_base, plan_action
 from matches.sim_helpers.event_log import EventLog
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.modes import (
     CONTROL_BONUS,
@@ -312,15 +313,18 @@ class TestChooseGoalCellGoesForBases:
         _remember(cmdr, "blue_commander", (9, 9), NOW, "commander")
         assert _choose(cmdr, [cmdr], _bases()) == (9, 9)
 
-    def test_low_lives_come_first(self) -> None:
+    def test_a_resupply_visit_comes_first(self) -> None:
+        # CAL-03c (#591): a visit's goal replaced step 1's walk to a support at
+        # low lives or shots.
         cmdr = _placed("commander", final_lives=1)
+        cmdr.visit = Visit(phase="go", started=NOW, goal=(7, 7))
         medic = _placed("medic", (7, 7))
         assert _choose(cmdr, [cmdr, medic], _bases()) == (7, 7)
 
-    def test_low_shots_come_first(self) -> None:
+    def test_low_resources_alone_do_not_skip_the_bases(self) -> None:
         cmdr = _placed("commander", final_shots=3)
         ammo = _placed("ammo", (7, 7))
-        assert _choose(cmdr, [cmdr, ammo], _bases()) == (7, 7)
+        assert _choose(cmdr, [cmdr, ammo], _bases()) != (7, 7)
 
     def test_a_downed_option_comes_first(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(pathfinding, "downed_goal", lambda *_a: (8, 8))

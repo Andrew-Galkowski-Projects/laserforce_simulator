@@ -50,6 +50,7 @@ from ..sim_helpers.pending_events import (
     PendingReaction,
 )
 from ..sim_helpers.resupply_queue import resolve_resupply_requests
+from ..sim_helpers.resupply_visit import end_open_visits
 from ..sim_helpers.role_constants import ROLE_STATS
 from ..sim_helpers.round_context import RoundContext
 from ..sim_helpers.shot import (
@@ -1517,6 +1518,9 @@ class BatchSimulator:
                         self._award_bases(p, ctx, second)
                 break
 
+        # CAL-03 rule 6: the round's end ends every Resupply visit still open.
+        end_open_visits(red_players + blue_players, self.ROUND_TICKS)
+
         # TIME-01: guarantee uptime reconciles to exactly TICKS_PER_ROUND per
         # player. If the loop broke early on a team wipe, survivors are credited
         # the remaining ticks as active (they were alive the whole round).
@@ -2110,6 +2114,8 @@ class BatchSimulator:
                     continue
                 lives_taken = min(opp.final_lives, 3)
                 opp.final_lives -= lives_taken
+                # CAL-03: a Downed enemy loses its lives too, and they count.
+                opp.counters.lives_lost_to_nukes += lives_taken
                 record_down(opp, second, ctx, tagger=player)
                 opp.shields = opp.max_shields
                 if opp.role == "commander" and opp.special_active_until > second:

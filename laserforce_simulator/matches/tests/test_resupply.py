@@ -185,8 +185,9 @@ class TestSupportAvailability(unittest.TestCase):
         return ctx.events.entries
 
     def test_available_support_triggers_resupply(self):
-        """An alive, in-LOS, shot-stocked, non-cooldown support produces a resupply event."""
-        requestor = _ps("scout", final_lives=5)
+        """An alive, in-LOS, shot-stocked, non-cooldown support produces a resupply event.
+        CAL-03 HOLD: a lone Medic's single needs ``CALLOUT_LIVES`` (3) or fewer."""
+        requestor = _ps("scout", final_lives=3)
         # Medic: alive, has shots, no cooldown
         support = _ps(
             "medic",
@@ -231,7 +232,8 @@ class TestSupportAvailability(unittest.TestCase):
         )
 
     def _resupply_types(self, last_downed_time):
-        requestor = _ps("scout", final_lives=5)
+        # CAL-03 HOLD: at 3 lives (``CALLOUT_LIVES``) a lone Medic's single is given.
+        requestor = _ps("scout", final_lives=3)
         support = _ps(
             "medic",
             team_color="red",
@@ -472,8 +474,9 @@ class TestResolveResupplyRequests(unittest.TestCase):
     # --- Test 1: Single request, Medic only ---
 
     def test_single_request_medic_only_emits_resupply_lives(self):
-        """Requestor + only Medic in LOS → resupply_lives event; Medic last_shot_time updated."""
-        requestor = _ps("scout", team_color="red", final_lives=5)
+        """Requestor + only Medic in LOS → resupply_lives event; Medic last_shot_time updated.
+        CAL-03 HOLD: the lone Medic's single needs ``CALLOUT_LIVES`` (3) or fewer."""
+        requestor = _ps("scout", team_color="red", final_lives=3)
         medic = _ps(
             "medic",
             team_color="red",
@@ -548,6 +551,26 @@ class TestResolveResupplyRequests(unittest.TestCase):
         self.assertIn("resupply_lives", event_types)
         self.assertIn("resupply_ammo", event_types)
         self.assertEqual(requestor.counters.combo_resupply_count, 1)
+        # CAL-03: the second half lands through the double window, not through a
+        # restored last_downed_time, so the pair is recorded as used.
+        self.assertTrue(requestor.last_single.paired)
+
+    def test_a_combo_whose_resupplies_fail_counts_no_combo(self):
+        """CAL-03 regression (resupply_queue.py:202): a combo roll whose
+        Resupplies did not land is no combo. The requestor was Downed after it
+        asked, so neither support's Resupply lands."""
+        requestor = _ps("scout", final_lives=5, final_shots=5, last_downed_time=98)
+        medic = _ps("medic")
+        ammo = _ps("ammo")
+        ctx = self._los_ctx(can_see=True)
+
+        events = self._run(
+            [requestor], [requestor, medic, ammo], movement_ctx=ctx, rng_value=0.10
+        )
+
+        self.assertEqual(requestor.counters.combo_resupply_count, 0)
+        self.assertEqual((requestor.final_lives, requestor.final_shots), (5, 5))
+        self.assertNotIn("resupply_lives", [e["event_type"] for e in events])
 
     # --- Test 4: Both supports, combo roll fails ---
 
@@ -721,12 +744,14 @@ class TestResolveResupplyRequests(unittest.TestCase):
 
     def _second_requestor_resupplies(self, dm: int, tw: int) -> int:
         """Two requestors; medic 1 serves the first and is then on shot cooldown,
-        so medic 2 (dm, tw) takes the stress roll for the second at roll 0.05 (5%)."""
+        so medic 2 (dm, tw) takes the stress roll for the second at roll 0.05 (5%).
+        CAL-03 HOLD: with no Ammo a Medic gives singles only at ``CALLOUT_LIVES``
+        (3) or fewer, so both requestors are at 3."""
         requestor1 = _ps(
-            "heavy", team_color="red", final_lives=5, tag_id="red_heavy", player_id=1
+            "heavy", team_color="red", final_lives=3, tag_id="red_heavy", player_id=1
         )
         requestor2 = _ps(
-            "scout", team_color="red", final_lives=5, tag_id="red_scout", player_id=2
+            "scout", team_color="red", final_lives=3, tag_id="red_scout", player_id=2
         )
         medic1 = _ps("medic", team_color="red", tag_id="red_medic_1", player_id=3)
         medic2 = _ps(
@@ -1218,3 +1243,127 @@ class TestAttemptResupplyActiveGate(unittest.TestCase):
         tagger = _ps("medic", last_downed_time=100)
         mate, _ = self._attempt(tagger, 103)
         self.assertIsNone(mate.last_resupplied_at)
+
+
+class TestDoubleResupply(unittest.TestCase):
+    """CAL-03 rule 1 (#588): the other support's Resupply lands inside
+    ``DOUBLE_WINDOW_TICKS`` of a single, although the single reset the pack."""
+
+    def setUp(self):
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.round_context import RoundContext
+
+        self.ctx = RoundContext(events=EventLog(persist=True))
+        self.medic = _ps("medic")
+        self.ammo = _ps("ammo")
+        self.mate = _ps("scout", final_lives=5, final_shots=5)
+
+    def _attempt(self, tagger, tick):
+        from matches.sim_helpers.combat import attempt_resupply
+
+        attempt_resupply(tagger, self.mate, tick, ctx=self.ctx)
+
+    def test_a_second_resupply_in_the_same_tick_lands_despite_the_reset(self):
+        self._attempt(self.medic, 100)
+        self.assertFalse(self.mate.is_resupplyable_at(100))  # the reset started
+
+        self._attempt(self.ammo, 100)
+
+        self.assertEqual((self.mate.final_lives, self.mate.final_shots), (10, 15))
+        self.assertEqual(self.ammo.counters.resupplies_given, 1)
+
+    def test_the_next_tick_is_inside_the_window(self):
+        self._attempt(self.ammo, 100)
+        self._attempt(self.medic, 101)
+        self.assertEqual(self.medic.counters.resupplies_given, 1)
+
+    def test_two_ticks_later_the_reset_blocks_it(self):
+        self._attempt(self.ammo, 100)
+        self._attempt(self.medic, 102)
+        self.assertEqual(self.medic.counters.resupplies_given, 0)
+
+    def test_the_single_is_recorded_and_the_double_uses_it(self):
+        from matches.sim_helpers.support_survival import LastSingle
+
+        self._attempt(self.medic, 100)
+        self.assertEqual(
+            self.mate.last_single, LastSingle("lives", 100, self.medic.tag_id_key)
+        )
+        self._attempt(self.ammo, 100)
+        self.assertTrue(self.mate.last_single.paired)
+
+    def test_a_used_pair_lets_no_third_resupply_land(self):
+        second_medic = _ps("medic", tag_id="red_medic_2")
+        self._attempt(self.medic, 100)
+        self._attempt(self.ammo, 100)
+        self._attempt(second_medic, 100)
+        self.assertEqual(second_medic.counters.resupplies_given, 0)
+
+    def test_the_resupply_target_honours_the_window(self):
+        from matches.sim_helpers.mechanics import choose_resupply_target
+
+        self._attempt(self.medic, 100)
+        same_zone = [self.ammo, self.mate]
+        self.assertIs(choose_resupply_target(self.ammo, same_zone, 101), self.mate)
+        self.assertIsNone(choose_resupply_target(self.ammo, same_zone, 102))
+
+
+class TestHoldGatesTheResupply(unittest.TestCase):
+    """CAL-03 rule 8 (#588): ``choose_resupply_target`` and the Resupply queue's
+    single fallback go through ``support_survival.hold_allows``; the queue's double
+    is always allowed. Map-less (the zone rule): the Ammo in zone 2 sees no one in
+    zone 0."""
+
+    def setUp(self):
+        self.medic = _ps("medic", current_zone=0)
+        self.ammo = _ps("ammo", current_zone=2)
+        self.scout = _ps("scout", final_lives=5, current_zone=0)
+        self.everyone = [self.medic, self.ammo, self.scout]
+
+    def _queue(self, rng_value=0.99):
+        from matches.sim_helpers.event_log import EventLog
+        from matches.sim_helpers.resupply_queue import resolve_resupply_requests
+        from matches.sim_helpers.round_context import RoundContext
+
+        ctx = RoundContext(events=EventLog(persist=True))
+        with patch("random.random", return_value=rng_value):
+            resolve_resupply_requests([self.scout], self.everyone, 100, None, ctx=ctx)
+        return [e["event_type"] for e in ctx.events.entries]
+
+    def test_the_medic_holds_a_single_the_ammo_cannot_see(self):
+        from matches.sim_helpers.mechanics import choose_resupply_target
+
+        self.assertIsNone(choose_resupply_target(self.medic, self.everyone, 100))
+
+    def test_the_medic_gives_it_when_the_ammo_sees_the_teammate(self):
+        from matches.sim_helpers.mechanics import choose_resupply_target
+
+        self.ammo.current_zone = 0
+        self.assertIs(
+            choose_resupply_target(self.medic, self.everyone, 100), self.scout
+        )
+
+    def test_the_medic_gives_it_at_callout_lives(self):
+        from matches.sim_helpers import support_survival
+        from matches.sim_helpers.mechanics import choose_resupply_target
+
+        self.scout.final_lives = support_survival.CALLOUT_LIVES
+        self.assertIs(
+            choose_resupply_target(self.medic, self.everyone, 100), self.scout
+        )
+
+    def test_the_queue_holds_the_single(self):
+        self.assertEqual(self._queue(), [])
+
+    def test_the_queue_gives_the_single_at_callout_lives(self):
+        from matches.sim_helpers import support_survival
+
+        self.scout.final_lives = support_survival.CALLOUT_LIVES
+        self.assertEqual(self._queue(), ["resupply_lives"])
+
+    def test_the_queue_double_is_always_allowed(self):
+        # Both supports see the Scout and the combo roll lands (0.0 < chance).
+        self.ammo.current_zone = 0
+        events = self._queue(rng_value=0.0)
+        self.assertIn("combo_resupply", events)
+        self.assertEqual(self.scout.counters.combo_resupply_count, 1)

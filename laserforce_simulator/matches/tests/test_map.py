@@ -395,7 +395,7 @@ class TestMap02CellMovement:
         assert _movement_cost((0, 0), (0, 1), elev) == 1.0  # downhill
         assert _movement_cost((0, 0), (0, 1), None) == 1.0  # flat (no data)
 
-    def test_choose_goal_cell_shots_critical_navigates_to_ammo(self):
+    def test_choose_goal_cell_shots_critical_no_longer_walks_to_ammo(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell
         from matches.sim_helpers.player_state import PlayerState
 
@@ -429,8 +429,11 @@ class TestMap02CellMovement:
             cell_row=0,
             cell_col=0,
         )
+        # CAL-03c (#591): step 1's walk to the Ammo's true cell is gone (a
+        # Resupply visit replaced it, on map rounds only), so with no map the
+        # default goal stands.
         goal = choose_goal_cell(attacker, [attacker, ammo], spawn_cells)
-        assert goal == (3, 4), f"Expected ammo's cell, got {goal}"
+        assert goal == (9, 9), f"Expected the enemy base, got {goal}"
 
     def test_choose_goal_cell_default_is_enemy_base(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell

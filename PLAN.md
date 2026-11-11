@@ -188,6 +188,8 @@ CAL-02 (Tags and times tagged in line with the arena) is **[DONE]**; see `PLAN-c
 
 ### CAL-03 · Supports stay on the floor, and goal-cell variety (owner, 2026-11-08)
 
+Spec: #588
+
 The lives budget behind CAL-02. The sim Ammo is eliminated at minute 4.5 of 15 on average and
 the Medic at 6.4 (eliminated in 82% and 88% of rounds; Active 26% and 33% of the round against
 55% and 58% real); real players leave at about minute 9.7 (the Medic 8.6; real Elimination rates
@@ -215,6 +217,326 @@ nukes and missiles. Measure with `round_probe --lineups test` (Eliminations and 
 enemies on the floor per Active roll, Resupplies given and received per role) against the TDF
 targets in `data/tdf_role_targets_2026.json`. Keep the T, H,
 M, A switches as the starting point; CAL-02's levers are in.
+
+**Grill facts (2026-11-10).** Baseline `round_probe --lineups test --workers 4` (128 games, seed
+42): Ammo Eliminated 80.9 +/- 2.2% at tick 529 (4.4 min), Medic 87.5 +/- 1.9% at tick 644 (5.4
+min). Real (164 TDF games, lives replayed against livesLeft, 98% exact): the Ammo is tagged about
+as often per alive minute as the sim's (2.0 against ~2.3) but receives 10.2 life Resupplies a game
+(27 lives, 89% of its losses); the Medic is tagged 1.05 per alive minute (sim ~2.3), gets no lives
+back, and loses 38% of its lives to nukes (6.5 a game). Real survival at minute 5 / 7 / 9: Ammo 97 /
+92 / 80%, Medic 95 / 78 / 62%; games over by then 0 / 5 / 21%. 110 of 164 real games end before
+14:40, every one by a wipe. On Syracuse `strong_spots` equals `high_los` (1277 cells), and
+`draw_goal`'s TOP_K 8 with the distance penalty gives every role on a team the same 8 nearest
+cells: 24-27 distinct Control cells across 200 seeds. A nuke takes 3 lives from every enemy with no
+LOS check, in the arena and in the sim. `lives_lost_to_nukes` and `medic_lives_removed_from_nuke`
+are never incremented. Survivors of a wipe are credited the remaining ticks as Active.
+
+**Grill decisions (owner, 2026-11-10, round 1):**
+1. Goal-cell variety lives in CAL-03; no separate roadmap item.
+2. Primary target: per-role survival at minutes 7 and 9 against the real curve; secondary: the
+   Elimination minute. Real Eliminated % is reported, not targeted (real games end early).
+3. Compare Tags and Downs per minute in play, not per round; the probe adds minutes in play that
+   leaves out the after-wipe credit. The engine's after-wipe Active credit stays.
+4. Probe gaps first: lives lost by cause (Tag / missile / nuke), Resupplies and lives received per
+   role, Downs per alive minute, the survival curve by minute, goal-cell variety (distinct cells per
+   player and per team).
+5. Wire `lives_lost_to_nukes` on every nuke; retiring `medic_lives_removed_from_nuke` is out of scope.
+6. Medic lever: prototype (a) Defense cells further back and more hidden, (b) the Medic tag-target
+   weight 10 toward 3; keep whichever gets closer; no targeting rule changes without a run.
+7. Ammo: no Ammo-specific lever at first; it should follow the Medic's survival (check with the
+   received measure).
+8. Goal variety: prototype (a) TOP_K 8 to ~24, (b) DISTANCE_WEIGHT halved; pick on goal sharing,
+   distinct cells, enemies on the floor and support survival. Per-player lanes only if both fail.
+9. The Commander's missing shots: measure only; expected to follow the Ammo.
+10. Determinism: seeded outcomes change; re-pin fingerprints, fold into CAL-01; the existing
+    serial-vs-parallel probe test covers the probe.
+11. Scope: engine plus `round_probe` only; no models beyond the counter, no API / UI / ownership.
+    Out: MECH-19, SM5-03, MOVE-10, a Medic self-heal. T, H, M, A switches stay on.
+
+**Prototype ladder (2026-11-10, 128 Test games, seed 42; patch and outputs in session
+68b130ac's scratchpad, `cal03_proto*`).** Survival at minutes 7 / 9 (real Ammo 92 / 80, Medic
+78 / 62): baseline Ammo 29 / 21, Medic 20 / 13; MA (Medic Defense cells within reach 3,
+value `0.5 x (1 - los_rank) + 0.5 x depth from the enemy base`, no pull to the Heavy) Medic
+33 / 19 (+4.5 se), Ammo 21 / 15; MB (Medic target weight 3) no change, since `_priority_targets`
+already skips the Medic while another Active enemy is in sight; GA (TOP_K 24) and GB
+(DISTANCE_WEIGHT 0.25) leave goal sharing at 7% and support survival flat or lower; MA+GB loses
+MA's gain. At minute 5 the Ammo survives 45% and the Medic 65% (real 97, 95): the supports die in
+the opening. Tag Downs per minute in play, sim against real: Commander 1.26 / 2.32, Heavy 1.56 /
+1.88, Scout 2.8 / 2.92, Ammo 2.73 / 2.11, Medic 2.53 / 1.19. The Ammo receives 3.8 life Resupplies
+(11.5 lives) in 5.5 minutes in play, about 80% of the real per-minute rate.
+
+**Grill decisions (owner, 2026-11-10, round 2):**
+12. Diagnose the opening before choosing a lever: a probe of every support Down in minutes 0-5
+    (the support's Action, Mode, goal source, Resupply walk / hidden / Defense cell, distance to
+    its own Heavy, the attacker's role and Mode), and the owner reviews a Round in the Playback
+    where the Ammo dies before minute 4.
+13. Keep MA as a proven Medic lever.
+14. Drop MB, GA and GB: goal-cell variety does not move support survival (numbers above); no
+    per-player lanes.
+15. Target Downs per minute in play by role as well as survival at minutes 7 / 9: more on the
+    Commander and Heavy, fewer on the supports, the round total about the same.
+16. The prototype's probe measures (survival by minute, minutes in play, lives lost by cause,
+    Resupplies received) become the first ticket.
+
+**Opening diagnosis (2026-11-10, ticks 0-599, 128 Test games).** No support state explains the
+Downs: Mode, Action and goal at the Down match the support's Active ticks (Ammo on a Resupply walk
+50% / 46%). Supports are seen on 35% (Ammo) and 28% (Medic) of Active ticks against about 50% for
+the Commander and Heavy, but are Downed about 11 times per minute in sight against about 4 (one
+Shield: every Tag is a Down), by 4.3 / 3.9 different enemies in 5 minutes, first at a median tick
+62 / 72. The Ammo works 40 squares from its own Heavy. About 30% of support Downs land in the Reset
+window, which matches the TDF rule (4 s down, 4 s coming back). Review Round 6 (seed_browser_check
+--syracuse): the blue Ammo runs from column 108 to 40 by tick 70 on Resupply walks, trades with the
+red Ammo and Commander, and is Eliminated at tick 186 after 8 Tag Downs and a missile; its Medic
+resupplied it once, at tick 0.
+
+**Grill decisions (owner, 2026-11-10, round 3):**
+17. The Reset window and nukes stay as they are.
+18. Supports stay behind the front: the Heavy meets the enemy before the Ammo or Medic in almost
+    every case. A teammate who needs resources goes back to the team for them; a support's
+    Resupply walk does not chase a teammate into enemy sight.
+19. Revisit the request system. In the arena a player asks for a Resupply mostly (a) when in sight
+    of the Medic / Ammo, usually wanting both, or (b) at 1-3 lives, unable to move without dying.
+    Measure doubles (one teammate resupplied by Medic and Ammo together) real against sim; at
+    Invasion 30-60% of Resupplies are doubles (Syracuse untracked).
+20. Supports trade back too rarely: a Medic or Ammo with no other Action should trade most of the
+    time, since it is usually hidden and watching. Measure hit diff and trade rate sim against real.
+21. No separate Ammo-lives lever, but an Ammo low on lives should be more likely to go back for
+    lives.
+22. Owner's Playback read: the Medic's positioning is fine. A real Medic holds one spot until the
+    team moves up or it is flushed (tagged without winning the trade, so it moves rather than lose
+    another life). The Ammo is far too aggressive: a real Ammo stays very near the Medic unless
+    above 15 lives (cap 20, 3 lives per Resupply).
+
+**Trades, doubles and hit diff (2026-11-10; real 164 TDF games, sim 128 Test games).** Doubles
+(a life + shot pair to one teammate): real 32.1% of Resupplies (Commander 44, Heavy 39, Scout 46;
+66% of pairs within 0.25 s), sim 0.5%: `_reset_resupplied` starts the receiver's reset, and
+`is_resupplyable_at` needs `is_active_at`, so the second Resupply waits 16 ticks unless it comes
+through the combo path; `combo_resupply_count` (resupply_queue.py:202) counts a successful combo
+roll, not two delivered Resupplies. Hit diff (Tags made / times tagged) real against sim:
+Commander 0.95 / 1.46, Heavy 0.93 / 0.99, Scout 1.12 / 0.96, Ammo 0.99 / 0.90, Medic 0.87 / 0.31.
+Shot first (the defender tagged its attacker in the 2 s before the Down), real / sim: Commander
+24 / 17, Heavy 8 / 0, Scout 18 / 7, Ammo 19 / 8, Medic 20 / 4; every sim shot-first is a Reaction
+or Follow-up. The Ammo is idle (empty, hide or hold) on 79% of Active rolls and the Medic on 86%,
+mostly an empty `resupply_ally`; with an enemy in sight on those ticks the Medic tags it 0.5% of
+the time and the Ammo 5.6%. `request_resupply` is an in-place ask that a support in sight answers
+the same tick; its weight is a flat `resupply_efficiency / 2` whenever the player is below max.
+
+**Grill decisions (owner, 2026-11-10, round 4):**
+23. Doubles: a Resupply's reset does not block the other resource from the other support for 1
+    tick; target about 32% doubles on Syracuse; `combo_resupply_count` counts only delivered pairs.
+24. Idle supports trade: an empty `resupply_ally` or `hide` roll with an enemy in sight falls back
+    to a Tag on it (`choose_tag_target`). Targets: shot-first Ammo 19%, Medic 20%; hit diff Ammo
+    0.99, Medic 0.87.
+25. The Ammo anchors on its Medic at 15 lives or fewer: Defense cells near a cell that sees its
+    own Medic's remembered cell, scored with MA's depth and hiddenness; above 15 the Heavy rule.
+26. The Ammo joins the low-lives seek rule: at 6 lives or fewer (30% of 20) it walks to its Medic.
+27. Behind the front: a support's Resupply walk targets only a teammate with no remembered enemy
+    in sight of it; otherwise it stays and the teammate comes back.
+28. Requests: (a) `request_resupply` resolves only while a support can see the player, and its
+    weight rises when both lives and shots are below half (asking for a double); a request
+    rolled out of a support's sight becomes a move whose goal is the last known cell of the
+    support it needs (Ammo or Medic). (b) At 1-3 lives with no support in sight the player hides or
+    holds and calls out its cell; a support walks to it only where decision 27 allows.
+29. The Medic is flushed: after a Down in which it did not tag its attacker, it comes back on a
+    new Defense cell out of that attacker's sight; otherwise it holds its spot.
+30. The Commander's 1.46 hit diff and the Heavy's 0% shot-first are measure only, expected to
+    move with 24 and 29; "a planned Shot never beats its attacker" is a note on MECH-18.
+31. Prototype ladder: P1 doubles, P2 idle trade, P3 Ammo anchor + low-lives seek (25-26), P4
+    behind the front (27), P5 requests (28), P6 Medic flush (29), plus MA; each alone, then
+    stacked in order, then all together.
+
+**Ladder results (2026-11-10; 128 Test games, seed 42, 4 workers; se in brackets).** Base
+reproduces (A elim tick 529, M 644, round Tags 300). The all-on and stacked runs were killed
+for low memory and have no 128-game result. Survival A s5/s7/s9, M s5/s7/s9 (real A 97/92/80,
+M 95/78/62):
+
+| run | A s5 | A s7 | A s9 | M s5 | M s7 | M s9 | round Tags (403) | other |
+|---|---|---|---|---|---|---|---|---|
+| base | 44.9(3.1) | 28.9 | 21.1 | 64.8(3.0) | 19.9 | 13.3 | 300 | |
+| P1 doubles | 41.0 | 22.7 | 15.6 | 56.6 | 18.4 | 9.8 | 296 | doubles 0.5 -> 3.5% (real 32) |
+| P2 idle trade | 51.2 | 37.5 | 29.7 | 78.9 | 32.8 | 20.7 | 348 | A/M hit ratio 1.71/1.55 (real 0.99/0.87); shot-first 15.6/17.1 (19/20) |
+| P3 Ammo anchor | 87.1 | 63.3 | 40.2 | 71.1 | 27.7 | 11.3 | 344 | A elim tick 819; sharing 7 -> 12% |
+| P4 behind front | 54.3 | 35.2 | 22.7 | 63.7 | 22.3 | 12.9 | 309 | |
+| P5 requests | 100 | 98.4 | 85.9 | 97.3 | 67.2 | 22.3 | 473 | C s11 98%; life Resupplies x2-3; M still 99% Eliminated |
+| P6 Medic flush | 40.6 | 26.6 | 19.9 | 64.1 | 19.5 | 13.3 | 300 | no effect (4152 flushes) |
+| MA Medic back | 39.1 | 20.7 | 14.5 | 75.0 | 32.8 | 19.1 | 301 | costs the Ammo |
+
+- P1's combo count today is mostly phantom (58 counted, 11 landed). Doubles stay low because the
+  two supports rarely see the same receiver, not because of the reset rule.
+- P5's cost is volume: ~214k unseen requests became walks, clustering whole teams on supports.
+- No lever brings Medic s9 near 62%; best is P2 at 21%.
+- Tables: session scratchpad `cal03_lad_tables_8.txt`; patch `cal03_lad.patch`.
+
+**Round 5 decisions (owner, 2026-11-10).**
+
+32. Keep P3 (Ammo anchor at 15 lives or fewer, seek its Medic at 6 or fewer).
+33. Keep P2 at a lower rate, tuned until support hit ratio is within 0.15 of real with
+    shot-first at 12% or more.
+34. P5 is rebuilt as a **Resupply visit** (owner): a player goes for Resupplies when its lives or
+    shots fall to about 1/3 of its cap (more or less by player, average 1/3). If both supports
+    are not Active, it waits for the second to come back, then goes for doubles. At the supports
+    it takes 2-3 doubles (fully resupplied), then leaves and stays out fighting for a while
+    before coming back. Decision 28's out-of-sight walk to the support's last known cell stays;
+    the agent's request-weight doubling is removed. The 1-3 lives call-out stays.
+35. Keep P1 as a bug fix (doubles unblock and the combo count); doubles is a measure only, with
+    real 32% beside it.
+36. Keep P4.
+37. Drop P6; note it as an idea under MECH-19.
+38. MA is run both ways in the stack; the better run decides.
+39. Next prototype: P1 + P2 (lower) + P3 + P4 + P5 (visit), with and without MA, 128 games, one
+    run at a time, 3 workers.
+40. Provisional targets (final, with se, after 39): A s5 >= 85, A s7 >= 65, M s5 >= 85,
+    M s7 >= 40, round Tags 350-430 (real 403), Commander s9 <= 90 (real 85).
+41. Medic late survival (s9 real 62%) beyond what the stack reaches goes to a follow-up CAL-04.
+
+**Resupply visits, real vs sim (2026-11-10).** A visit is a receiver's Resupplies with no gap
+above 15 s; real 164 TDF games (C/H/S receivers), sim the 128-game baseline. se in brackets.
+
+| measure | C real | C sim | H real | H sim | S real | S sim |
+|---|---|---|---|---|---|---|
+| visits per player-game | 6.2 | 7.7 | 8.3 | 9.1 | 4.6 | 6.5 |
+| Resupplies per visit | 2.82(0.05) | 1.78(0.03) | 2.30(0.03) | 1.93(0.03) | 2.77(0.04) | 1.41(0.01) |
+| doubles per visit | 0.86(0.03) | 0.01 | 0.64(0.02) | 0.01 | 0.87(0.02) | 0.01 |
+| visits with a double % | 49 | ~1 | 43 | ~1 | 56 | ~1 |
+| gap to next visit, median s | 84 | 33 | 52 | 27 | 111 | 42 |
+| lives/cap at visit start, median | 0.50 | | 0.60 | | 0.50 | |
+
+Real players visit less often, take more per visit, and stay away 2-3 times longer. Lives at
+visit start sit near half the cap; the owner's 1/3 trigger is lives *or* shots, and shots are not
+replayed. Scripts: scratchpad `cal03_visits.py`, `cal03_visits_sim.py`.
+
+**Stack prototype (2026-11-10; 128 Test games, seed 42, 3 workers).** STACK = P1 + P2 (rate 0.4)
++ P3 + P4 + P5V (visit). P2 rate 0.3/0.4/0.5 on 32 games: no rate meets both hit ratio and
+shot-first; 0.4 chosen. P5V as built: threshold 1/3 + 0.1 x (decision_making - 50)/50 clamped
+0.15-0.5 (no RNG); hide while a support is not Active; walk to a cell seeing both supports;
+request only while every living support is Active and sees it (singles allowed in the second
+half); end when full, 30 s after arrival or 60 s after start; cooldown 160 ticks; non-support
+`request_resupply` weight 0 outside a visit. Agent additions: a partner follows a single in the
+same tick (needs P1); step-1 seek kept between visits (Scout s5 fell to 74% without it).
+
+| measure | real | base | STACK | STACK+MA |
+|---|---|---|---|---|
+| A s5/s7/s9 | 97/92/80 | 44.9/28.9/21.1 | 93.0(1.6)/72.3(2.8)/48.4 | 91.8(1.7)/76.2(2.7)/55.9 |
+| M s5/s7/s9 | 95/78/62 | 64.8/19.9/13.3 | 83.2(2.3)/38.3(3.0)/16.8 | 89.5(1.9)/46.9(3.1)/25.0 |
+| C s9 | 85 | 78.9 | 91.8(1.7) | 88.7(2.0) |
+| round Tags | 403 | 300 | 383(5.5) | 393(6.9) |
+| hit ratio A/M | 0.99/0.87 | 0.90/0.31 | 1.12/1.02 | 1.10/1.00 |
+| shot-first A/M % | 19/20 | 7.6/3.8 | 10.7/11.1 | 11.3/11.1 |
+| doubles % | 32.1 | 0.5 | 4.8 | 4.8 |
+| doubles per visit C/H/S | 0.86/0.64/0.87 | 0.01 | 0.13/0.09/0.09 | 0.12/0.10/0.09 |
+| visits per game C/H/S | 6.2/8.3/4.6 | 7.7/9.1/6.5 | 9.1/10.3/7.0 | 9.4/10.6/7.7 |
+
+STACK+MA meets every provisional target except shot-first. P5V starts only 2.5-3.7 visits per
+player-game; the other clusters are the supports' own `resupply_ally` singles, which keep visit
+gaps short. In a 3-game check only 2 of 199 visit requests found both supports Active and in
+sight (Medic Active ~35% of the time). Tables: scratchpad `cal03_lad_tables_stack.txt`.
+
+**Round 6 decisions (owner, 2026-11-10).**
+
+42. Keep MA.
+43. Keep the agent's two P5V additions (partner follows a single; step-1 seek between visits).
+44. Supports hold singles: a support Resupplies a teammate only when it is on a visit, at 1-3
+    lives, or also seen by the other support (so a double can land).
+45. At the supports, a visiting player waits up to 10 s for the second support, then takes a
+    single (was the second half of 30 s).
+46. Shot-first is a floor of >= 10%, with real 19-20% beside it.
+47. One more 128-game run: STACK + MA + 44 + 45; keep 44/45 only if survival targets still hold
+    and doubles per visit reach about 0.4 or more.
+48. Final spec targets from that run's se: A s5 >= 85, A s7 >= 65, M s5 >= 85, M s7 >= 40,
+    C s9 <= 90, round Tags 350-430, A/M hit ratio within 0.15 of real, shot-first >= 10;
+    doubles and visits measure only, real beside them.
+49. Medic late survival stays out (CAL-04, decision 41).
+50. Save one game with the final levers on for the owner to watch beside today's review Round 6.
+
+**FINAL run (2026-11-10; STACK + MA + HOLD + WAIT10, 128 games).** A s5/7/9 94.5/85.5/70,
+M s5/7/9 94.9/59.4/39, C s9 89.1, round Tags 364, hit ratio A/M 1.18/1.04, shot-first A/M
+9.7/10.1, doubles 10.6%, doubles per visit 0.27/0.28/0.21 (C/H/S), visits per game 7.2/7.5/5.1,
+median visit gap 82/68/92 s, goal sharing 22.6% (was 7-8%). Saved game: agent worktree
+Round 5 (Ender Eliminated tick 1355, baseline 186).
+
+**Owner review of the saved game (2026-11-10).** Late in the round Scouts and the Commander follow
+the Ammo while it is away from the Medic, so the team runs around in two groups. Owner asks
+whether they don't know where the Medic is, and proposes that a player can broadcast its location
+to nearby teammates so they sync up (open: part of CAL-03 or its own task). Spawned RV-09 (goal /
+action dots on the playback map) and MECH-22 (an enemy in sight for several ticks is tagged
+quickly).
+
+**Following diagnosis (2026-11-10; Round 5 replayed exactly, plus 32 FINAL games).** Not missing
+Medic memory: at 864 visit starts it is never missing (median age 15 ticks, error 2 squares).
+- Main cause: today's step-1 **shots** seek. At 30% shots or less a C/S walks to the Ammo's
+  true cell (29% of C/S ticks across 32 games; 1129 ticks in Round 5, median lives 22). The Ammo
+  walks to the shots-poorest ally, HOLD stops it giving a single, and the pair drift together.
+- Supports are apart: the Ammo is >= 10 squares from its Medic 92% of the time (median 33);
+  P3 anchors it only at 15 lives or fewer, and MA holds the Medic far back.
+- Stuck visits: 88.9% of P5V "go" ticks sit on the player's own cell, which sees the
+  *remembered* support cells but not the supports, until the 60 s limit.
+- Today's comms (MECH-06) broadcast only the top *enemy* memory entry; teammates' cells are known
+  only by direct sight. A support self-broadcast would fix stuck visits, not the following.
+- Scrub ticks (Round 5): red Commander 166-279 and 287-528; blue Commander 696-853 (seek) and
+  606-683 (stuck visit). Following the Ammo after blue 909 / red 1029 is by design (Medic dead).
+
+**Round 7 decisions (owner, 2026-11-10).**
+
+51. Low shots or low lives start a P5V visit (skipping the visit cooldown) instead of step-1's
+    walk to the Ammo's true cell. Owner amendment to HOLD: when the Medic is not with the Ammo and
+    the Ammo does not know where the Medic is, the Ammo gives singles.
+52. **Support link** (replaces "P3 at all lives"): the Medic and Ammo always try to remember each
+    other's cells and stay within communication distance. The Ammo may leave the Medic; leaving
+    starts a timer, and within 30 s the Ammo goes back and syncs up with the Medic again.
+53. Under HOLD, the Ammo walks only to teammates it may Resupply (on a visit, at 1-3 lives, or
+    in the Medic's sight; or anyone when 51's singles apply).
+54. **Backline** (replaces the support self-broadcast): Heavy, Ammo and Medic are the backline and
+    hold a position on the map. The offense (Commander, Scouts) remembers the last known backline
+    position and returns there when low or on a Resupply visit. Kept backup: a visitor that
+    reaches its cell and sees no support forgets that cell and draws again.
+55. One more 128-game run with FINAL + 51-54, then re-save the seeded Syracuse game.
+56. Round 6's open calls (keep HOLD/WAIT10, shot-first and hit-ratio bands, goal sharing) are
+    decided after 55.
+57. RV-09 stays its own task and goes before MECH-22.
+
+**R7 run (2026-11-10; FINAL + 51-54, 128 games).** A s5/7/9 98.8/89.1/69.1, M s5/7/9
+89.1/59.4/28.5, C s9 94.9(1.4) (fails <= 90), S s5 92.2, round Tags 421, hit ratio A/M
+1.07/1.06, shot-first A/M 11.9/10.4, doubles 11.8%, Resupplies per visit 2.97/2.92/2.83 (real
+2.82/2.30/2.77), doubles per visit .39/.41/.32 (real .86/.64/.87), visits per game 8.6/9.1/5.8,
+median visit gap 40/41/63 s (real 84/52/111), goal sharing 5.4%, C/S walking to the Ammo 13.5% ->
+0.7%, stuck "go" 88.9% -> 16.3%, C life Resupplies 5.3 -> 10.3.
+- 32-game checks per lever on FINAL: 51 alone hurts (A s7 69, S s5 80, Tags 319, gaps halve:
+  it skips the cooldown); 52 and 54 each push C s9 to ~95; 53 is clean (M s7 67, more doubles).
+- Built as: "with" = in sight or within 6 squares; Medic memory stale after 60 ticks; LINK
+  refresh draws no RNG; backline position = the Medic's cell when seen, else the seen backline
+  teammate nearest their centroid.
+- Saved game: scratch DB `cal03_r7.sqlite3` Round 5 (seed_browser_check refuses to add to a
+  seeded DB).
+
+**Close-out (owner, 2026-11-10).**
+
+58. Ship the R7 set (decisions 1-57 as built in the R7 run, P2 rate 0.4) as permanent behaviour;
+    no env switches; P5 (request walks), P6, MB, GA, GB are not shipped. Owner: Resupplies still
+    do not stick together often enough; good progress, close CAL-03 and leave the rest to CAL-04
+    and the spawned tasks (RV-09, MECH-22). Acceptance is the R7 run reproduced within its se;
+    C s9 (94.9 against <= 90, real 85), visit pacing and doubles per visit are CAL-04's.
+
+**CAL-03b built (#590, 2026-11-10; rules 1-5, 8, 9 without visits; 128 Test games, seed 42, 3
+workers).** A s5/7/9 98.8/91.4/72.7, M s5/7/9 93.4/63.7/46.1, C s9 75.8, round Tags 343.7(6.9),
+hit ratio A/M 1.18/1.24, shot-first A/M 10.2/10.9, doubles 21.9% of Resupplies, doubles per visit
+.50/.50/.42 (C/H/S), Resupplies per visit 1.95/1.97/1.56, C life Resupplies 4.8, goal sharing
+45.6%. Without visits HOLD keeps lone singles back, so C/H/S on step 1's walk park on a support's
+true cell (sharing up, Tags and C survival down); #591's visits replace that walk.
+
+### CAL-04 · Resupply visits stick together, supports last the round (owner, 2026-11-10)
+
+Follow-up to CAL-03 (its PLAN section and the R7 run hold every number). After CAL-03:
+- doubles 11.8% of Resupplies against real 32%; doubles per visit .39/.41/.32 (C/H/S) against
+  .86/.64/.87;
+- visits come too often: median gap 40/41/63 s against 84/52/111, and 8.6/9.1/5.8 per game against
+  6.2/8.3/4.6. 32-game checks put it on VISITSEEK skipping the visit cooldown;
+- Commanders survive too well: C s9 94.9 against real 85 (life Resupplies 5.3 -> 10.3 with the
+  support link and backline);
+- the Medic still leaves early: M s9 28.5 against 62 (39 before round 7);
+- support shot-first 11.9/10.4 against 19/20.
+**Open for the grill:** a short cooldown for low-shots/lives visits (round 8's 40 s idea), why both
+supports are rarely ready together (Medic Active ~35% of the time), the Medic's late lives budget
+(nukes are 38% of real Medic losses), and whether MECH-22's in-sight tag ramp lands first.
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 
@@ -583,6 +905,11 @@ formula's three options as the choice when no enemy sees the player.
 
 ### MECH-18 · Re-engage a known enemy the tick it comes back into sight (owner, 2026-11-08)
 
+**From CAL-03 (2026-11-10):** in the sim a defender's planned Shot never lands before its
+attacker's: every shot-first Tag is a Reaction or Follow-up. Defenders tag their attacker in the
+2 s before the Down, real / sim: Commander 24 / 17%, Heavy 8 / 0%, Scout 18 / 7%, Ammo 19 / 8%,
+Medic 20 / 4% (CAL-03's trade measures).
+
 From the same review: "a player will trade, the losing player goes behind a wall, then when they
 come back out it still takes several ticks for the players, in each other's sights, who assumedly
 knew where each other were, to tag each other." They should be attempting to tag each other at
@@ -627,6 +954,27 @@ window (or count across the team), what happens to a partial capture when the pl
 leaves sight, whether missiles on bases come in with this task, the new event's name and
 metadata, and the Tag counts this changes for CAL-03's numbers. RV-06's radial lasers then fire on
 the third tag.
+
+### RV-09 · Playback map: each player's goal and attempted action as a colored dot (owner, 2026-11-10)
+
+From CAL-03's review of the stack game: debugging why players move where they do needs their
+intent on the map. Above the playback map, a legend maps colored dots to objectives (e.g.
+Resupply visit, seek a support, Defense cell, Attack cell, hide, chase, call-out); every player
+icon carries a dot for its current goal or attempted action, so the viewer can see why it made a
+decision. **Open for the grill:** whether goal source and chosen action are persisted per tick
+today (if not, the event or column that carries them, and its size on a 1800-tick round), whether
+the dot shows the goal, the action roll or both, the legend's categories, and whether it is a
+toggle.
+
+### MECH-22 · An enemy in sight for several ticks is tagged quickly (owner, 2026-11-10)
+
+From CAL-03's review: players sit in each other's sight without tagging. In real games that
+almost never happens. When an enemy has been in sight for more than one tick, the chance of
+choosing to tag it should rise very quickly with each further tick in sight. **Open for the
+grill:** the curve (per-tick ramp and cap), whether it counts per enemy or for any enemy, whether
+it resets on a Down or loss of sight, which stats scale it, the real measure to calibrate it
+against (time from first sight to first shot in the TDF logs), and how it interacts with CAL-03's
+idle trade (P2) and MECH-18's re-engage rule.
 
 ### MECH-08 · Reset-timing miss penalty
 

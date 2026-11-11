@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .map_context import MapContext
 
 from . import support_survival
+from .resupply_visit import freshest_callout
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
@@ -537,10 +538,42 @@ def _goal_from_action(
             and p.cell_row is not None
             and p is not player
         ]
+        # CAL-03 rule 4: behind the front, so no walk to a teammate a remembered
+        # enemy can see; rule 8: the Ammo walks only to whom HOLD lets it Resupply.
+        enemy_cells = _known_enemies_from_memory(
+            player, enemy_color, second, time_domain
+        )
+
+        def exposed(cell: tuple[int, int]) -> bool:
+            return any(movement_ctx.can_see(e, cell) for e in enemy_cells)
+
+        # Support-survival switch 4: the walk ends on a hidden cell.
+        hidden = (
+            (lambda cell: 1.0 - movement_ctx.los_rank(cell))
+            if support_survival.AMMO_HIDES_FREELY
+            else None
+        )
+        # CAL-03 rule 7: to the freshest call-out first, rule 4 permitting.
+        callout = freshest_callout(player, all_alive, second)
+        if callout is not None and not exposed(callout):
+            return _goal_seeing(
+                player, callout, all_alive, movement_ctx, second, hidden
+            )
         # Support-survival switch 3: the Medic holds its position; a low ally
-        # comes to it (the critical-resource override in choose_goal_cell).
+        # comes to it (on a Resupply visit, CAL-03 rule 6).
         if player.role == "medic" and support_survival.MEDIC_HOLDS_POSITION:
             return None
+        allies = [
+            p
+            for p in allies
+            if not exposed((p.cell_row, p.cell_col))
+            and (
+                player.role != "ammo"
+                or support_survival.hold_allows(
+                    player, p, all_alive, second, movement_ctx
+                )
+            )
+        ]
         if allies:
             shares = {id(p): _resupply_share(p, player.role) for p in allies}
             target = min(allies, key=lambda p: shares[id(p)])
@@ -551,12 +584,6 @@ def _goal_from_action(
                 and shares[id(target)] > DEFENSE_RESUPPLY_SHARE
             ):
                 return None
-            # Support-survival switch 4: the walk ends on a hidden cell.
-            hidden = (
-                (lambda cell: 1.0 - movement_ctx.los_rank(cell))
-                if support_survival.AMMO_HIDES_FREELY
-                else None
-            )
             return _goal_seeing(
                 player,
                 (target.cell_row, target.cell_col),
@@ -576,6 +603,31 @@ def _goal_from_action(
             return safest
 
     return None
+
+
+def _link_return_goal(
+    player, all_alive: list, movement_ctx: "MapContext", second: float
+) -> tuple[int, int] | None:
+    """CAL-03 rule 9: ``LINK_RETURN_TICKS`` after the Ammo left its Medic
+    (``link_left_at``), the nearest cell (Manhattan, then the cell) that sees the
+    Medic's remembered cell, or that cell when none does. None for anyone else,
+    before then, or with no living Medic remembered. No RNG."""
+    left = getattr(player, "link_left_at", None)
+    if player.role != "ammo" or left is None:
+        return None
+    if second - left < support_survival.LINK_RETURN_TICKS:
+        return None
+    medic = _find_role(all_alive, player.team_color, "medic")
+    entry = player.player_memory.get(medic.tag_id_key) if medic is not None else None
+    if entry is None or entry.get("cell") is None:
+        return None
+    target = (int(entry["cell"][0]), int(entry["cell"][1]))
+    here = (player.cell_row, player.cell_col)
+    return min(
+        movement_ctx.cells_visible_from(target),
+        key=lambda c: (abs(c[0] - here[0]) + abs(c[1] - here[1]), c),
+        default=target,
+    )
 
 
 def _goal_from_role(
@@ -603,8 +655,9 @@ def choose_goal_cell(
 
     Goal selection is action-aware (uses the player's previous chosen action) and
     role-aware. Priority order:
-    1. Critical-resource override: seek medic (low lives) or ammo (low shots) for
-       non-support roles — always trumps role/action logic.
+    1. A Commander's, Heavy's or Scout's Resupply visit goal (CAL-03 rule 6,
+       ``resupply_visit``) — always trumps role/action logic. A low Ammo walks to
+       its Medic (rule 3). After 1a, an Ammo away from its Medic goes back (rule 9).
     1c. A Commander with 3+ Shots and a Base left: ``modes.base_goal``, held until
        reached. It does not stop the Commander shooting.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
@@ -630,7 +683,6 @@ def choose_goal_cell(
     cell_col: int | None = getattr(player, "cell_col", None)
 
     max_lives = getattr(player, "max_lives", player.starting_lives)
-    max_shots = getattr(player, "max_shots", player.starting_shots)
 
     # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
     # MOVE-08: a Downed player's option holds unless they are Active at least
@@ -681,29 +733,38 @@ def choose_goal_cell(
                 player._committed_goal = None
                 return enemy_cmd_cell
 
-    # ── 1. Critical-resource overrides (non-support roles) ───────────────────
+    # ── 1. A Resupply visit's goal (CAL-03 rule 6, non-support roles) ─────────
+    # It replaced step 1's walk to a support's true cell at 30% lives or shots
+    # (decision 51): a visit starts there instead (``resupply_visit.visit_step``).
+    visit = getattr(player, "visit", None)
     if player.role not in ("medic", "ammo"):
-        if player.final_lives <= max_lives * 0.3:
-            medic = _find_role(all_alive, player.team_color, "medic")
-            if medic and medic.cell_row is not None:
-                # MOVE-04: reactive override fires — clear any committed goal.
-                player._committed_goal = None
-                return (medic.cell_row, medic.cell_col)
-        elif player.final_shots <= max_shots * 0.3:
-            ammo = _find_role(all_alive, player.team_color, "ammo")
-            if ammo and ammo.cell_row is not None:
-                # MOVE-04: reactive override fires — clear any committed goal.
-                player._committed_goal = None
-                return (ammo.cell_row, ammo.cell_col)
+        if visit is not None and visit.goal is not None:
+            player._committed_goal = None
+            return visit.goal
+    elif (
+        player.role == "ammo"
+        and player.final_lives <= support_survival.AMMO_SEEK_MEDIC_LIVES
+    ):
+        # CAL-03 rule 3: a low Ammo walks to its Medic, like the other roles.
+        medic = _find_role(all_alive, player.team_color, "medic")
+        if medic and medic.cell_row is not None:
+            player._committed_goal = None
+            return (medic.cell_row, medic.cell_col)
 
     if movement_ctx is None or cell_row is None or cell_col is None:
         return default_goal
 
     # ── 1a. MOVE-08: the Downed option's goal (Shuffle to cover / Make a
-    # trail) while Downed; beats 1b, the commitment and steps 2-4.
+    # trail) while Downed; beats rule 9, 1b, the commitment and steps 2-4.
     downed = downed_goal(player, second, movement_ctx)
     if downed is not None:
         return downed
+
+    # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.
+    link_goal = _link_return_goal(player, all_alive, movement_ctx, second)
+    if link_goal is not None:
+        player._committed_goal = None
+        return link_goal
 
     # ── 1b. MECH-06: score broadcast movement override ────────────────────────
     # Winning + low lives + medic alive + enough time still remaining → seek

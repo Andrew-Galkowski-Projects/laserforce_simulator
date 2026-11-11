@@ -11,6 +11,7 @@ from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.pending_events import PendingNuke
 from matches.sim_helpers.pathfinding import choose_goal_cell
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.role_constants import SPECIAL_COST
 from matches.sim_helpers.weights import (
     _commander_nuke_gate,
@@ -248,8 +249,8 @@ class TestMech04GoalOverride(unittest.TestCase):
         """reacting_to_nuke=False → step 0 is skipped; step 1 handles critical lives.
 
         Scout with critical lives (9/30 = 30%) but NOT reacting to nuke:
-        step 0 must not fire.  The critical-resource override in step 1 still
-        seeks the allied medic for non-support roles at ≤ 30% lives.
+        step 0 must not fire. Since CAL-03c (#591) step 1 is the Resupply visit's
+        goal (here the Medic's cell), which replaced the critical-resource walk.
         Confirms goal reaches medic via step 1, not MECH-04 path.
         """
         scout = _ps(
@@ -260,12 +261,13 @@ class TestMech04GoalOverride(unittest.TestCase):
             cell_row=0,
             cell_col=0,
         )
+        scout.visit = Visit(phase="go", started=0, goal=(4, 4))
         medic = _ps("medic", "red", cell_row=4, cell_col=4)
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
         ctx = _minimal_ctx(spawn_cells=spawn_cells)
 
         goal = choose_goal_cell(scout, [scout, medic], spawn_cells, ctx)
-        # Critical-resource override (step 1) should still direct to medic
+        # The visit goal (step 1) directs it to the medic
         self.assertEqual(
             goal,
             (4, 4),
@@ -940,7 +942,8 @@ class TestNukeArmingRules(unittest.TestCase):
         from matches.sim_helpers.mechanics import choose_resupply_target
 
         medic = _ps("medic")
-        cmd = _ps("commander", lives=10, special_active_until=110)
+        # CAL-03 HOLD: with no Ammo, the Medic's single needs 3 lives or fewer.
+        cmd = _ps("commander", lives=3, special_active_until=110)
         self.assertIsNone(choose_resupply_target(medic, [medic, cmd], 100))
         self.assertIs(choose_resupply_target(medic, [medic, cmd], 110), cmd)
 
@@ -1341,3 +1344,41 @@ class TestMech05NukeCancellation(unittest.TestCase):
 
         self.assertEqual(nuke.complete_time, 107.0)
         self.assertIs(nuke.player, commander)
+
+
+class TestLivesLostToNukes(unittest.TestCase):
+    """CAL-03 (#588): every nuke adds the lives it takes to each enemy's
+    ``lives_lost_to_nukes``, a Downed one included, and ``lives_lost`` follows."""
+
+    def test_a_nuke_on_three_players_counts_three_lives_on_each(self) -> None:
+        from dataclasses import asdict
+
+        from matches.models import PlayerRoundState
+        from matches.simulation import BatchSimulator
+
+        commander = _ps("commander", "red")
+        heavy = _ps("heavy", "blue", lives=20)
+        scout = _ps("scout", "blue", lives=10)
+        # Downed two ticks ago: not Active, still on the floor with lives.
+        medic = _ps("medic", "blue", lives=8, last_downed_time=98)
+        self.assertFalse(medic.is_active_at(100))
+
+        BatchSimulator()._complete_nuke(commander, 100, [heavy, scout, medic])
+
+        for victim, lives in ((heavy, 17), (scout, 7), (medic, 5)):
+            with self.subTest(role=victim.role):
+                self.assertEqual(victim.final_lives, lives)
+                self.assertEqual(victim.counters.lives_lost_to_nukes, 3)
+                state = PlayerRoundState(**asdict(victim.counters))
+                self.assertEqual(state.lives_lost, 3)
+
+    def test_a_nuke_counts_only_the_lives_a_player_had(self) -> None:
+        from matches.simulation import BatchSimulator
+
+        last_two = _ps("ammo", "blue", lives=2)
+        out = _ps("scout", "blue", lives=0)
+
+        BatchSimulator()._complete_nuke(_ps("commander", "red"), 100, [last_two, out])
+
+        self.assertEqual(last_two.counters.lives_lost_to_nukes, 2)
+        self.assertEqual(out.counters.lives_lost_to_nukes, 0)

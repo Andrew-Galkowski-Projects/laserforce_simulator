@@ -37,6 +37,7 @@ import pytest
 
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.player_state import PlayerState
+from matches.sim_helpers.support_survival import Visit
 
 # ---------------------------------------------------------------------------
 # Lightweight fixtures (mirror the style of test_goal_selection.py / test_move03)
@@ -292,7 +293,9 @@ class TestMove04GoalCommitment:
         assert scout._committed_goal[0] == (2, 2)
 
         # Now drop lives below the 30% threshold (30 * 0.3 = 9 → 5 qualifies).
+        # CAL-03c (#591): a Resupply visit starts there; its goal is step 1 now.
         scout.final_lives = 5
+        scout.visit = Visit(phase="go", started=1, goal=(4, 4))
 
         goal = choose_goal_cell(
             scout, [scout, medic], spawn_cells, ctx, second=1, time_domain="ticks"

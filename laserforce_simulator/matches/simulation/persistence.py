@@ -119,9 +119,10 @@ def _write_player_states(
             ticks_reset_window=p.ticks_reset_window,
             was_eliminated_at=p.was_eliminated_at,
             # 18 counter columns splatted from PlayerCounters (ADR-0018).
-            # Of the 5 nuke counters only own_specials_cancelled has a
-            # simulator writer (LFS-01a); the other 4 are 0 and the model
-            # defaults match, so they are behaviour-neutral.
+            # Of the 5 nuke counters only own_specials_cancelled (LFS-01a)
+            # and lives_lost_to_nukes (CAL-03) have a simulator writer; the
+            # other 3 are 0 and the model defaults match, so they are
+            # behaviour-neutral.
             **asdict(p.counters),
         )
 

@@ -29,6 +29,7 @@ from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
+from matches.sim_helpers.support_survival import Visit
 from matches.sim_helpers.time_constants import RESPAWN_TICKS
 
 
@@ -279,6 +280,18 @@ class TestGoalSelectionOverrides(unittest.TestCase):
         downed, tagger = self._trailing()
         self.assertEqual(self._goal(downed, [downed, tagger], 101), (7, 4))
 
+    def test_downed_goal_beats_the_ammo_s_link_return(self) -> None:
+        # CAL-03 review (#588): rule 9's walk back to the Medic does not override
+        # the Downed option; the spec orders it nowhere above step 1a.
+        downed = _ps("blue_ammo", "blue", (7, 14), role="ammo")
+        tagger = _ps("red_scout_1", "red", (7, 29))
+        medic = _ps("blue_medic", "blue", (1, 1), role="medic")
+        downed.link_left_at = 0
+        downed.player_memory["blue_medic"] = {"cell": (1, 1), "timestamp": 0}
+        _down(downed, tagger, 100, OPEN, 0.999)
+        self.assertEqual(downed.downed_plan.option, MAKE_A_TRAIL)
+        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (7, 4))
+
     def test_nuke_reaction_wins_only_when_active_before_detonation(self) -> None:
         downed, tagger = self._trailing()
         commander = _ps("red_commander", "red", (2, 2), role="commander")
@@ -292,11 +305,20 @@ class TestGoalSelectionOverrides(unittest.TestCase):
                     self._goal(downed, [downed, tagger, commander], 101), goal
                 )
 
-    def test_critical_resource_seek_medic_wins(self) -> None:
+    def test_a_visit_goal_beats_the_downed_option(self) -> None:
+        # CAL-03c (#591): step 1's walk to the Medic is a Resupply visit's goal.
         downed, tagger = self._trailing()
         medic = _ps("blue_medic", "blue", (1, 1), role="medic")
         downed.final_lives = 2
+        downed.visit = Visit(phase="go", started=90, goal=(1, 1))
         self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (1, 1))
+
+    def test_low_lives_alone_no_longer_beat_the_downed_option(self) -> None:
+        # With no visit (none starts while Downed) the trail holds.
+        downed, tagger = self._trailing()
+        medic = _ps("blue_medic", "blue", (1, 1), role="medic")
+        downed.final_lives = 2
+        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (7, 4))
 
 
 class TestResupplyTrail(unittest.TestCase):
@@ -471,13 +493,15 @@ class TestStationaryWhileDowned(unittest.TestCase):
 
     def test_critical_resource_moves_a_stay_hidden_player(self) -> None:
         """Decision 14 reaches Stay hidden too: at 30% lives or less a Downed
-        non-support player leaves the hide for their Medic."""
+        non-support player leaves the hide for their Medic. CAL-03c (#591): the
+        walk is its Resupply visit's goal, which goes on through a Down."""
         from matches.simulation import BatchSimulator
 
         downed = _ps("blue_scout_1", "blue", (7, 2))
         _down(downed, None, 100, OPEN, 0.0)
         medic = _ps("blue_medic", "blue", (7, 20), role="medic")
         downed.final_lives = 2
+        downed.visit = Visit(phase="go", started=90, goal=(7, 20))
         BatchSimulator()._advance_player(downed, [downed, medic], 101, OPEN, "")
         self.assertFalse(downed.is_hiding)
         self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 2))

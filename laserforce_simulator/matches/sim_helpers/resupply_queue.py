@@ -9,6 +9,7 @@ from __future__ import annotations
 import random
 from typing import Any
 
+from . import support_survival
 from .mechanics import shot_cooldown
 from .round_context import RoundContext
 
@@ -192,14 +193,21 @@ def resolve_resupply_requests(
             ammo = available_ammos[0]
             chance = _combo_chance(ammo, medic)
             if random.random() < chance:
-                # Combo resupply: medic gives lives, ammo gives shots.
-                # Save last_downed_time so the second resupply is not blocked by the
-                # reset that attempt_resupply applies to last_downed_time.
-                saved_downed_time = getattr(requestor, "last_downed_time", None)
+                # Combo resupply: medic gives lives, ammo gives shots. CAL-03:
+                # the second lands through the double window
+                # (``support_survival.double_window_open``), and the combo counts
+                # only when both Resupplies landed.
+                given = (
+                    medic.counters.resupplies_given,
+                    ammo.counters.resupplies_given,
+                )
                 attempt_resupply(medic, requestor, second, ctx=ctx)
-                requestor.last_downed_time = saved_downed_time
                 attempt_resupply(ammo, requestor, second, ctx=ctx)
-                requestor.counters.combo_resupply_count += 1
+                if (
+                    medic.counters.resupplies_given > given[0]
+                    and ammo.counters.resupplies_given > given[1]
+                ):
+                    requestor.counters.combo_resupply_count += 1
                 medic.last_shot_time = second
                 ammo.last_shot_time = second
                 # RES-02b: combo_resupply carries the medic actor +
@@ -228,6 +236,13 @@ def resolve_resupply_requests(
             prior_request_count += 1
             continue
 
+        # CAL-03 rule 8: HOLD keeps back a single (the double above is always
+        # allowed).
+        if not support_survival.hold_allows(
+            support, requestor, all_alive, second, movement_ctx
+        ):
+            prior_request_count += 1
+            continue
         attempt_resupply(support, requestor, second, ctx=ctx)
         support.last_shot_time = second
         prior_request_count += 1

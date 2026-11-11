@@ -137,10 +137,20 @@ def choose_resupply_target(
             if p.team_color == player.team_color
             and p is not player
             and p.final_lives > 0
-            and p.is_resupplyable_at(second)
+            and (
+                p.is_resupplyable_at(second)
+                # CAL-03 rule 1: the second kind of a double.
+                or support_survival.double_window_open(p, player, second)
+            )
         ],
         movement_ctx,
     )
+    # CAL-03 rule 8: a support holds a single nobody but it could give a double to.
+    teammates = [
+        t
+        for t in teammates
+        if support_survival.hold_allows(player, t, all_alive, second, movement_ctx)
+    ]
     if not teammates:
         return None
     all_full = True
