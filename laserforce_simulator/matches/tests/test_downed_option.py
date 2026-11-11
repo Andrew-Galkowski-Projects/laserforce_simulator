@@ -280,6 +280,18 @@ class TestGoalSelectionOverrides(unittest.TestCase):
         downed, tagger = self._trailing()
         self.assertEqual(self._goal(downed, [downed, tagger], 101), (7, 4))
 
+    def test_downed_goal_beats_the_ammo_s_link_return(self) -> None:
+        # CAL-03 review (#588): rule 9's walk back to the Medic does not override
+        # the Downed option; the spec orders it nowhere above step 1a.
+        downed = _ps("blue_ammo", "blue", (7, 14), role="ammo")
+        tagger = _ps("red_scout_1", "red", (7, 29))
+        medic = _ps("blue_medic", "blue", (1, 1), role="medic")
+        downed.link_left_at = 0
+        downed.player_memory["blue_medic"] = {"cell": (1, 1), "timestamp": 0}
+        _down(downed, tagger, 100, OPEN, 0.999)
+        self.assertEqual(downed.downed_plan.option, MAKE_A_TRAIL)
+        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (7, 4))
+
     def test_nuke_reaction_wins_only_when_active_before_detonation(self) -> None:
         downed, tagger = self._trailing()
         commander = _ps("red_commander", "red", (2, 2), role="commander")

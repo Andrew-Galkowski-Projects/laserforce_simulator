@@ -657,7 +657,7 @@ def choose_goal_cell(
     role-aware. Priority order:
     1. A Commander's, Heavy's or Scout's Resupply visit goal (CAL-03 rule 6,
        ``resupply_visit``) — always trumps role/action logic. A low Ammo walks to
-       its Medic (rule 3), and an Ammo away from its Medic goes back (rule 9).
+       its Medic (rule 3). After 1a, an Ammo away from its Medic goes back (rule 9).
     1c. A Commander with 3+ Shots and a Base left: ``modes.base_goal``, held until
        reached. It does not stop the Commander shooting.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
@@ -754,17 +754,17 @@ def choose_goal_cell(
     if movement_ctx is None or cell_row is None or cell_col is None:
         return default_goal
 
+    # ── 1a. MOVE-08: the Downed option's goal (Shuffle to cover / Make a
+    # trail) while Downed; beats rule 9, 1b, the commitment and steps 2-4.
+    downed = downed_goal(player, second, movement_ctx)
+    if downed is not None:
+        return downed
+
     # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.
     link_goal = _link_return_goal(player, all_alive, movement_ctx, second)
     if link_goal is not None:
         player._committed_goal = None
         return link_goal
-
-    # ── 1a. MOVE-08: the Downed option's goal (Shuffle to cover / Make a
-    # trail) while Downed; beats 1b, the commitment and steps 2-4.
-    downed = downed_goal(player, second, movement_ctx)
-    if downed is not None:
-        return downed
 
     # ── 1b. MECH-06: score broadcast movement override ────────────────────────
     # Winning + low lives + medic alive + enough time still remaining → seek

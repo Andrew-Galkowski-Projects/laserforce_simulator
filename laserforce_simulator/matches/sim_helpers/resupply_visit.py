@@ -151,11 +151,11 @@ def _at_supports(
     movement_ctx: Any,
     tick: float,
 ) -> tuple[Visit, VisitAction]:
-    """The ``at`` phase: some support sees the player. In every support's sight it
-    stays; else it keeps closing on the one it misses (unstick on its goal). It
-    requests while every support is Active and sees it, or once
-    ``VISIT_WAIT_TICKS`` have passed since arrival and a seeing support is Active;
-    otherwise it holds, hidden (or walks on, short of a support)."""
+    """The ``at`` phase: some support sees the player. In every support's sight its
+    goal is its own cell; else the cell that sees both (unstick on it: forget the
+    unseen support and the ``backline_cell``). It requests while every support is
+    Active and sees it, or once ``VISIT_WAIT_TICKS`` have passed since arrival and
+    a seeing support is Active; otherwise it holds, hidden."""
     arrived = int(tick) if visit.arrived is None else visit.arrived
     here = _here(player)
     if all(sees):
@@ -164,6 +164,7 @@ def _at_supports(
         goal = visit_goal(player, supports, movement_ctx)
         if goal == here:
             _forget(player, (s for v, s in zip(sees, supports) if not v))
+            player.backline_cell = None
             goal = visit_goal(player, supports, movement_ctx)
     visit = replace(visit, phase="at", arrived=arrived, goal=goal)
     ready = all(sees) and all(s.is_active_at(tick) for s in supports)
@@ -172,7 +173,7 @@ def _at_supports(
     )
     if ready or late:
         return visit, "request"
-    return visit, "hide" if all(sees) else "move"
+    return visit, "hide"
 
 
 def _walk(

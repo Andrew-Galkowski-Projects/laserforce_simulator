@@ -250,8 +250,9 @@ class TestThePhases:
         assert action == "request"
 
     def test_no_single_one_tick_before(self) -> None:
+        # Spec rule 6 ``at``: otherwise it holds, hidden (also short of a support).
         action, scout = self._one_sees(support_survival.VISIT_WAIT_TICKS - 1)
-        assert action == "move"
+        assert action == "hide"
         assert scout.visit is not None and scout.visit.phase == "at"
 
     def test_go_walks_to_the_nearest_cell_seeing_both_supports(self) -> None:
@@ -304,6 +305,7 @@ class TestThePhases:
         sight["10,12"] = {"10,11"}
         sight["10,10"].add("10,11")
         scout, _, _, everyone, ctx = _scene(sight)
+        scout.backline_cell = (3, 3)
         scout.player_memory["red_ammo"] = {
             "cell": (4, 6),
             "timestamp": NOW,
@@ -317,6 +319,7 @@ class TestThePhases:
         _step(scout, everyone, ctx)
         assert "red_ammo" not in scout.player_memory
         assert "red_medic" in scout.player_memory
+        assert scout.backline_cell is None  # spec rule 6: and its backline_cell
         assert scout.visit is not None and scout.visit.goal == (10, 11)
 
     def test_the_heavy_s_go_starts_at_the_cell_seeing_both(self) -> None:
