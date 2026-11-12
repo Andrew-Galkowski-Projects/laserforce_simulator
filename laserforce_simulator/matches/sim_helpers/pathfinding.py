@@ -613,7 +613,7 @@ def _link_return_goal(
     (``link_left_at``), the nearest cell (Manhattan, then the cell) that sees the
     Medic's remembered cell, or that cell when none does. None for anyone else,
     before then, or with no living Medic remembered. No RNG."""
-    left = getattr(player, "link_left_at", None)
+    left = player.link_left_at
     if player.role != "ammo" or left is None:
         return None
     if second - left < support_survival.LINK_RETURN_TICKS:
@@ -637,7 +637,7 @@ def _leash_goal(
     anyone else, before then, with no cell, no living Medic, or a memory of it
     missing, cell-less or older than ``LINK_STALE_TICKS``. Sets only the goal
     (decision 27: a hold or hide roll stays still). No RNG."""
-    since = getattr(player, "leash_far_since", None)
+    since = player.leash_far_since
     if player.role != "ammo" or since is None:
         return None
     if second - since <= support_survival.LEASH_TICKS or player.cell_row is None:
@@ -681,7 +681,7 @@ def _join_goal(
         p
         for p in all_alive
         if p.team_color == player.team_color
-        and getattr(p, "visit", None) is not None
+        and p.visit is not None
         and p.final_lives > 0
         and p.cell_row is not None
         and movement_ctx.can_see((p.cell_row, p.cell_col), there)
@@ -815,7 +815,7 @@ def choose_goal_cell(
     # ── 1. A Resupply visit's goal (CAL-03 rule 6, non-support roles) ─────────
     # It replaced step 1's walk to a support's true cell at 30% lives or shots
     # (decision 51): a visit starts there instead (``resupply_visit.visit_step``).
-    visit = getattr(player, "visit", None)
+    visit = player.visit
     if player.role not in SUPPORT_ROLES:
         if visit is not None and visit.goal is not None:
             player._committed_goal = None

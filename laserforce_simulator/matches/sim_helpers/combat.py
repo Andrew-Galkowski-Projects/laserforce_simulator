@@ -742,7 +742,7 @@ def attempt_resupply(
         ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
     else:
         return
-    visit = getattr(teammate, "visit", None)
+    visit = teammate.visit
     if in_window and visit is not None:
         teammate.visit = replace(visit, doubles=visit.doubles + 1)
     if not in_window:
@@ -758,7 +758,7 @@ def _partner_follows(
     it land. No RNG."""
     from .resupply_queue import _is_available  # noqa: PLC0415 (resupply_queue -> here)
 
-    if getattr(teammate, "visit", None) is None:
+    if teammate.visit is None:
         return
     partner = support_survival.own_teammate(
         teammate, support_survival.partner_role(tagger.role), ctx.all_alive

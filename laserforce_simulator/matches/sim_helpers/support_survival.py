@@ -100,7 +100,7 @@ def double_window_open(teammate: Any, supporter: Any, tick: float) -> bool:
     """True while *teammate*'s last single is at most ``DOUBLE_WINDOW_TICKS`` old,
     it was the other kind from another supporter, no Down came after it, and its
     pair is unused: then *supporter* may deliver the second kind. No RNG."""
-    single: Optional[LastSingle] = getattr(teammate, "last_single", None)
+    single: Optional[LastSingle] = teammate.last_single
     kind = RESUPPLY_KIND.get(supporter.role)
     if single is None or kind is None or single.paired:
         return False

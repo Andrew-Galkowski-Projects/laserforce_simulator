@@ -103,7 +103,7 @@ def record_down(
     # CAL-03 rule 6: an Elimination ends a Resupply visit. A Down does not: the
     # visit goes on through the Respawn cooldown, as in the R7 prototype (#588).
     # Called through the module so ``round_probe`` sees the reason (CAL-04a).
-    if player.final_lives <= 0 and getattr(player, "visit", None) is not None:
+    if player.final_lives <= 0 and player.visit is not None:
         resupply_visit.end_visit(player, tick, "eliminated")
 
     # 2-4. simple state mutations
