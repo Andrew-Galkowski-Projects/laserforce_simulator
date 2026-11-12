@@ -206,6 +206,8 @@ def _scripted(
         role=role,
         team_color=team,
         script=ticks,
+        cell_row=None,
+        cell_col=None,
         is_active_at=lambda tick: ticks[tick].active,
         is_hiding=False,
         is_holding=False,
@@ -1600,9 +1602,8 @@ class TestEngineVisitMeasures(SimpleTestCase):
         self.assertEqual(visits.normal_starts.mean, 1.0)
         self.assertEqual(visits.critical_starts.mean, 1.0)
         self.assertEqual(list(visits.end_share), list(get_args(VisitEnd)))
-        # CAL-04b: a full pack ends "satisfied"; "full" is no longer produced.
+        # CAL-04b: a full pack ends "satisfied".
         self.assertEqual(visits.end_share["satisfied"].mean, 50.0)
-        self.assertEqual(visits.end_share["full"].mean, 0.0)
         self.assertEqual(visits.end_share["round_end"].mean, 50.0)
         self.assertEqual(visits.end_share["timeout"].mean, 0.0)
 
@@ -1711,7 +1712,7 @@ class TestEngineVisitMeasures(SimpleTestCase):
         scout, _, _, everyone, _ = _visit_scene()
         visits = self._visits(everyone, None)
         self.assertEqual(visits.normal_starts.mean, 0.0)
-        self.assertEqual(visits.end_share["full"].mean, 0.0)
+        self.assertEqual(visits.end_share["satisfied"].mean, 0.0)
         self.assertIsNone(visits.median_ticks_to_arrive)
 
     def test_the_visit_observers_are_put_back(self) -> None:
@@ -1808,9 +1809,9 @@ class TestFormatCal04Measures(SimpleTestCase):
         for text in (
             "  Engine visit starts per round, normal: 1.0 +/- 0.0 (1.0-1.0)",
             "  Engine visit starts per round, critical: 0.0 +/- 0.0 (0.0-0.0)",
-            "  Engine visit end %: full 0.0 +/- 0.0, satisfied 0.0 +/- 0.0, timeout "
-            "0.0 +/- 0.0, max 0.0 +/- 0.0, no_support 0.0 +/- 0.0, eliminated 0.0 "
-            "+/- 0.0, round_end 100.0 +/- 0.0",
+            "  Engine visit end %: satisfied 0.0 +/- 0.0, timeout 0.0 +/- 0.0, "
+            "max 0.0 +/- 0.0, no_support 0.0 +/- 0.0, eliminated 0.0 +/- 0.0, "
+            "round_end 100.0 +/- 0.0",
             "  Engine visit ticks to arrive: median 0.0",
             "  Engine visits never arriving %: 0.0 +/- 0.0 (0.0-0.0)",
             "  Arrivals with both supports ready %: 100.0 +/- 0.0 (100.0-100.0)",

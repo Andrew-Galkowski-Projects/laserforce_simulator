@@ -652,8 +652,7 @@ def _support_link(
         entry = player.player_memory.get(other.tag_id_key)
         cell = entry.get("cell") if entry else None
         far = cell is not None and (
-            max(abs(cell[0] - here[0]), abs(cell[1] - here[1]))
-            > support_survival.LEASH_SQUARES
+            resupply_visit.chebyshev(cell, here) > support_survival.LEASH_SQUARES
         )
         if not far:
             player.leash_far_since = None

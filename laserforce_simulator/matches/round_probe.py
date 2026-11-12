@@ -507,10 +507,6 @@ def _band(tick: float) -> str:
     return next(label for end, label in LIFE_BANDS if tick < end)
 
 
-def _chebyshev(a: Any, b: Any) -> int:
-    return max(abs(a.cell_row - b.cell_row), abs(a.cell_col - b.cell_col))
-
-
 def _readiness(
     player: Any, all_alive: list, movement_ctx: Any, tick: float
 ) -> tuple[tuple[str, ...], bool | None]:
@@ -524,13 +520,13 @@ def _readiness(
         support = support_survival.own_teammate(player, role, all_alive)
         if support is None or not support.is_active_at(tick):
             causes.append(f"{role} not Active")
-        elif not resupply_visit._sees(player, support, movement_ctx):
+        elif not resupply_visit.sees(player, support, movement_ctx):
             causes.append(f"{role} unseen")
         if support is not None and support.cell_row is not None:
-            supports.append(support)
+            supports.append((support.cell_row, support.cell_col))
     apart = None
     if len(supports) == 2:
-        apart = _chebyshev(*supports) > support_survival.LEASH_SQUARES
+        apart = resupply_visit.chebyshev(*supports) > support_survival.LEASH_SQUARES
     return tuple(causes), apart
 
 
@@ -748,11 +744,7 @@ def _probe_round(task: tuple) -> _RoundTally:
     open_visits: dict[int, _EngineVisit] = {}
 
     def observed_visit_step(player, all_alive, movement_ctx, tick):
-        seek = support_survival.VISIT_SEEK_SHARE
-        critical = (
-            player.final_lives <= seek * player.max_lives
-            or player.final_shots <= seek * player.max_shots
-        )
+        critical = resupply_visit.is_critical(player)
         before = player.visit
         action = real_visit_step(player, all_alive, movement_ctx, tick)
         after = player.visit
@@ -888,10 +880,15 @@ def _probe_round(task: tuple) -> _RoundTally:
                 for other in all_alive
                 if other.team_color != player.team_color and other.final_lives > 0
             )
-            if player.role == "ammo" and getattr(player, "cell_row", None) is not None:
+            if player.role == "ammo" and player.cell_row is not None:
                 medic = support_survival.own_teammate(player, "medic", all_alive)
                 if medic is not None and medic.cell_row is not None:
-                    row.medic_distances[_chebyshev(player, medic)] += 1
+                    row.medic_distances[
+                        resupply_visit.chebyshev(
+                            (player.cell_row, player.cell_col),
+                            (medic.cell_row, medic.cell_col),
+                        )
+                    ] += 1
             if not plans:
                 tally.empty_rolls[player.last_chosen_action] += 1
             if (

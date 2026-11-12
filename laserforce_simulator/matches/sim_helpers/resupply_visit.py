@@ -26,10 +26,9 @@ VisitAction = Literal["hide", "move", "request"]
 #: CAL-04a (#599): why a visit ended, passed to ``end_visit`` by every caller.
 #: ``satisfied`` / ``timeout`` / ``max`` come from ``_over``, ``no_support`` from
 #: ``visit_step``, ``eliminated`` from ``down.record_down`` and ``round_end`` from
-#: ``end_open_visits``. Since CAL-04b a full pack is ``satisfied``, so nothing
-#: produces ``full``; it stays so the probe's table keeps a fixed column set.
+#: ``end_open_visits``.
 VisitEnd = Literal[
-    "full", "satisfied", "timeout", "max", "no_support", "eliminated", "round_end"
+    "satisfied", "timeout", "max", "no_support", "eliminated", "round_end"
 ]
 
 #: Rule 10: the backline is the Heavy, Ammo and Medic; the offense keeps its cell.
@@ -53,19 +52,36 @@ def _own_supports(player: Any, all_alive: list) -> list:
     return supports
 
 
-def _sees(player: Any, support: Any, movement_ctx: Any) -> bool:
+def sees(player: Any, support: Any, movement_ctx: Any) -> bool:
+    """True when *player* and *support* are in line of sight on the map."""
     from .resupply_queue import _is_in_los  # noqa: PLC0415 (resupply_queue -> here)
 
     return bool(_is_in_los(player, support, movement_ctx))
 
 
+def is_critical(player: Any) -> bool:
+    """CAL-04b: True when Lives or Shots are at ``VISIT_SEEK_SHARE`` of the cap or
+    less (a Critical visit). No RNG."""
+    seek = support_survival.VISIT_SEEK_SHARE
+    return (
+        player.final_lives <= seek * player.max_lives
+        or player.final_shots <= seek * player.max_shots
+    )
+
+
+def manhattan(a: Cell, b: Cell) -> int:
+    """The Manhattan distance between two cells."""
+    return abs(a[0] - b[0]) + abs(a[1] - b[1])
+
+
+def chebyshev(a: Cell, b: Cell) -> int:
+    """The Chebyshev (king-move) distance between two cells."""
+    return max(abs(a[0] - b[0]), abs(a[1] - b[1]))
+
+
 def nearest_cell(cells: Iterable[Cell], here: Cell) -> Optional[Cell]:
     """The cell nearest *here* (Manhattan, then the cell), or None."""
-    return min(
-        cells,
-        key=lambda c: (abs(c[0] - here[0]) + abs(c[1] - here[1]), c),
-        default=None,
-    )
+    return min(cells, key=lambda c: (manhattan(c, here), c), default=None)
 
 
 def end_visit(player: Any, tick: float, reason: VisitEnd) -> None:
@@ -117,11 +133,7 @@ def _start(player: Any, tick: float) -> Optional[Visit]:
     """A new visit when lives or shots fall to ``visit_share`` of the cap outside
     the cooldown (``visit_next_tick``); a Critical visit, at ``VISIT_SEEK_SHARE``
     or less, needs only ``tick >= critical_visit_next_tick`` (CAL-04b). Else None."""
-    seek = support_survival.VISIT_SEEK_SHARE
-    critical = (
-        player.final_lives <= seek * player.max_lives
-        or player.final_shots <= seek * player.max_shots
-    )
+    critical = is_critical(player)
     next_tick = player.critical_visit_next_tick if critical else player.visit_next_tick
     if tick < next_tick:
         return None
@@ -144,8 +156,7 @@ def satisfied(player: Any, visit: Visit) -> bool:
 
 
 def _over(player: Any, visit: Visit, tick: float) -> Optional[VisitEnd]:
-    """The end rules, in order: ``satisfied`` (CAL-04b; a full pack is satisfied,
-    so ``full`` is no longer produced), ``timeout`` (``VISIT_TIMEOUT_TICKS`` since
+    """The end rules, in order: ``satisfied`` (CAL-04b), ``timeout`` (``VISIT_TIMEOUT_TICKS`` since
     arrival), ``max`` (``VISIT_MAX_TICKS`` since the start); else None."""
     if satisfied(player, visit):
         return "satisfied"
@@ -163,7 +174,7 @@ def _at_supports(
     player: Any,
     visit: Visit,
     supports: list,
-    sees: list,
+    in_sight: list,
     movement_ctx: Any,
     tick: float,
 ) -> tuple[Visit, VisitAction]:
@@ -174,18 +185,18 @@ def _at_supports(
     a seeing support is Active; otherwise it holds, hidden."""
     arrived = int(tick) if visit.arrived is None else visit.arrived
     here = _here(player)
-    if all(sees):
+    if all(in_sight):
         goal = here
     else:
         goal = visit_goal(player, supports, movement_ctx)
         if goal == here:
-            _forget(player, (s for v, s in zip(sees, supports) if not v))
+            _forget(player, (s for v, s in zip(in_sight, supports) if not v))
             player.backline_cell = None
             goal = visit_goal(player, supports, movement_ctx)
     visit = replace(visit, phase="at", arrived=arrived, goal=goal)
-    ready = all(sees) and all(s.is_active_at(tick) for s in supports)
+    ready = all(in_sight) and all(s.is_active_at(tick) for s in supports)
     late = tick - arrived >= support_survival.VISIT_WAIT_TICKS and any(
-        v and s.is_active_at(tick) for v, s in zip(sees, supports)
+        v and s.is_active_at(tick) for v, s in zip(in_sight, supports)
     )
     if ready or late:
         return visit, "request"
@@ -238,10 +249,12 @@ def visit_step(
     if reason is not None:
         end_visit(player, tick, reason)
         return None
-    sees = [_sees(player, s, movement_ctx) for s in supports]
+    in_sight = [sees(player, s, movement_ctx) for s in supports]
     action: VisitAction
-    if any(sees):
-        visit, action = _at_supports(player, visit, supports, sees, movement_ctx, tick)
+    if any(in_sight):
+        visit, action = _at_supports(
+            player, visit, supports, in_sight, movement_ctx, tick
+        )
     elif visit.arrived is None and not all(s.is_active_at(tick) for s in supports):
         # ``wait``: a living support is not Active yet, so hide.
         visit, action = replace(visit, phase="wait", goal=None), "hide"
@@ -293,7 +306,7 @@ def call_out(player: Any, all_alive: list, movement_ctx: Any, tick: float) -> bo
     if not 0 < player.final_lives <= support_survival.CALLOUT_LIVES:
         return False
     supports = _own_supports(player, all_alive)
-    if not supports or any(_sees(player, s, movement_ctx) for s in supports):
+    if not supports or any(sees(player, s, movement_ctx) for s in supports):
         return False
     call = Callout(caller=player.tag_id_key, cell=here, tick=int(tick))
     for support in supports:

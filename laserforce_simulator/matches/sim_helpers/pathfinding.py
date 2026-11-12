@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 from . import support_survival
 from .support_survival import SUPPORT_ROLES
-from .resupply_visit import freshest_callout, nearest_cell
+from .resupply_visit import chebyshev, freshest_callout, manhattan, nearest_cell
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
@@ -653,7 +653,7 @@ def _leash_goal(
     near = [
         c
         for c in movement_ctx.cells_visible_from(target)
-        if max(abs(c[0] - target[0]), abs(c[1] - target[1])) <= reach
+        if chebyshev(c, target) <= reach
     ]
     return nearest_cell(near, (player.cell_row, player.cell_col)) or target
 
@@ -691,7 +691,7 @@ def _join_goal(
         return None
     visitor = min(
         visitors,
-        key=lambda p: (abs(p.cell_row - here[0]) + abs(p.cell_col - here[1]), p.tag_id),
+        key=lambda p: (manhattan((p.cell_row, p.cell_col), here), p.tag_id),
     )
     target = (visitor.cell_row, visitor.cell_col)
     return nearest_cell(movement_ctx.cells_visible_from(target), here) or target
@@ -724,6 +724,7 @@ def choose_goal_cell(
     role-aware. Priority order:
     0. On a map, the Ammo leash (CAL-04c, ``_leash_goal``); only a live Downed
        option beats it. It sets only the goal.
+    0b. The MECH-04 nuke reaction, when active (after the leash).
     1. A Commander's, Heavy's or Scout's Resupply visit goal (CAL-03 rule 6,
        ``resupply_visit``) — always trumps role/action logic. A low Ammo walks to
        its Medic (rule 3). After 1a, a support joins a visitor its partner sees
@@ -754,8 +755,8 @@ def choose_goal_cell(
 
     max_lives = getattr(player, "max_lives", player.starting_lives)
 
-    # CAL-04c Ammo leash: the first rule on a map; only a live Downed option
-    # beats it. It sets only the goal (a hold or hide roll stays still).
+    # ── 0. CAL-04c Ammo leash: the first rule on a map; only a live Downed
+    # option beats it. It sets only the goal (a hold or hide roll stays still).
     if movement_ctx is not None and cell_row is not None:
         leash = _leash_goal(player, all_alive, movement_ctx, second)
         if leash is not None:
@@ -763,7 +764,7 @@ def choose_goal_cell(
             player._committed_goal = None
             return downed_first if downed_first is not None else leash
 
-    # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
+    # ── 0b. MECH-04: nuke-reaction override (after the leash, when active) ───
     # MOVE-08: a Downed player's option holds unless they are Active at least
     # one tick before the Nuke detonates (still time to cancel / resupply).
     nuke_active = getattr(player, "reacting_to_nuke", False)

@@ -173,6 +173,54 @@ class TestTheCriticalCooldown:
         )
 
 
+class TestIsCritical:
+    """CAL-04b: Lives or Shots at ``VISIT_SEEK_SHARE`` of the cap or less. Each
+    fixture tests one resource alone, the other kept full."""
+
+    def _scout(self, lives: int, shots: int) -> PlayerState:
+        scout, _, _, _, _ = _scene()
+        scout.final_lives, scout.final_shots = lives, shots
+        return scout
+
+    def test_lives_exactly_at_the_share(self) -> None:
+        scout = self._scout(CRITICAL_LIVES, 60)
+        assert CRITICAL_LIVES == support_survival.VISIT_SEEK_SHARE * 30
+        assert resupply_visit.is_critical(scout)
+
+    def test_lives_one_above_the_share(self) -> None:
+        assert not resupply_visit.is_critical(self._scout(CRITICAL_LIVES + 1, 60))
+
+    def test_shots_exactly_at_the_share(self) -> None:
+        shots = math.floor(support_survival.VISIT_SEEK_SHARE * 60)
+        assert shots == support_survival.VISIT_SEEK_SHARE * 60
+        assert resupply_visit.is_critical(self._scout(30, shots))
+
+    def test_shots_one_above_the_share(self) -> None:
+        shots = math.floor(support_survival.VISIT_SEEK_SHARE * 60) + 1
+        assert not resupply_visit.is_critical(self._scout(30, shots))
+
+    def test_a_full_pack_is_not_critical(self) -> None:
+        assert not resupply_visit.is_critical(self._scout(30, 60))
+
+
+class TestCellDistances:
+    """``manhattan`` and ``chebyshev`` between two cells."""
+
+    def test_manhattan_adds_both_axes(self) -> None:
+        assert resupply_visit.manhattan((1, 2), (4, -2)) == 7
+
+    def test_chebyshev_takes_the_longer_axis(self) -> None:
+        assert resupply_visit.chebyshev((1, 2), (4, -2)) == 4
+
+    def test_a_diagonal_step_is_one_chebyshev_square(self) -> None:
+        assert resupply_visit.chebyshev((3, 3), (4, 4)) == 1
+        assert resupply_visit.manhattan((3, 3), (4, 4)) == 2
+
+    def test_the_same_cell_is_zero(self) -> None:
+        assert resupply_visit.chebyshev((5, 5), (5, 5)) == 0
+        assert resupply_visit.manhattan((5, 5), (5, 5)) == 0
+
+
 SAT_LIVES = math.ceil(support_survival.SATISFIED_SHARE * 30)  # a Scout's caps
 SAT_SHOTS = math.ceil(support_survival.SATISFIED_SHARE * 60)
 
@@ -226,8 +274,8 @@ class TestSatisfied:
 class TestTheVisitEnds:
     """Each exit ends the visit with exactly one cooldown set."""
 
-    def test_full(self, ends: list[str]) -> None:
-        # CAL-04b: a full pack is Satisfied, so "full" is no longer produced.
+    def test_a_full_pack_is_satisfied(self, ends: list[str]) -> None:
+        # CAL-04b: a full pack ends the visit as Satisfied.
         scout, _, _, everyone, ctx = _scene()
         _on_a_visit(scout)
         scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
@@ -320,10 +368,7 @@ class TestVisitEndReasons:
     """CAL-04a (#599): every caller names why the visit ends."""
 
     def test_the_reasons_are_a_fixed_set(self) -> None:
-        # "satisfied" is in the set before anything produces it (CAL-04b), so the
-        # probe's table has a fixed column set.
         assert typing.get_args(resupply_visit.VisitEnd) == (
-            "full",
             "satisfied",
             "timeout",
             "max",
@@ -374,7 +419,7 @@ class TestVisitEndReasons:
         assert ends == ["round_end"]
 
     def test_satisfied_comes_before_timeout_and_max(self) -> None:
-        # CAL-04b: a full pack is Satisfied; "full" stays in the Literal unproduced.
+        # CAL-04b: a full pack is Satisfied.
         scout, _, _, _, _ = _scene()
         scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
         visit = Visit(
