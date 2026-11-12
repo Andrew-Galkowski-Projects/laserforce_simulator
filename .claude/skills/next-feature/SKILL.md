@@ -341,9 +341,11 @@ mismatches, field-name drift between spec and code, missing seam methods.
 "unlikely", "edge case") gets a red test before merge: it is a test to write,
 not a judgement call. (ANG-05: the one real bug was such a reported gap.)
 
-1. **Full suite** on SQLite (`python scripts/run_suite.py`, which prints only
-   failures and the count line) and, when `docker info` succeeds, on Postgres
-   (`docker start lf-test-pg`, then `python scripts/run_suite.py --postgres`), plus
+1. **Full suite** on SQLite (`python scripts/run_suite.py --rerun-failures`, which
+   prints only failures and the count line, then re-runs each failure alone and
+   marks it `passes alone (likely flaky)` or `fails alone`) and, when `docker info`
+   succeeds, on Postgres (`docker start lf-test-pg`, then
+   `python scripts/run_suite.py --postgres --rerun-failures`), plus
    `python laserforce_simulator/manage.py makemigrations --check --dry-run`.
    Run `run_suite.py` in the foreground, with a 600 s timeout: a background run can be stopped for low memory while
    the session waits (DESK-03 lost one).

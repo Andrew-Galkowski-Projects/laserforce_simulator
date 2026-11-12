@@ -90,10 +90,13 @@ def _load_check_encoding() -> ModuleType:
 TEXT_SUFFIXES: tuple[str, ...] = _load_check_encoding().TEXT_SUFFIXES
 
 
-def _run(cmd: list[str], cwd: str) -> tuple[int, str]:
+def _run(
+    cmd: list[str], cwd: str, env: dict[str, str] | None = None
+) -> tuple[int, str]:
     proc = subprocess.run(
         cmd,
         cwd=cwd,
+        env=env,
         capture_output=True,
         text=True,
         encoding="utf-8",
@@ -176,6 +179,36 @@ def pytest_scope(data: Any) -> list[str] | None:
     return None
 
 
+PURE_BLACK_DIR = Path(".tools", "black")
+_BLOCKED_BY_POLICY = "Application Control policy"
+
+
+def black_step(py_files: list[str], repo_root: str) -> tuple[str, str]:
+    """``black --check`` on the changed files.
+
+    An Application Control policy can block the venv's compiled black (CAL-04
+    retro). Then the check re-runs on the pure-Python copy that
+    ``scripts/install_pure_black.py`` puts in ``.tools/black``.
+    """
+    if not py_files:
+        return ("SKIP", "no changed .py files")
+    cmd = _tool("black", "--check", *py_files)
+    code, out = _run(cmd, cwd=repo_root)
+    if code != 0 and _BLOCKED_BY_POLICY in out:
+        pure = Path(repo_root, PURE_BLACK_DIR)
+        if not pure.is_dir():
+            return (
+                "FAIL",
+                "compiled black blocked by Application Control: run "
+                "python scripts/install_pure_black.py",
+            )
+        env = {**os.environ, "PYTHONPATH": str(pure)}
+        code, out = _run(cmd, cwd=repo_root, env=env)
+        if code == 0:
+            return ("PASS", f"pure-Python black ({PURE_BLACK_DIR.as_posix()})")
+    return ("PASS", "") if code == 0 else ("FAIL", _tail(out))
+
+
 def mypy_step(py_files: list[str], diff_ref: str, repo_root: str) -> tuple[str, str]:
     """mypy on the changed files; FAIL only for an error on a line changed vs ``diff_ref``."""
     if not py_files:
@@ -225,12 +258,7 @@ def main(argv: list[str] | None = None) -> int:
 
     results: dict[str, tuple[str, str]] = {}  # step -> (PASS|FAIL|SKIP, note)
 
-    # --- black ---
-    if py_files:
-        code, out = _run(_tool("black", "--check", *py_files), cwd=repo_root)
-        results["black"] = ("PASS", "") if code == 0 else ("FAIL", _tail(out))
-    else:
-        results["black"] = ("SKIP", "no changed .py files")
+    results["black"] = black_step(py_files, repo_root)
 
     # --- ruff (rule set + excludes from pyproject.toml) ---
     if py_files:

@@ -71,12 +71,19 @@ def within_tolerance(kind: str, sim: float, real: float) -> bool:
 _FIXTURE_REQUIRED = ("name", "zone_size", "zone_data", "bases", "sight_data")
 
 
-def load_map_fixture(path: str | os.PathLike[str]) -> ArenaMap:
+def load_map_fixture(
+    path: str | os.PathLike[str], arena_map: ArenaMap | None = None
+) -> ArenaMap:
     """Create an ``ArenaMap`` and every config ``load_map_context`` reads, from a JSON file.
 
-    The caller wraps this in ``transaction.atomic()`` and rolls back, so
-    nothing persists. ``ArenaMap`` is shared, unowned data; no image file is
-    written (``image`` is only a stored path).
+    The Calibration harness wraps this in ``transaction.atomic()`` and rolls
+    back, so nothing persists; ``seed_demo`` keeps the rows. ``ArenaMap`` is
+    shared, unowned data; no image file is written (``image`` is only a stored
+    path).
+
+    Given ``arena_map``, the configs go on that existing map instead (a live
+    site's uploaded map with no configs yet). It keeps its name and image, takes
+    the fixture's scale and bases, and must have no zone config yet.
 
     **Fixture format** (``data/maps/*.json``), one object whose keys mirror
     the model fields, all at the one ``zone_size``::
@@ -110,20 +117,28 @@ def load_map_fixture(path: str | os.PathLike[str]) -> ArenaMap:
 
     Raises:
         ValueError: when a required key (name, zone_size, zone_data, bases,
-            sight_data) is missing. Nothing is created in that case.
+            sight_data) is missing, or ``arena_map`` already has a zone
+            config. Nothing is created in either case.
     """
     data = json.loads(Path(path).read_text(encoding="utf-8"))
     missing = [key for key in _FIXTURE_REQUIRED if key not in data]
     if missing:
         raise ValueError(f"Map fixture {path} is missing {', '.join(missing)}")
     zone_size = data["zone_size"]
-    arena_map = ArenaMap.objects.create(
-        name=data["name"],
-        image=data.get("image", ""),
-        img_width=data.get("img_width"),
-        img_height=data.get("img_height"),
-        feet_per_pixel=data.get("feet_per_pixel", DEFAULT_FEET_PER_PIXEL),
-    )
+    if arena_map is None:
+        arena_map = ArenaMap.objects.create(
+            name=data["name"],
+            image=data.get("image", ""),
+            img_width=data.get("img_width"),
+            img_height=data.get("img_height"),
+            feet_per_pixel=data.get("feet_per_pixel", DEFAULT_FEET_PER_PIXEL),
+        )
+    else:
+        if MapZoneConfig.objects.filter(arena_map=arena_map).exists():
+            raise ValueError(f"Map {arena_map.name!r} already has a zone config")
+        arena_map.feet_per_pixel = data.get("feet_per_pixel", DEFAULT_FEET_PER_PIXEL)
+        arena_map.save(update_fields=["feet_per_pixel"])
+        MapBaseConfig.objects.filter(arena_map=arena_map).delete()
     MapZoneConfig.objects.create(
         arena_map=arena_map,
         zone_size=zone_size,

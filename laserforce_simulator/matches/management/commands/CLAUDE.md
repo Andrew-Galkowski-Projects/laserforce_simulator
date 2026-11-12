@@ -159,6 +159,18 @@ Writes `round`, `playback` (`round_playback`: snapshots, map routes, role limits
 
 ---
 
+## seed_demo.py
+
+A demo Account that owns one simulated map Round, for showing the self-hosted site (CAL-04 retro).
+
+```bash
+python manage.py seed_demo data/maps/syracuse.json [--email demo@laserforce.demo]
+```
+
+Reads a map fixture (`load_map_fixture`'s format). The fixture's map, by name, is created when missing, gets the fixture's configs when it has no zone config (`load_map_fixture(path, arena_map=...)`: a live site's uploaded map keeps its image), and is used as it is when configured. The Account is created on the first run; every run sets it a new password, generates two Teams if it has fewer, and plays one more full-fidelity sandbox Round. Prints `Email:`, `Password:` and `Round: <id> on <map>`. Live-site steps: `docs/self-hosting.md`, *Day two*.
+
+---
+
 ## seed_browser_check.py
 
 Throwaway data for a browser check in a worktree's disposable database (ADR-0004).

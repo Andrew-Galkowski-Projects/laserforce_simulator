@@ -14,6 +14,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Python: use the main checkout's `.venv\Scripts\python.exe`, also from a
   worktree (worktrees have no `.venv`). The `python` on PATH is the `.conda`
   env, which has no Django or pytest.
+- black fails with `An Application Control policy has blocked this file`: run
+  `python scripts/install_pure_black.py` once and set the `PYTHONPATH` it prints
+  (`/verify` uses that copy on its own).
 - Shell: PowerShell on Windows (use PowerShell-compatible commands, not bash-isms like `&&`)
 - Path separators: prefer forward slashes or `os.path.join` in Python
 - **Never prepend `cd` to any command — git especially.** The shell already

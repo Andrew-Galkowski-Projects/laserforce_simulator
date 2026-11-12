@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from core.map_processing import compute_high_los_ranking, compute_sight_lines
-from core.models import ArenaMap
+from core.models import ArenaMap, MapBaseConfig, MapZoneConfig
 from matches import lfstats_calibration as cal
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.map_loader import load_map_context
@@ -289,6 +289,35 @@ class TestLoadMapFixture:
         with pytest.raises(ValueError, match="sight_data"):
             cal.load_map_fixture(path)
         assert not ArenaMap.objects.filter(name=data["name"]).exists()
+
+    def test_attaches_configs_to_an_existing_map(self, fixture_path: Path) -> None:
+        # CAL-04 retro: the live site's map had an image but no configs.
+        bare = ArenaMap.objects.create(name="Live Arena", image="maps/live.png")
+        MapBaseConfig.objects.create(arena_map=bare, base_type="red", x_px=1, y_px=1)
+        arena_map = cal.load_map_fixture(fixture_path, arena_map=bare)
+        assert arena_map.pk == bare.pk
+        assert ArenaMap.objects.count() == 1
+        assert sorted(
+            MapBaseConfig.objects.filter(arena_map=bare).values_list(
+                "base_type", "x_px", "y_px"
+            )
+        ) == sorted(
+            (b["base_type"], b["x_px"], b["y_px"]) for b in _fixture_dict()["bases"]
+        )
+        bare.refresh_from_db()
+        assert bare.name == "Live Arena"
+        assert bare.image == "maps/live.png"
+        ctx, _ = load_map_context(bare)
+        assert ctx is not None
+        assert ctx.spawn_cells == {"red": RED_CELL, "blue": BLUE_CELL}
+
+    def test_refuses_a_map_that_already_has_a_zone_config(
+        self, fixture_path: Path
+    ) -> None:
+        configured = cal.load_map_fixture(fixture_path)
+        with pytest.raises(ValueError, match="already has a zone config"):
+            cal.load_map_fixture(fixture_path, arena_map=configured)
+        assert MapZoneConfig.objects.filter(arena_map=configured).count() == 1
 
 
 def _row(position: str, games: float = 30, **overrides: object) -> dict:
