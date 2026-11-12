@@ -657,6 +657,56 @@ class TestPartnerFollows:
         assert scout.final_shots == 10
 
 
+class TestDoubleCounting:
+    """CAL-04b (#600): a window Resupply (the second of a pair) to a player on a
+    visit adds one to ``visit.doubles``, whichever path delivered it."""
+
+    def _window(self, visiting: bool) -> tuple[PlayerState, PlayerState, Any]:
+        # The Medic's single landed this tick, so the Ammo's lands in the window.
+        scout, medic, ammo, everyone, ctx = _scene()
+        scout.final_shots = 10
+        scout.last_downed_time = NOW
+        scout.last_single = support_survival.LastSingle(
+            kind="lives", tick=NOW, supporter=medic.tag_id_key
+        )
+        if visiting:
+            _on_a_visit(scout, phase="at", arrived=NOW - 30)
+        round_ctx = RoundContext(movement_ctx=ctx, all_alive=everyone)
+        return scout, ammo, round_ctx
+
+    def test_a_window_resupply_to_a_visitor_adds_one(self) -> None:
+        scout, ammo, round_ctx = self._window(visiting=True)
+        combat.attempt_resupply(ammo, scout, NOW, ctx=round_ctx)
+        assert scout.final_shots > 10  # it landed
+        assert scout.visit is not None and scout.visit.doubles == 1
+
+    def test_a_single_adds_none(self) -> None:
+        # Nobody sees the Scout, so the partner does not follow.
+        scout, medic, _, everyone, ctx = _scene()
+        _on_a_visit(scout, phase="at", arrived=NOW - 30)
+        round_ctx = RoundContext(movement_ctx=ctx, all_alive=everyone)
+        combat.attempt_resupply(medic, scout, NOW, ctx=round_ctx)
+        assert scout.final_lives > SHARE_LIVES  # it landed
+        assert scout.visit is not None and scout.visit.doubles == 0
+
+    def test_a_window_resupply_off_a_visit_changes_nothing(self) -> None:
+        scout, ammo, round_ctx = self._window(visiting=False)
+        combat.attempt_resupply(ammo, scout, NOW, ctx=round_ctx)
+        assert scout.final_shots > 10
+        assert scout.visit is None
+
+    def test_partner_follows_counts_exactly_one(self) -> None:
+        scout, medic, _, everyone, ctx = _scene(
+            _sight((HERE, MEDIC_AT), (HERE, AMMO_AT))
+        )
+        scout.final_shots = 10
+        _on_a_visit(scout, phase="at", arrived=NOW - 30)
+        round_ctx = RoundContext(movement_ctx=ctx, all_alive=everyone)
+        combat.attempt_resupply(medic, scout, NOW, ctx=round_ctx)
+        assert scout.final_shots > 10  # the partner followed
+        assert scout.visit is not None and scout.visit.doubles == 1
+
+
 class TestBackline:
     """Rule 10: a Commander or Scout keeps its Medic's cell when it sees the
     Medic, else the seen backline teammate's nearest their centroid."""

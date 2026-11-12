@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import random
+from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Literal
 
 if TYPE_CHECKING:
@@ -717,7 +718,9 @@ def attempt_resupply(
     CAL-03 rule 1: while ``double_window_open`` the other support's Resupply
     lands although the first one's reset has started; every landed Resupply
     updates the receiver's ``last_single``. Rule 6: a single to a player on a
-    visit is followed by the partner's (``_partner_follows``).
+    visit is followed by the partner's (``_partner_follows``). CAL-04b: a window
+    Resupply (the second of a pair) to a player on a visit adds one to
+    ``visit.doubles``, so each double counts once whichever path delivered it.
     """
     if not tagger.is_active_at(second):
         return
@@ -735,6 +738,9 @@ def attempt_resupply(
         ctx.events.resupply_lives(tagger, teammate, second, amount=amount)
     else:
         return
+    visit = getattr(teammate, "visit", None)
+    if in_window and visit is not None:
+        teammate.visit = replace(visit, doubles=visit.doubles + 1)
     if not in_window:
         _partner_follows(tagger, teammate, second, ctx)
 
