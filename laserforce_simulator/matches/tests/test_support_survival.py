@@ -18,6 +18,7 @@ from matches.sim_helpers.mechanics import choose_tag_target
 from matches.sim_helpers.modes import hide_allowed, mode_goal
 from matches.sim_helpers.pathfinding import _goal_from_action
 from matches.sim_helpers.player_state import PlayerState
+from matches.sim_helpers.support_survival import Visit
 from matches.simulation.round_loop import _broadcast_communication
 
 
@@ -827,6 +828,159 @@ class TestSupportLink:
     def test_no_return_goal_one_tick_before(self) -> None:
         goal = self._return_goal(40, 40 + support_survival.LINK_RETURN_TICKS - 1)
         assert goal != (2, 8)
+
+
+_VISITOR = (5, 9)
+
+
+class TestJoin:
+    """CAL-04c (#601) Join: an Active Medic or Ammo whose partner sees a teammate on
+    a Resupply visit that it does not see walks to the nearest cell that sees that
+    visitor (``pathfinding._join_goal``). True cell-to-cell LOS, no RNG."""
+
+    TICK = 100
+
+    def _scene(
+        self, *pairs: tuple[tuple[int, int], tuple[int, int]]
+    ) -> tuple[PlayerState, PlayerState, PlayerState, MapContext]:
+        """The Medic at (0, 0) does not see the Scout on a visit at (5, 9); its Ammo
+        at (5, 5) does. The Scout's cell sees (4, 0) and (1, 8) too."""
+        medic = _player("medic", cell_row=0, cell_col=0)
+        ammo = _player("ammo", cell_row=5, cell_col=5)
+        scout = _player(
+            "scout", cell_row=5, cell_col=9, visit=Visit(phase="go", started=90)
+        )
+        if not pairs:
+            pairs = ((_VISITOR, (5, 5)), (_VISITOR, (4, 0)), (_VISITOR, (1, 8)))
+        return medic, ammo, scout, _grid_map(sight=_sight(*pairs))
+
+    def _join(self, player: PlayerState, everyone: list, ctx: Any) -> Any:
+        return pathfinding._join_goal(player, everyone, ctx, self.TICK)
+
+    def test_the_nearest_cell_that_sees_the_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        # (4, 0) is 4 squares away, (1, 8) 9 and the Ammo's (5, 5) 10.
+        assert self._join(medic, [medic, ammo, scout], ctx) == (4, 0)
+
+    def test_a_tie_goes_to_the_lower_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene(
+            (_VISITOR, (5, 5)), (_VISITOR, (3, 2)), (_VISITOR, (2, 3))
+        )
+        assert self._join(medic, [medic, ammo, scout], ctx) == (2, 3)
+
+    def test_the_nearest_visitor(self) -> None:
+        heavy_cell = (1, 9)
+        medic, ammo, scout, ctx = self._scene(
+            (_VISITOR, (5, 5)),
+            (_VISITOR, (4, 0)),
+            (heavy_cell, (5, 5)),
+            (heavy_cell, (0, 6)),
+        )
+        heavy = _player(
+            "heavy", cell_row=1, cell_col=9, visit=Visit(phase="go", started=95)
+        )
+        # The Heavy is 10 squares from the Medic, the Scout 14.
+        assert self._join(medic, [medic, ammo, scout, heavy], ctx) == (0, 6)
+
+    def test_the_ammo_joins_too(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        ammo.cell_row, ammo.cell_col = (0, 0)
+        medic.cell_row, medic.cell_col = (5, 5)
+        assert self._join(ammo, [medic, ammo, scout], ctx) == (4, 0)
+
+    def test_not_a_support(self) -> None:
+        _, _, scout, ctx = self._scene()
+        heavy = _player("heavy", cell_row=0, cell_col=0)
+        medic = _player("medic", cell_row=5, cell_col=5)
+        assert self._join(heavy, [heavy, medic, scout], ctx) is None
+
+    def test_not_active(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        medic.last_downed_time = self.TICK - 1
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_no_map(self) -> None:
+        medic, ammo, scout, _ = self._scene()
+        assert self._join(medic, [medic, ammo, scout], None) is None
+
+    def test_no_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        medic.cell_row = medic.cell_col = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_no_partner(self) -> None:
+        medic, _, scout, ctx = self._scene()
+        assert self._join(medic, [medic, scout], ctx) is None
+
+    def test_the_partner_has_no_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        ammo.cell_row = ammo.cell_col = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_no_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.visit = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_an_enemy_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.team_color = "blue"
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_partner_does_not_see_the_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene((_VISITOR, (4, 0)), (_VISITOR, (1, 8)))
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_player_already_sees_the_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene(
+            (_VISITOR, (5, 5)), (_VISITOR, (4, 0)), (_VISITOR, (0, 0))
+        )
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_visitor_is_not_alive(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.final_lives = 0
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_visitor_has_no_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.cell_row = scout.cell_col = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_draws_no_rng(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        random.seed(11)
+        before = random.getstate()
+        assert self._join(medic, [medic, ammo, scout], ctx) == (4, 0)
+        assert random.getstate() == before
+
+    def _goal(self, player: PlayerState, everyone: list, ctx: Any) -> Any:
+        return pathfinding.choose_goal_cell(
+            player, everyone, ctx.spawn_cells, ctx, "", self.TICK, "ticks"
+        )
+
+    def test_join_beats_the_link_return(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        ammo.cell_row, ammo.cell_col = (0, 0)
+        medic.cell_row, medic.cell_col = (5, 5)
+        ammo.link_left_at = 0
+        ammo.player_memory["red_medic"] = {
+            "cell": (5, 5),
+            "timestamp": self.TICK,
+            "role": "medic",
+        }
+        # Rule 9's link return alone would walk the Ammo to (5, 9).
+        assert pathfinding._link_return_goal(ammo, [medic, ammo], ctx, self.TICK) == (
+            5,
+            9,
+        )
+        assert self._goal(ammo, [medic, ammo, scout], ctx) == (4, 0)
+
+    def test_join_clears_the_commitment(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        medic._committed_goal = ((11, 11), False, 10**6)
+        assert self._goal(medic, [medic, ammo, scout], ctx) == (4, 0)
+        assert medic._committed_goal is None
 
 
 class TestIdleTrade:

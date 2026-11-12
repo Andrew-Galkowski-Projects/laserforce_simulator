@@ -292,6 +292,18 @@ class TestGoalSelectionOverrides(unittest.TestCase):
         self.assertEqual(downed.downed_plan.option, MAKE_A_TRAIL)
         self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (7, 4))
 
+    def test_downed_goal_beats_join(self) -> None:
+        # CAL-04c (#601): Join runs after the Downed option. Its own Active
+        # guard also keeps a Downed support from joining.
+        downed = _ps("blue_medic", "blue", (7, 14), role="medic")
+        tagger = _ps("red_scout_1", "red", (7, 29))
+        ammo = _ps("blue_ammo", "blue", (3, 3), role="ammo")
+        scout = _ps("blue_scout_1", "blue", (3, 20))
+        scout.visit = Visit(phase="go", started=90)
+        _down(downed, tagger, 100, OPEN, 0.999)
+        self.assertEqual(downed.downed_plan.option, MAKE_A_TRAIL)
+        self.assertEqual(self._goal(downed, [downed, tagger, ammo, scout], 101), (7, 4))
+
     def test_nuke_reaction_wins_only_when_active_before_detonation(self) -> None:
         downed, tagger = self._trailing()
         commander = _ps("red_commander", "red", (2, 2), role="commander")

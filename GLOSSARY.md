@@ -136,7 +136,7 @@ How a **Resupply visit** normally ends: the visitor's **Lives** and **Shots** ar
 _Avoid_: "full"; a visit rarely refills every Shot.
 
 **Join**:
-A support's walk to a visitor it cannot see while its partner support already sees it, so both can Resupply it together (CAL-04).
+A support's walk to the nearest spot that sees a visitor it cannot see while its partner support already sees it, so both can Resupply it together (CAL-04).
 
 **Ammo leash**:
 The rule that brings the Ammo back to its Medic: an Ammo more than 10 squares from where it last saw its Medic for more than 10 ticks walks back to within 10 squares (CAL-04).

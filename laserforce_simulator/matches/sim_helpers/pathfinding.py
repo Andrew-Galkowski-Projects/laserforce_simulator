@@ -630,6 +630,57 @@ def _link_return_goal(
     )
 
 
+def _nearest(
+    cells: list[tuple[int, int]], here: tuple[int, int], default: tuple[int, int]
+) -> tuple[int, int]:
+    """The cell of *cells* nearest *here* (Manhattan, ties on the cell), else
+    *default*."""
+    return min(
+        cells,
+        key=lambda c: (abs(c[0] - here[0]) + abs(c[1] - here[1]), c),
+        default=default,
+    )
+
+
+def _join_goal(
+    player, all_alive: list, movement_ctx: "MapContext | None", second: float
+) -> tuple[int, int] | None:
+    """CAL-04c Join: an Active Medic or Ammo whose partner support sees a living
+    teammate on a Resupply visit that it does not see walks to the nearest cell
+    (Manhattan, ties on the cell) that sees the nearest such visitor (Manhattan,
+    ties on ``tag_id``), or to the visitor's cell when none does. True
+    cell-to-cell LOS, not memory. None otherwise. No RNG."""
+    if player.role not in ("medic", "ammo") or movement_ctx is None:
+        return None
+    if player.cell_row is None or not player.is_active_at(second):
+        return None
+    partner = support_survival._own(
+        player, "ammo" if player.role == "medic" else "medic", all_alive
+    )
+    if partner is None or partner.cell_row is None:
+        return None
+    here = (player.cell_row, player.cell_col)
+    there = (partner.cell_row, partner.cell_col)
+    visitors = [
+        p
+        for p in all_alive
+        if p.team_color == player.team_color
+        and getattr(p, "visit", None) is not None
+        and p.final_lives > 0
+        and p.cell_row is not None
+        and movement_ctx.can_see((p.cell_row, p.cell_col), there)
+        and not movement_ctx.can_see((p.cell_row, p.cell_col), here)
+    ]
+    if not visitors:
+        return None
+    visitor = min(
+        visitors,
+        key=lambda p: (abs(p.cell_row - here[0]) + abs(p.cell_col - here[1]), p.tag_id),
+    )
+    target = (visitor.cell_row, visitor.cell_col)
+    return _nearest(movement_ctx.cells_visible_from(target), here, target)
+
+
 def _goal_from_role(
     player,
     all_alive: list,
@@ -657,7 +708,8 @@ def choose_goal_cell(
     role-aware. Priority order:
     1. A Commander's, Heavy's or Scout's Resupply visit goal (CAL-03 rule 6,
        ``resupply_visit``) — always trumps role/action logic. A low Ammo walks to
-       its Medic (rule 3). After 1a, an Ammo away from its Medic goes back (rule 9).
+       its Medic (rule 3). After 1a, a support joins a visitor its partner sees
+       (CAL-04c Join), then an Ammo away from its Medic goes back (rule 9).
     1c. A Commander with 3+ Shots and a Base left: ``modes.base_goal``, held until
        reached. It does not stop the Commander shooting.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
@@ -759,6 +811,12 @@ def choose_goal_cell(
     downed = downed_goal(player, second, movement_ctx)
     if downed is not None:
         return downed
+
+    # CAL-04c Join: a support walks to see a visitor its partner already sees.
+    join = _join_goal(player, all_alive, movement_ctx, second)
+    if join is not None:
+        player._committed_goal = None
+        return join
 
     # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.
     link_goal = _link_return_goal(player, all_alive, movement_ctx, second)
