@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 import random
+import typing
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -195,6 +197,92 @@ class TestTheVisitEnds:
         resupply_visit.end_open_visits(everyone, NOW)
         assert medic.visit_next_tick == 0  # no visit, no cooldown
         _ended_once_at(scout, everyone, ctx)
+
+
+@pytest.fixture
+def ends(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every reason passed to ``resupply_visit.end_visit``, which still runs."""
+    reasons: list[str] = []
+    real = resupply_visit.end_visit
+
+    def spy(player: Any, tick: float, reason: resupply_visit.VisitEnd) -> None:
+        reasons.append(reason)
+        real(player, tick, reason)
+
+    monkeypatch.setattr(resupply_visit, "end_visit", spy)
+    return reasons
+
+
+class TestVisitEndReasons:
+    """CAL-04a (#599): every caller names why the visit ends."""
+
+    def test_the_reasons_are_a_fixed_set(self) -> None:
+        # "satisfied" is in the set before anything produces it (CAL-04b), so the
+        # probe's table has a fixed column set.
+        assert typing.get_args(resupply_visit.VisitEnd) == (
+            "full",
+            "satisfied",
+            "timeout",
+            "max",
+            "no_support",
+            "eliminated",
+            "round_end",
+        )
+
+    def test_full(self, ends: list[str]) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        _on_a_visit(scout)
+        scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
+        _step(scout, everyone, ctx)
+        assert ends == ["full"]
+
+    def test_timeout(self, ends: list[str]) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        _on_a_visit(
+            scout, phase="at", arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS
+        )
+        _step(scout, everyone, ctx)
+        assert ends == ["timeout"]
+
+    def test_max(self, ends: list[str]) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        _on_a_visit(scout, started=NOW - support_survival.VISIT_MAX_TICKS)
+        _step(scout, everyone, ctx)
+        assert ends == ["max"]
+
+    def test_no_support(self, ends: list[str]) -> None:
+        scout, medic, ammo, everyone, ctx = _scene()
+        _on_a_visit(scout)
+        medic.final_lives = ammo.final_lives = 0
+        _step(scout, everyone, ctx)
+        assert ends == ["no_support"]
+
+    def test_eliminated_through_record_down(self, ends: list[str]) -> None:
+        scout, _, _, _, _ = _scene()
+        _on_a_visit(scout)
+        scout.final_lives = 0
+        record_down(scout, NOW, None)
+        assert ends == ["eliminated"]
+
+    def test_round_end_through_end_open_visits(self, ends: list[str]) -> None:
+        scout, _, _, everyone, _ = _scene()
+        _on_a_visit(scout)
+        resupply_visit.end_open_visits(everyone, NOW)
+        assert ends == ["round_end"]
+
+    def test_full_comes_before_timeout_and_max(self) -> None:
+        scout, _, _, _, _ = _scene()
+        scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
+        visit = Visit(
+            phase="at",
+            started=NOW - support_survival.VISIT_MAX_TICKS,
+            arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS,
+        )
+        assert resupply_visit._over(scout, visit, NOW) == "full"
+        scout.final_lives = 1
+        assert resupply_visit._over(scout, visit, NOW) == "timeout"
+        assert resupply_visit._over(scout, replace(visit, arrived=None), NOW) == "max"
+        assert resupply_visit._over(scout, Visit(phase="go", started=NOW), NOW) is None
 
 
 @pytest.mark.django_db

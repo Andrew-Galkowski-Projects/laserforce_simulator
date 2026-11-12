@@ -23,6 +23,13 @@ Cell = tuple[int, int]
 #: What a visit makes of this tick's Action roll (a Tag roll always stands):
 #: ``hide``, ``move`` (``only_move``) or ``request`` (``request_resupply``).
 VisitAction = Literal["hide", "move", "request"]
+#: CAL-04a (#599): why a visit ended, passed to ``end_visit`` by every caller.
+#: ``full`` / ``satisfied`` / ``timeout`` / ``max`` come from ``_over``,
+#: ``no_support`` from ``visit_step``, ``eliminated`` from ``down.record_down`` and
+#: ``round_end`` from ``end_open_visits``. ``satisfied`` is produced from CAL-04b on.
+VisitEnd = Literal[
+    "full", "satisfied", "timeout", "max", "no_support", "eliminated", "round_end"
+]
 
 _SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
 #: Rule 10: the backline is the Heavy, Ammo and Medic; the offense keeps its cell.
@@ -71,18 +78,19 @@ def _nearest(cells: Iterable[Cell], here: Cell) -> Optional[Cell]:
     )
 
 
-def end_visit(player: Any, tick: float) -> None:
-    """End *player*'s visit and start its cooldown: no new visit before ``tick +
-    VISIT_COOLDOWN_TICKS`` (unless at ``VISIT_SEEK_SHARE``)."""
+def end_visit(player: Any, tick: float, reason: VisitEnd) -> None:
+    """End *player*'s visit for *reason* and start its cooldown: no new visit
+    before ``tick + VISIT_COOLDOWN_TICKS`` (unless at ``VISIT_SEEK_SHARE``). The
+    reason changes nothing here; ``round_probe`` reads it."""
     player.visit = None
     player.visit_next_tick = int(tick) + support_survival.VISIT_COOLDOWN_TICKS
 
 
 def end_open_visits(players: Iterable[Any], tick: float) -> None:
-    """The round ended: end every visit still open."""
+    """The round ended: end every visit still open (``round_end``)."""
     for player in players:
         if player.visit is not None:
-            end_visit(player, tick)
+            end_visit(player, tick, "round_end")
 
 
 def _support_cell(player: Any, support: Any) -> Optional[Cell]:
@@ -129,18 +137,22 @@ def _start(player: Any, tick: float) -> Optional[Visit]:
     return Visit(phase="go", started=int(tick)) if low else None
 
 
-def _over(player: Any, visit: Visit, tick: float) -> bool:
-    """The end rules: full, ``VISIT_TIMEOUT_TICKS`` since arrival, or
-    ``VISIT_MAX_TICKS`` since the start."""
-    full = (
+def _over(player: Any, visit: Visit, tick: float) -> Optional[VisitEnd]:
+    """The end rules, in order: ``full``, ``timeout`` (``VISIT_TIMEOUT_TICKS``
+    since arrival), ``max`` (``VISIT_MAX_TICKS`` since the start); else None."""
+    if (
         player.final_lives >= player.max_lives
         and player.final_shots >= player.max_shots
-    )
-    timed_out = (
+    ):
+        return "full"
+    if (
         visit.arrived is not None
         and tick - visit.arrived >= support_survival.VISIT_TIMEOUT_TICKS
-    )
-    return full or timed_out or tick - visit.started >= support_survival.VISIT_MAX_TICKS
+    ):
+        return "timeout"
+    if tick - visit.started >= support_survival.VISIT_MAX_TICKS:
+        return "max"
+    return None
 
 
 def _at_supports(
@@ -203,14 +215,14 @@ def visit_step(
     or end its Resupply visit (``player.visit``) and return what the visit makes of
     this tick's roll, or None (no visit). The visit ends when the player is full,
     ``VISIT_TIMEOUT_TICKS`` after arrival, ``VISIT_MAX_TICKS`` after the start, or
-    with no living support left. No RNG."""
+    with no living support left, passing ``end_visit`` the reason. No RNG."""
     if movement_ctx is None or player.role in _SUPPORT_ROLES or _here(player) is None:
         return None
     supports = _own_supports(player, all_alive)
     visit = player.visit
     if not supports:
         if visit is not None:
-            end_visit(player, tick)
+            end_visit(player, tick, "no_support")
         return None
     if visit is None:
         if not player.is_active_at(tick):
@@ -218,8 +230,9 @@ def visit_step(
         visit = _start(player, tick)
         if visit is None:
             return None
-    if _over(player, visit, tick):
-        end_visit(player, tick)
+    reason = _over(player, visit, tick)
+    if reason is not None:
+        end_visit(player, tick, reason)
         return None
     sees = [_sees(player, s, movement_ctx) for s in supports]
     action: VisitAction

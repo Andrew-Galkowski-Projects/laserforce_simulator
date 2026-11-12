@@ -168,6 +168,10 @@ VISIT_MAX_TICKS: int = 120
 VISIT_COOLDOWN_TICKS: int = 160
 #: ... except at this share of the cap or less (step 1's old seek threshold).
 VISIT_SEEK_SHARE: float = 0.3
+#: CAL-04 (#598): the Ammo leash's reach, Chebyshev squares from the Medic's
+#: remembered cell. CAL-04a's ``round_probe`` measures read it; the leash itself
+#: lands in CAL-04c.
+LEASH_SQUARES: int = 10
 
 _SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
 
