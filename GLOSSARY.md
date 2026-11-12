@@ -139,7 +139,7 @@ _Avoid_: "full"; a visit rarely refills every Shot.
 A support's walk to the nearest spot that sees a visitor it cannot see while its partner support already sees it, so both can Resupply it together (CAL-04).
 
 **Ammo leash**:
-The rule that brings the Ammo back to its Medic: an Ammo more than 10 squares from where it last saw its Medic for more than 10 ticks walks back to within 10 squares (CAL-04).
+The rule that brings the Ammo back to its Medic: an Ammo more than 10 squares from where it last saw its Medic for more than 10 ticks walks back to the nearest spot within 10 squares that sees where its Medic was. It changes only where the Ammo walks: an Ammo that chose to hold or hide stays put (CAL-04).
 
 **Backline**:
 The Heavy, Ammo and Medic, who hold a position on the map. A Commander or Scout remembers where it last saw the backline and walks there first on a **Resupply visit** (CAL-03).

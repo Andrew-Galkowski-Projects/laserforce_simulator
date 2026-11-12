@@ -304,6 +304,24 @@ class TestGoalSelectionOverrides(unittest.TestCase):
         self.assertEqual(downed.downed_plan.option, MAKE_A_TRAIL)
         self.assertEqual(self._goal(downed, [downed, tagger, ammo, scout], 101), (7, 4))
 
+    def test_a_live_downed_option_beats_the_leash(self) -> None:
+        # CAL-04c (#601): only a live Downed option comes before the Ammo leash,
+        # and either way the goal commitment is cleared.
+        downed = _ps("blue_ammo", "blue", (7, 14), role="ammo")
+        tagger = _ps("red_scout_1", "red", (7, 29))
+        medic = _ps("blue_medic", "blue", (1, 1), role="medic")
+        downed.player_memory["blue_medic"] = {"cell": (1, 1), "timestamp": 101}
+        _down(downed, tagger, 100, OPEN, 0.999)
+        downed.leash_far_since = 0
+        downed._committed_goal = ((14, 29), False, 999)
+        self.assertEqual(self._goal(downed, [downed, tagger, medic], 101), (7, 4))
+        self.assertIsNone(downed._committed_goal)
+        # Active again, the leash walks it to (1, 11), the nearest cell within
+        # 10 squares that sees the Medic's row or column.
+        self.assertEqual(
+            self._goal(downed, [downed, tagger, medic], 100 + RESPAWN_TICKS), (1, 11)
+        )
+
     def test_nuke_reaction_wins_only_when_active_before_detonation(self) -> None:
         downed, tagger = self._trailing()
         commander = _ps("red_commander", "red", (2, 2), role="commander")

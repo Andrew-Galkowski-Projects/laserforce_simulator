@@ -983,6 +983,206 @@ class TestJoin:
         assert medic._committed_goal is None
 
 
+class TestLeashStamp:
+    """CAL-04c (#601): each plan ``combat._support_link`` stamps the Ammo's
+    ``leash_far_since`` the first plan its cell is more than ``LEASH_SQUARES``
+    (Chebyshev) from its memory's cell for its Medic, and clears it when within
+    reach or with no remembered cell."""
+
+    def _holding(self, role: str, cell: tuple[int, int]) -> PlayerState:
+        return _player(role, cell_row=cell[0], cell_col=cell[1], hold_until=10**6)
+
+    def _plan(self, player: PlayerState, everyone: list, ctx: Any, tick: int) -> None:
+        from matches.sim_helpers import combat
+
+        combat.plan_action(player, everyone, tick, ctx, time_domain="ticks")
+
+    def _far(self) -> tuple[PlayerState, PlayerState, MapContext]:
+        far = support_survival.LEASH_SQUARES + 1
+        medic, ammo = self._holding("medic", (0, far)), self._holding("ammo", (0, 0))
+        return medic, ammo, _grid_map(size=16)
+
+    def test_the_first_far_plan_stamps_it(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        assert ammo.leash_far_since == 100
+
+    def test_a_later_far_plan_keeps_it(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        self._plan(ammo, [medic, ammo], ctx, 130)
+        assert ammo.leash_far_since == 100
+
+    def test_back_within_reach_clears_it(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        medic.cell_col = support_survival.LEASH_SQUARES
+        self._plan(ammo, [medic, ammo], ctx, 110)
+        assert ammo.leash_far_since is None
+
+    def test_no_remembered_cell_clears_it(self) -> None:
+        # Out of comms range (half the 4 x 4 diagonal), so nothing is remembered.
+        medic, ammo, ctx = self._far()
+        ctx.zone_data = [[1] * 4 for _ in range(4)]
+        ammo.leash_far_since = 50
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        assert "red_medic" not in ammo.player_memory
+        assert ammo.leash_far_since is None
+
+    def test_the_medic_is_not_stamped(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(medic, [medic, ammo], ctx, 100)
+        assert medic.leash_far_since is None
+
+
+_LEASH_SINCE = 40
+_LEASH_TICK = _LEASH_SINCE + support_survival.LEASH_TICKS + 1
+_REMEMBERED = (11, 11)
+
+
+class TestLeashGoal:
+    """CAL-04c (#601): ``pathfinding._leash_goal`` fires strictly ``LEASH_TICKS``
+    after the stamp: the nearest cell (Manhattan, then the cell) that sees the
+    Medic's remembered cell and lies within ``LEASH_SQUARES`` of it. No RNG."""
+
+    def _scene(
+        self, role: str = "ammo", sight: dict | None = None
+    ) -> tuple[PlayerState, PlayerState, MapContext]:
+        """The Ammo at (0, 0) remembers its Medic at (11, 11), whose cell sees
+        (0, 11) (11 squares off, the nearest), (5, 11) and (11, 3)."""
+        ammo = _player(role, cell_row=0, cell_col=0, leash_far_since=_LEASH_SINCE)
+        medic = _player("medic", cell_row=15, cell_col=15)
+        ammo.player_memory["red_medic"] = {
+            "cell": _REMEMBERED,
+            "timestamp": _LEASH_TICK,
+            "role": "medic",
+        }
+        if sight is None:
+            sight = {"11,11": {"0,11", "5,11", "11,3"}}
+        return ammo, medic, _grid_map(sight=sight, size=16)
+
+    def _leash(self, ammo: Any, everyone: list, ctx: Any, tick: int = _LEASH_TICK):
+        return pathfinding._leash_goal(ammo, everyone, ctx, tick)
+
+    def test_one_tick_past_leash_ticks_a_cell_within_reach(self) -> None:
+        # (11, 3) is 14 squares off and 8 from the Medic; (0, 11) is nearer the
+        # Ammo but 11 from the Medic, beyond the reach.
+        ammo, medic, ctx = self._scene()
+        assert self._leash(ammo, [ammo, medic], ctx) == (11, 3)
+
+    def test_none_at_exactly_leash_ticks(self) -> None:
+        ammo, medic, ctx = self._scene()
+        assert self._leash(ammo, [ammo, medic], ctx, _LEASH_TICK - 1) is None
+
+    def test_the_medic_s_cell_when_none_within_reach_sees_it(self) -> None:
+        ammo, medic, ctx = self._scene(sight={"11,11": {"0,11"}})
+        assert self._leash(ammo, [ammo, medic], ctx) == _REMEMBERED
+
+    def test_not_the_ammo(self) -> None:
+        scout, medic, ctx = self._scene(role="scout")
+        assert self._leash(scout, [scout, medic], ctx) is None
+
+    def test_no_stamp(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.leash_far_since = None
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_no_cell(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.cell_row = ammo.cell_col = None
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_no_medic(self) -> None:
+        ammo, _, ctx = self._scene()
+        assert self._leash(ammo, [ammo], ctx) is None
+
+    def test_no_memory_of_the_medic(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.player_memory.clear()
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_a_memory_with_no_cell(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.player_memory["red_medic"]["cell"] = None
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_a_stale_memory(self) -> None:
+        ammo, medic, ctx = self._scene()
+        stale = _LEASH_TICK - support_survival.LINK_STALE_TICKS - 1
+        ammo.player_memory["red_medic"]["timestamp"] = stale
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_a_memory_at_link_stale_ticks_still_counts(self) -> None:
+        ammo, medic, ctx = self._scene()
+        oldest = _LEASH_TICK - support_survival.LINK_STALE_TICKS
+        ammo.player_memory["red_medic"]["timestamp"] = oldest
+        assert self._leash(ammo, [ammo, medic], ctx) == (11, 3)
+
+    def test_draws_no_rng(self) -> None:
+        ammo, medic, ctx = self._scene()
+        random.seed(5)
+        before = random.getstate()
+        assert self._leash(ammo, [ammo, medic], ctx) == (11, 3)
+        assert random.getstate() == before
+
+    def _goal(self, ammo: PlayerState, everyone: list, ctx: Any) -> Any:
+        return pathfinding.choose_goal_cell(
+            ammo, everyone, ctx.spawn_cells, ctx, "", _LEASH_TICK, "ticks"
+        )
+
+    def test_the_leash_clears_the_commitment(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo._committed_goal = ((15, 0), False, 10**6)
+        assert self._goal(ammo, [ammo, medic], ctx) == (11, 3)
+        assert ammo._committed_goal is None
+
+    def test_the_leash_beats_the_nuke_reaction(self) -> None:
+        ammo, medic, ctx = self._scene()
+        scout = _player("scout", cell_row=3, cell_col=3)
+        scout.final_shots = 1
+        ammo.reacting_to_nuke = True
+        everyone = [ammo, medic, scout]
+        # Without the leash the Ammo rushes to the Scout, the neediest by Shots.
+        ammo.leash_far_since = None
+        assert self._goal(ammo, everyone, ctx) == (3, 3)
+        ammo.leash_far_since = _LEASH_SINCE
+        assert self._goal(ammo, everyone, ctx) == (11, 3)
+
+    def test_the_leash_beats_join(self) -> None:
+        ammo, medic, _ = self._scene()
+        medic.cell_row, medic.cell_col = (5, 5)
+        scout = _player(
+            "scout", cell_row=5, cell_col=9, visit=Visit(phase="go", started=90)
+        )
+        sight = _sight((_VISITOR, (5, 5)), (_VISITOR, (4, 0)))
+        sight.setdefault("11,11", set()).add("11,3")
+        ctx = _grid_map(sight=sight, size=16)
+        assert pathfinding._join_goal(ammo, [ammo, medic, scout], ctx, _LEASH_TICK)
+        assert self._goal(ammo, [ammo, medic, scout], ctx) == (11, 3)
+
+    @pytest.mark.parametrize("still", ["is_holding", "is_hiding"])
+    def test_a_fired_leash_leaves_a_hold_or_hide_still(self, still: str) -> None:
+        # Decision 27: the leash sets only the goal, never overriding the roll.
+        from matches.simulation import BatchSimulator
+
+        ammo, medic, ctx = self._scene()
+        setattr(ammo, still, True)
+        ammo.last_chosen_action = "hold" if still == "is_holding" else "hide"
+        assert self._leash(ammo, [ammo, medic], ctx) is not None
+        BatchSimulator()._advance_player(
+            ammo, [ammo, medic], _LEASH_TICK, ctx, ammo.last_chosen_action
+        )
+        assert (ammo.cell_row, ammo.cell_col) == (0, 0)
+        assert getattr(ammo, still) is True
+
+    def test_without_the_roll_the_leash_walks(self) -> None:
+        from matches.simulation import BatchSimulator
+
+        ammo, medic, ctx = self._scene()
+        BatchSimulator()._advance_player(ammo, [ammo, medic], _LEASH_TICK, ctx, "")
+        assert (ammo.cell_row, ammo.cell_col) != (0, 0)
+
+
 class TestIdleTrade:
     """CAL-03 rule 2 (#588): an Active support whose roll plans nothing (a ``hide``,
     or an empty ``resupply_ally``) Tags an enemy in sight with probability

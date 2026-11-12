@@ -613,7 +613,9 @@ def _support_link(
     Within comms range (half the map diagonal, as ``_broadcast_communication``) the
     support writes its partner's true cell into its memory. The Ammo stamps
     ``link_left_at`` when ``medic_with_ammo`` turns False and clears it once the
-    Medic is with it again."""
+    Medic is with it again. CAL-04c: it also stamps ``leash_far_since`` the first
+    plan its cell is more than ``LEASH_SQUARES`` (Chebyshev) from its memory's
+    cell for the Medic, and clears it within reach or with no remembered cell."""
     other_role = "ammo" if player.role == "medic" else "medic"
     other = next(
         (
@@ -648,6 +650,16 @@ def _support_link(
             player.link_left_at = None
         elif player.link_left_at is None:
             player.link_left_at = int(second)
+        entry = player.player_memory.get(other.tag_id_key)
+        cell = entry.get("cell") if entry else None
+        far = cell is not None and (
+            max(abs(cell[0] - here[0]), abs(cell[1] - here[1]))
+            > support_survival.LEASH_SQUARES
+        )
+        if not far:
+            player.leash_far_since = None
+        elif player.leash_far_since is None:
+            player.leash_far_since = int(second)
 
 
 def _idle_trade(

@@ -642,6 +642,37 @@ def _nearest(
     )
 
 
+def _leash_goal(
+    player, all_alive: list, movement_ctx: "MapContext", second: float
+) -> tuple[int, int] | None:
+    """CAL-04c Ammo leash: an Ammo more than ``LEASH_SQUARES`` from its Medic's
+    remembered cell for more than ``LEASH_TICKS`` (``leash_far_since``) walks to
+    the nearest cell (Manhattan, ties on the cell) within ``LEASH_SQUARES``
+    (Chebyshev) of that cell that sees it, or to the cell when none does. None for
+    anyone else, before then, with no cell, no living Medic, or a memory of it
+    missing, cell-less or older than ``LINK_STALE_TICKS``. Sets only the goal
+    (decision 27: a hold or hide roll stays still). No RNG."""
+    since = getattr(player, "leash_far_since", None)
+    if player.role != "ammo" or since is None:
+        return None
+    if second - since <= support_survival.LEASH_TICKS or player.cell_row is None:
+        return None
+    medic = support_survival._own(player, "medic", all_alive)
+    entry = player.player_memory.get(medic.tag_id_key) if medic is not None else None
+    if entry is None or entry.get("cell") is None:
+        return None
+    if second - entry.get("timestamp", 0) > support_survival.LINK_STALE_TICKS:
+        return None
+    target = (int(entry["cell"][0]), int(entry["cell"][1]))
+    reach = support_survival.LEASH_SQUARES
+    near = [
+        c
+        for c in movement_ctx.cells_visible_from(target)
+        if max(abs(c[0] - target[0]), abs(c[1] - target[1])) <= reach
+    ]
+    return _nearest(near, (player.cell_row, player.cell_col), target)
+
+
 def _join_goal(
     player, all_alive: list, movement_ctx: "MapContext | None", second: float
 ) -> tuple[int, int] | None:
@@ -706,6 +737,8 @@ def choose_goal_cell(
 
     Goal selection is action-aware (uses the player's previous chosen action) and
     role-aware. Priority order:
+    0. On a map, the Ammo leash (CAL-04c, ``_leash_goal``); only a live Downed
+       option beats it. It sets only the goal.
     1. A Commander's, Heavy's or Scout's Resupply visit goal (CAL-03 rule 6,
        ``resupply_visit``) — always trumps role/action logic. A low Ammo walks to
        its Medic (rule 3). After 1a, a support joins a visitor its partner sees
@@ -735,6 +768,15 @@ def choose_goal_cell(
     cell_col: int | None = getattr(player, "cell_col", None)
 
     max_lives = getattr(player, "max_lives", player.starting_lives)
+
+    # CAL-04c Ammo leash: the first rule on a map; only a live Downed option
+    # beats it. It sets only the goal (a hold or hide roll stays still).
+    if movement_ctx is not None and cell_row is not None:
+        leash = _leash_goal(player, all_alive, movement_ctx, second)
+        if leash is not None:
+            downed_first = downed_goal(player, second, movement_ctx)
+            player._committed_goal = None
+            return downed_first if downed_first is not None else leash
 
     # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
     # MOVE-08: a Downed player's option holds unless they are Active at least

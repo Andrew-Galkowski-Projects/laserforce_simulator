@@ -202,6 +202,10 @@ class PlayerState:
     # CAL-03 rule 9: the tick the Ammo left its Medic (``medic_with_ammo`` turned
     # False), None while with it; set and cleared by ``combat._support_link``.
     link_left_at: Optional[int] = None
+    # CAL-04c: the first plan the Ammo was more than ``LEASH_SQUARES`` from its
+    # memory's cell for its Medic, None within reach or with no remembered cell;
+    # set and cleared by ``combat._support_link``, read by ``_leash_goal``.
+    leash_far_since: Optional[int] = None
     # CAL-03 rule 6: the current Resupply visit, or None (``resupply_visit``); read
     # by ``support_survival.hold_allows`` and ``choose_goal_cell``.
     visit: Optional[Visit] = None

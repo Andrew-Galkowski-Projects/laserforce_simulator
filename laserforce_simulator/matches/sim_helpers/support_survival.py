@@ -175,9 +175,12 @@ CRITICAL_COOLDOWN_TICKS: int = 80
 SATISFIED_SHARE: float = 2 / 3
 SATISFIED_DOUBLES: int = 2
 #: CAL-04 (#598): the Ammo leash's reach, Chebyshev squares from the Medic's
-#: remembered cell. CAL-04a's ``round_probe`` measures read it; the leash itself
-#: lands in CAL-04c.
+#: remembered cell (``combat._support_link``, ``pathfinding._leash_goal``, and
+#: ``round_probe``'s measures) ...
 LEASH_SQUARES: int = 10
+#: ... and the leash fires once the Ammo has been beyond it for more than this
+#: many ticks (CAL-04c, #601).
+LEASH_TICKS: int = 10
 
 _SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
 
