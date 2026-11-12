@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 from . import resupply_visit, support_survival
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
-from .map_context import _NEUTRAL_BASE_TYPES
+from .map_context import _NEUTRAL_BASE_TYPES, comms_reach
 from .modes import (
     BASE_CAPTURE_SHOTS,
     apply_mode_weights,
@@ -592,6 +592,15 @@ def plan_action(
     return plans
 
 
+#: CAL-03 rule 6: the roll each ``VisitAction`` makes of a non-Tag roll (a
+#: ``request`` that cannot be resupplied hides). One key per ``VisitAction``.
+_VISIT_ROLLS: dict[resupply_visit.VisitAction, str] = {
+    "hide": "hide",
+    "move": "only_move",
+    "request": "hide",
+}
+
+
 def _visit_choice(
     visit: "resupply_visit.VisitAction | None", choice: str, player: Any, second: float
 ) -> str:
@@ -602,7 +611,7 @@ def _visit_choice(
         return "request_resupply"
     if visit is None or choice == "tag_player":
         return choice
-    return "only_move" if visit == "move" else "hide"
+    return _VISIT_ROLLS[visit]
 
 
 def _support_link(
@@ -622,9 +631,7 @@ def _support_link(
     if other is None or player.cell_row is None or other.cell_row is None:
         return
     here, there = (player.cell_row, player.cell_col), (other.cell_row, other.cell_col)
-    zone = movement_ctx.get_zone_data()
-    reach = math.hypot(len(zone), len(zone[0])) / 2 if zone else math.inf
-    if math.dist(here, there) <= reach:
+    if math.dist(here, there) <= comms_reach(movement_ctx.get_zone_data()):
         if not other.is_taggable_at(second):
             status = "downed"
         elif not other.is_active_at(second):

@@ -132,7 +132,7 @@ def resupply_landed(
 #: ``resupply_ally`` or a ``hide``) Tags an enemy in sight instead.
 IDLE_TRADE_RATE: float = 0.4
 #: CAL-03 rule 3: at this many lives or fewer the Ammo's Defense cell anchors on its
-#: Medic (``modes._ammo_anchor_goal``) ...
+#: Medic (``modes._defense_goal``, through ``modes._back_goal``) ...
 AMMO_ANCHOR_LIVES: int = 15
 #: ... and at this many or fewer it walks to its Medic (``choose_goal_cell`` step 1).
 AMMO_SEEK_MEDIC_LIVES: int = 6
@@ -168,9 +168,12 @@ VISIT_TIMEOUT_TICKS: int = 60
 VISIT_MAX_TICKS: int = 120
 #: ... starts no new visit for this many ticks after one ends ...
 VISIT_COOLDOWN_TICKS: int = 160
-#: ... except at this share of the cap or less (step 1's old seek threshold): such a
-#: Critical visit waits only this many ticks after one ends (CAL-04b, #600).
+#: ... except at this share of the cap or less (step 1's old seek threshold), a
+#: Critical visit (``resupply_visit._start``) ...
 VISIT_SEEK_SHARE: float = 0.3
+#: ... which waits only this many ticks after the last visit ended, whatever its
+#: reason (``resupply_visit.end_visit`` sets ``critical_visit_next_tick``; CAL-04b,
+#: #600).
 CRITICAL_COOLDOWN_TICKS: int = 80
 #: CAL-04b (#600): a visit ends Satisfied once Lives and Shots are each at least
 #: this share of the cap, or once the visitor has received this many doubles on it.

@@ -7,13 +7,14 @@ resupply walk, and the call-out roll with the support staleness window.
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Any, Callable
 
 import pytest
 
 from matches.sim_helpers import goal_scoring, modes, pathfinding, support_survival
-from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.map_context import MapContext, comms_reach
 from matches.sim_helpers.mechanics import choose_tag_target
 from matches.sim_helpers.modes import hide_allowed, mode_goal
 from matches.sim_helpers.pathfinding import _goal_from_action
@@ -1290,6 +1291,18 @@ class TestIdleTrade:
             time_domain="ticks",
         )
         assert self._kinds(plans) == [("hide", None)]
+
+
+class TestCommsReach:
+    """CAL-04d (#602): ``map_context.comms_reach``, half the grid's diagonal, is
+    the range of ``_support_link`` and ``_broadcast_communication``."""
+
+    def test_half_the_diagonal(self) -> None:
+        assert comms_reach([[1] * 8 for _ in range(6)]) == 5.0
+
+    def test_no_grid_is_unbounded(self) -> None:
+        assert comms_reach([]) == math.inf
+        assert comms_reach(None) == math.inf
 
 
 class TestPartnerRole:

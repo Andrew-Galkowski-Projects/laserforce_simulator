@@ -11,6 +11,7 @@ Backward-compatibility helpers:
 
 from __future__ import annotations
 
+import math
 from bisect import bisect_left
 from dataclasses import dataclass
 from typing import Any
@@ -22,6 +23,13 @@ DEFAULT_FEET_PER_SQUARE: float = 5.0
 
 # Neutral base_types in priority order for capture/reset checks
 _NEUTRAL_BASE_TYPES = ("neutral_1", "neutral_2", "neutral_3", "neutral_4")
+
+
+def comms_reach(zone: list | None) -> float:
+    """The communication range on *zone*'s grid: half its diagonal, in squares
+    (``inf`` with no grid). Shared by ``round_loop._broadcast_communication`` and
+    ``combat._support_link`` (CAL-04d)."""
+    return math.hypot(len(zone), len(zone[0])) / 2 if zone else math.inf
 
 
 def _main_floor(

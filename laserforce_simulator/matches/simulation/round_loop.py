@@ -23,6 +23,7 @@ import math as _math
 import random
 
 from ..sim_helpers import support_survival
+from ..sim_helpers.map_context import comms_reach
 from ..sim_helpers.time_constants import (
     MEDIC_UNDER_FIRE_WINDOW_TICKS,
     SCORE_BROADCAST_PERIOD_TICKS,
@@ -129,12 +130,7 @@ def _broadcast_communication(
             if hasattr(movement_ctx, "get_zone_data")
             else movement_ctx.get("zone_data")
         )
-        if zone_data:
-            rows = len(zone_data)
-            cols = len(zone_data[0]) if rows else 0
-            comm_range = _math.sqrt(rows**2 + cols**2) / 2.0
-        else:
-            comm_range = float("inf")
+        comm_range = comms_reach(zone_data)
     else:
         comm_range = float("inf")
 

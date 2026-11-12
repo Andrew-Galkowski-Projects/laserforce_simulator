@@ -554,6 +554,12 @@ def _types(plans: list) -> list[str]:
 
 
 class TestTheVisitInPlanAction:
+    def test_every_visit_action_has_a_roll(self) -> None:
+        # CAL-04d (#602): the table is tied to the Literal, one key per action.
+        assert set(combat._VISIT_ROLLS) == set(
+            typing.get_args(resupply_visit.VisitAction)
+        )
+
     def test_go_makes_a_roll_only_move(self, monkeypatch: pytest.MonkeyPatch) -> None:
         scout, _, _, everyone, ctx = _scene()
         _rolled(monkeypatch, "capture_base")
