@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from .map_context import MapContext
 
 from . import support_survival
+from .support_survival import SUPPORT_ROLES
 from .resupply_visit import freshest_callout
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
@@ -657,7 +658,7 @@ def _leash_goal(
         return None
     if second - since <= support_survival.LEASH_TICKS or player.cell_row is None:
         return None
-    medic = support_survival._own(player, "medic", all_alive)
+    medic = support_survival.own_teammate(player, "medic", all_alive)
     entry = player.player_memory.get(medic.tag_id_key) if medic is not None else None
     if entry is None or entry.get("cell") is None:
         return None
@@ -681,12 +682,12 @@ def _join_goal(
     (Manhattan, ties on the cell) that sees the nearest such visitor (Manhattan,
     ties on ``tag_id``), or to the visitor's cell when none does. True
     cell-to-cell LOS, not memory. None otherwise. No RNG."""
-    if player.role not in ("medic", "ammo") or movement_ctx is None:
+    if player.role not in SUPPORT_ROLES or movement_ctx is None:
         return None
     if player.cell_row is None or not player.is_active_at(second):
         return None
-    partner = support_survival._own(
-        player, "ammo" if player.role == "medic" else "medic", all_alive
+    partner = support_survival.own_teammate(
+        player, support_survival.partner_role(player.role), all_alive
     )
     if partner is None or partner.cell_row is None:
         return None
@@ -783,7 +784,7 @@ def choose_goal_cell(
     # one tick before the Nuke detonates (still time to cancel / resupply).
     nuke_active = getattr(player, "reacting_to_nuke", False)
     if nuke_active and (not plan_is_live(player, second) or active_before_nuke(player)):
-        if player.role in ("medic", "ammo"):
+        if player.role in SUPPORT_ROLES:
             # Support roles: rush toward the neediest ally to maximise resupply
             # output in the ticks before the nuke lands.
             allies = [
@@ -831,7 +832,7 @@ def choose_goal_cell(
     # It replaced step 1's walk to a support's true cell at 30% lives or shots
     # (decision 51): a visit starts there instead (``resupply_visit.visit_step``).
     visit = getattr(player, "visit", None)
-    if player.role not in ("medic", "ammo"):
+    if player.role not in SUPPORT_ROLES:
         if visit is not None and visit.goal is not None:
             player._committed_goal = None
             return visit.goal
@@ -878,7 +879,7 @@ def choose_goal_cell(
     else:
         score_min_remaining = 360
     score_state = getattr(player, "score_broadcast_state", None)
-    if score_state and player.role not in ("medic", "ammo"):
+    if score_state and player.role not in SUPPORT_ROLES:
         winning_team = score_state.get("winning_team", "")
         if winning_team == player.team_color and second >= score_min_remaining:
             low_lives = player.final_lives <= max_lives * 0.3

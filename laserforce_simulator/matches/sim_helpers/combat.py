@@ -27,6 +27,7 @@ from .modes import (
     known_threats,
 )
 from .round_context import RoundContext
+from .support_survival import SUPPORT_ROLES
 from .time_constants import HOLD_TICKS
 from .mechanics import (
     cooldown_ticks,
@@ -86,7 +87,6 @@ _CHOICES = [
     "request_resupply",
     "hold",
 ]
-_SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
 
 
 # ---------------------------------------------------------------------------
@@ -296,7 +296,7 @@ def plan_action(
     is_active = player.is_active_at(second)
     # CAL-03 rules 9 and 10: the support link and the backline position, before a
     # Hold can return (no RNG).
-    if movement_ctx is not None and player.role in _SUPPORT_ROLES:
+    if movement_ctx is not None and player.role in SUPPORT_ROLES:
         _support_link(player, all_alive, movement_ctx, second)
     resupply_visit.update_backline(player, all_alive, movement_ctx)
     # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
@@ -395,7 +395,7 @@ def plan_action(
     must_leave_hide = (
         movement_ctx is not None
         and is_active
-        and player.role in _SUPPORT_ROLES
+        and player.role in SUPPORT_ROLES
         and not hide_allowed(player, all_alive, movement_ctx, second, time_domain)
     )
     if must_leave_hide:
@@ -407,7 +407,7 @@ def plan_action(
 
     # CAL-03 rule 6: on a map a non-support asks for a Resupply only on a visit.
     visit = resupply_visit.visit_step(player, all_alive, movement_ctx, second)
-    if movement_ctx is not None and player.role not in _SUPPORT_ROLES and not visit:
+    if movement_ctx is not None and player.role not in SUPPORT_ROLES and not visit:
         weights[_ACTION_IDX["request_resupply"]] = 0
 
     # SIM-12 / UXP-23: finalize_action_weights clamps every slot to >= 0 (a
@@ -431,7 +431,7 @@ def plan_action(
     moves_out_of_hide = (
         movement_ctx is not None
         and is_active
-        and player.role not in _SUPPORT_ROLES
+        and player.role not in SUPPORT_ROLES
         and choice == "only_move"
     )
     # MOVE-08: Stay hidden keeps its hide for the whole Down.
@@ -616,16 +616,8 @@ def _support_link(
     Medic is with it again. CAL-04c: it also stamps ``leash_far_since`` the first
     plan its cell is more than ``LEASH_SQUARES`` (Chebyshev) from its memory's
     cell for the Medic, and clears it within reach or with no remembered cell."""
-    other_role = "ammo" if player.role == "medic" else "medic"
-    other = next(
-        (
-            p
-            for p in all_alive
-            if p.team_color == player.team_color
-            and p.role == other_role
-            and p.final_lives > 0
-        ),
-        None,
+    other = support_survival.own_teammate(
+        player, support_survival.partner_role(player.role), all_alive
     )
     if other is None or player.cell_row is None or other.cell_row is None:
         return
@@ -673,7 +665,7 @@ def _idle_trade(
     enemy in sight (``choose_tag_target``) with probability ``IDLE_TRADE_RATE``, its
     gun off cooldown. The rate draw is made only once a target is in sight; ``[]``
     otherwise (and on a map-less round)."""
-    if player.role not in _SUPPORT_ROLES or movement_ctx is None:
+    if player.role not in SUPPORT_ROLES or movement_ctx is None:
         return []
     if player.final_shots <= 0 or not player.is_active_at(second):
         return []
@@ -768,8 +760,9 @@ def _partner_follows(
 
     if getattr(teammate, "visit", None) is None:
         return
-    other = "ammo" if tagger.role == "medic" else "medic"
-    partner = support_survival._own(teammate, other, ctx.all_alive)
+    partner = support_survival.own_teammate(
+        teammate, support_survival.partner_role(tagger.role), ctx.all_alive
+    )
     if partner is None or not _is_available(
         partner, second, ctx.movement_ctx, teammate
     ):

@@ -182,7 +182,13 @@ LEASH_SQUARES: int = 10
 #: many ticks (CAL-04c, #601).
 LEASH_TICKS: int = 10
 
-_SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
+#: The two support roles, Medic then Ammo (the order ``_own_supports`` returns).
+SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
+
+
+def partner_role(role: str) -> str:
+    """The other support role: ``ammo`` for a Medic, else ``medic``."""
+    return "ammo" if role == "medic" else "medic"
 
 
 def visit_share(player: Any) -> float:
@@ -226,7 +232,7 @@ def medic_with_ammo(ammo: Any, medic: Any, movement_ctx: Any) -> bool:
     return movement_ctx is not None and movement_ctx.can_see(a, m)
 
 
-def _own(player: Any, role: str, all_alive: list) -> Any:
+def own_teammate(player: Any, role: str, all_alive: list) -> Any:
     """*player*'s living teammate in *role* (not *player*), or None."""
     return next(
         (
@@ -247,7 +253,7 @@ def _ammo_singles_case(
     """The Ammo gives singles as before HOLD: its Medic is Eliminated, or the Medic
     is not with it and its memory of the Medic is missing or older than
     ``LINK_STALE_TICKS``. No RNG."""
-    medic = _own(ammo, "medic", all_alive)
+    medic = own_teammate(ammo, "medic", all_alive)
     if medic is None:
         return True
     if medic_with_ammo(ammo, medic, movement_ctx):
@@ -269,7 +275,7 @@ def hold_allows(
     singles case (``_ammo_singles_case``). No RNG."""
     from .resupply_queue import _is_in_los  # noqa: PLC0415 (resupply_queue -> here)
 
-    if teammate.role in _SUPPORT_ROLES or teammate.visit is not None:
+    if teammate.role in SUPPORT_ROLES or teammate.visit is not None:
         return True
     if 0 < teammate.final_lives <= CALLOUT_LIVES:
         return True
@@ -277,7 +283,7 @@ def hold_allows(
         support, all_alive, second, movement_ctx
     ):
         return True
-    other = _own(support, "ammo" if support.role == "medic" else "medic", all_alive)
+    other = own_teammate(support, partner_role(support.role), all_alive)
     return (
         other is not None
         and other is not teammate

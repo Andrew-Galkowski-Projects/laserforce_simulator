@@ -17,7 +17,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Iterable, Literal, Optional
 
 from . import support_survival
-from .support_survival import Visit
+from .support_survival import SUPPORT_ROLES, Visit
 
 Cell = tuple[int, int]
 #: What a visit makes of this tick's Action roll (a Tag roll always stands):
@@ -32,7 +32,6 @@ VisitEnd = Literal[
     "full", "satisfied", "timeout", "max", "no_support", "eliminated", "round_end"
 ]
 
-_SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
 #: Rule 10: the backline is the Heavy, Ammo and Medic; the offense keeps its cell.
 _BACKLINE_ROLES: tuple[str, ...] = ("heavy", "ammo", "medic")
 _OFFENSE_ROLES: tuple[str, ...] = ("commander", "scout")
@@ -57,8 +56,8 @@ def _here(player: Any) -> Optional[Cell]:
 def _own_supports(player: Any, all_alive: list) -> list:
     """*player*'s living Medic then Ammo (not *player* itself)."""
     supports = []
-    for role in _SUPPORT_ROLES:
-        support = support_survival._own(player, role, all_alive)
+    for role in SUPPORT_ROLES:
+        support = support_survival.own_teammate(player, role, all_alive)
         if support is not None:
             supports.append(support)
     return supports
@@ -231,7 +230,7 @@ def visit_step(
     this tick's roll, or None (no visit). The visit ends when the player is
     ``satisfied``, ``VISIT_TIMEOUT_TICKS`` after arrival, ``VISIT_MAX_TICKS`` after the start, or
     with no living support left, passing ``end_visit`` the reason. No RNG."""
-    if movement_ctx is None or player.role in _SUPPORT_ROLES or _here(player) is None:
+    if movement_ctx is None or player.role in SUPPORT_ROLES or _here(player) is None:
         return None
     supports = _own_supports(player, all_alive)
     visit = player.visit

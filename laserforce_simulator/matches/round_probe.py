@@ -520,8 +520,8 @@ def _readiness(
     Eliminated. Reads the engine's own sight test; no RNG."""
     causes = []
     supports = []
-    for role in ("medic", "ammo"):
-        support = support_survival._own(player, role, all_alive)
+    for role in support_survival.SUPPORT_ROLES:
+        support = support_survival.own_teammate(player, role, all_alive)
         if support is None or not support.is_active_at(tick):
             causes.append(f"{role} not Active")
         elif not resupply_visit._sees(player, support, movement_ctx):
@@ -889,7 +889,7 @@ def _probe_round(task: tuple) -> _RoundTally:
                 if other.team_color != player.team_color and other.final_lives > 0
             )
             if player.role == "ammo" and getattr(player, "cell_row", None) is not None:
-                medic = support_survival._own(player, "medic", all_alive)
+                medic = support_survival.own_teammate(player, "medic", all_alive)
                 if medic is not None and medic.cell_row is not None:
                     row.medic_distances[_chebyshev(player, medic)] += 1
             if not plans:

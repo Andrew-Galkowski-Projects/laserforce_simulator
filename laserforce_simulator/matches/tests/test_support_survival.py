@@ -1292,6 +1292,39 @@ class TestIdleTrade:
         assert self._kinds(plans) == [("hide", None)]
 
 
+class TestPartnerRole:
+    """CAL-04d (#602): ``partner_role`` names the other support role."""
+
+    @pytest.mark.parametrize(
+        ("role", "partner"), [("medic", "ammo"), ("ammo", "medic")]
+    )
+    def test_each_support_names_the_other(self, role: str, partner: str) -> None:
+        assert support_survival.partner_role(role) == partner
+
+    def test_any_other_role_gets_the_medic(self) -> None:
+        assert support_survival.partner_role("scout") == "medic"
+
+
+class TestOwnTeammate:
+    """CAL-04d (#602): ``own_teammate`` is *player*'s living teammate in a role."""
+
+    def test_the_living_teammate_in_the_role(self) -> None:
+        ammo, medic = _player("ammo"), _player("medic")
+        enemy_medic = _player("medic", team="blue")
+        assert (
+            support_survival.own_teammate(ammo, "medic", [enemy_medic, ammo, medic])
+            is medic
+        )
+
+    def test_an_eliminated_teammate_is_none(self) -> None:
+        ammo, medic = _player("ammo"), _player("medic", final_lives=0)
+        assert support_survival.own_teammate(ammo, "medic", [ammo, medic]) is None
+
+    def test_never_the_player_itself(self) -> None:
+        medic = _player("medic")
+        assert support_survival.own_teammate(medic, "medic", [medic]) is None
+
+
 class TestVisitShare:
     """CAL-03 rule 6 (#588): ``VISIT_BASE_SHARE + VISIT_SPREAD x (decision_making -
     50) / 50``, clamped to [``VISIT_SHARE_MIN``, ``VISIT_SHARE_MAX``]."""
