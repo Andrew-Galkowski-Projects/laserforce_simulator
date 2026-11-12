@@ -173,14 +173,66 @@ class TestTheCriticalCooldown:
         )
 
 
+SAT_LIVES = math.ceil(support_survival.SATISFIED_SHARE * 30)  # a Scout's caps
+SAT_SHOTS = math.ceil(support_survival.SATISFIED_SHARE * 60)
+
+
+class TestSatisfied:
+    """CAL-04b (#600): Lives and Shots each at ``SATISFIED_SHARE`` of the cap, or
+    ``SATISFIED_DOUBLES`` doubles on the visit. Each fixture fails one alone."""
+
+    def _scout(self, lives: int, shots: int, doubles: int = 0) -> tuple:
+        scout, _, _, _, _ = _scene()
+        scout.final_lives, scout.final_shots = lives, shots
+        return scout, Visit(phase="at", started=NOW - 10, doubles=doubles)
+
+    def test_lives_at_the_share_with_shots_one_below(self) -> None:
+        scout, visit = self._scout(SAT_LIVES, SAT_SHOTS - 1)
+        assert not resupply_visit.satisfied(scout, visit)
+
+    def test_shots_at_the_share_with_lives_one_below(self) -> None:
+        scout, visit = self._scout(SAT_LIVES - 1, SAT_SHOTS)
+        assert not resupply_visit.satisfied(scout, visit)
+
+    def test_both_at_the_share(self) -> None:
+        scout, visit = self._scout(SAT_LIVES, SAT_SHOTS)
+        assert resupply_visit.satisfied(scout, visit)
+
+    def test_one_double_short(self) -> None:
+        scout, visit = self._scout(1, 1, support_survival.SATISFIED_DOUBLES - 1)
+        assert not resupply_visit.satisfied(scout, visit)
+
+    def test_at_satisfied_doubles(self) -> None:
+        scout, visit = self._scout(1, 1, support_survival.SATISFIED_DOUBLES)
+        assert resupply_visit.satisfied(scout, visit)
+
+    def test_satisfied_beats_timeout(self) -> None:
+        scout, _ = self._scout(SAT_LIVES, SAT_SHOTS)
+        visit = Visit(
+            phase="at",
+            started=NOW - support_survival.VISIT_MAX_TICKS,
+            arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS,
+        )
+        assert resupply_visit._over(scout, visit, NOW) == "satisfied"
+
+    def test_satisfied_draws_no_rng(self) -> None:
+        scout, visit = self._scout(SAT_LIVES, SAT_SHOTS)
+        random.seed(5)
+        before = random.getstate()
+        resupply_visit.satisfied(scout, visit)
+        assert random.getstate() == before
+
+
 class TestTheVisitEnds:
     """Each exit ends the visit with exactly one cooldown set."""
 
-    def test_full(self) -> None:
+    def test_full(self, ends: list[str]) -> None:
+        # CAL-04b: a full pack is Satisfied, so "full" is no longer produced.
         scout, _, _, everyone, ctx = _scene()
         _on_a_visit(scout)
         scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
         assert _step(scout, everyone, ctx) is None
+        assert ends == ["satisfied"]
         _ended_once_at(scout, everyone, ctx)
 
     def test_visit_timeout_ticks_after_arrival(self) -> None:
@@ -280,12 +332,12 @@ class TestVisitEndReasons:
             "round_end",
         )
 
-    def test_full(self, ends: list[str]) -> None:
+    def test_satisfied(self, ends: list[str]) -> None:
         scout, _, _, everyone, ctx = _scene()
         _on_a_visit(scout)
-        scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
+        scout.final_lives, scout.final_shots = SAT_LIVES, SAT_SHOTS
         _step(scout, everyone, ctx)
-        assert ends == ["full"]
+        assert ends == ["satisfied"]
 
     def test_timeout(self, ends: list[str]) -> None:
         scout, _, _, everyone, ctx = _scene()
@@ -321,7 +373,8 @@ class TestVisitEndReasons:
         resupply_visit.end_open_visits(everyone, NOW)
         assert ends == ["round_end"]
 
-    def test_full_comes_before_timeout_and_max(self) -> None:
+    def test_satisfied_comes_before_timeout_and_max(self) -> None:
+        # CAL-04b: a full pack is Satisfied; "full" stays in the Literal unproduced.
         scout, _, _, _, _ = _scene()
         scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
         visit = Visit(
@@ -329,7 +382,7 @@ class TestVisitEndReasons:
             started=NOW - support_survival.VISIT_MAX_TICKS,
             arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS,
         )
-        assert resupply_visit._over(scout, visit, NOW) == "full"
+        assert resupply_visit._over(scout, visit, NOW) == "satisfied"
         scout.final_lives = 1
         assert resupply_visit._over(scout, visit, NOW) == "timeout"
         assert resupply_visit._over(scout, replace(visit, arrived=None), NOW) == "max"

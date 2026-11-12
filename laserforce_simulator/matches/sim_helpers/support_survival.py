@@ -195,13 +195,15 @@ class Visit:
     """A Resupply visit (CAL-03 rule 6, ``resupply_visit``): its ``phase``
     (``wait``, ``go`` or ``at``), the tick it ``started``, the ``arrived`` tick (a
     support first saw the player) and its ``goal`` cell. ``backline_done`` is True
-    once the walk reached the player's ``backline_cell``."""
+    once the walk reached the player's ``backline_cell``; ``doubles`` counts the
+    doubles received on this visit (CAL-04b, ``combat.attempt_resupply``)."""
 
     phase: str
     started: int
     arrived: Optional[int] = None
     goal: Optional[tuple[int, int]] = None
     backline_done: bool = False
+    doubles: int = 0
 
 
 def _cell(player: Any) -> Optional[tuple[int, int]]:

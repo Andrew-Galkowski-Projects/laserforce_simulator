@@ -24,9 +24,10 @@ Cell = tuple[int, int]
 #: ``hide``, ``move`` (``only_move``) or ``request`` (``request_resupply``).
 VisitAction = Literal["hide", "move", "request"]
 #: CAL-04a (#599): why a visit ended, passed to ``end_visit`` by every caller.
-#: ``full`` / ``satisfied`` / ``timeout`` / ``max`` come from ``_over``,
-#: ``no_support`` from ``visit_step``, ``eliminated`` from ``down.record_down`` and
-#: ``round_end`` from ``end_open_visits``. ``satisfied`` is produced from CAL-04b on.
+#: ``satisfied`` / ``timeout`` / ``max`` come from ``_over``, ``no_support`` from
+#: ``visit_step``, ``eliminated`` from ``down.record_down`` and ``round_end`` from
+#: ``end_open_visits``. Since CAL-04b a full pack is ``satisfied``, so nothing
+#: produces ``full``; it stays so the probe's table keeps a fixed column set.
 VisitEnd = Literal[
     "full", "satisfied", "timeout", "max", "no_support", "eliminated", "round_end"
 ]
@@ -143,14 +144,22 @@ def _start(player: Any, tick: float) -> Optional[Visit]:
     return Visit(phase="go", started=int(tick)) if low else None
 
 
+def satisfied(player: Any, visit: Visit) -> bool:
+    """CAL-04b: True when Lives and Shots are each at least ``SATISFIED_SHARE`` of
+    the cap, or *visit* has had ``SATISFIED_DOUBLES`` doubles. No RNG."""
+    share = support_survival.SATISFIED_SHARE
+    shares = player.final_lives >= share * player.max_lives and (
+        player.final_shots >= share * player.max_shots
+    )
+    return shares or visit.doubles >= support_survival.SATISFIED_DOUBLES
+
+
 def _over(player: Any, visit: Visit, tick: float) -> Optional[VisitEnd]:
-    """The end rules, in order: ``full``, ``timeout`` (``VISIT_TIMEOUT_TICKS``
-    since arrival), ``max`` (``VISIT_MAX_TICKS`` since the start); else None."""
-    if (
-        player.final_lives >= player.max_lives
-        and player.final_shots >= player.max_shots
-    ):
-        return "full"
+    """The end rules, in order: ``satisfied`` (CAL-04b; a full pack is satisfied,
+    so ``full`` is no longer produced), ``timeout`` (``VISIT_TIMEOUT_TICKS`` since
+    arrival), ``max`` (``VISIT_MAX_TICKS`` since the start); else None."""
+    if satisfied(player, visit):
+        return "satisfied"
     if (
         visit.arrived is not None
         and tick - visit.arrived >= support_survival.VISIT_TIMEOUT_TICKS
@@ -219,8 +228,8 @@ def visit_step(
 ) -> Optional[VisitAction]:
     """Rule 6, once per plan of a Commander, Heavy or Scout on a map: start, step
     or end its Resupply visit (``player.visit``) and return what the visit makes of
-    this tick's roll, or None (no visit). The visit ends when the player is full,
-    ``VISIT_TIMEOUT_TICKS`` after arrival, ``VISIT_MAX_TICKS`` after the start, or
+    this tick's roll, or None (no visit). The visit ends when the player is
+    ``satisfied``, ``VISIT_TIMEOUT_TICKS`` after arrival, ``VISIT_MAX_TICKS`` after the start, or
     with no living support left, passing ``end_visit`` the reason. No RNG."""
     if movement_ctx is None or player.role in _SUPPORT_ROLES or _here(player) is None:
         return None

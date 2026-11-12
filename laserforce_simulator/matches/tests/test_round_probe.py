@@ -1591,7 +1591,7 @@ class TestEngineVisitMeasures(SimpleTestCase):
         def play(sim) -> None:
             resupply_visit.visit_step(scout, everyone, ctx, 100)  # normal start
             scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
-            resupply_visit.visit_step(scout, everyone, ctx, 101)  # ends full
+            resupply_visit.visit_step(scout, everyone, ctx, 101)  # ends satisfied
             scout.final_lives = 1
             resupply_visit.visit_step(scout, everyone, ctx, 400)  # critical start
             resupply_visit.end_open_visits(everyone, 1800)
@@ -1600,7 +1600,9 @@ class TestEngineVisitMeasures(SimpleTestCase):
         self.assertEqual(visits.normal_starts.mean, 1.0)
         self.assertEqual(visits.critical_starts.mean, 1.0)
         self.assertEqual(list(visits.end_share), list(get_args(VisitEnd)))
-        self.assertEqual(visits.end_share["full"].mean, 50.0)
+        # CAL-04b: a full pack ends "satisfied"; "full" is no longer produced.
+        self.assertEqual(visits.end_share["satisfied"].mean, 50.0)
+        self.assertEqual(visits.end_share["full"].mean, 0.0)
         self.assertEqual(visits.end_share["round_end"].mean, 50.0)
         self.assertEqual(visits.end_share["timeout"].mean, 0.0)
 
