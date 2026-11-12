@@ -62,7 +62,7 @@ def _ended_once_at(player: PlayerState, everyone: list, ctx: MapContext) -> None
 
 class TestTheVisitStarts:
     """Lives or shots at ``visit_share`` of the cap, Active, outside the cooldown;
-    at ``VISIT_SEEK_SHARE`` or lower inside it too."""
+    at ``VISIT_SEEK_SHARE`` or lower inside it too, outside the critical one."""
 
     def test_lives_at_the_share(self) -> None:
         scout, _, _, everyone, ctx = _scene()
@@ -97,6 +97,8 @@ class TestTheVisitStarts:
         assert _step(scout, everyone, ctx) is None
 
     def test_a_visit_inside_the_cooldown_at_the_seek_share(self) -> None:
+        """A Critical visit ignores ``visit_next_tick``; its own
+        ``critical_visit_next_tick`` is at its default 0 here (CAL-04b)."""
         scout, _, _, everyone, ctx = _scene()
         scout.final_lives = math.floor(support_survival.VISIT_SEEK_SHARE * 30)
         scout.visit_next_tick = NOW + 1
@@ -120,6 +122,55 @@ class TestTheVisitStarts:
         scout, _, _, everyone, _ = _scene()
         assert resupply_visit.visit_step(scout, everyone, None, NOW) is None
         assert scout.visit is None
+
+
+CRITICAL_LIVES = math.floor(support_survival.VISIT_SEEK_SHARE * 30)
+
+
+class TestTheCriticalCooldown:
+    """CAL-04b (#600): a Critical visit (``VISIT_SEEK_SHARE`` or less) waits
+    ``CRITICAL_COOLDOWN_TICKS`` after the last visit ended; a non-critical start
+    keeps the ``visit_next_tick`` rule. Each fixture fails one condition alone."""
+
+    def _critical(self, critical_next: int) -> tuple:
+        scout, _, _, everyone, ctx = _scene()
+        scout.final_lives = CRITICAL_LIVES
+        scout.critical_visit_next_tick = critical_next
+        return scout, everyone, ctx
+
+    def test_no_critical_visit_one_tick_before(self) -> None:
+        scout, everyone, ctx = self._critical(NOW + 1)
+        assert _step(scout, everyone, ctx) is None
+        assert scout.visit is None
+
+    def test_a_critical_visit_at_exactly_the_tick(self) -> None:
+        scout, everyone, ctx = self._critical(NOW)
+        _step(scout, everyone, ctx)
+        assert scout.visit is not None
+
+    def test_a_non_critical_start_ignores_it_outside_visit_next_tick(self) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        assert scout.final_lives > CRITICAL_LIVES
+        scout.critical_visit_next_tick = NOW + 99
+        _step(scout, everyone, ctx)
+        assert scout.visit is not None
+
+    def test_a_non_critical_start_waits_for_visit_next_tick(self) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        scout.visit_next_tick = NOW + 1
+        scout.critical_visit_next_tick = 0
+        assert _step(scout, everyone, ctx) is None
+
+    @pytest.mark.parametrize("reason", typing.get_args(resupply_visit.VisitEnd))
+    def test_end_visit_sets_both_next_ticks(self, reason: str) -> None:
+        scout, _, _, _, _ = _scene()
+        _on_a_visit(scout)
+        resupply_visit.end_visit(scout, NOW, reason)  # type: ignore[arg-type]
+        assert scout.visit_next_tick == NOW + support_survival.VISIT_COOLDOWN_TICKS
+        assert (
+            scout.critical_visit_next_tick
+            == NOW + support_survival.CRITICAL_COOLDOWN_TICKS
+        )
 
 
 class TestTheVisitEnds:

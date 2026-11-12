@@ -207,7 +207,7 @@ supports are rarely ready together (Medic Active ~35% of the time), the Medic's 
 
 **Grill facts (2026-11-11).** Visit rules draw no RNG (`resupply_visit.py`, `support_survival.py`).
 The 160-tick cooldown (`VISIT_COOLDOWN_TICKS`) is skipped only by the critical case, lives or
-shots at or below `VISIT_SEEK_SHARE` 0.3 of the cap (decision 51); there is no cooldown for it.
+shots at or below `VISIT_SEEK_SHARE` 0.3 of the cap (decision 51); there is no cooldown for it (CAL-04b gives it 80 ticks).
 The Commander starts 15/30 lives and 30/60 shots, so at decision_making 50 it triggers a visit at
 10 lives or 20 shots and skips the cooldown at 9 or 18; a shots-started visit still brings lives
 (the partner follows the single, 4 lives per Medic Resupply) and walks to the backline first. A

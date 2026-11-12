@@ -207,6 +207,8 @@ class PlayerState:
     visit: Optional[Visit] = None
     # CAL-03 rule 6: the earliest tick a new visit may start (the cooldown).
     visit_next_tick: int = 0
+    # CAL-04b: the earliest tick a Critical visit may start (its own cooldown).
+    critical_visit_next_tick: int = 0
     # CAL-03 rule 10: a Commander's or Scout's last known backline position.
     backline_cell: Optional[tuple[int, int]] = None
     # CAL-03 rule 7 (supports): call-outs from teammates at 1-3 lives, freshest

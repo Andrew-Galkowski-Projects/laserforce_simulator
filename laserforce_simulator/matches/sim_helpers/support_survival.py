@@ -166,8 +166,14 @@ VISIT_TIMEOUT_TICKS: int = 60
 VISIT_MAX_TICKS: int = 120
 #: ... starts no new visit for this many ticks after one ends ...
 VISIT_COOLDOWN_TICKS: int = 160
-#: ... except at this share of the cap or less (step 1's old seek threshold).
+#: ... except at this share of the cap or less (step 1's old seek threshold): such a
+#: Critical visit waits only this many ticks after one ends (CAL-04b, #600).
 VISIT_SEEK_SHARE: float = 0.3
+CRITICAL_COOLDOWN_TICKS: int = 80
+#: CAL-04b (#600): a visit ends Satisfied once Lives and Shots are each at least
+#: this share of the cap, or once the visitor has received this many doubles on it.
+SATISFIED_SHARE: float = 2 / 3
+SATISFIED_DOUBLES: int = 2
 #: CAL-04 (#598): the Ammo leash's reach, Chebyshev squares from the Medic's
 #: remembered cell. CAL-04a's ``round_probe`` measures read it; the leash itself
 #: lands in CAL-04c.

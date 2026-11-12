@@ -79,11 +79,15 @@ def _nearest(cells: Iterable[Cell], here: Cell) -> Optional[Cell]:
 
 
 def end_visit(player: Any, tick: float, reason: VisitEnd) -> None:
-    """End *player*'s visit for *reason* and start its cooldown: no new visit
-    before ``tick + VISIT_COOLDOWN_TICKS`` (unless at ``VISIT_SEEK_SHARE``). The
-    reason changes nothing here; ``round_probe`` reads it."""
+    """End *player*'s visit for *reason* and start both cooldowns, whatever the
+    reason: no new visit before ``tick + VISIT_COOLDOWN_TICKS``, and no Critical
+    visit (at ``VISIT_SEEK_SHARE``) before ``tick + CRITICAL_COOLDOWN_TICKS``
+    (CAL-04b). The reason changes nothing here; ``round_probe`` reads it."""
     player.visit = None
     player.visit_next_tick = int(tick) + support_survival.VISIT_COOLDOWN_TICKS
+    player.critical_visit_next_tick = (
+        int(tick) + support_survival.CRITICAL_COOLDOWN_TICKS
+    )
 
 
 def end_open_visits(players: Iterable[Any], tick: float) -> None:
@@ -121,13 +125,15 @@ def _forget(player: Any, supports: Iterable[Any]) -> None:
 
 def _start(player: Any, tick: float) -> Optional[Visit]:
     """A new visit when lives or shots fall to ``visit_share`` of the cap outside
-    the cooldown, or to ``VISIT_SEEK_SHARE`` inside it; else None."""
+    the cooldown (``visit_next_tick``); a Critical visit, at ``VISIT_SEEK_SHARE``
+    or less, needs only ``tick >= critical_visit_next_tick`` (CAL-04b). Else None."""
     seek = support_survival.VISIT_SEEK_SHARE
     critical = (
         player.final_lives <= seek * player.max_lives
         or player.final_shots <= seek * player.max_shots
     )
-    if not critical and tick < player.visit_next_tick:
+    next_tick = player.critical_visit_next_tick if critical else player.visit_next_tick
+    if tick < next_tick:
         return None
     share = support_survival.visit_share(player)
     low = critical or (
