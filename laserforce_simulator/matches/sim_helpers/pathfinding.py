@@ -8,7 +8,8 @@ if TYPE_CHECKING:
     from .map_context import MapContext
 
 from . import support_survival
-from .resupply_visit import freshest_callout
+from .support_survival import SUPPORT_ROLES
+from .resupply_visit import chebyshev, freshest_callout, manhattan, nearest_cell
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
@@ -612,7 +613,7 @@ def _link_return_goal(
     (``link_left_at``), the nearest cell (Manhattan, then the cell) that sees the
     Medic's remembered cell, or that cell when none does. None for anyone else,
     before then, or with no living Medic remembered. No RNG."""
-    left = getattr(player, "link_left_at", None)
+    left = player.link_left_at
     if player.role != "ammo" or left is None:
         return None
     if second - left < support_survival.LINK_RETURN_TICKS:
@@ -623,11 +624,77 @@ def _link_return_goal(
         return None
     target = (int(entry["cell"][0]), int(entry["cell"][1]))
     here = (player.cell_row, player.cell_col)
-    return min(
-        movement_ctx.cells_visible_from(target),
-        key=lambda c: (abs(c[0] - here[0]) + abs(c[1] - here[1]), c),
-        default=target,
+    return nearest_cell(movement_ctx.cells_visible_from(target), here) or target
+
+
+def _leash_goal(
+    player, all_alive: list, movement_ctx: "MapContext", second: float
+) -> tuple[int, int] | None:
+    """CAL-04c Ammo leash: an Ammo more than ``LEASH_SQUARES`` from its Medic's
+    remembered cell for more than ``LEASH_TICKS`` (``leash_far_since``) walks to
+    the nearest cell (Manhattan, ties on the cell) within ``LEASH_SQUARES``
+    (Chebyshev) of that cell that sees it, or to the cell when none does. None for
+    anyone else, before then, with no cell, no living Medic, or a memory of it
+    missing, cell-less or older than ``LINK_STALE_TICKS``. Sets only the goal
+    (decision 27: a hold or hide roll stays still). No RNG."""
+    since = player.leash_far_since
+    if player.role != "ammo" or since is None:
+        return None
+    if second - since <= support_survival.LEASH_TICKS or player.cell_row is None:
+        return None
+    medic = support_survival.own_teammate(player, "medic", all_alive)
+    entry = player.player_memory.get(medic.tag_id_key) if medic is not None else None
+    if entry is None or entry.get("cell") is None:
+        return None
+    if second - entry.get("timestamp", 0) > support_survival.LINK_STALE_TICKS:
+        return None
+    target = (int(entry["cell"][0]), int(entry["cell"][1]))
+    reach = support_survival.LEASH_SQUARES
+    near = [
+        c
+        for c in movement_ctx.cells_visible_from(target)
+        if chebyshev(c, target) <= reach
+    ]
+    return nearest_cell(near, (player.cell_row, player.cell_col)) or target
+
+
+def _join_goal(
+    player, all_alive: list, movement_ctx: "MapContext | None", second: float
+) -> tuple[int, int] | None:
+    """CAL-04c Join: an Active Medic or Ammo whose partner support sees a living
+    teammate on a Resupply visit that it does not see walks to the nearest cell
+    (Manhattan, ties on the cell) that sees the nearest such visitor (Manhattan,
+    ties on ``tag_id``), or to the visitor's cell when none does. True
+    cell-to-cell LOS, not memory. None otherwise. No RNG."""
+    if player.role not in SUPPORT_ROLES or movement_ctx is None:
+        return None
+    if player.cell_row is None or not player.is_active_at(second):
+        return None
+    partner = support_survival.own_teammate(
+        player, support_survival.partner_role(player.role), all_alive
     )
+    if partner is None or partner.cell_row is None:
+        return None
+    here = (player.cell_row, player.cell_col)
+    there = (partner.cell_row, partner.cell_col)
+    visitors = [
+        p
+        for p in all_alive
+        if p.team_color == player.team_color
+        and p.visit is not None
+        and p.final_lives > 0
+        and p.cell_row is not None
+        and movement_ctx.can_see((p.cell_row, p.cell_col), there)
+        and not movement_ctx.can_see((p.cell_row, p.cell_col), here)
+    ]
+    if not visitors:
+        return None
+    visitor = min(
+        visitors,
+        key=lambda p: (manhattan((p.cell_row, p.cell_col), here), p.tag_id),
+    )
+    target = (visitor.cell_row, visitor.cell_col)
+    return nearest_cell(movement_ctx.cells_visible_from(target), here) or target
 
 
 def _goal_from_role(
@@ -655,9 +722,13 @@ def choose_goal_cell(
 
     Goal selection is action-aware (uses the player's previous chosen action) and
     role-aware. Priority order:
+    0. On a map, the Ammo leash (CAL-04c, ``_leash_goal``); only a live Downed
+       option beats it. It sets only the goal.
+    0b. The MECH-04 nuke reaction, when active (after the leash).
     1. A Commander's, Heavy's or Scout's Resupply visit goal (CAL-03 rule 6,
        ``resupply_visit``) — always trumps role/action logic. A low Ammo walks to
-       its Medic (rule 3). After 1a, an Ammo away from its Medic goes back (rule 9).
+       its Medic (rule 3). After 1a, a support joins a visitor its partner sees
+       (CAL-04c Join), then an Ammo away from its Medic goes back (rule 9).
     1c. A Commander with 3+ Shots and a Base left: ``modes.base_goal``, held until
        reached. It does not stop the Commander shooting.
     2. Action-driven movement: based on the action chosen last tick (intended_action):
@@ -684,12 +755,21 @@ def choose_goal_cell(
 
     max_lives = getattr(player, "max_lives", player.starting_lives)
 
-    # ── 0. MECH-04: nuke-reaction override (highest priority when active) ────
+    # ── 0. CAL-04c Ammo leash: the first rule on a map; only a live Downed
+    # option beats it. It sets only the goal (a hold or hide roll stays still).
+    if movement_ctx is not None and cell_row is not None:
+        leash = _leash_goal(player, all_alive, movement_ctx, second)
+        if leash is not None:
+            downed_first = downed_goal(player, second, movement_ctx)
+            player._committed_goal = None
+            return downed_first if downed_first is not None else leash
+
+    # ── 0b. MECH-04: nuke-reaction override (after the leash, when active) ───
     # MOVE-08: a Downed player's option holds unless they are Active at least
     # one tick before the Nuke detonates (still time to cancel / resupply).
     nuke_active = getattr(player, "reacting_to_nuke", False)
     if nuke_active and (not plan_is_live(player, second) or active_before_nuke(player)):
-        if player.role in ("medic", "ammo"):
+        if player.role in SUPPORT_ROLES:
             # Support roles: rush toward the neediest ally to maximise resupply
             # output in the ticks before the nuke lands.
             allies = [
@@ -736,8 +816,8 @@ def choose_goal_cell(
     # ── 1. A Resupply visit's goal (CAL-03 rule 6, non-support roles) ─────────
     # It replaced step 1's walk to a support's true cell at 30% lives or shots
     # (decision 51): a visit starts there instead (``resupply_visit.visit_step``).
-    visit = getattr(player, "visit", None)
-    if player.role not in ("medic", "ammo"):
+    visit = player.visit
+    if player.role not in SUPPORT_ROLES:
         if visit is not None and visit.goal is not None:
             player._committed_goal = None
             return visit.goal
@@ -760,6 +840,12 @@ def choose_goal_cell(
     if downed is not None:
         return downed
 
+    # CAL-04c Join: a support walks to see a visitor its partner already sees.
+    join = _join_goal(player, all_alive, movement_ctx, second)
+    if join is not None:
+        player._committed_goal = None
+        return join
+
     # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.
     link_goal = _link_return_goal(player, all_alive, movement_ctx, second)
     if link_goal is not None:
@@ -778,7 +864,7 @@ def choose_goal_cell(
     else:
         score_min_remaining = 360
     score_state = getattr(player, "score_broadcast_state", None)
-    if score_state and player.role not in ("medic", "ammo"):
+    if score_state and player.role not in SUPPORT_ROLES:
         winning_team = score_state.get("winning_team", "")
         if winning_team == player.team_color and second >= score_min_remaining:
             low_lives = player.final_lives <= max_lives * 0.3

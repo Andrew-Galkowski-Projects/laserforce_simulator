@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import math
 import random
 from io import StringIO
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any, get_args
 from unittest.mock import patch
 
 from django.core.management import CommandError, call_command
@@ -23,14 +25,17 @@ from matches.round_probe import (
     probe_seeds,
     run_probe,
 )
-from matches.sim_helpers import shot
+from matches.sim_helpers import resupply_visit, shot, support_survival
 from matches.sim_helpers.event_log import EventLog
+from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.map_loader import load_map_context
+from matches.sim_helpers.resupply_visit import VisitEnd
 from matches.sim_helpers.modes import Mode
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.shot import ShotOutcome
 from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
 from matches.simulation import BatchSimulator, entrypoints
+from matches.tests.test_support_survival import _grid_map, _player, _sight
 from teams.models import Player, Team
 
 _SYRACUSE = Path(__file__).resolve().parents[3] / "data/maps/syracuse.json"
@@ -201,6 +206,8 @@ def _scripted(
         role=role,
         team_color=team,
         script=ticks,
+        cell_row=None,
+        cell_col=None,
         is_active_at=lambda tick: ticks[tick].active,
         is_hiding=False,
         is_holding=False,
@@ -598,6 +605,25 @@ class TestRunProbe(TestCase):
         self.assertEqual(missile_lives > 0, missiled > 0)
         self.assertEqual(EventLog.resupply_lives.__name__, "resupply_lives")
         self.assertEqual(BatchSimulator._complete_missile.__name__, "_complete_missile")
+        # CAL-04a: the visit, end-reason, nuke and Medic-Ammo observers ran in that
+        # same round too.
+        starts = sum(
+            observed.roles[role].engine_visits.normal_starts.mean
+            + observed.roles[role].engine_visits.critical_starts.mean
+            for role in ("commander", "heavy", "scout")
+        )
+        self.assertGreater(starts, 0.0)
+        ends = observed.roles["commander"].engine_visits.end_share
+        self.assertAlmostEqual(sum(m.mean for m in ends.values()), 100.0)
+        self.assertIsNotNone(observed.roles["ammo"].medic_distance_median)
+        band_lives = sum(
+            m.mean for m in observed.roles["medic"].lives_by_band["tag"].values()
+        )
+        self.assertAlmostEqual(
+            band_lives, observed.roles["medic"].lives_lost["tag"].mean
+        )
+        self.assertEqual(resupply_visit.visit_step.__name__, "visit_step")
+        self.assertEqual(resupply_visit.end_visit.__name__, "end_visit")
 
     @staticmethod
     def _count(players: list, role: str) -> int:
@@ -1539,6 +1565,297 @@ class TestFormatCal03Measures(SimpleTestCase):
         )
 
 
+_HERE, _MEDIC_AT, _AMMO_AT = (0, 0), (10, 10), (10, 12)
+
+
+def _visit_scene(
+    sight: dict[str, set[str]] | None = None, size: int = 16
+) -> tuple[PlayerState, PlayerState, PlayerState, list, MapContext]:
+    """A Scout at ``_HERE`` at its visit share (a normal start), its Medic and Ammo
+    off at their cells; nobody sees anybody unless *sight* says so."""
+    scout = _player("scout", cell_row=_HERE[0], cell_col=_HERE[1])
+    scout.final_lives = math.floor(support_survival.visit_share(scout) * 30)
+    medic = _player("medic", cell_row=_MEDIC_AT[0], cell_col=_MEDIC_AT[1])
+    ammo = _player("ammo", cell_row=_AMMO_AT[0], cell_col=_AMMO_AT[1])
+    return scout, medic, ammo, [scout, medic, ammo], _grid_map(sight=sight, size=size)
+
+
+class TestEngineVisitMeasures(SimpleTestCase):
+    """CAL-04a (#599): the engine's own Resupply visits, read off
+    ``resupply_visit.visit_step`` and ``resupply_visit.end_visit``."""
+
+    def _visits(self, players: list, play) -> Any:
+        return _probe_round_of(players, play=play).roles["scout"].engine_visits
+
+    def test_starts_split_normal_and_critical_and_ends_by_reason(self) -> None:
+        scout, _, _, everyone, ctx = _visit_scene()
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)  # normal start
+            scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
+            resupply_visit.visit_step(scout, everyone, ctx, 101)  # ends satisfied
+            scout.final_lives = 1
+            resupply_visit.visit_step(scout, everyone, ctx, 400)  # critical start
+            resupply_visit.end_open_visits(everyone, 1800)
+
+        visits = self._visits(everyone, play)
+        self.assertEqual(visits.normal_starts.mean, 1.0)
+        self.assertEqual(visits.critical_starts.mean, 1.0)
+        self.assertEqual(list(visits.end_share), list(get_args(VisitEnd)))
+        # CAL-04b: a full pack ends "satisfied".
+        self.assertEqual(visits.end_share["satisfied"].mean, 50.0)
+        self.assertEqual(visits.end_share["round_end"].mean, 50.0)
+        self.assertEqual(visits.end_share["timeout"].mean, 0.0)
+
+    def test_an_arrival_with_both_supports_ready(self) -> None:
+        scout, _, _, everyone, ctx = _visit_scene(
+            _sight((_HERE, _MEDIC_AT), (_HERE, _AMMO_AT))
+        )
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+
+        visits = self._visits(everyone, play)
+        self.assertEqual(visits.median_ticks_to_arrive, 0.0)
+        self.assertEqual(visits.never_arrived.mean, 0.0)
+        self.assertEqual(visits.ready_at_arrival.mean, 100.0)
+        self.assertEqual(visits.supports_apart.mean, 0.0)
+
+    def test_a_visit_that_never_arrives(self) -> None:
+        scout, _, _, everyone, ctx = _visit_scene()
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+            resupply_visit.end_open_visits(everyone, 1800)
+
+        visits = self._visits(everyone, play)
+        self.assertEqual(visits.never_arrived.mean, 100.0)
+        self.assertIsNone(visits.median_ticks_to_arrive)
+
+    def test_the_not_ready_causes_and_both_ready_later(self) -> None:
+        # Start at 100 with no support in sight; the Medic steps into sight at 110
+        # (arrival) with the Ammo Downed on (10, 13), out of sight. At 115 the Ammo
+        # is Active on (10, 12), where the Scout sees it.
+        scout, medic, ammo, everyone, ctx = _visit_scene(
+            _sight((_HERE, _MEDIC_AT), (_HERE, _AMMO_AT))
+        )
+        medic.cell_col = 11
+        ammo.cell_col = 13
+        ammo.last_downed_time = 99
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+            medic.cell_col = 10
+            resupply_visit.visit_step(scout, everyone, ctx, 110)
+            ammo.cell_col, ammo.last_downed_time = 12, None
+            resupply_visit.visit_step(scout, everyone, ctx, 115)
+
+        visits = self._visits(everyone, play)
+        self.assertEqual(visits.ready_at_arrival.mean, 0.0)
+        self.assertEqual(
+            {cause: m.mean for cause, m in visits.not_ready_causes.items()},
+            {
+                "medic not Active": 0.0,
+                "medic unseen": 0.0,
+                "ammo not Active": 100.0,
+                "ammo unseen": 0.0,
+            },
+        )
+        self.assertEqual(visits.median_ticks_to_arrive, 10.0)
+        self.assertEqual(visits.ready_later.mean, 100.0)
+
+    def test_an_eliminated_support_is_not_active_and_an_active_one_unseen(
+        self,
+    ) -> None:
+        # The Medic is Eliminated; the Ammo is left, Active and seeing the Scout.
+        scout, medic, _, everyone, ctx = _visit_scene(_sight((_HERE, _AMMO_AT)))
+        medic.final_lives = 0
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+
+        visits = self._visits(everyone, play)
+        causes = {cause: m.mean for cause, m in visits.not_ready_causes.items()}
+        self.assertEqual(causes["medic not Active"], 100.0)
+        self.assertEqual(causes["ammo unseen"], 0.0)
+        self.assertEqual(visits.ready_at_arrival.mean, 0.0)
+        self.assertEqual(visits.ready_later.mean, 0.0)
+
+    def test_an_active_support_out_of_sight_is_unseen(self) -> None:
+        scout, _, _, everyone, ctx = _visit_scene(_sight((_HERE, _MEDIC_AT)))
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+
+        causes = {
+            cause: m.mean
+            for cause, m in self._visits(everyone, play).not_ready_causes.items()
+        }
+        self.assertEqual(causes["ammo unseen"], 100.0)
+        self.assertEqual(causes["ammo not Active"], 0.0)
+
+    def test_supports_more_than_leash_squares_apart_at_arrival(self) -> None:
+        far = (10, 10 + support_survival.LEASH_SQUARES + 1)
+        scout, _, ammo, everyone, ctx = _visit_scene(
+            _sight((_HERE, _MEDIC_AT), (_HERE, far)), size=24
+        )
+        ammo.cell_row, ammo.cell_col = far
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+
+        visits = self._visits(everyone, play)
+        self.assertEqual(visits.ready_at_arrival.mean, 100.0)
+        self.assertEqual(visits.supports_apart.mean, 100.0)
+
+    def test_a_player_with_no_visit_has_no_start(self) -> None:
+        scout, _, _, everyone, _ = _visit_scene()
+        visits = self._visits(everyone, None)
+        self.assertEqual(visits.normal_starts.mean, 0.0)
+        self.assertEqual(visits.end_share["satisfied"].mean, 0.0)
+        self.assertIsNone(visits.median_ticks_to_arrive)
+
+    def test_the_visit_observers_are_put_back(self) -> None:
+        _probe_round_of([_scripted(_tick())])
+        self.assertEqual(resupply_visit.visit_step.__name__, "visit_step")
+        self.assertEqual(resupply_visit.end_visit.__name__, "end_visit")
+        self.assertEqual(BatchSimulator._complete_nuke.__name__, "_complete_nuke")
+
+
+class TestSupportLivesByBand(SimpleTestCase):
+    """CAL-04a (#599): the lives each player lost to Tags, missiles and nukes in
+    the minute bands 0-5, 5-7, 7-9, 9-11 and 11-15."""
+
+    def test_a_tag_down_lands_in_its_band(self) -> None:
+        heavy = _scripted(_tick(), role="heavy", team="blue")
+        medic = _scripted(_tick(), role="medic", team="red")
+        result = _probe_shots(
+            [(heavy, medic, 700, "down"), (heavy, medic, 1400, "hit")]
+        )
+        tag = result.roles["medic"].lives_by_band["tag"]
+        self.assertEqual(list(tag), ["0-5", "5-7", "7-9", "9-11", "11-15"])
+        self.assertEqual(
+            {band: m.mean for band, m in tag.items() if m.mean}, {"5-7": 1.0}
+        )
+
+    def test_missile_and_nuke_lives_land_in_their_bands(self) -> None:
+        commander = _capturer("commander", "red")
+        ammo = _capturer("ammo", "blue")
+
+        def play(sim) -> None:
+            sim._complete_missile(commander, ammo, 900)
+            sim._complete_nuke(commander, 1320, [ammo])
+
+        result = _probe_round_of([commander, ammo], play=play)
+        roles = result.roles["ammo"]
+        missile = {
+            b: m.mean for b, m in roles.lives_by_band["missile"].items() if m.mean
+        }
+        nuke = {b: m.mean for b, m in roles.lives_by_band["nuke"].items() if m.mean}
+        self.assertEqual(missile, {"7-9": roles.lives_lost["missile"].mean})
+        self.assertEqual(nuke, {"11-15": roles.lives_lost["nuke"].mean})
+        self.assertGreater(roles.lives_lost["missile"].mean, 0.0)
+        self.assertGreater(roles.lives_lost["nuke"].mean, 0.0)
+
+
+class TestMedicAmmoDistance(SimpleTestCase):
+    """CAL-04a (#599): the Chebyshev squares from an Active Ammo to its living
+    Medic at each of its plans."""
+
+    def _result(self) -> ProbeResult:
+        ammo = _player("ammo", cell_row=0, cell_col=0)
+        medic = _player("medic", cell_row=0, cell_col=4)
+
+        def fake_plan(player, all_alive, tick, movement_ctx=None, **kwargs):
+            return []
+
+        def fake_round(self, red, blue, movement_ctx=None):
+            # 10 squares is within reach, 11 beyond it.
+            for tick, col in ((0, 4), (1, 10), (2, 11), (3, 30)):
+                medic.cell_col = col
+                if tick == 3:
+                    ammo.last_downed_time = 3  # not Active: not counted
+                entrypoints.plan_action(ammo, [ammo, medic], tick, None)
+            return {}, [ammo, medic], []
+
+        with patch.object(entrypoints, "plan_action", fake_plan):
+            with patch.object(BatchSimulator, "_simulate_round", fake_round):
+                return run_probe(None, [1])
+
+    def test_the_median_and_the_share_above_leash_squares(self) -> None:
+        ammo = self._result().roles["ammo"]
+        self.assertEqual(ammo.medic_distance_median, 10.0)
+        self.assertAlmostEqual(ammo.medic_distance_far.mean, 100 / 3)
+        self.assertEqual(ammo.medic_distance_plans, 3)
+
+    def test_a_medic_has_none(self) -> None:
+        self.assertIsNone(self._result().roles["medic"].medic_distance_median)
+
+
+class TestFormatCal04Measures(SimpleTestCase):
+    """CAL-04a (#599): the new lines, after the CAL-03a ones."""
+
+    def test_a_visitor_prints_the_engine_visit_lines(self) -> None:
+        scout, _, _, everyone, ctx = _visit_scene(
+            _sight((_HERE, _MEDIC_AT), (_HERE, _AMMO_AT))
+        )
+
+        def play(sim) -> None:
+            resupply_visit.visit_step(scout, everyone, ctx, 100)
+            resupply_visit.end_open_visits(everyone, 1800)
+
+        lines = format_result(_probe_round_of(everyone, play=play))
+        scout_lines = lines[lines.index("scout") :]
+        for text in (
+            "  Engine visit starts per round, normal: 1.0 +/- 0.0 (1.0-1.0)",
+            "  Engine visit starts per round, critical: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Engine visit end %: satisfied 0.0 +/- 0.0, timeout 0.0 +/- 0.0, "
+            "max 0.0 +/- 0.0, no_support 0.0 +/- 0.0, eliminated 0.0 +/- 0.0, "
+            "round_end 100.0 +/- 0.0",
+            "  Engine visit ticks to arrive: median 0.0",
+            "  Engine visits never arriving %: 0.0 +/- 0.0 (0.0-0.0)",
+            "  Arrivals with both supports ready %: 100.0 +/- 0.0 (100.0-100.0)",
+            "  Not-ready arrival causes %: medic not Active 0.0 +/- 0.0, medic "
+            "unseen 0.0 +/- 0.0, ammo not Active 0.0 +/- 0.0, ammo unseen 0.0 +/- 0.0",
+            "  Arrivals with the supports more than 10 squares apart %: "
+            "0.0 +/- 0.0 (0.0-0.0)",
+            "  Arrivals with both supports ready later in the visit %: "
+            "0.0 +/- 0.0 (0.0-0.0)",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, scout_lines)
+        medic_lines = lines[lines.index("medic") : lines.index("scout")]
+        self.assertFalse([line for line in medic_lines if "Engine visit" in line])
+
+    def test_a_support_prints_lives_by_band_and_the_ammo_its_distance(self) -> None:
+        lines = format_result(
+            _probe_scripted(
+                [_scripted(_tick(), role="ammo"), _scripted(_tick(), role="medic")]
+            )
+        )
+        ammo = lines[lines.index("ammo") : lines.index("medic")]
+        band = "0-5 0.0 +/- 0.0, 5-7 0.0 +/- 0.0, 7-9 0.0 +/- 0.0, 9-11 0.0 +/- 0.0, 11-15 0.0 +/- 0.0"
+        for text in (
+            f"  Lives lost to Tags by minute band: {band}",
+            f"  Lives lost to missiles by minute band: {band}",
+            f"  Lives lost to nukes by minute band: {band}",
+            "  Medic-Ammo distance, squares: none",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, ammo)
+        medic = lines[lines.index("medic") :]
+        self.assertIn(f"  Lives lost to nukes by minute band: {band}", medic)
+        self.assertFalse([line for line in medic if "Medic-Ammo" in line])
+
+    def test_the_distance_prints_its_median_and_far_share(self) -> None:
+        lines = format_result(TestMedicAmmoDistance()._result())
+        self.assertIn(
+            "  Medic-Ammo distance, squares: median 10.0 over 3 Active plans; more "
+            "than 10: 33.3 +/- 0.0 %",
+            lines,
+        )
+
+
 class TestCalibrationLineups(SimpleTestCase):
     """CAL-02 (#567): the Test games' rosters, built as the Calibration harness does."""
 
@@ -1591,6 +1908,15 @@ class TestLineupsProbe(TestCase):
         self.assertGreater(serial.round_tags.mean, 0.0)
         self.assertGreater(serial.roles["ammo"].life_resupplies.mean, 0.0)
         self.assertGreater(serial.roles["commander"].visits.per_round.mean, 0.0)
+        # CAL-04a: and the engine visit, lives-by-band and distance tallies.
+        engine = serial.roles["commander"].engine_visits
+        self.assertGreater(engine.normal_starts.mean + engine.critical_starts.mean, 0)
+        self.assertIsNotNone(engine.median_ticks_to_arrive)
+        self.assertIsNotNone(serial.roles["ammo"].medic_distance_median)
+        self.assertGreater(
+            sum(m.mean for m in serial.roles["medic"].lives_by_band["tag"].values()),
+            0.0,
+        )
 
 
 class TestRoundProbeCommand(TestCase):
@@ -1612,6 +1938,13 @@ class TestRoundProbeCommand(TestCase):
             "Tags per round, both teams",
             "| real 403.0",
             "| real 32.1",
+            # CAL-04a: the engine's own visits and the support measures.
+            "Engine visit starts per round, normal",
+            "Engine visit end %",
+            "Arrivals with both supports ready %",
+            "Not-ready arrival causes %",
+            "Lives lost to missiles by minute band",
+            "Medic-Ammo distance, squares: median",
         ):
             self.assertIn(text, output)
         self.assertTrue(output.isascii())

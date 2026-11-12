@@ -188,20 +188,31 @@ CAL-02 (Tags and times tagged in line with the arena) is **[DONE]**; see `PLAN-c
 
 CAL-03 (Supports stay on the floor, and goal-cell variety) is **[DONE]**; see `PLAN-completed.md`.
 
-### CAL-04 · Resupply visits stick together, supports last the round (owner, 2026-11-10)
+CAL-04 (Resupply visits stick together, supports last the round) is **[DONE]**; see `PLAN-completed.md`.
 
-Follow-up to CAL-03 (its PLAN section and the R7 run hold every number). After CAL-03:
-- doubles 11.8% of Resupplies against real 32%; doubles per visit .39/.41/.32 (C/H/S) against
-  .86/.64/.87;
-- visits come too often: median gap 40/41/63 s against 84/52/111, and 8.6/9.1/5.8 per game against
-  6.2/8.3/4.6. 32-game checks put it on VISITSEEK skipping the visit cooldown;
-- Commanders survive too well: C s9 94.9 against real 85 (life Resupplies 5.3 -> 10.3 with the
-  support link and backline);
-- the Medic still leaves early: M s9 28.5 against 62 (39 before round 7);
-- support shot-first 11.9/10.4 against 19/20.
-**Open for the grill:** a short cooldown for low-shots/lives visits (round 8's 40 s idea), why both
-supports are rarely ready together (Medic Active ~35% of the time), the Medic's late lives budget
-(nukes are 38% of real Medic losses), and whether MECH-22's in-sight tag ramp lands first.
+### MECH-23 · Hiding means getting out of sight, not a 50% miss (owner, 2026-11-11)
+
+From CAL-04's diagnosis. Hiding today hides nothing: no LOS, memory or detection code reads
+`is_hiding`. Its effects are a flat 50% miss on every shot kind (`shot.py:229`), no missile lock
+(`combat.py:925`), being passed over by `_priority_targets` while a non-hiding enemy is in sight
+(`mechanics.py:102`), and no Advance. Owner: replace the 50% miss with movement. A hiding player
+paths out of every known enemy's sight, then chooses a low-visibility cell (low `los_rank`) to
+hold. Player accuracy is generally low, so dropping the flat miss should also lift hit rates
+toward real. It should cut the Medic's opening Tags too (2x real; CAL-04: two-thirds of hiding
+Medic Downs come in the Reset window, after Stay hidden leaves it on the cell where it was tagged,
+in its attacker's sight). **Open for the grill:** what replaces the missile-lock and target-choice
+effects, the Downed option Stay hidden (`downed_option.py:236`), how far a hider may walk and
+whether it Advances while hiding, which stats scale it, and the real figures to calibrate against
+(per-role hit ratio, shots hit / fired, Medic Tags per alive minute 1.05).
+
+### CAL-05 · The Medic is tagged at twice the real rate in the opening (owner, 2026-11-11)
+
+From CAL-04 (its section in `PLAN-completed.md` holds the numbers). The Medic loses ~12 of its 20 lives by minute 5
+(Tag rate 1.9-2.07 per alive minute, real 1.05), and no CAL-04 lever moved it; M s9 ~41 against
+real 62. 42% of Medic Downs land in the Reset window. Re-measure after MECH-23 first; then
+**open for the grill:** the Downed option for supports (leave the attacker's sight), whether the
+Medic's Defense cells are in enemy sight lines at the opening, and nukes (20% of sim Medic losses
+against 38% real).
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 

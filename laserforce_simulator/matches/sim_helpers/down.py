@@ -27,7 +27,7 @@ from typing import Any, Optional
 from .combat import cancel_missile_locks_involving
 from .downed_option import choose_downed_option
 from .follow_rule import round_map, start_trail
-from .resupply_visit import end_visit
+from . import resupply_visit
 from .round_context import RoundContext
 from .time_constants import RESPAWN_TICKS
 
@@ -102,8 +102,9 @@ def record_down(
 
     # CAL-03 rule 6: an Elimination ends a Resupply visit. A Down does not: the
     # visit goes on through the Respawn cooldown, as in the R7 prototype (#588).
-    if player.final_lives <= 0 and getattr(player, "visit", None) is not None:
-        end_visit(player, tick)
+    # Called through the module so ``round_probe`` sees the reason (CAL-04a).
+    if player.final_lives <= 0 and player.visit is not None:
+        resupply_visit.end_visit(player, tick, "eliminated")
 
     # 2-4. simple state mutations
     player.last_downed_time = tick

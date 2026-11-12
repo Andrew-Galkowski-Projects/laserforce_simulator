@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import math
 import random
+import typing
+from dataclasses import replace
 from typing import Any
 
 import pytest
@@ -60,7 +62,7 @@ def _ended_once_at(player: PlayerState, everyone: list, ctx: MapContext) -> None
 
 class TestTheVisitStarts:
     """Lives or shots at ``visit_share`` of the cap, Active, outside the cooldown;
-    at ``VISIT_SEEK_SHARE`` or lower inside it too."""
+    at ``VISIT_SEEK_SHARE`` or lower inside it too, outside the critical one."""
 
     def test_lives_at_the_share(self) -> None:
         scout, _, _, everyone, ctx = _scene()
@@ -95,6 +97,8 @@ class TestTheVisitStarts:
         assert _step(scout, everyone, ctx) is None
 
     def test_a_visit_inside_the_cooldown_at_the_seek_share(self) -> None:
+        """A Critical visit ignores ``visit_next_tick``; its own
+        ``critical_visit_next_tick`` is at its default 0 here (CAL-04b)."""
         scout, _, _, everyone, ctx = _scene()
         scout.final_lives = math.floor(support_survival.VISIT_SEEK_SHARE * 30)
         scout.visit_next_tick = NOW + 1
@@ -120,14 +124,163 @@ class TestTheVisitStarts:
         assert scout.visit is None
 
 
+CRITICAL_LIVES = math.floor(support_survival.VISIT_SEEK_SHARE * 30)
+
+
+class TestTheCriticalCooldown:
+    """CAL-04b (#600): a Critical visit (``VISIT_SEEK_SHARE`` or less) waits
+    ``CRITICAL_COOLDOWN_TICKS`` after the last visit ended; a non-critical start
+    keeps the ``visit_next_tick`` rule. Each fixture fails one condition alone."""
+
+    def _critical(self, critical_next: int) -> tuple:
+        scout, _, _, everyone, ctx = _scene()
+        scout.final_lives = CRITICAL_LIVES
+        scout.critical_visit_next_tick = critical_next
+        return scout, everyone, ctx
+
+    def test_no_critical_visit_one_tick_before(self) -> None:
+        scout, everyone, ctx = self._critical(NOW + 1)
+        assert _step(scout, everyone, ctx) is None
+        assert scout.visit is None
+
+    def test_a_critical_visit_at_exactly_the_tick(self) -> None:
+        scout, everyone, ctx = self._critical(NOW)
+        _step(scout, everyone, ctx)
+        assert scout.visit is not None
+
+    def test_a_non_critical_start_ignores_it_outside_visit_next_tick(self) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        assert scout.final_lives > CRITICAL_LIVES
+        scout.critical_visit_next_tick = NOW + 99
+        _step(scout, everyone, ctx)
+        assert scout.visit is not None
+
+    def test_a_non_critical_start_waits_for_visit_next_tick(self) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        scout.visit_next_tick = NOW + 1
+        scout.critical_visit_next_tick = 0
+        assert _step(scout, everyone, ctx) is None
+
+    @pytest.mark.parametrize("reason", typing.get_args(resupply_visit.VisitEnd))
+    def test_end_visit_sets_both_next_ticks(self, reason: str) -> None:
+        scout, _, _, _, _ = _scene()
+        _on_a_visit(scout)
+        resupply_visit.end_visit(scout, NOW, reason)  # type: ignore[arg-type]
+        assert scout.visit_next_tick == NOW + support_survival.VISIT_COOLDOWN_TICKS
+        assert (
+            scout.critical_visit_next_tick
+            == NOW + support_survival.CRITICAL_COOLDOWN_TICKS
+        )
+
+
+class TestIsCritical:
+    """CAL-04b: Lives or Shots at ``VISIT_SEEK_SHARE`` of the cap or less. Each
+    fixture tests one resource alone, the other kept full."""
+
+    def _scout(self, lives: int, shots: int) -> PlayerState:
+        scout, _, _, _, _ = _scene()
+        scout.final_lives, scout.final_shots = lives, shots
+        return scout
+
+    def test_lives_exactly_at_the_share(self) -> None:
+        scout = self._scout(CRITICAL_LIVES, 60)
+        assert CRITICAL_LIVES == support_survival.VISIT_SEEK_SHARE * 30
+        assert resupply_visit.is_critical(scout)
+
+    def test_lives_one_above_the_share(self) -> None:
+        assert not resupply_visit.is_critical(self._scout(CRITICAL_LIVES + 1, 60))
+
+    def test_shots_exactly_at_the_share(self) -> None:
+        shots = math.floor(support_survival.VISIT_SEEK_SHARE * 60)
+        assert shots == support_survival.VISIT_SEEK_SHARE * 60
+        assert resupply_visit.is_critical(self._scout(30, shots))
+
+    def test_shots_one_above_the_share(self) -> None:
+        shots = math.floor(support_survival.VISIT_SEEK_SHARE * 60) + 1
+        assert not resupply_visit.is_critical(self._scout(30, shots))
+
+    def test_a_full_pack_is_not_critical(self) -> None:
+        assert not resupply_visit.is_critical(self._scout(30, 60))
+
+
+class TestCellDistances:
+    """``manhattan`` and ``chebyshev`` between two cells."""
+
+    def test_manhattan_adds_both_axes(self) -> None:
+        assert resupply_visit.manhattan((1, 2), (4, -2)) == 7
+
+    def test_chebyshev_takes_the_longer_axis(self) -> None:
+        assert resupply_visit.chebyshev((1, 2), (4, -2)) == 4
+
+    def test_a_diagonal_step_is_one_chebyshev_square(self) -> None:
+        assert resupply_visit.chebyshev((3, 3), (4, 4)) == 1
+        assert resupply_visit.manhattan((3, 3), (4, 4)) == 2
+
+    def test_the_same_cell_is_zero(self) -> None:
+        assert resupply_visit.chebyshev((5, 5), (5, 5)) == 0
+        assert resupply_visit.manhattan((5, 5), (5, 5)) == 0
+
+
+SAT_LIVES = math.ceil(support_survival.SATISFIED_SHARE * 30)  # a Scout's caps
+SAT_SHOTS = math.ceil(support_survival.SATISFIED_SHARE * 60)
+
+
+class TestSatisfied:
+    """CAL-04b (#600): Lives and Shots each at ``SATISFIED_SHARE`` of the cap, or
+    ``SATISFIED_DOUBLES`` doubles on the visit. Each fixture fails one alone."""
+
+    def _scout(self, lives: int, shots: int, doubles: int = 0) -> tuple:
+        scout, _, _, _, _ = _scene()
+        scout.final_lives, scout.final_shots = lives, shots
+        return scout, Visit(phase="at", started=NOW - 10, doubles=doubles)
+
+    def test_lives_at_the_share_with_shots_one_below(self) -> None:
+        scout, visit = self._scout(SAT_LIVES, SAT_SHOTS - 1)
+        assert not resupply_visit.satisfied(scout, visit)
+
+    def test_shots_at_the_share_with_lives_one_below(self) -> None:
+        scout, visit = self._scout(SAT_LIVES - 1, SAT_SHOTS)
+        assert not resupply_visit.satisfied(scout, visit)
+
+    def test_both_at_the_share(self) -> None:
+        scout, visit = self._scout(SAT_LIVES, SAT_SHOTS)
+        assert resupply_visit.satisfied(scout, visit)
+
+    def test_one_double_short(self) -> None:
+        scout, visit = self._scout(1, 1, support_survival.SATISFIED_DOUBLES - 1)
+        assert not resupply_visit.satisfied(scout, visit)
+
+    def test_at_satisfied_doubles(self) -> None:
+        scout, visit = self._scout(1, 1, support_survival.SATISFIED_DOUBLES)
+        assert resupply_visit.satisfied(scout, visit)
+
+    def test_satisfied_beats_timeout(self) -> None:
+        scout, _ = self._scout(SAT_LIVES, SAT_SHOTS)
+        visit = Visit(
+            phase="at",
+            started=NOW - support_survival.VISIT_MAX_TICKS,
+            arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS,
+        )
+        assert resupply_visit._over(scout, visit, NOW) == "satisfied"
+
+    def test_satisfied_draws_no_rng(self) -> None:
+        scout, visit = self._scout(SAT_LIVES, SAT_SHOTS)
+        random.seed(5)
+        before = random.getstate()
+        resupply_visit.satisfied(scout, visit)
+        assert random.getstate() == before
+
+
 class TestTheVisitEnds:
     """Each exit ends the visit with exactly one cooldown set."""
 
-    def test_full(self) -> None:
+    def test_a_full_pack_is_satisfied(self, ends: list[str]) -> None:
+        # CAL-04b: a full pack ends the visit as Satisfied.
         scout, _, _, everyone, ctx = _scene()
         _on_a_visit(scout)
         scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
         assert _step(scout, everyone, ctx) is None
+        assert ends == ["satisfied"]
         _ended_once_at(scout, everyone, ctx)
 
     def test_visit_timeout_ticks_after_arrival(self) -> None:
@@ -195,6 +348,90 @@ class TestTheVisitEnds:
         resupply_visit.end_open_visits(everyone, NOW)
         assert medic.visit_next_tick == 0  # no visit, no cooldown
         _ended_once_at(scout, everyone, ctx)
+
+
+@pytest.fixture
+def ends(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Every reason passed to ``resupply_visit.end_visit``, which still runs."""
+    reasons: list[str] = []
+    real = resupply_visit.end_visit
+
+    def spy(player: Any, tick: float, reason: resupply_visit.VisitEnd) -> None:
+        reasons.append(reason)
+        real(player, tick, reason)
+
+    monkeypatch.setattr(resupply_visit, "end_visit", spy)
+    return reasons
+
+
+class TestVisitEndReasons:
+    """CAL-04a (#599): every caller names why the visit ends."""
+
+    def test_the_reasons_are_a_fixed_set(self) -> None:
+        assert typing.get_args(resupply_visit.VisitEnd) == (
+            "satisfied",
+            "timeout",
+            "max",
+            "no_support",
+            "eliminated",
+            "round_end",
+        )
+
+    def test_satisfied(self, ends: list[str]) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        _on_a_visit(scout)
+        scout.final_lives, scout.final_shots = SAT_LIVES, SAT_SHOTS
+        _step(scout, everyone, ctx)
+        assert ends == ["satisfied"]
+
+    def test_timeout(self, ends: list[str]) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        _on_a_visit(
+            scout, phase="at", arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS
+        )
+        _step(scout, everyone, ctx)
+        assert ends == ["timeout"]
+
+    def test_max(self, ends: list[str]) -> None:
+        scout, _, _, everyone, ctx = _scene()
+        _on_a_visit(scout, started=NOW - support_survival.VISIT_MAX_TICKS)
+        _step(scout, everyone, ctx)
+        assert ends == ["max"]
+
+    def test_no_support(self, ends: list[str]) -> None:
+        scout, medic, ammo, everyone, ctx = _scene()
+        _on_a_visit(scout)
+        medic.final_lives = ammo.final_lives = 0
+        _step(scout, everyone, ctx)
+        assert ends == ["no_support"]
+
+    def test_eliminated_through_record_down(self, ends: list[str]) -> None:
+        scout, _, _, _, _ = _scene()
+        _on_a_visit(scout)
+        scout.final_lives = 0
+        record_down(scout, NOW, None)
+        assert ends == ["eliminated"]
+
+    def test_round_end_through_end_open_visits(self, ends: list[str]) -> None:
+        scout, _, _, everyone, _ = _scene()
+        _on_a_visit(scout)
+        resupply_visit.end_open_visits(everyone, NOW)
+        assert ends == ["round_end"]
+
+    def test_satisfied_comes_before_timeout_and_max(self) -> None:
+        # CAL-04b: a full pack is Satisfied.
+        scout, _, _, _, _ = _scene()
+        scout.final_lives, scout.final_shots = scout.max_lives, scout.max_shots
+        visit = Visit(
+            phase="at",
+            started=NOW - support_survival.VISIT_MAX_TICKS,
+            arrived=NOW - support_survival.VISIT_TIMEOUT_TICKS,
+        )
+        assert resupply_visit._over(scout, visit, NOW) == "satisfied"
+        scout.final_lives = 1
+        assert resupply_visit._over(scout, visit, NOW) == "timeout"
+        assert resupply_visit._over(scout, replace(visit, arrived=None), NOW) == "max"
+        assert resupply_visit._over(scout, Visit(phase="go", started=NOW), NOW) is None
 
 
 @pytest.mark.django_db
@@ -362,6 +599,12 @@ def _types(plans: list) -> list[str]:
 
 
 class TestTheVisitInPlanAction:
+    def test_every_visit_action_has_a_roll(self) -> None:
+        # CAL-04d (#602): the table is tied to the Literal, one key per action.
+        assert set(combat._VISIT_ROLLS) == set(
+            typing.get_args(resupply_visit.VisitAction)
+        )
+
     def test_go_makes_a_roll_only_move(self, monkeypatch: pytest.MonkeyPatch) -> None:
         scout, _, _, everyone, ctx = _scene()
         _rolled(monkeypatch, "capture_base")
@@ -436,6 +679,19 @@ class TestTheVisitGoal:
         assert self._goal(scout, everyone, ctx) not in (MEDIC_AT, AMMO_AT)
 
 
+class TestNearestCell:
+    """CAL-04d (#602): ``nearest_cell``, Manhattan from *here*, ties on the cell."""
+
+    def test_the_nearest_by_manhattan(self) -> None:
+        assert resupply_visit.nearest_cell([(5, 5), (1, 2), (0, 4)], HERE) == (1, 2)
+
+    def test_a_tie_goes_to_the_lower_cell(self) -> None:
+        assert resupply_visit.nearest_cell([(2, 0), (0, 2), (1, 1)], HERE) == (0, 2)
+
+    def test_no_cells_is_none(self) -> None:
+        assert resupply_visit.nearest_cell([], HERE) is None
+
+
 class TestPartnerFollows:
     """Decision 43: a single to a visiting player is followed in the same tick by
     the other support's, when that support is available and sees the player."""
@@ -463,6 +719,56 @@ class TestPartnerFollows:
         scout = self._resupply(_sight((HERE, MEDIC_AT)), True)
         assert scout.final_lives > SHARE_LIVES
         assert scout.final_shots == 10
+
+
+class TestDoubleCounting:
+    """CAL-04b (#600): a window Resupply (the second of a pair) to a player on a
+    visit adds one to ``visit.doubles``, whichever path delivered it."""
+
+    def _window(self, visiting: bool) -> tuple[PlayerState, PlayerState, Any]:
+        # The Medic's single landed this tick, so the Ammo's lands in the window.
+        scout, medic, ammo, everyone, ctx = _scene()
+        scout.final_shots = 10
+        scout.last_downed_time = NOW
+        scout.last_single = support_survival.LastSingle(
+            kind="lives", tick=NOW, supporter=medic.tag_id_key
+        )
+        if visiting:
+            _on_a_visit(scout, phase="at", arrived=NOW - 30)
+        round_ctx = RoundContext(movement_ctx=ctx, all_alive=everyone)
+        return scout, ammo, round_ctx
+
+    def test_a_window_resupply_to_a_visitor_adds_one(self) -> None:
+        scout, ammo, round_ctx = self._window(visiting=True)
+        combat.attempt_resupply(ammo, scout, NOW, ctx=round_ctx)
+        assert scout.final_shots > 10  # it landed
+        assert scout.visit is not None and scout.visit.doubles == 1
+
+    def test_a_single_adds_none(self) -> None:
+        # Nobody sees the Scout, so the partner does not follow.
+        scout, medic, _, everyone, ctx = _scene()
+        _on_a_visit(scout, phase="at", arrived=NOW - 30)
+        round_ctx = RoundContext(movement_ctx=ctx, all_alive=everyone)
+        combat.attempt_resupply(medic, scout, NOW, ctx=round_ctx)
+        assert scout.final_lives > SHARE_LIVES  # it landed
+        assert scout.visit is not None and scout.visit.doubles == 0
+
+    def test_a_window_resupply_off_a_visit_changes_nothing(self) -> None:
+        scout, ammo, round_ctx = self._window(visiting=False)
+        combat.attempt_resupply(ammo, scout, NOW, ctx=round_ctx)
+        assert scout.final_shots > 10
+        assert scout.visit is None
+
+    def test_partner_follows_counts_exactly_one(self) -> None:
+        scout, medic, _, everyone, ctx = _scene(
+            _sight((HERE, MEDIC_AT), (HERE, AMMO_AT))
+        )
+        scout.final_shots = 10
+        _on_a_visit(scout, phase="at", arrived=NOW - 30)
+        round_ctx = RoundContext(movement_ctx=ctx, all_alive=everyone)
+        combat.attempt_resupply(medic, scout, NOW, ctx=round_ctx)
+        assert scout.final_shots > 10  # the partner followed
+        assert scout.visit is not None and scout.visit.doubles == 1
 
 
 class TestBackline:
@@ -535,7 +841,7 @@ class TestCallOut:
     def test_it_fires_at_callout_lives(self) -> None:
         scout, medic, ammo, everyone, ctx = self._caller(support_survival.CALLOUT_LIVES)
         assert resupply_visit.call_out(scout, everyone, ctx, NOW)
-        call = resupply_visit.Callout(caller="red_scout", cell=HERE, tick=NOW)
+        call = support_survival.Callout(caller="red_scout", cell=HERE, tick=NOW)
         assert medic.support_callouts == [call]
         assert ammo.support_callouts == [call]
 

@@ -9,9 +9,12 @@ Reaction and Follow-up shots, enemies on the floor per Active roll, shot cadence
 who-tags-whom and who-Downs-whom matrices. CAL-03a (#589) added the support measures:
 survival by minute, minutes in play, Tag Downs per minute in play, lives lost by
 cause, life Resupplies received, doubles, hit ratio, shot-first, Resupply visits and
-Tags per round. Each measure is pooled over the rounds and kept per round. Read-only:
-it observes ``plan_action``, ``choose_goal_cell``, the capture, ``resolve_shot``, the
-missile launch and the two Resupply events without drawing from the RNG, so a seed plays the same
+Tags per round. CAL-04a (#599) added the engine's own visits (starts, end reasons,
+arrival and readiness), the lives lost per minute band and the Medic-Ammo distance.
+Each measure is pooled over the rounds and kept per round. Read-only: it observes
+``plan_action``, ``choose_goal_cell``, the capture, ``resolve_shot``, the missile
+launch, the nuke, the two Resupply events, ``resupply_visit.visit_step`` and
+``resupply_visit.end_visit`` without drawing from the RNG, so a seed plays the same
 round as it would unobserved. One round is one task, so ``workers`` processes give
 the serial numbers.
 """
@@ -23,8 +26,9 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from math import sqrt
 from statistics import median, stdev
-from typing import Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence, get_args
 
+from matches.sim_helpers import resupply_visit, support_survival
 from matches.sim_helpers import shot as shot_module
 from matches.sim_helpers.combat import _CHOICES
 from matches.sim_helpers.parallel_worker import worker_django_init
@@ -70,6 +74,23 @@ SURVIVAL_MINUTES = (5, 7, 9, 11)
 DOUBLE_PAIR_TICKS = 2  # a life + shot pair to one receiver within 1 s is a double
 VISIT_GAP_TICKS = 30  # Resupplies with no gap above 15 s are one visit
 SHOT_FIRST_TICKS = 4  # the defender Tagged its attacker in the 2 s before the Down
+# CAL-04a (#599): the minute bands of the lives lost, as (end tick, label).
+LIFE_BANDS: tuple[tuple[int, str], ...] = (
+    (5 * TICKS_PER_MINUTE, "0-5"),
+    (7 * TICKS_PER_MINUTE, "5-7"),
+    (9 * TICKS_PER_MINUTE, "7-9"),
+    (11 * TICKS_PER_MINUTE, "9-11"),
+    (10**9, "11-15"),
+)
+LIFE_CAUSES = ("tag", "missile", "nuke")
+# Why an arrival found its supports not ready; one arrival can count several.
+NOT_READY_CAUSES = (
+    "medic not Active",
+    "medic unseen",
+    "ammo not Active",
+    "ammo unseen",
+)
+VISIT_ENDS: tuple[str, ...] = get_args(resupply_visit.VisitEnd)
 
 
 @dataclass(frozen=True)
@@ -103,6 +124,27 @@ class VisitMeasures:
     doubles_per_visit: Measure
     gap_seconds: Measure
     median_gap_seconds: float | None
+
+
+@dataclass(frozen=True)
+class EngineVisitMeasures:
+    """CAL-04a (#599): the engine's own Resupply visits (``player.visit``), each
+    share a % with its cluster standard error over player-rounds. Starts are per
+    player-round (critical: Lives or Shots at ``VISIT_SEEK_SHARE`` of the cap or
+    less at the start); ``end_share`` is over visits, one entry per ``VisitEnd``;
+    ``never_arrived`` is over visits; ``ready_at_arrival``, ``supports_apart`` and
+    ``ready_later`` are over arrivals (``supports_apart`` over those with both
+    supports living); ``not_ready_causes`` is over the arrivals not ready."""
+
+    normal_starts: Measure
+    critical_starts: Measure
+    end_share: dict[str, Measure]
+    median_ticks_to_arrive: float | None
+    never_arrived: Measure
+    ready_at_arrival: Measure
+    not_ready_causes: dict[str, Measure]
+    supports_apart: Measure
+    ready_later: Measure
 
 
 @dataclass(frozen=True)
@@ -157,6 +199,15 @@ class RoleMeasures:
     hit_ratio: Measure
     shot_first_share: Measure
     visits: VisitMeasures
+    # CAL-04a (#599): the engine's visits; lives lost per cause (``LIFE_CAUSES``)
+    # per minute band (``LIFE_BANDS``), per player-round; and, over the Active
+    # plans of an Ammo with a living Medic, the median Chebyshev squares to it
+    # (None with no plan), the % above ``LEASH_SQUARES`` and the plans counted.
+    engine_visits: EngineVisitMeasures
+    lives_by_band: dict[str, dict[str, Measure]]
+    medic_distance_median: float | None
+    medic_distance_far: Measure
+    medic_distance_plans: int
 
 
 @dataclass(frozen=True)
@@ -177,6 +228,22 @@ class ProbeResult:
     # as a % of every Resupply episode received, all roles pooled.
     round_tags: Measure = Measure(0.0, 0.0)
     doubles_share: Measure = Measure(0.0, 0.0)
+
+
+@dataclass
+class _EngineVisit:
+    """CAL-04a: one engine visit as the observers saw it. ``causes`` and ``apart``
+    are read at arrival (``apart`` None unless both supports are living and
+    placed); ``ready_later`` is both ready on an ``at`` tick after arrival;
+    ``reason`` is what ``end_visit`` was passed (None while open)."""
+
+    critical: bool
+    started: int
+    arrived: int | None = None
+    causes: tuple[str, ...] = ()
+    apart: bool | None = None
+    ready_later: bool = False
+    reason: str | None = None
 
 
 @dataclass
@@ -207,6 +274,11 @@ class _PlayerRound:
     enemy_downs_taken: int = 0
     shot_first: int = 0
     resupplies: list[tuple[int, str]] = field(default_factory=list)
+    # CAL-04a: the engine visits, lives lost per (cause, band) and, for an Ammo,
+    # its Active plans per Chebyshev squares to its Medic.
+    engine_visits: list[_EngineVisit] = field(default_factory=list)
+    band_lives: Counter = field(default_factory=Counter)
+    medic_distances: Counter = field(default_factory=Counter)
 
     def survived(self, minute: int) -> float:
         """100.0 unless Eliminated before ``minute``'s tick, else 0.0."""
@@ -430,6 +502,79 @@ def _visit_measures(rows: Sequence[_PlayerRound]) -> VisitMeasures:
     )
 
 
+def _band(tick: float) -> str:
+    """The ``LIFE_BANDS`` label of ``tick``."""
+    return next(label for end, label in LIFE_BANDS if tick < end)
+
+
+def _readiness(
+    player: Any, all_alive: list, movement_ctx: Any, tick: float
+) -> tuple[tuple[str, ...], bool | None]:
+    """The ``NOT_READY_CAUSES`` of *player*'s supports at ``tick`` (none: both
+    Active and seeing it) and whether they are more than ``LEASH_SQUARES`` apart
+    (None unless both are living and placed). A support not Active is Downed or
+    Eliminated. Reads the engine's own sight test; no RNG."""
+    causes = []
+    supports = []
+    for role in support_survival.SUPPORT_ROLES:
+        support = support_survival.own_teammate(player, role, all_alive)
+        if support is None or not support.is_active_at(tick):
+            causes.append(f"{role} not Active")
+        elif not resupply_visit.sees(player, support, movement_ctx):
+            causes.append(f"{role} unseen")
+        if support is not None and support.cell_row is not None:
+            supports.append((support.cell_row, support.cell_col))
+    apart = None
+    if len(supports) == 2:
+        apart = resupply_visit.chebyshev(*supports) > support_survival.LEASH_SQUARES
+    return tuple(causes), apart
+
+
+def _engine_visit_measures(rows: Sequence[_PlayerRound]) -> EngineVisitMeasures:
+    def share(among, test) -> Measure:
+        pairs = []
+        for row in rows:
+            group = [visit for visit in row.engine_visits if among(visit)]
+            pairs.append((float(sum(1 for v in group if test(v))), float(len(group))))
+        return _ratio_measure(pairs, 100.0)
+
+    def arrived(visit: _EngineVisit) -> bool:
+        return visit.arrived is not None
+
+    def not_ready(visit: _EngineVisit) -> bool:
+        return visit.arrived is not None and bool(visit.causes)
+
+    to_arrive = [
+        visit.arrived - visit.started
+        for row in rows
+        for visit in row.engine_visits
+        if visit.arrived is not None
+    ]
+    return EngineVisitMeasures(
+        normal_starts=_measure(
+            [float(sum(not v.critical for v in row.engine_visits)) for row in rows]
+        ),
+        critical_starts=_measure(
+            [float(sum(v.critical for v in row.engine_visits)) for row in rows]
+        ),
+        end_share={
+            reason: share(lambda v: True, lambda v, r=reason: v.reason == r)
+            for reason in VISIT_ENDS
+        },
+        median_ticks_to_arrive=float(median(to_arrive)) if to_arrive else None,
+        never_arrived=share(lambda v: True, lambda v: v.arrived is None),
+        ready_at_arrival=share(arrived, lambda v: not v.causes),
+        not_ready_causes={
+            cause: share(not_ready, lambda v, c=cause: c in v.causes)
+            for cause in NOT_READY_CAUSES
+        },
+        supports_apart=share(
+            lambda v: arrived(v) and v.apart is not None, lambda v: v.apart
+        ),
+        ready_later=share(arrived, lambda v: v.ready_later),
+    )
+
+
 def _cadence(gaps: Sequence[int]) -> Cadence:
     """The median gap and the share of the gaps in each cadence bin."""
     bins: Counter = Counter()
@@ -459,6 +604,11 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
 
     def measure(name: str) -> Measure:
         return _measure([getattr(row, name) for row in rows])
+
+    distances: Counter = Counter()
+    for row in rows:
+        distances.update(row.medic_distances)
+    reach = support_survival.LEASH_SQUARES
 
     return RoleMeasures(
         mode_share=_share(tally.modes),
@@ -522,6 +672,28 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
             [(row.shot_first, row.enemy_downs_taken) for row in rows], 100.0
         ),
         visits=_visit_measures(rows),
+        engine_visits=_engine_visit_measures(rows),
+        lives_by_band={
+            cause: {
+                label: _measure([float(row.band_lives[(cause, label)]) for row in rows])
+                for _, label in LIFE_BANDS
+            }
+            for cause in LIFE_CAUSES
+        },
+        medic_distance_median=(
+            float(median(distances.elements())) if distances else None
+        ),
+        medic_distance_far=_ratio_measure(
+            [
+                (
+                    float(sum(n for d, n in row.medic_distances.items() if d > reach)),
+                    float(sum(row.medic_distances.values())),
+                )
+                for row in rows
+            ],
+            100.0,
+        ),
+        medic_distance_plans=sum(distances.values()),
     )
 
 
@@ -564,6 +736,48 @@ def _probe_round(task: tuple) -> _RoundTally:
     real_resupply_ammo = EventLog.resupply_ammo
     # The tick of the latest enemy Tag per (attacker, defender), for shot-first.
     last_enemy_tag: dict[tuple[int, int], int] = {}
+    # CAL-04a: the engine's visits, read through the module attributes the engine
+    # calls (``down.record_down`` and ``end_open_visits`` call ``end_visit`` so).
+    real_nuke = BatchSimulator._complete_nuke
+    real_visit_step = resupply_visit.visit_step
+    real_end_visit = resupply_visit.end_visit
+    open_visits: dict[int, _EngineVisit] = {}
+
+    def observed_visit_step(player, all_alive, movement_ctx, tick):
+        critical = resupply_visit.is_critical(player)
+        before = player.visit
+        action = real_visit_step(player, all_alive, movement_ctx, tick)
+        after = player.visit
+        if before is None and after is not None:
+            open_visits[id(player)] = _EngineVisit(critical, int(tick))
+            rows[id(player)].engine_visits.append(open_visits[id(player)])
+        record = open_visits.get(id(player))
+        if record is None or after is None or after.arrived is None:
+            return action
+        if record.arrived is None:
+            record.arrived = int(after.arrived)
+            record.causes, record.apart = _readiness(
+                player, all_alive, movement_ctx, tick
+            )
+        elif after.phase == "at" and not record.ready_later:
+            causes, _ = _readiness(player, all_alive, movement_ctx, tick)
+            record.ready_later = not causes
+        return action
+
+    def observed_end_visit(player, tick, reason):
+        record = open_visits.pop(id(player), None)
+        if record is not None:
+            record.reason = reason
+        return real_end_visit(player, tick, reason)
+
+    def observed_nuke(sim, player, second, opposing_players, ctx=None):
+        before = {id(p): p.counters.lives_lost_to_nukes for p in opposing_players}
+        outcome = real_nuke(sim, player, second, opposing_players, ctx)
+        for opp in opposing_players:
+            lost = opp.counters.lives_lost_to_nukes - before[id(opp)]
+            if lost:
+                rows[id(opp)].band_lives[("nuke", _band(second))] += lost
+        return outcome
 
     def observe_enemy_tag(attacker, defender, tick: int, downed: bool) -> None:
         rows[id(attacker)].enemy_tags_made += 1
@@ -578,7 +792,10 @@ def _probe_round(task: tuple) -> _RoundTally:
     def observed_missile(sim, attacker, defender, second, ctx=None):
         lives = defender.final_lives
         real_missile(sim, attacker, defender, second, ctx)
-        rows[id(defender)].lives_missile += lives - defender.final_lives
+        lost = lives - defender.final_lives
+        rows[id(defender)].lives_missile += lost
+        if lost:
+            rows[id(defender)].band_lives[("missile", _band(second))] += lost
 
     def observed_resupply(real, kind: str):
         def observe(log, supporter, requestor, tick, *, amount=None):
@@ -610,6 +827,7 @@ def _probe_round(task: tuple) -> _RoundTally:
                     downs_by_pair[(attacker.role, defender.role)] += 1
                     rows[id(attacker)].downs_given += 1
                     rows[id(defender)].downs_taken += 1
+                    rows[id(defender)].band_lives[("tag", _band(tick))] += 1
                 if attacker.team_color != defender.team_color:
                     observe_enemy_tag(attacker, defender, tick, outcome.downed)
             return outcome
@@ -662,6 +880,15 @@ def _probe_round(task: tuple) -> _RoundTally:
                 for other in all_alive
                 if other.team_color != player.team_color and other.final_lives > 0
             )
+            if player.role == "ammo" and player.cell_row is not None:
+                medic = support_survival.own_teammate(player, "medic", all_alive)
+                if medic is not None and medic.cell_row is not None:
+                    row.medic_distances[
+                        resupply_visit.chebyshev(
+                            (player.cell_row, player.cell_col),
+                            (medic.cell_row, medic.cell_col),
+                        )
+                    ] += 1
             if not plans:
                 tally.empty_rolls[player.last_chosen_action] += 1
             if (
@@ -711,6 +938,9 @@ def _probe_round(task: tuple) -> _RoundTally:
     entrypoints.resolve_shot = observed_resolve(real_resolve)
     shot_module.resolve_shot = observed_resolve(real_shot_resolve)
     BatchSimulator._complete_missile = observed_missile  # type: ignore[method-assign]
+    BatchSimulator._complete_nuke = observed_nuke  # type: ignore[method-assign]
+    resupply_visit.visit_step = observed_visit_step
+    resupply_visit.end_visit = observed_end_visit
     EventLog.resupply_lives = observed_resupply(  # type: ignore[method-assign]
         real_resupply_lives, "lives"
     )
@@ -759,6 +989,9 @@ def _probe_round(task: tuple) -> _RoundTally:
         entrypoints.resolve_shot = real_resolve
         shot_module.resolve_shot = real_shot_resolve
         BatchSimulator._complete_missile = real_missile  # type: ignore[method-assign]
+        BatchSimulator._complete_nuke = real_nuke  # type: ignore[method-assign]
+        resupply_visit.visit_step = real_visit_step
+        resupply_visit.end_visit = real_end_visit
         EventLog.resupply_lives = real_resupply_lives  # type: ignore[method-assign]
         EventLog.resupply_ammo = real_resupply_ammo  # type: ignore[method-assign]
     return _RoundTally(

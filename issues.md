@@ -207,6 +207,31 @@ page; both pages measured fine after a browser restart); a "missing" progress in
 Months (the spinner and counter are there); the Site-picker error, which came from submitting the
 dropdown form without opening it.
 
+# Owner report — map editor Base sights (2026-11-11)
+
+Date: 2026-11-11
+Reported by: the owner, on the map editor's Sight lines mode.
+
+Severity legend: 🔴 High · 🟠 Medium · 🟡 Low · ℹ️ Note
+
+## Summary — map editor Base sights
+
+| ID | Sev | Area | One-liner |
+|----|-----|------|-----------|
+| BUG-ME-01 | 🟡 | Map editor | Base sight Cells cannot be click-and-dragged as a block; each must be clicked |
+
+### 🟡 BUG-ME-01 — Base sight Cells take no drag rectangle
+Placing the Cells a Base can be tagged from (the red / blue / neutral Base sight views of the Sight
+lines mode) toggles one Cell per click; a click-and-drag over a block does nothing. Every other
+grid tool in the editor (Zone-view Sight lines with a selected Cell, Heavy strong spots) takes the
+same drag rectangle (with Bulk Edit on). Cause: `frontend/src/app/maps/sight-lines/sight-lines.ts`
+`startDrag` (line 232) starts a rectangle only in Zone view with a selection or in
+`'heavy_spots'`, and `releaseDrag` (249-257) bulk-toggles only those two; in a Base sight view
+`click` (281-285) calls `toggleBaseSight` for a single Cell. Expected: dragging in a Base sight view toggles every non-wall Cell in the
+rectangle for that Base type, like `bulkToggleStrongSpots` (a pure `bulkToggleBaseSight` in
+`sight-edit.ts` beside `toggleBaseSight`, skipping `isSightWall` Cells), with a spec in
+`sight-lines.spec.ts` beside the existing drag cases (lines 122-130) and one in `sight-edit.spec.ts`.
+
 # Out-of-scope findings — ANG-01f-5 (Player pool and Draw)
 
 Date: 2026-10-19

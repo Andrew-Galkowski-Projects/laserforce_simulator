@@ -7,17 +7,19 @@ resupply walk, and the call-out roll with the support staleness window.
 
 from __future__ import annotations
 
+import math
 import random
 from typing import Any, Callable
 
 import pytest
 
 from matches.sim_helpers import goal_scoring, modes, pathfinding, support_survival
-from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.map_context import MapContext, comms_reach
 from matches.sim_helpers.mechanics import choose_tag_target
 from matches.sim_helpers.modes import hide_allowed, mode_goal
 from matches.sim_helpers.pathfinding import _goal_from_action
 from matches.sim_helpers.player_state import PlayerState
+from matches.sim_helpers.support_survival import Visit
 from matches.simulation.round_loop import _broadcast_communication
 
 
@@ -829,6 +831,359 @@ class TestSupportLink:
         assert goal != (2, 8)
 
 
+_VISITOR = (5, 9)
+
+
+class TestJoin:
+    """CAL-04c (#601) Join: an Active Medic or Ammo whose partner sees a teammate on
+    a Resupply visit that it does not see walks to the nearest cell that sees that
+    visitor (``pathfinding._join_goal``). True cell-to-cell LOS, no RNG."""
+
+    TICK = 100
+
+    def _scene(
+        self, *pairs: tuple[tuple[int, int], tuple[int, int]]
+    ) -> tuple[PlayerState, PlayerState, PlayerState, MapContext]:
+        """The Medic at (0, 0) does not see the Scout on a visit at (5, 9); its Ammo
+        at (5, 5) does. The Scout's cell sees (4, 0) and (1, 8) too."""
+        medic = _player("medic", cell_row=0, cell_col=0)
+        ammo = _player("ammo", cell_row=5, cell_col=5)
+        scout = _player(
+            "scout", cell_row=5, cell_col=9, visit=Visit(phase="go", started=90)
+        )
+        if not pairs:
+            pairs = ((_VISITOR, (5, 5)), (_VISITOR, (4, 0)), (_VISITOR, (1, 8)))
+        return medic, ammo, scout, _grid_map(sight=_sight(*pairs))
+
+    def _join(self, player: PlayerState, everyone: list, ctx: Any) -> Any:
+        return pathfinding._join_goal(player, everyone, ctx, self.TICK)
+
+    def test_the_nearest_cell_that_sees_the_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        # (4, 0) is 4 squares away, (1, 8) 9 and the Ammo's (5, 5) 10.
+        assert self._join(medic, [medic, ammo, scout], ctx) == (4, 0)
+
+    def test_a_tie_goes_to_the_lower_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene(
+            (_VISITOR, (5, 5)), (_VISITOR, (3, 2)), (_VISITOR, (2, 3))
+        )
+        assert self._join(medic, [medic, ammo, scout], ctx) == (2, 3)
+
+    def test_the_nearest_visitor(self) -> None:
+        heavy_cell = (1, 9)
+        medic, ammo, scout, ctx = self._scene(
+            (_VISITOR, (5, 5)),
+            (_VISITOR, (4, 0)),
+            (heavy_cell, (5, 5)),
+            (heavy_cell, (0, 6)),
+        )
+        heavy = _player(
+            "heavy", cell_row=1, cell_col=9, visit=Visit(phase="go", started=95)
+        )
+        # The Heavy is 10 squares from the Medic, the Scout 14.
+        assert self._join(medic, [medic, ammo, scout, heavy], ctx) == (0, 6)
+
+    def test_the_ammo_joins_too(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        ammo.cell_row, ammo.cell_col = (0, 0)
+        medic.cell_row, medic.cell_col = (5, 5)
+        assert self._join(ammo, [medic, ammo, scout], ctx) == (4, 0)
+
+    def test_not_a_support(self) -> None:
+        _, _, scout, ctx = self._scene()
+        heavy = _player("heavy", cell_row=0, cell_col=0)
+        medic = _player("medic", cell_row=5, cell_col=5)
+        assert self._join(heavy, [heavy, medic, scout], ctx) is None
+
+    def test_not_active(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        medic.last_downed_time = self.TICK - 1
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_no_map(self) -> None:
+        medic, ammo, scout, _ = self._scene()
+        assert self._join(medic, [medic, ammo, scout], None) is None
+
+    def test_no_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        medic.cell_row = medic.cell_col = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_no_partner(self) -> None:
+        medic, _, scout, ctx = self._scene()
+        assert self._join(medic, [medic, scout], ctx) is None
+
+    def test_the_partner_has_no_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        ammo.cell_row = ammo.cell_col = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_no_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.visit = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_an_enemy_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.team_color = "blue"
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_partner_does_not_see_the_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene((_VISITOR, (4, 0)), (_VISITOR, (1, 8)))
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_player_already_sees_the_visitor(self) -> None:
+        medic, ammo, scout, ctx = self._scene(
+            (_VISITOR, (5, 5)), (_VISITOR, (4, 0)), (_VISITOR, (0, 0))
+        )
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_visitor_is_not_alive(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.final_lives = 0
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_the_visitor_has_no_cell(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        scout.cell_row = scout.cell_col = None
+        assert self._join(medic, [medic, ammo, scout], ctx) is None
+
+    def test_draws_no_rng(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        random.seed(11)
+        before = random.getstate()
+        assert self._join(medic, [medic, ammo, scout], ctx) == (4, 0)
+        assert random.getstate() == before
+
+    def _goal(self, player: PlayerState, everyone: list, ctx: Any) -> Any:
+        return pathfinding.choose_goal_cell(
+            player, everyone, ctx.spawn_cells, ctx, "", self.TICK, "ticks"
+        )
+
+    def test_join_beats_the_link_return(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        ammo.cell_row, ammo.cell_col = (0, 0)
+        medic.cell_row, medic.cell_col = (5, 5)
+        ammo.link_left_at = 0
+        ammo.player_memory["red_medic"] = {
+            "cell": (5, 5),
+            "timestamp": self.TICK,
+            "role": "medic",
+        }
+        # Rule 9's link return alone would walk the Ammo to (5, 9).
+        assert pathfinding._link_return_goal(ammo, [medic, ammo], ctx, self.TICK) == (
+            5,
+            9,
+        )
+        assert self._goal(ammo, [medic, ammo, scout], ctx) == (4, 0)
+
+    def test_join_clears_the_commitment(self) -> None:
+        medic, ammo, scout, ctx = self._scene()
+        medic._committed_goal = ((11, 11), False, 10**6)
+        assert self._goal(medic, [medic, ammo, scout], ctx) == (4, 0)
+        assert medic._committed_goal is None
+
+
+class TestLeashStamp:
+    """CAL-04c (#601): each plan ``combat._support_link`` stamps the Ammo's
+    ``leash_far_since`` the first plan its cell is more than ``LEASH_SQUARES``
+    (Chebyshev) from its memory's cell for its Medic, and clears it when within
+    reach or with no remembered cell."""
+
+    def _holding(self, role: str, cell: tuple[int, int]) -> PlayerState:
+        return _player(role, cell_row=cell[0], cell_col=cell[1], hold_until=10**6)
+
+    def _plan(self, player: PlayerState, everyone: list, ctx: Any, tick: int) -> None:
+        from matches.sim_helpers import combat
+
+        combat.plan_action(player, everyone, tick, ctx, time_domain="ticks")
+
+    def _far(self) -> tuple[PlayerState, PlayerState, MapContext]:
+        far = support_survival.LEASH_SQUARES + 1
+        medic, ammo = self._holding("medic", (0, far)), self._holding("ammo", (0, 0))
+        return medic, ammo, _grid_map(size=16)
+
+    def test_the_first_far_plan_stamps_it(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        assert ammo.leash_far_since == 100
+
+    def test_a_later_far_plan_keeps_it(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        self._plan(ammo, [medic, ammo], ctx, 130)
+        assert ammo.leash_far_since == 100
+
+    def test_back_within_reach_clears_it(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        medic.cell_col = support_survival.LEASH_SQUARES
+        self._plan(ammo, [medic, ammo], ctx, 110)
+        assert ammo.leash_far_since is None
+
+    def test_no_remembered_cell_clears_it(self) -> None:
+        # Out of comms range (half the 4 x 4 diagonal), so nothing is remembered.
+        medic, ammo, ctx = self._far()
+        ctx.zone_data = [[1] * 4 for _ in range(4)]
+        ammo.leash_far_since = 50
+        self._plan(ammo, [medic, ammo], ctx, 100)
+        assert "red_medic" not in ammo.player_memory
+        assert ammo.leash_far_since is None
+
+    def test_the_medic_is_not_stamped(self) -> None:
+        medic, ammo, ctx = self._far()
+        self._plan(medic, [medic, ammo], ctx, 100)
+        assert medic.leash_far_since is None
+
+
+_LEASH_SINCE = 40
+_LEASH_TICK = _LEASH_SINCE + support_survival.LEASH_TICKS + 1
+_REMEMBERED = (11, 11)
+
+
+class TestLeashGoal:
+    """CAL-04c (#601): ``pathfinding._leash_goal`` fires strictly ``LEASH_TICKS``
+    after the stamp: the nearest cell (Manhattan, then the cell) that sees the
+    Medic's remembered cell and lies within ``LEASH_SQUARES`` of it. No RNG."""
+
+    def _scene(
+        self, role: str = "ammo", sight: dict | None = None
+    ) -> tuple[PlayerState, PlayerState, MapContext]:
+        """The Ammo at (0, 0) remembers its Medic at (11, 11), whose cell sees
+        (0, 11) (11 squares off, the nearest), (5, 11) and (11, 3)."""
+        ammo = _player(role, cell_row=0, cell_col=0, leash_far_since=_LEASH_SINCE)
+        medic = _player("medic", cell_row=15, cell_col=15)
+        ammo.player_memory["red_medic"] = {
+            "cell": _REMEMBERED,
+            "timestamp": _LEASH_TICK,
+            "role": "medic",
+        }
+        if sight is None:
+            sight = {"11,11": {"0,11", "5,11", "11,3"}}
+        return ammo, medic, _grid_map(sight=sight, size=16)
+
+    def _leash(self, ammo: Any, everyone: list, ctx: Any, tick: int = _LEASH_TICK):
+        return pathfinding._leash_goal(ammo, everyone, ctx, tick)
+
+    def test_one_tick_past_leash_ticks_a_cell_within_reach(self) -> None:
+        # (11, 3) is 14 squares off and 8 from the Medic; (0, 11) is nearer the
+        # Ammo but 11 from the Medic, beyond the reach.
+        ammo, medic, ctx = self._scene()
+        assert self._leash(ammo, [ammo, medic], ctx) == (11, 3)
+
+    def test_none_at_exactly_leash_ticks(self) -> None:
+        ammo, medic, ctx = self._scene()
+        assert self._leash(ammo, [ammo, medic], ctx, _LEASH_TICK - 1) is None
+
+    def test_the_medic_s_cell_when_none_within_reach_sees_it(self) -> None:
+        ammo, medic, ctx = self._scene(sight={"11,11": {"0,11"}})
+        assert self._leash(ammo, [ammo, medic], ctx) == _REMEMBERED
+
+    def test_not_the_ammo(self) -> None:
+        scout, medic, ctx = self._scene(role="scout")
+        assert self._leash(scout, [scout, medic], ctx) is None
+
+    def test_no_stamp(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.leash_far_since = None
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_no_cell(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.cell_row = ammo.cell_col = None
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_no_medic(self) -> None:
+        ammo, _, ctx = self._scene()
+        assert self._leash(ammo, [ammo], ctx) is None
+
+    def test_no_memory_of_the_medic(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.player_memory.clear()
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_a_memory_with_no_cell(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo.player_memory["red_medic"]["cell"] = None
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_a_stale_memory(self) -> None:
+        ammo, medic, ctx = self._scene()
+        stale = _LEASH_TICK - support_survival.LINK_STALE_TICKS - 1
+        ammo.player_memory["red_medic"]["timestamp"] = stale
+        assert self._leash(ammo, [ammo, medic], ctx) is None
+
+    def test_a_memory_at_link_stale_ticks_still_counts(self) -> None:
+        ammo, medic, ctx = self._scene()
+        oldest = _LEASH_TICK - support_survival.LINK_STALE_TICKS
+        ammo.player_memory["red_medic"]["timestamp"] = oldest
+        assert self._leash(ammo, [ammo, medic], ctx) == (11, 3)
+
+    def test_draws_no_rng(self) -> None:
+        ammo, medic, ctx = self._scene()
+        random.seed(5)
+        before = random.getstate()
+        assert self._leash(ammo, [ammo, medic], ctx) == (11, 3)
+        assert random.getstate() == before
+
+    def _goal(self, ammo: PlayerState, everyone: list, ctx: Any) -> Any:
+        return pathfinding.choose_goal_cell(
+            ammo, everyone, ctx.spawn_cells, ctx, "", _LEASH_TICK, "ticks"
+        )
+
+    def test_the_leash_clears_the_commitment(self) -> None:
+        ammo, medic, ctx = self._scene()
+        ammo._committed_goal = ((15, 0), False, 10**6)
+        assert self._goal(ammo, [ammo, medic], ctx) == (11, 3)
+        assert ammo._committed_goal is None
+
+    def test_the_leash_beats_the_nuke_reaction(self) -> None:
+        ammo, medic, ctx = self._scene()
+        scout = _player("scout", cell_row=3, cell_col=3)
+        scout.final_shots = 1
+        ammo.reacting_to_nuke = True
+        everyone = [ammo, medic, scout]
+        # Without the leash the Ammo rushes to the Scout, the neediest by Shots.
+        ammo.leash_far_since = None
+        assert self._goal(ammo, everyone, ctx) == (3, 3)
+        ammo.leash_far_since = _LEASH_SINCE
+        assert self._goal(ammo, everyone, ctx) == (11, 3)
+
+    def test_the_leash_beats_join(self) -> None:
+        ammo, medic, _ = self._scene()
+        medic.cell_row, medic.cell_col = (5, 5)
+        scout = _player(
+            "scout", cell_row=5, cell_col=9, visit=Visit(phase="go", started=90)
+        )
+        sight = _sight((_VISITOR, (5, 5)), (_VISITOR, (4, 0)))
+        sight.setdefault("11,11", set()).add("11,3")
+        ctx = _grid_map(sight=sight, size=16)
+        assert pathfinding._join_goal(ammo, [ammo, medic, scout], ctx, _LEASH_TICK)
+        assert self._goal(ammo, [ammo, medic, scout], ctx) == (11, 3)
+
+    @pytest.mark.parametrize("still", ["is_holding", "is_hiding"])
+    def test_a_fired_leash_leaves_a_hold_or_hide_still(self, still: str) -> None:
+        # Decision 27: the leash sets only the goal, never overriding the roll.
+        from matches.simulation import BatchSimulator
+
+        ammo, medic, ctx = self._scene()
+        setattr(ammo, still, True)
+        ammo.last_chosen_action = "hold" if still == "is_holding" else "hide"
+        assert self._leash(ammo, [ammo, medic], ctx) is not None
+        BatchSimulator()._advance_player(
+            ammo, [ammo, medic], _LEASH_TICK, ctx, ammo.last_chosen_action
+        )
+        assert (ammo.cell_row, ammo.cell_col) == (0, 0)
+        assert getattr(ammo, still) is True
+
+    def test_without_the_roll_the_leash_walks(self) -> None:
+        from matches.simulation import BatchSimulator
+
+        ammo, medic, ctx = self._scene()
+        BatchSimulator()._advance_player(ammo, [ammo, medic], _LEASH_TICK, ctx, "")
+        assert (ammo.cell_row, ammo.cell_col) != (0, 0)
+
+
 class TestIdleTrade:
     """CAL-03 rule 2 (#588): an Active support whose roll plans nothing (a ``hide``,
     or an empty ``resupply_ally``) Tags an enemy in sight with probability
@@ -936,6 +1291,51 @@ class TestIdleTrade:
             time_domain="ticks",
         )
         assert self._kinds(plans) == [("hide", None)]
+
+
+class TestCommsReach:
+    """CAL-04d (#602): ``map_context.comms_reach``, half the grid's diagonal, is
+    the range of ``_support_link`` and ``_broadcast_communication``."""
+
+    def test_half_the_diagonal(self) -> None:
+        assert comms_reach([[1] * 8 for _ in range(6)]) == 5.0
+
+    def test_no_grid_is_unbounded(self) -> None:
+        assert comms_reach([]) == math.inf
+        assert comms_reach(None) == math.inf
+
+
+class TestPartnerRole:
+    """CAL-04d (#602): ``partner_role`` names the other support role."""
+
+    @pytest.mark.parametrize(
+        ("role", "partner"), [("medic", "ammo"), ("ammo", "medic")]
+    )
+    def test_each_support_names_the_other(self, role: str, partner: str) -> None:
+        assert support_survival.partner_role(role) == partner
+
+    def test_any_other_role_gets_the_medic(self) -> None:
+        assert support_survival.partner_role("scout") == "medic"
+
+
+class TestOwnTeammate:
+    """CAL-04d (#602): ``own_teammate`` is *player*'s living teammate in a role."""
+
+    def test_the_living_teammate_in_the_role(self) -> None:
+        ammo, medic = _player("ammo"), _player("medic")
+        enemy_medic = _player("medic", team="blue")
+        assert (
+            support_survival.own_teammate(ammo, "medic", [enemy_medic, ammo, medic])
+            is medic
+        )
+
+    def test_an_eliminated_teammate_is_none(self) -> None:
+        ammo, medic = _player("ammo"), _player("medic", final_lives=0)
+        assert support_survival.own_teammate(ammo, "medic", [ammo, medic]) is None
+
+    def test_never_the_player_itself(self) -> None:
+        medic = _player("medic")
+        assert support_survival.own_teammate(medic, "medic", [medic]) is None
 
 
 class TestVisitShare:

@@ -19,7 +19,7 @@ Pure Python; imports only ``time_constants`` at module level so it is safe anywh
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from .time_constants import _stale_table
 
@@ -80,8 +80,10 @@ def callout_chance(actor) -> float:
 #: has started (``attempt_resupply``, ``choose_resupply_target``).
 DOUBLE_WINDOW_TICKS: int = 1
 
+#: The two kinds of Resupply (CAL-04d).
+ResupplyKind = Literal["lives", "shots"]
 #: The kind of Resupply each support role gives.
-RESUPPLY_KIND: dict[str, str] = {"medic": "lives", "ammo": "shots"}
+RESUPPLY_KIND: dict[str, ResupplyKind] = {"medic": "lives", "ammo": "shots"}
 
 
 @dataclass(frozen=True)
@@ -90,7 +92,7 @@ class LastSingle:
     or ``shots``), its tick and the supporter's ``tag_id_key``. ``paired`` is True
     once the other kind landed inside the window (the pair is used)."""
 
-    kind: str
+    kind: ResupplyKind
     tick: int
     supporter: str
     paired: bool = False
@@ -100,7 +102,7 @@ def double_window_open(teammate: Any, supporter: Any, tick: float) -> bool:
     """True while *teammate*'s last single is at most ``DOUBLE_WINDOW_TICKS`` old,
     it was the other kind from another supporter, no Down came after it, and its
     pair is unused: then *supporter* may deliver the second kind. No RNG."""
-    single: Optional[LastSingle] = getattr(teammate, "last_single", None)
+    single: Optional[LastSingle] = teammate.last_single
     kind = RESUPPLY_KIND.get(supporter.role)
     if single is None or kind is None or single.paired:
         return False
@@ -130,7 +132,7 @@ def resupply_landed(
 #: ``resupply_ally`` or a ``hide``) Tags an enemy in sight instead.
 IDLE_TRADE_RATE: float = 0.4
 #: CAL-03 rule 3: at this many lives or fewer the Ammo's Defense cell anchors on its
-#: Medic (``modes._ammo_anchor_goal``) ...
+#: Medic (``modes._defense_goal``, through ``modes._back_goal``) ...
 AMMO_ANCHOR_LIVES: int = 15
 #: ... and at this many or fewer it walks to its Medic (``choose_goal_cell`` step 1).
 AMMO_SEEK_MEDIC_LIVES: int = 6
@@ -166,10 +168,32 @@ VISIT_TIMEOUT_TICKS: int = 60
 VISIT_MAX_TICKS: int = 120
 #: ... starts no new visit for this many ticks after one ends ...
 VISIT_COOLDOWN_TICKS: int = 160
-#: ... except at this share of the cap or less (step 1's old seek threshold).
+#: ... except at this share of the cap or less (step 1's old seek threshold), a
+#: Critical visit (``resupply_visit._start``) ...
 VISIT_SEEK_SHARE: float = 0.3
+#: ... which waits only this many ticks after the last visit ended, whatever its
+#: reason (``resupply_visit.end_visit`` sets ``critical_visit_next_tick``; CAL-04b,
+#: #600).
+CRITICAL_COOLDOWN_TICKS: int = 80
+#: CAL-04b (#600): a visit ends Satisfied once Lives and Shots are each at least
+#: this share of the cap, or once the visitor has received this many doubles on it.
+SATISFIED_SHARE: float = 2 / 3
+SATISFIED_DOUBLES: int = 2
+#: CAL-04 (#598): the Ammo leash's reach, Chebyshev squares from the Medic's
+#: remembered cell (``combat._support_link``, ``pathfinding._leash_goal``, and
+#: ``round_probe``'s measures) ...
+LEASH_SQUARES: int = 10
+#: ... and the leash fires once the Ammo has been beyond it for more than this
+#: many ticks (CAL-04c, #601).
+LEASH_TICKS: int = 10
 
-_SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
+#: The two support roles, Medic then Ammo (the order ``_own_supports`` returns).
+SUPPORT_ROLES: tuple[str, ...] = ("medic", "ammo")
+
+
+def partner_role(role: str) -> str:
+    """The other support role: ``ammo`` for a Medic, else ``medic``."""
+    return "ammo" if role == "medic" else "medic"
 
 
 def visit_share(player: Any) -> float:
@@ -180,18 +204,36 @@ def visit_share(player: Any) -> float:
     return min(VISIT_SHARE_MAX, max(VISIT_SHARE_MIN, share))
 
 
+#: A Resupply visit's phase (CAL-04d): ``wait`` for the supports, ``go`` to them,
+#: or ``at`` them.
+VisitPhase = Literal["wait", "go", "at"]
+
+
 @dataclass(frozen=True)
 class Visit:
     """A Resupply visit (CAL-03 rule 6, ``resupply_visit``): its ``phase``
     (``wait``, ``go`` or ``at``), the tick it ``started``, the ``arrived`` tick (a
     support first saw the player) and its ``goal`` cell. ``backline_done`` is True
-    once the walk reached the player's ``backline_cell``."""
+    once the walk reached the player's ``backline_cell``; ``doubles`` counts the
+    doubles received on this visit (CAL-04b, ``combat.attempt_resupply``)."""
 
-    phase: str
+    phase: VisitPhase
     started: int
     arrived: Optional[int] = None
     goal: Optional[tuple[int, int]] = None
     backline_done: bool = False
+    doubles: int = 0
+
+
+@dataclass(frozen=True)
+class Callout:
+    """CAL-03 rule 7 (``resupply_visit.call_out``): a teammate at
+    ``CALLOUT_LIVES`` or fewer (``caller``, a ``tag_id_key``) called a support to
+    ``cell`` at ``tick``."""
+
+    caller: str
+    cell: tuple[int, int]
+    tick: int
 
 
 def _cell(player: Any) -> Optional[tuple[int, int]]:
@@ -211,7 +253,7 @@ def medic_with_ammo(ammo: Any, medic: Any, movement_ctx: Any) -> bool:
     return movement_ctx is not None and movement_ctx.can_see(a, m)
 
 
-def _own(player: Any, role: str, all_alive: list) -> Any:
+def own_teammate(player: Any, role: str, all_alive: list) -> Any:
     """*player*'s living teammate in *role* (not *player*), or None."""
     return next(
         (
@@ -232,7 +274,7 @@ def _ammo_singles_case(
     """The Ammo gives singles as before HOLD: its Medic is Eliminated, or the Medic
     is not with it and its memory of the Medic is missing or older than
     ``LINK_STALE_TICKS``. No RNG."""
-    medic = _own(ammo, "medic", all_alive)
+    medic = own_teammate(ammo, "medic", all_alive)
     if medic is None:
         return True
     if medic_with_ammo(ammo, medic, movement_ctx):
@@ -254,7 +296,7 @@ def hold_allows(
     singles case (``_ammo_singles_case``). No RNG."""
     from .resupply_queue import _is_in_los  # noqa: PLC0415 (resupply_queue -> here)
 
-    if teammate.role in _SUPPORT_ROLES or teammate.visit is not None:
+    if teammate.role in SUPPORT_ROLES or teammate.visit is not None:
         return True
     if 0 < teammate.final_lives <= CALLOUT_LIVES:
         return True
@@ -262,7 +304,7 @@ def hold_allows(
         support, all_alive, second, movement_ctx
     ):
         return True
-    other = _own(support, "ammo" if support.role == "medic" else "medic", all_alive)
+    other = own_teammate(support, partner_role(support.role), all_alive)
     return (
         other is not None
         and other is not teammate

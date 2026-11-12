@@ -30,11 +30,14 @@ from matches.round_probe import (
     probe_seeds,
     run_probe,
 )
+from matches.sim_helpers import support_survival
 from matches.sim_helpers.time_constants import TICK_SECONDS
 
 # The real per-role targets ``--targets`` prints beside the sim's (CAL-02c, #566).
 DEFAULT_TARGETS = REPO_ROOT / "data" / "tdf_role_targets_2026.json"
 _ROLES = ("commander", "heavy", "scout", "ammo", "medic")
+# CAL-04a: the Roles that make Resupply visits.
+_VISITORS = ("commander", "heavy", "scout")
 # The real figure beside a role line: measure -> (targets metric, scale to print).
 _REAL_METRIC: dict[str, tuple[str, float]] = {
     "tags_made_per_round": ("tags", 1.0),
@@ -257,6 +260,77 @@ def _cal03_lines(
     return lines + [f"  Gap to the next visit, s: {gap}" + real_gap]
 
 
+def _pooled(measures: Mapping[str, Measure]) -> str:
+    """``name mean +/- se, ...``: pooled shares with their own standard error."""
+    return ", ".join(
+        f"{name} {m.mean:.1f} +/- {m.se:.1f}" for name, m in measures.items()
+    )
+
+
+def _cal04_lines(
+    role: str, pooled: RoleMeasures, seeds: list[RoleMeasures]
+) -> list[str]:
+    """CAL-04a (#599): a Commander, Heavy or Scout's engine visits; a Medic or
+    Ammo's lives lost by cause and minute band; the Ammo's distance to its Medic."""
+
+    def line(label: str, read: Callable[[RoleMeasures], Measure]) -> str:
+        return _measure_line(label, read(pooled), [read(seed) for seed in seeds])
+
+    if role in _VISITORS:
+        visits = pooled.engine_visits
+        ticks = visits.median_ticks_to_arrive
+        reach = support_survival.LEASH_SQUARES
+        return [
+            line(
+                "Engine visit starts per round, normal",
+                lambda m: m.engine_visits.normal_starts,
+            ),
+            line(
+                "Engine visit starts per round, critical",
+                lambda m: m.engine_visits.critical_starts,
+            ),
+            f"  Engine visit end %: {_pooled(visits.end_share)}",
+            "  Engine visit ticks to arrive: "
+            + ("none" if ticks is None else f"median {ticks:.1f}"),
+            line(
+                "Engine visits never arriving %",
+                lambda m: m.engine_visits.never_arrived,
+            ),
+            line(
+                "Arrivals with both supports ready %",
+                lambda m: m.engine_visits.ready_at_arrival,
+            ),
+            f"  Not-ready arrival causes %: {_pooled(visits.not_ready_causes)}",
+            line(
+                f"Arrivals with the supports more than {reach} squares apart %",
+                lambda m: m.engine_visits.supports_apart,
+            ),
+            line(
+                "Arrivals with both supports ready later in the visit %",
+                lambda m: m.engine_visits.ready_later,
+            ),
+        ]
+    lines = [
+        f"  Lives lost to {name} by minute band: "
+        + _pooled(pooled.lives_by_band[cause])
+        for cause, name in (("tag", "Tags"), ("missile", "missiles"), ("nuke", "nukes"))
+    ]
+    if role == "ammo":
+        distance = pooled.medic_distance_median
+        far = pooled.medic_distance_far
+        lines.append(
+            "  Medic-Ammo distance, squares: "
+            + (
+                "none"
+                if distance is None
+                else f"median {distance:.1f} over {pooled.medic_distance_plans} "
+                f"Active plans; more than {support_survival.LEASH_SQUARES}: "
+                f"{far.mean:.1f} +/- {far.se:.1f} %"
+            )
+        )
+    return lines
+
+
 def _real_cadence(targets: Mapping | None, role: str) -> str:
     """`` | real median 7.2 ticks``: the targets' cadence median (seconds) in
     ticks, or nothing without one."""
@@ -385,6 +459,7 @@ def _role_lines(
         f"{measure('enemies_on_floor_per_active_roll')}",
         _cadence_line(pooled, role, targets),
         *_cal03_lines(role, pooled, seeds, targets),
+        *_cal04_lines(role, pooled, seeds),
     ]
 
 
