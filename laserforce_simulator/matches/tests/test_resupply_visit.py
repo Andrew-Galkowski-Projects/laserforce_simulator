@@ -628,6 +628,19 @@ class TestTheVisitGoal:
         assert self._goal(scout, everyone, ctx) not in (MEDIC_AT, AMMO_AT)
 
 
+class TestNearestCell:
+    """CAL-04d (#602): ``nearest_cell``, Manhattan from *here*, ties on the cell."""
+
+    def test_the_nearest_by_manhattan(self) -> None:
+        assert resupply_visit.nearest_cell([(5, 5), (1, 2), (0, 4)], HERE) == (1, 2)
+
+    def test_a_tie_goes_to_the_lower_cell(self) -> None:
+        assert resupply_visit.nearest_cell([(2, 0), (0, 2), (1, 1)], HERE) == (0, 2)
+
+    def test_no_cells_is_none(self) -> None:
+        assert resupply_visit.nearest_cell([], HERE) is None
+
+
 class TestPartnerFollows:
     """Decision 43: a single to a visiting player is followed in the same tick by
     the other support's, when that support is available and sees the player."""

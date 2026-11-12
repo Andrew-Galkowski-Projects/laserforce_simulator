@@ -22,6 +22,7 @@ from . import support_survival
 from .follow_rule import Cell, chased_tag_ids, open_trail
 from .goal_scoring import draw_goal
 from .map_context import _NEUTRAL_BASE_TYPES
+from .resupply_visit import nearest_cell
 from .time_constants import HELD_GOAL_EXPIRY, RESPAWN_TICKS
 
 
@@ -342,12 +343,8 @@ def attack_tag_goal(
     targets = _attack_targets(
         player, all_alive, enemy_color, tick, time_domain, exclude or set()
     )
-    row, col = cast(Cell, (player.cell_row, player.cell_col))
-    return min(
-        (cell for _, cell in targets),
-        key=lambda c: (abs(c[0] - row) + abs(c[1] - col), c),
-        default=None,
-    )
+    here = cast(Cell, (player.cell_row, player.cell_col))
+    return nearest_cell((cell for _, cell in targets), here)
 
 
 def _enemy_base_keys(player, enemy_color: str, movement_ctx: MapContext) -> frozenset:

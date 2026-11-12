@@ -69,7 +69,7 @@ def _sees(player: Any, support: Any, movement_ctx: Any) -> bool:
     return bool(_is_in_los(player, support, movement_ctx))
 
 
-def _nearest(cells: Iterable[Cell], here: Cell) -> Optional[Cell]:
+def nearest_cell(cells: Iterable[Cell], here: Cell) -> Optional[Cell]:
     """The cell nearest *here* (Manhattan, then the cell), or None."""
     return min(
         cells,
@@ -114,7 +114,7 @@ def visit_goal(player: Any, supports: list, movement_ctx: Any) -> Optional[Cell]
         return None
     seen = [set(movement_ctx.cells_visible_from(c)) for c in cells]
     both = set.intersection(*seen)
-    return _nearest(both, here) or _nearest(seen[0], here) or cells[0]
+    return nearest_cell(both, here) or nearest_cell(seen[0], here) or cells[0]
 
 
 def _forget(player: Any, supports: Iterable[Any]) -> None:

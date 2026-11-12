@@ -9,7 +9,7 @@ if TYPE_CHECKING:
 
 from . import support_survival
 from .support_survival import SUPPORT_ROLES
-from .resupply_visit import freshest_callout
+from .resupply_visit import freshest_callout, nearest_cell
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
 from .follow_rule import chased_tag_ids
 from .goal_scoring import draw_goal, enemy_base_cells
@@ -624,23 +624,7 @@ def _link_return_goal(
         return None
     target = (int(entry["cell"][0]), int(entry["cell"][1]))
     here = (player.cell_row, player.cell_col)
-    return min(
-        movement_ctx.cells_visible_from(target),
-        key=lambda c: (abs(c[0] - here[0]) + abs(c[1] - here[1]), c),
-        default=target,
-    )
-
-
-def _nearest(
-    cells: list[tuple[int, int]], here: tuple[int, int], default: tuple[int, int]
-) -> tuple[int, int]:
-    """The cell of *cells* nearest *here* (Manhattan, ties on the cell), else
-    *default*."""
-    return min(
-        cells,
-        key=lambda c: (abs(c[0] - here[0]) + abs(c[1] - here[1]), c),
-        default=default,
-    )
+    return nearest_cell(movement_ctx.cells_visible_from(target), here) or target
 
 
 def _leash_goal(
@@ -671,7 +655,7 @@ def _leash_goal(
         for c in movement_ctx.cells_visible_from(target)
         if max(abs(c[0] - target[0]), abs(c[1] - target[1])) <= reach
     ]
-    return _nearest(near, (player.cell_row, player.cell_col), target)
+    return nearest_cell(near, (player.cell_row, player.cell_col)) or target
 
 
 def _join_goal(
@@ -710,7 +694,7 @@ def _join_goal(
         key=lambda p: (abs(p.cell_row - here[0]) + abs(p.cell_col - here[1]), p.tag_id),
     )
     target = (visitor.cell_row, visitor.cell_col)
-    return _nearest(movement_ctx.cells_visible_from(target), here, target)
+    return nearest_cell(movement_ctx.cells_visible_from(target), here) or target
 
 
 def _goal_from_role(
