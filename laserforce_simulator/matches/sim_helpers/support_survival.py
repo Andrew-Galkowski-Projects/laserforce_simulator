@@ -19,7 +19,7 @@ Pure Python; imports only ``time_constants`` at module level so it is safe anywh
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from .time_constants import _stale_table
 
@@ -80,8 +80,10 @@ def callout_chance(actor) -> float:
 #: has started (``attempt_resupply``, ``choose_resupply_target``).
 DOUBLE_WINDOW_TICKS: int = 1
 
+#: The two kinds of Resupply (CAL-04d).
+ResupplyKind = Literal["lives", "shots"]
 #: The kind of Resupply each support role gives.
-RESUPPLY_KIND: dict[str, str] = {"medic": "lives", "ammo": "shots"}
+RESUPPLY_KIND: dict[str, ResupplyKind] = {"medic": "lives", "ammo": "shots"}
 
 
 @dataclass(frozen=True)
@@ -90,7 +92,7 @@ class LastSingle:
     or ``shots``), its tick and the supporter's ``tag_id_key``. ``paired`` is True
     once the other kind landed inside the window (the pair is used)."""
 
-    kind: str
+    kind: ResupplyKind
     tick: int
     supporter: str
     paired: bool = False
@@ -199,6 +201,11 @@ def visit_share(player: Any) -> float:
     return min(VISIT_SHARE_MAX, max(VISIT_SHARE_MIN, share))
 
 
+#: A Resupply visit's phase (CAL-04d): ``wait`` for the supports, ``go`` to them,
+#: or ``at`` them.
+VisitPhase = Literal["wait", "go", "at"]
+
+
 @dataclass(frozen=True)
 class Visit:
     """A Resupply visit (CAL-03 rule 6, ``resupply_visit``): its ``phase``
@@ -207,12 +214,23 @@ class Visit:
     once the walk reached the player's ``backline_cell``; ``doubles`` counts the
     doubles received on this visit (CAL-04b, ``combat.attempt_resupply``)."""
 
-    phase: str
+    phase: VisitPhase
     started: int
     arrived: Optional[int] = None
     goal: Optional[tuple[int, int]] = None
     backline_done: bool = False
     doubles: int = 0
+
+
+@dataclass(frozen=True)
+class Callout:
+    """CAL-03 rule 7 (``resupply_visit.call_out``): a teammate at
+    ``CALLOUT_LIVES`` or fewer (``caller``, a ``tag_id_key``) called a support to
+    ``cell`` at ``tick``."""
+
+    caller: str
+    cell: tuple[int, int]
+    tick: int
 
 
 def _cell(player: Any) -> Optional[tuple[int, int]]:

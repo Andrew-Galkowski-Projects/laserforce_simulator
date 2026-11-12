@@ -3,7 +3,7 @@ from typing import Any, Optional
 
 from matches.sim_helpers.modes import Mode, default_mode
 from matches.sim_helpers.player_counters import PlayerCounters
-from matches.sim_helpers.support_survival import LastSingle, Visit
+from matches.sim_helpers.support_survival import Callout, LastSingle, Visit
 from matches.sim_helpers.role_constants import (
     MAX_LIVES as _MAX_LIVES,
     MAX_SHOTS as _MAX_SHOTS,
@@ -216,8 +216,8 @@ class PlayerState:
     # CAL-03 rule 10: a Commander's or Scout's last known backline position.
     backline_cell: Optional[tuple[int, int]] = None
     # CAL-03 rule 7 (supports): call-outs from teammates at 1-3 lives, freshest
-    # first (``resupply_visit.Callout``).
-    support_callouts: list = field(default_factory=list)
+    # first (``support_survival.Callout``).
+    support_callouts: list[Callout] = field(default_factory=list)
     downs_taken: int = 0
     downs_in_resupply_cooldown: int = 0
 

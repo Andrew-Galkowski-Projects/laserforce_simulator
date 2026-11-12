@@ -13,11 +13,11 @@ imported when called (it imports ``combat``, which imports this module).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from typing import Any, Iterable, Literal, Optional
 
 from . import support_survival
-from .support_survival import SUPPORT_ROLES, Visit
+from .support_survival import SUPPORT_ROLES, Callout, Visit
 
 Cell = tuple[int, int]
 #: What a visit makes of this tick's Action roll (a Tag roll always stands):
@@ -35,16 +35,6 @@ VisitEnd = Literal[
 #: Rule 10: the backline is the Heavy, Ammo and Medic; the offense keeps its cell.
 _BACKLINE_ROLES: tuple[str, ...] = ("heavy", "ammo", "medic")
 _OFFENSE_ROLES: tuple[str, ...] = ("commander", "scout")
-
-
-@dataclass(frozen=True)
-class Callout:
-    """Rule 7: a teammate at ``CALLOUT_LIVES`` or fewer (``caller``, a
-    ``tag_id_key``) called a support to ``cell`` at ``tick``."""
-
-    caller: str
-    cell: Cell
-    tick: int
 
 
 def _here(player: Any) -> Optional[Cell]:

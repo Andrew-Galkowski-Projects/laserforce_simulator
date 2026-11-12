@@ -790,7 +790,7 @@ class TestCallOut:
     def test_it_fires_at_callout_lives(self) -> None:
         scout, medic, ammo, everyone, ctx = self._caller(support_survival.CALLOUT_LIVES)
         assert resupply_visit.call_out(scout, everyone, ctx, NOW)
-        call = resupply_visit.Callout(caller="red_scout", cell=HERE, tick=NOW)
+        call = support_survival.Callout(caller="red_scout", cell=HERE, tick=NOW)
         assert medic.support_callouts == [call]
         assert ammo.support_callouts == [call]
 
