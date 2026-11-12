@@ -235,3 +235,53 @@ class BucketTests(TestCase):
         buckets = changed_files.bucket([path])
         self.assertEqual(buckets["templates"], [])
         self.assertEqual(buckets["other"], [path])
+
+
+_BLOCKED = (
+    "ImportError: DLL load failed while importing black: "
+    "An Application Control policy has blocked this file."
+)
+
+
+class BlackStepTests(TestCase):
+    """CAL-04 retro: Application Control blocks the venv's compiled black."""
+
+    def test_no_python_file_skips(self) -> None:
+        self.assertEqual(verify.black_step([], "."), ("SKIP", "no changed .py files"))
+
+    def test_blocked_black_without_the_pure_copy_says_how_to_install_it(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            with mock.patch.object(verify, "_run", return_value=(1, _BLOCKED)):
+                status, note = verify.black_step(["a.py"], repo)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("scripts/install_pure_black.py", note)
+
+    def test_blocked_black_reruns_on_the_pure_copy(self) -> None:
+        envs: list[dict[str, str] | None] = []
+
+        def fake_run(
+            cmd: list[str], cwd: str, env: dict[str, str] | None = None
+        ) -> tuple[int, str]:
+            envs.append(env)
+            return (1, _BLOCKED) if env is None else (0, "")
+
+        with tempfile.TemporaryDirectory() as repo:
+            pure = Path(repo, ".tools", "black")
+            pure.mkdir(parents=True)
+            with mock.patch.object(verify, "_run", fake_run):
+                status, note = verify.black_step(["a.py"], repo)
+        self.assertEqual((status, note), ("PASS", "pure-Python black (.tools/black)"))
+        self.assertEqual(len(envs), 2)
+        assert envs[1] is not None
+        self.assertEqual(envs[1]["PYTHONPATH"], str(pure))
+
+    def test_an_unformatted_file_still_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as repo:
+            with mock.patch.object(
+                verify, "_run", return_value=(1, "would reformat a.py")
+            ):
+                status, note = verify.black_step(["a.py"], repo)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("would reformat a.py", note)

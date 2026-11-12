@@ -41,7 +41,7 @@ since is Markdown, comments, docstrings or formatting: skip Steps 2, 2b and 3, a
 write that run's counts with `(at <sha>; later changes cosmetic)`. Otherwise:
 
 ```powershell
-python scripts/run_suite.py
+python scripts/run_suite.py --rerun-failures
 ```
 
 It runs `pytest laserforce_simulator` and prints only the failures and the

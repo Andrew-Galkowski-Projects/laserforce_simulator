@@ -139,6 +139,10 @@ Add these to each implementer prompt, beside `SKILL.md`'s shared constraints:
 
 ## An implementer that stops reporting
 
+When an agent's result is a network error (`ENOTFOUND`, a dropped connection),
+first `SendMessage` it "continue": it resumes with its context intact (CAL-04's
+three drops all resumed this way). Restart only if that fails.
+
 An agent's session can end with no report and no commit (CAL-02b finished every
 criterion and died before `git commit`). Before restarting a ticket, run
 `python scripts/worktree_status.py` (read-only: every worktree's branch, last

@@ -28,6 +28,9 @@ media/
 
 # Local virtual environment
 .venv/
+# Pure-Python black for a machine that blocks the compiled one
+# (scripts/install_pure_black.py)
+.tools/
 
 # Environment variable files — never commit real secrets
 .env

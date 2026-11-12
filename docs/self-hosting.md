@@ -96,7 +96,10 @@ is always single-use.
 
 | Task | Command |
 |---|---|
+| Back up before an update | `dc exec -T db pg_dump -Fc -U laserforce laserforce > selfhost-<date>.dump` (restore with `pg_restore -c`) |
 | Update to the latest `main` | `git pull` then `dc up -d --build` |
+| Copy a local map's configs to the live site | Export on the PC: `python scripts/lfstats_import/export_map_fixture.py "<map name>" <zone size> map.json` (local database). Then `docker cp map.json <app container>:/tmp/map.json` and `dc exec app python laserforce_simulator/manage.py seed_demo /tmp/map.json`. The configs go on the live map of the same name if it has none yet (an uploaded map keeps its image); a missing map is created without an image. The committed `data/maps/syracuse.json` is already in the image |
+| Make or refresh the demo Account | `dc exec app python laserforce_simulator/manage.py seed_demo data/maps/syracuse.json`: creates `demo@laserforce.demo` with two Teams on the first run, sets a new password every run and plays one more full-fidelity Round on the map; prints the email, password and Round id |
 | First update after ANG-10 (nginx removed) | `git pull`, `dc up -d --build --remove-orphans` (drops the old nginx container), then `dc restart tailscale` (re-reads `serve.json`, now proxying to `app:8000`) |
 | Logs | `dc logs -f app worker` |
 | Funnel status / URL | `dc exec tailscale tailscale funnel status` |

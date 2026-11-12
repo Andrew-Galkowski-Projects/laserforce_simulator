@@ -69,3 +69,46 @@ class CondenseTests(TestCase):
         self.assertEqual(
             run_suite.condense("....,,s.x\n3 passed in 1s\n"), "3 passed in 1s"
         )
+
+
+_FLAKY_SUMMARY = """\
+=========================== short test summary info ===========================
+FAILED matches/tests/test_a.py::A::test_one - AssertionError: False not found
+ERROR matches/tests/test_b.py::B::test_two - django.db.utils.OperationalError
+FAILED app/tests/test_x.py::TestX::test_y
+2 failed, 1 error, 7 passed in 3.45s
+"""
+
+
+class FailedIdsTests(TestCase):
+    def test_reads_failed_and_error_rows_without_their_messages(self) -> None:
+        self.assertEqual(
+            run_suite.failed_ids(_FLAKY_SUMMARY),
+            [
+                "matches/tests/test_a.py::A::test_one",
+                "matches/tests/test_b.py::B::test_two",
+                "app/tests/test_x.py::TestX::test_y",
+            ],
+        )
+
+    def test_green_run_has_none(self) -> None:
+        self.assertEqual(run_suite.failed_ids(_GREEN), [])
+
+
+class RerunReportTests(TestCase):
+    """CAL-04 retro: #604 failed three times in parallel and passed alone."""
+
+    def test_splits_tests_that_pass_alone_from_tests_that_fail_alone(self) -> None:
+        codes = {"t::flaky": 0, "t::broken": 1}
+        lines = run_suite.rerun_report(["t::flaky", "t::broken"], codes.__getitem__)
+        self.assertEqual(
+            lines,
+            [
+                "RERUN ALONE (-n0)",
+                "passes alone (likely flaky): t::flaky",
+                "fails alone: t::broken",
+            ],
+        )
+
+    def test_no_failures_reports_nothing(self) -> None:
+        self.assertEqual(run_suite.rerun_report([], lambda node: 1), [])
