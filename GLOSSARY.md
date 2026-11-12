@@ -125,8 +125,21 @@ A single tick in which a requesting player receives both a **Lives** resupply an
 An action by any player signalling they need a **Resupply**, resolved at end of tick against eligible nearby support players. On a map round a Commander, Heavy or Scout makes one only on a **Resupply visit**.
 
 **Resupply visit**:
-A Commander, Heavy or Scout low on **Lives** or **Shots** (about a third of the cap) walks back to its Medic and Ammo, waits briefly for both, takes its **Resupplies** (as **Combo resupplies** where it can), then goes back out and does not start another for 160 ticks unless it falls to 30% (CAL-03). Map rounds only.
+A Commander, Heavy or Scout low on **Lives** or **Shots** (about a third of the cap) walks back to its Medic and Ammo, waits briefly for both, takes its **Resupplies** (as **Combo resupplies** where it can) until it is **Satisfied**, then goes back out and does not start another for 160 ticks, unless it makes a **Critical visit** (CAL-03, CAL-04). Map rounds only.
 _Avoid_: calling one Resupply a visit; in `round_probe` a visit is measured from the Resupply events (a gap of 15 s or less), which is not the engine's visit.
+
+**Critical visit**:
+A **Resupply visit** started at 30% of the cap or less in **Lives** or **Shots**. It skips the normal 160-tick wait between visits but has its own shorter one, 80 ticks (CAL-04).
+
+**Satisfied**:
+How a **Resupply visit** normally ends: the visitor's **Lives** and **Shots** are each at least two-thirds of the cap, or it has received two **Combo resupplies** on the visit (CAL-04).
+_Avoid_: "full"; a visit rarely refills every Shot.
+
+**Join**:
+A support's walk to a visitor it cannot see while its partner support already sees it, so both can Resupply it together (CAL-04).
+
+**Ammo leash**:
+The rule that brings the Ammo back to its Medic: an Ammo more than 10 squares from where it last saw its Medic for more than 10 ticks walks back to within 10 squares (CAL-04).
 
 **Backline**:
 The Heavy, Ammo and Medic, who hold a position on the map. A Commander or Scout remembers where it last saw the backline and walks there first on a **Resupply visit** (CAL-03).
