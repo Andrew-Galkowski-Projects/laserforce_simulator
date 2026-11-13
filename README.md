@@ -289,7 +289,7 @@ laserforce_simulator/
 1. Resolve any pending missiles/nukes whose delay has elapsed
 2. Each active player picks an action (weighted random by role, zone, remaining resources)
 3. Resolve the action — update player state and write a `GameEvent`
-4. On a map, every non-stationary player also advances toward their goal cell this tick — movement is decoupled from the chosen action; a player is stationary only while hiding, holding (overwatch), or capturing a base
+4. On a map, every non-stationary player also advances toward their goal cell this tick — movement is decoupled from the chosen action; a player is stationary only while holding (overwatch), capturing a base, or hiding on the out-of-sight cell its hide chose (a hider walks up to 15 ft out of every remembered enemy's sight first, MECH-23)
 5. Check for eliminations; award a 10,000-point bonus for wiping the opposing team
 
 Action weights live in `matches/sim_helpers/weights.py` and shift dynamically based on remaining lives, special charges, current zone, and allied presence.

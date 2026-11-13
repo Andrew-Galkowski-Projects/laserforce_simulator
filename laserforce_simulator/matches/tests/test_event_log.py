@@ -225,7 +225,7 @@ class TestTagVerb(unittest.TestCase):
 
 
 class TestMissVerb(unittest.TestCase):
-    """``miss(attacker, defender, tick, kind=..., reason=...)`` emits
+    """``miss(attacker, defender, tick, kind=...)`` emits
     ``event_type='miss'``, points=0."""
 
     def test_initial_miss(self) -> None:
@@ -237,12 +237,14 @@ class TestMissVerb(unittest.TestCase):
         self.assertEqual(e["description"], "Alice misses Bob")
         self.assertNotIn("reason", e["metadata"])
 
-    def test_hiding_reason(self) -> None:
+    def test_miss_takes_no_reason(self) -> None:
+        # MECH-23 (#606): replaces test_hiding_reason. "hiding" was the only
+        # reason ever passed, and the hiding miss is gone, so the parameter
+        # went with it.
         log = EventLog()
-        log.miss(_attacker(), _defender(), 5, reason="hiding")
-        e = log.entries[0]
-        self.assertEqual(e["description"], "Alice misses Bob (hiding)")
-        self.assertEqual(e["metadata"]["reason"], "hiding")
+        with self.assertRaises(TypeError):
+            log.miss(_attacker(), _defender(), 5, reason="hiding")  # type: ignore[call-arg]
+        self.assertEqual(log.entries, [])
 
     def test_follow_up_miss(self) -> None:
         log = EventLog()
@@ -258,14 +260,14 @@ class TestMissVerb(unittest.TestCase):
         self.assertEqual(e["description"], "Alice reaction miss on Bob")
         self.assertTrue(e["metadata"]["is_reaction"])
 
-    def test_overwatch_hiding_miss_carries_both_flags(self) -> None:
-        """Overwatch + hide: metadata should have both overwatch=True
-        and reason='hiding'."""
+    def test_overwatch_miss_carries_the_overwatch_flag(self) -> None:
+        """MECH-23 (#606): was test_overwatch_hiding_miss_carries_both_flags.
+        The hiding reason is gone, so only the overwatch flag remains."""
         log = EventLog()
-        log.miss(_attacker(), _defender(), 5, kind="overwatch", reason="hiding")
+        log.miss(_attacker(), _defender(), 5, kind="overwatch")
         md = log.entries[0]["metadata"]
         self.assertTrue(md["overwatch"])
-        self.assertEqual(md["reason"], "hiding")
+        self.assertNotIn("reason", md)
 
 
 # ---------------------------------------------------------------------------

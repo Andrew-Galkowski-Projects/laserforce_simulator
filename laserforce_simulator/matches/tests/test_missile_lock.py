@@ -196,13 +196,14 @@ class TestOneLockRule:
 
         assert list(ctx.missile_locks) == [second.player_id, locker.player_id]
 
+    # MECH-23 (#606): the "hiding" gate's fixture is gone from both gate
+    # lists below; a hider in sight can be Locked (TestHiderCanBeLocked).
     @pytest.mark.parametrize(
         "failed_gate",
         [
             "inactive_attacker",
             "untaggable_defender",
             "no_missiles",
-            "hiding",
             "sight",
             "chased",
         ],
@@ -221,8 +222,6 @@ class TestOneLockRule:
             other.last_downed_time = tick - 1
         elif failed_gate == "no_missiles":
             locker.final_missiles = 0
-        elif failed_gate == "hiding":
-            other.is_hiding = True
         elif failed_gate == "sight":
             other.current_zone = locker.current_zone + 1
         before = len(ctx.events.entries)
@@ -239,7 +238,6 @@ class TestOneLockRule:
             "inactive_attacker",
             "untaggable_defender",
             "no_missiles",
-            "hiding",
             "sight",
             "chased",
         ],
@@ -254,8 +252,6 @@ class TestOneLockRule:
             target.last_downed_time = T - 1
         elif failed_gate == "no_missiles":
             locker.final_missiles = 0
-        elif failed_gate == "hiding":
-            target.is_hiding = True
         elif failed_gate == "sight":
             target.current_zone = locker.current_zone + 1
 
@@ -263,6 +259,32 @@ class TestOneLockRule:
             assert start_missile_lock(locker, target, T, None, ctx=ctx) is None
         assert ctx.missile_locks == {}
         assert ctx.events.entries == []
+
+
+class TestHiderCanBeLocked:
+    """MECH-23 decision 5: the "no Lock on a hider" gate is gone. A hider in
+    sight is as easy to Lock as anyone else."""
+
+    def test_a_lock_starts_on_a_hiding_defender_in_sight(self) -> None:
+        locker = _ps(1)
+        target = _ps(2, team_color="blue", role="scout")
+        target.is_hiding = True
+        ctx = _ctx(locker, target)
+
+        lock = start_missile_lock(locker, target, T, None, ctx=ctx)
+
+        assert lock is not None and lock.defender is target
+        assert _rows(ctx, "locking")
+
+    def test_a_retarget_moves_onto_a_hiding_defender(self) -> None:
+        locker, target, ctx = _locked()
+        other = _ps(3, team_color="blue", role="medic")
+        other.is_hiding = True
+
+        new = start_missile_lock(locker, other, T + 1, None, ctx=ctx)
+
+        assert new is not None and new.defender is other
+        assert _cancels(ctx) == [(T + 1, 1, 2, "retarget")]
 
 
 # ---------------------------------------------------------------------------

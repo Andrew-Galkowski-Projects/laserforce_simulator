@@ -429,8 +429,12 @@ class TestMap05RoleAwareGoal:
         # ally_low_shots has 2/60 shots; ally_ok_shots has 50/60
         assert goal == (3, 3)
 
-    def test_action_hide_moves_to_safest_adjacent_cell(self):
-        from matches.sim_helpers.pathfinding import choose_goal_cell
+    # MECH-23 (#606): replaces test_action_hide_moves_to_safest_adjacent_cell.
+    # That test pinned a dead branch (a hider was Stationary, so the adjacent
+    # lowest-LOS goal was never walked); the branch is gone and hiding.hide_cell
+    # (#607) is the hide goal now.
+    def test_action_hide_has_no_action_driven_goal(self):
+        from matches.sim_helpers.pathfinding import _goal_from_action
 
         spawn_cells = {"red": (0, 0), "blue": (9, 9)}
         scout = _make_player("red_scout", "red", "scout", cell_row=2, cell_col=2)
@@ -440,10 +444,7 @@ class TestMap05RoleAwareGoal:
             adj=adj, cell_los_counts=cell_los_counts, spawn_cells=spawn_cells
         )
 
-        goal = choose_goal_cell(
-            scout, [scout], spawn_cells, ctx, intended_action="hide"
-        )
-        assert goal == (2, 1)
+        assert _goal_from_action(scout, [scout], "blue", 2, 2, "hide", ctx) is None
 
     def test_critical_lives_overrides_action_for_non_support(self):
         from matches.sim_helpers.pathfinding import choose_goal_cell

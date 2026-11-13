@@ -499,8 +499,6 @@ def _goal_from_action(
     time_domain: str = "seconds",
 ) -> tuple[int, int] | None:
     """Return a goal cell driven by the player's last action, or None."""
-    cell_los_counts: dict[str, int] = movement_ctx.cell_los_counts
-
     if intended_action in ("tag_player", "missile_player"):
         # MECH-10: a Chaser's Tag goals skip the players they Chased.
         chased = chased_tag_ids(player, all_alive, second)
@@ -594,15 +592,8 @@ def _goal_from_action(
                 hidden,
             )
 
-    elif intended_action == "hide":
-        adj: dict = movement_ctx.get_adjacency()
-        neighbors = adj.get((cell_row, cell_col), [])
-        if neighbors and cell_los_counts:
-            safest = min(
-                neighbors, key=lambda rc: cell_los_counts.get(f"{rc[0]},{rc[1]}", 0)
-            )
-            return safest
-
+    # MECH-23: no "hide" branch. Its adjacent lowest-LOS goal was never walked
+    # (a hider was Stationary); the hide goal is ``hiding.hide_cell`` now.
     return None
 
 

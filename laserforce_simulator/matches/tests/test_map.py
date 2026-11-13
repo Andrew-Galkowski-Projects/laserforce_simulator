@@ -2490,7 +2490,9 @@ class TestMoveInMemoryMultiCell:
 #   1. action `change_zone` renamed `only_move` (index 1 unchanged).
 #   2. every non-stationary player Advances toward their goal cell EVERY tick,
 #      regardless of which weighted action was chosen (map path only).
-#   3. Stationary = is_hiding True OR chosen action == capture_base.
+#   3. Stationary = holding OR chosen action == capture_base. (MECH-23:
+#      is_hiding left the set; a hider walks to its hide cell, and stays only
+#      once it is there.)
 #      Every other action (tag/missile/use_special/resupply/request/only_move)
 #      Advances while acting.
 #   4. only_move = ONE single 2× step: cells_to_move(...) * 2 in one
@@ -2647,8 +2649,10 @@ class TestMove01AlwaysOnAdvance:
 
         assert player.cell_col > 0, "non-stationary medic must Advance toward goal"
 
-    def test_is_hiding_is_stationary_no_advance(self):
-        """Stationary: is_hiding True → no Advance, no trail entry this tick."""
+    def test_a_hider_with_no_remembered_enemy_does_not_advance(self):
+        """MECH-23 (#607): hiding is no longer Stationary. A hider walks to its
+        ``hiding.hide_cell`` (``test_hiding.py::TestAdvancePlayer``); with no
+        remembered enemy that is its own cell, so no Advance and no trail entry."""
         from matches.simulation import BatchSimulator
 
         grid = _FLOOR_30X1

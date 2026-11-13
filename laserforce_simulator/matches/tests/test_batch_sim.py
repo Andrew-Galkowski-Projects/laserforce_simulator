@@ -2013,6 +2013,69 @@ class TestMove01DeterminismPreserved:
         assert serial["side_advantage"] == parallel["side_advantage"]
 
 
+# 12x12 with wall blocks, so some cells are out of others' sight and a hider has
+# somewhere to walk to (an open floor sees everything).
+_WALLED_12X12 = [
+    [
+        0 if (r in (3, 8) and c in (2, 3, 8, 9)) or (r == 5 and 4 <= c <= 7) else 1
+        for c in range(12)
+    ]
+    for r in range(12)
+]
+
+
+@pytest.mark.django_db
+class TestMech23HidingDeterminism:
+    """MECH-23a (#607): ``hiding.hide_cell`` and ``holds_in_place`` draw no RNG and
+    break ties on ``(row, col)``, so a map round where players walk to hide plays
+    the same serial and parallel."""
+
+    def test_serial_equals_parallel_where_players_hide(self, monkeypatch):
+        from matches.simulation import entrypoints
+
+        team_red, _ = make_team_with_slots("M23ParR")
+        team_blue, _ = make_team_with_slots("M23ParB")
+        arena_map = _move01_make_map("M23ParMap", zone_data=_WALLED_12X12)
+        sim = BatchSimulator()
+
+        walks: list = []
+        real_hide_cell = entrypoints.hide_cell
+
+        def spy(player, tick, movement_ctx):
+            goal = real_hide_cell(player, tick, movement_ctx)
+            if goal != (player.cell_row, player.cell_col):
+                walks.append(goal)
+            return goal
+
+        # The spy reaches only the serial run: spawned workers import afresh.
+        monkeypatch.setattr(entrypoints, "hide_cell", spy)
+        serial = sim.run(team_red, team_blue, n=4, arena_map=arena_map, master_seed=606)
+        monkeypatch.undo()
+        assert walks, "no player walked to a hide cell"
+        try:
+            parallel = sim.run(
+                team_red,
+                team_blue,
+                n=4,
+                arena_map=arena_map,
+                master_seed=606,
+                workers=2,
+            )
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Parallel worker pool unavailable: {exc!r}")
+
+        for key in (
+            "red_wins",
+            "blue_wins",
+            "ties",
+            "red_scores",
+            "blue_scores",
+            "avg_seeds",
+            "side_advantage",
+        ):
+            assert serial[key] == parallel[key], key
+
+
 # ---------------------------------------------------------------------------
 # MOVE-02 — path commitment via a goal-keyed A* cache (BatchSimulator only)
 #
@@ -2249,43 +2312,10 @@ class TestMove02FlushTrailUnderCaching(_FastRoundsMixin):
 # ---------------------------------------------------------------------------
 
 
-class TestBugfixShotsClampOnMissHid:
-    """Regression: miss_hid path decremented final_shots without a max(0, ...)
-    clamp, producing negative shot counts for high-volume scouts who fired
-    at hiding defenders late in a round (e.g. round 78 Phoenix Scout-A).
-    Every other shot decrement in the file uses the clamp; this one did not.
-    """
-
-    def test_miss_hid_clamps_final_shots_at_zero(self):
-        """An attacker who fires at a hiding defender with final_shots == 0
-        must not drop below zero.
-        """
-        attacker = _make_ps("scout", team_color="red", final_shots=0)
-        defender = _make_ps("commander", team_color="blue", is_hiding=True)
-        sim = BatchSimulator()
-        log: list = []
-        # Drive a single tick through the public planning/resolution path.
-        # _resolve_tag_attempts is the post-plan stage that classifies the
-        # outcome (hit / miss / miss_hid) and applies the shot decrement.
-        # We construct one direct "tag_player" attempt and resolve it.
-        sim._resolve_tag_attempts(
-            [
-                {
-                    "attacker": attacker,
-                    "defender": defender,
-                    "second": 5,
-                    "movement_ctx": None,
-                    "overwatch": False,
-                }
-            ],
-            second=5,
-            event_log=log,
-            pending_followups=[],
-            pending_reactions=[],
-        )
-        assert attacker.final_shots == 0, (
-            f"final_shots must clamp at 0 on miss_hid; " f"got {attacker.final_shots}"
-        )
+# MECH-23 (#606): TestBugfixShotsClampOnMissHid is gone. It guarded the clamp on
+# the miss_hid branch's shot decrement, and MECH-23 removed that branch with the
+# hiding miss. A zero-shot attacker is refused by the resolver's Phase 1 gate
+# (test_shot_resolver.py::test_invalid_gate_zero_shots_no_event).
 
 
 class TestBugfixMedicHitsTracked:

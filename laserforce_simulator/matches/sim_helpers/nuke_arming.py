@@ -25,9 +25,8 @@ import random
 from . import support_survival
 from .time_constants import RESPAWN_TICKS
 
-#: While the fuse runs, the Commander rolls only ``hide``: Stationary, missed 50% of
-#: the time, passed over as a target while a visible enemy exists, and no missile
-#: lock can start on it. Measured on 12 Test rounds with the 20 SP gate: nukes
+#: While the fuse runs, the Commander rolls only ``hide``. Since MECH-23 the hide
+#: walks out of the sight of the enemies it remembers (``hiding.hide_cell``). Measured on 12 Test rounds with the 20 SP gate: nukes
 #: cancelled 1.29 -> 0.75 a Commander-round, detonated 1.29 -> 1.58.
 HIDE_WHILE_ARMING: bool = True
 ARMING_HIDE_WEIGHT: int = 100

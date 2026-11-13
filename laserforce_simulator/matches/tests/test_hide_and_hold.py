@@ -759,7 +759,11 @@ class TestMapLessRoundsAreUnchanged:
     # support's single back unless the other support sees the teammate (the zone
     # rule here), so map-less Resupplies redraw; with hold_allows forced True both
     # seeds replay the old values (83eb21969580daee and 7e3eee0498ef99ba).
-    PINNED = {7: "d15c339ffa382116", 21: "f238b2457f36a9bf"}
+    # Re-pinned 2026-11-12 for MECH-23b (#608): the 50% hiding miss is gone (one
+    # draw fewer per Shot at a hider) and the hit roll's base is 49 (was 70), so
+    # every map-less round with a Shot redraws (the values before were
+    # d15c339ffa382116 and f238b2457f36a9bf).
+    PINNED = {7: "0b547f9b3f4484d9", 21: "be28da2854982ffd"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

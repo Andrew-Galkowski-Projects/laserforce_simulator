@@ -15,7 +15,7 @@ import pytest
 
 from matches.sim_helpers import goal_scoring, modes, pathfinding, support_survival
 from matches.sim_helpers.map_context import MapContext, comms_reach
-from matches.sim_helpers.mechanics import choose_tag_target
+from matches.sim_helpers.mechanics import _priority_targets, choose_tag_target
 from matches.sim_helpers.modes import hide_allowed, mode_goal
 from matches.sim_helpers.pathfinding import _goal_from_action
 from matches.sim_helpers.player_state import PlayerState
@@ -144,7 +144,16 @@ class TestTargetPriority:
         counts = _draw_counts(scout, [heavy, medic], 100)
         assert counts["medic"] > 2 * counts["heavy"]
 
-    def test_on_a_hiding_enemy_is_passed_over_for_one_in_the_open(
+    # MECH-23 (#606) decision 6: replaces
+    # test_on_a_hiding_enemy_is_passed_over_for_one_in_the_open. The pass-over
+    # of hiders is gone; a hider in sight is as good a target as anyone.
+    def test_priority_targets_keeps_a_hider_beside_a_non_hider(self) -> None:
+        hidden = _player("heavy", is_hiding=True)
+        hidden.tag_id = "red_heavy_2"
+        open_heavy = _player("heavy")
+        assert _priority_targets([hidden, open_heavy], 100) == [hidden, open_heavy]
+
+    def test_on_a_hiding_enemy_is_drawn_beside_one_in_the_open(
         self, on: Callable[[str], None]
     ) -> None:
         on("TARGET_PRIORITY")
@@ -153,18 +162,19 @@ class TestTargetPriority:
         hidden = _player("heavy", is_hiding=True)
         hidden.tag_id = "red_heavy_2"
         open_heavy = _player("heavy")
-        for _ in range(100):
-            assert (
-                choose_tag_target(
-                    scout,
-                    [scout, hidden, open_heavy],
-                    100,
-                    None,
-                    los_filter=_all_visible,
-                )
-                is open_heavy
-            )
+        picks = {
+            choose_tag_target(
+                scout,
+                [scout, hidden, open_heavy],
+                100,
+                None,
+                los_filter=_all_visible,
+            ).tag_id
+            for _ in range(100)
+        }
+        assert picks == {hidden.tag_id, open_heavy.tag_id}
 
+    # Still true after MECH-23: a lone hider in sight is shot.
     def test_on_a_hiding_enemy_is_still_shot_when_alone(
         self, on: Callable[[str], None]
     ) -> None:

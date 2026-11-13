@@ -11,15 +11,17 @@ already-pending post-MOVE-01 Score Calibration re-baseline):
 
   - **Uniform hide-50%-miss roll.** Pre-refactor only the initial-tag
     site checked ``defender.is_hiding`` and rolled the 50% miss; the
-    four other sites skipped it. Post-refactor every ``kind`` rolls.
+    four other sites skipped it. Post-refactor every ``kind`` rolled.
+    MECH-23 then removed the roll (``TestHidingDefender``).
   - **Uniform Ammo non-decrement of ``final_shots``.** Pre-refactor
     the initial-tag hit/miss branches decremented even for an Ammo
-    attacker; the four other sites + ``miss_hid`` skipped. Post-
+    attacker; the four other sites skipped. Post-
     refactor Ammo never decrements ``final_shots`` regardless of kind.
 """
 
 from __future__ import annotations
 
+import contextlib
 import unittest
 from unittest.mock import patch
 
@@ -27,6 +29,7 @@ from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
 from matches.sim_helpers.shot import (
+    HIT_BASE,
     SHOT_KIND_FOLLOW_UP,
     SHOT_KIND_INITIAL,
     SHOT_KIND_OVERWATCH,
@@ -102,8 +105,8 @@ def _events_by_type(ctx: RoundContext, etype: str) -> list:
     return [e for e in ctx.events.entries if e["event_type"] == etype]
 
 
-# RNG patch helpers. ``hit_chance = (70 + acc - surv)``; with acc=99,
-# surv=0 that's 95 (max). A patched random.randint return of 1 ⇒
+# RNG patch helpers. ``hit_chance = (HIT_BASE + acc - surv)``, HIT_BASE 49;
+# with acc=99, surv=0 that clamps to 95 (max). A patched random.randint return of 1 ⇒
 # definite HIT under that clamp. With acc=0, surv=99 ⇒ hit_chance=10
 # (min); a return of 99 ⇒ definite MISS.
 def _patch_hit():
@@ -115,17 +118,19 @@ def _patch_miss():
 
 
 def _patch_see_through_hide():
-    # random.random() <= 0.5 ⇒ hide does NOT cause a miss_hid
-    return patch("matches.sim_helpers.shot.random.random", return_value=0.0)
+    # random.random() <= 0.5 was "hide does NOT cause a miss_hid". MECH-23
+    # removed the hiding miss, so this is a no-op kept for the older tests.
+    return contextlib.nullcontext()
 
 
 def _patch_hide_misses():
-    # random.random() > 0.5 ⇒ hide CAUSES a miss_hid
+    # random.random() > 0.5 was "hide CAUSES a miss_hid" before MECH-23.
+    # TestHidingDefender uses it to show the draw no longer matters.
     return patch("matches.sim_helpers.shot.random.random", return_value=0.99)
 
 
 # ---------------------------------------------------------------------------
-# TestResolveShotInitial — hit / miss / miss_hid / invalid + uniform-Ammo rule
+# TestResolveShotInitial — hit / miss / invalid + uniform-Ammo rule
 # ---------------------------------------------------------------------------
 
 
@@ -245,31 +250,10 @@ class TestResolveShotInitial(unittest.TestCase):
         # plain miss has no "reason" metadata key
         self.assertNotIn("reason", evt["metadata"])
 
-    def test_miss_hid_when_defender_hiding(self) -> None:
-        attacker = _player(role="scout", accuracy=99)
-        defender = _player(role="scout", team_color="blue", is_hiding=True)
-        ctx = _ctx(all_alive=[attacker, defender])
-        with _patch_hide_misses():
-            outcome = resolve_shot(
-                attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx
-            )
-        self.assertFalse(outcome.hit)
-        self.assertFalse(outcome.downed)
-        # miss_hid still costs the shot and increments shots_missed
-        self.assertEqual(attacker.counters.shots_missed, 1)
-        self.assertEqual(attacker.final_shots, 19)
-
-    def test_miss_hid_emits_miss_event_with_reason(self) -> None:
-        attacker = _player(role="scout", accuracy=99, player_id=1, name="A")
-        defender = _player(
-            role="scout", team_color="blue", is_hiding=True, player_id=2, name="D"
-        )
-        ctx = _ctx(all_alive=[attacker, defender])
-        with _patch_hide_misses():
-            resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx)
-        misses = _events_by_type(ctx, "miss")
-        self.assertEqual(len(misses), 1)
-        self.assertEqual(misses[0]["metadata"].get("reason"), "hiding")
+    # MECH-23 (#606): test_miss_hid_when_defender_hiding and
+    # test_miss_hid_emits_miss_event_with_reason are gone. They pinned the 50%
+    # hiding miss, which MECH-23 removes: hiding now protects by position only,
+    # so a Shot at a hider is rolled like any other (TestHidingDefender below).
 
     def test_invalid_gate_zero_shots_no_event(self) -> None:
         attacker = _player(role="scout", final_shots=0)
@@ -407,13 +391,8 @@ class TestResolveShotAmmoUniformity(unittest.TestCase):
             resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx)
         self.assertEqual(attacker.final_shots, 15)
 
-    def test_ammo_miss_hid_does_not_decrement_shots(self) -> None:
-        attacker = _player(role="ammo", accuracy=99, final_shots=15)
-        defender = _player(role="scout", team_color="blue", is_hiding=True)
-        ctx = _ctx(all_alive=[attacker, defender])
-        with _patch_hide_misses():
-            resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx)
-        self.assertEqual(attacker.final_shots, 15)
+    # MECH-23 (#606): test_ammo_miss_hid_does_not_decrement_shots is gone with
+    # the hiding miss (the miss_hid branch it covered no longer exists).
 
     def test_non_ammo_decrements_shots_on_miss(self) -> None:
         attacker = _player(role="scout", accuracy=0, final_shots=15)
@@ -425,59 +404,77 @@ class TestResolveShotAmmoUniformity(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# Behaviour change B — uniform hide-50% miss roll across all kinds
+# MECH-23 — a hiding defender is shot like any other
 # ---------------------------------------------------------------------------
+# Replaces TestResolveShotHideUniformity, which pinned the 50% hiding miss on
+# all four kinds. MECH-23 (#606) removes that miss: hiding protects by position.
 
 
-class TestResolveShotHideUniformity(unittest.TestCase):
-    """The ``defender.is_hiding`` 50%-miss roll fires on all four kinds
-    (pre-refactor only initial-tag rolled it)."""
+class TestHidingDefender(unittest.TestCase):
+    """MECH-23: ``is_hiding`` no longer changes how a Shot resolves."""
 
-    def test_follow_up_against_hiding_can_miss_hid(self) -> None:
-        attacker = _player(role="scout", accuracy=99)
-        defender = _player(role="scout", team_color="blue", is_hiding=True)
-        ctx = _ctx(all_alive=[attacker, defender])
-        with _patch_hide_misses():
-            outcome = resolve_shot(
-                attacker,
-                defender,
-                tick=5,
-                kind=SHOT_KIND_FOLLOW_UP,
-                ctx=ctx,
-                chain_depth=1,
+    def test_hit_on_a_hider_for_every_kind_is_never_a_hiding_miss(self) -> None:
+        for kind in _ALL_KINDS:
+            with self.subTest(kind=kind):
+                attacker = _player(role="scout", accuracy=99, player_id=1)
+                defender = _player(
+                    role="scout",
+                    team_color="blue",
+                    survival=0,
+                    is_hiding=True,
+                    player_id=2,
+                )
+                ctx = _ctx(all_alive=[attacker, defender])
+                # random.random() > 0.5 was the old hiding-miss draw.
+                with _patch_hit(), _patch_hide_misses():
+                    outcome = resolve_shot(
+                        attacker, defender, tick=5, kind=kind, ctx=ctx
+                    )
+                self.assertTrue(outcome.hit)
+                reasons = [
+                    e["metadata"].get("reason") for e in _events_by_type(ctx, "miss")
+                ]
+                self.assertNotIn("hiding", reasons)
+
+    def test_a_shot_at_a_hider_draws_the_same_rng_as_at_a_non_hider(self) -> None:
+        import random
+
+        def _state_after(is_hiding: bool) -> object:
+            attacker = _player(role="scout", player_id=1)
+            defender = _player(
+                role="scout", team_color="blue", is_hiding=is_hiding, player_id=2
             )
-        self.assertFalse(outcome.hit)
-        self.assertEqual(
-            _events_by_type(ctx, "miss")[0]["metadata"].get("reason"), "hiding"
-        )
+            ctx = _ctx(all_alive=[attacker, defender])
+            random.seed(1234)
+            resolve_shot(attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx)
+            return random.getstate()
 
-    def test_reaction_against_hiding_can_miss_hid(self) -> None:
-        attacker = _player(role="scout", accuracy=99)
-        defender = _player(role="scout", team_color="blue", is_hiding=True)
-        ctx = _ctx(all_alive=[attacker, defender])
-        with _patch_hide_misses():
-            outcome = resolve_shot(
-                attacker, defender, tick=5, kind=SHOT_KIND_REACTION, ctx=ctx
-            )
-        self.assertFalse(outcome.hit)
-        self.assertEqual(
-            _events_by_type(ctx, "miss")[0]["metadata"].get("reason"), "hiding"
-        )
+        self.assertEqual(_state_after(True), _state_after(False))
 
-    def test_overwatch_against_hiding_can_miss_hid(self) -> None:
-        attacker = _player(role="scout", accuracy=99)
-        defender = _player(role="scout", team_color="blue", is_hiding=True)
-        ctx = _ctx(all_alive=[attacker, defender])
-        with _patch_hide_misses():
-            outcome = resolve_shot(
-                attacker, defender, tick=5, kind=SHOT_KIND_OVERWATCH, ctx=ctx
-            )
-        self.assertFalse(outcome.hit)
-        # overwatch flag should still be on the miss-event metadata even
-        # though the cause was a hide-roll
-        evt = _events_by_type(ctx, "miss")[0]
-        self.assertEqual(evt["metadata"].get("reason"), "hiding")
-        self.assertTrue(evt["metadata"].get("overwatch"))
+
+class TestHitBase(unittest.TestCase):
+    """MECH-23 decisions 13 and 16: the hit roll's base is ``HIT_BASE`` = 49."""
+
+    def test_hit_base_is_49(self) -> None:
+        self.assertEqual(HIT_BASE, 49)
+
+    def test_even_accuracy_and_survival_hit_below_49(self) -> None:
+        # 49 + 50 - 50 = 49, elevation 1.0 (no map), stamina 1.0. The roll hits
+        # when randint(1, 100) < 49: 48 hits, 49 misses.
+        for roll, expected in ((48, True), (49, False)):
+            with self.subTest(roll=roll):
+                attacker = _player(role="scout", accuracy=50, player_id=1)
+                defender = _player(
+                    role="scout", team_color="blue", survival=50, player_id=2
+                )
+                ctx = _ctx(all_alive=[attacker, defender])
+                with patch(
+                    "matches.sim_helpers.shot.random.randint", return_value=roll
+                ):
+                    outcome = resolve_shot(
+                        attacker, defender, tick=5, kind=SHOT_KIND_INITIAL, ctx=ctx
+                    )
+                self.assertEqual(outcome.hit, expected)
 
 
 # ---------------------------------------------------------------------------

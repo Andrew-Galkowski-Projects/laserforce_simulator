@@ -3,7 +3,8 @@
 At every Down a player rolls one **Downed option** and keeps to it until
 they are Active again (``last_downed_time + RESPAWN_TICKS``):
 
-- **Stay hidden**: hide on the Down cell (the 50% hide-miss applies).
+- **Stay hidden**: hide for the whole Down. Since MECH-23 the hide walks out of
+  the sight of the enemies the player remembers (``hiding.hide_cell``).
 - **Shuffle to cover**: walk to the nearest cell no remembered enemy can see.
 - **Make a trail**: walk to a cell ``TRAIL_FEET`` away and back to the
   spot, so an enemy who follows becomes a Chaser (MECH-10). Allowed only
@@ -136,7 +137,9 @@ def option_weights(
     }
 
 
-def _remembered_enemy_cells(player, tick: float) -> list[Cell]:
+def remembered_enemy_cells(player, tick: float) -> list[Cell]:
+    """The cells of the enemies *player* remembers, stale entries left out.
+    Shared by Shuffle to cover and the walking hide (``hiding.hide_cell``)."""
     from .pathfinding import _known_enemies_from_memory  # avoids a cycle
 
     enemy_color = "blue" if player.team_color == "red" else "red"
@@ -148,7 +151,7 @@ def _nearest_cover(
 ) -> Optional[Cell]:
     """Nearest cell within ``SHUFFLE_MAX_FEET`` (ties by row, col) that no
     remembered enemy can see; None when none, or no enemy is remembered."""
-    watchers = _remembered_enemy_cells(player, tick)
+    watchers = remembered_enemy_cells(player, tick)
     if not watchers:
         return None
     distances = movement_ctx.walk_distances(
@@ -285,7 +288,7 @@ def downed_goal(player, tick: float, movement_ctx: MapContext) -> Optional[Cell]
         return None
     here = _cell(player)
     if plan.option == SHUFFLE_TO_COVER:
-        watchers = _remembered_enemy_cells(player, tick)
+        watchers = remembered_enemy_cells(player, tick)
         if any(movement_ctx.can_see(w, plan.cover) for w in watchers):
             cover = _nearest_cover(player, here, tick, movement_ctx)
             if cover is None:

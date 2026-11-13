@@ -30,6 +30,7 @@ from ..sim_helpers.combat import (
 )
 from ..sim_helpers.down import record_down
 from ..sim_helpers.downed_option import overrides_stay_hidden, plan_is_live
+from ..sim_helpers.hiding import hide_cell, holds_in_place
 from ..sim_helpers.event_log import EventLog
 from ..sim_helpers.follow_rule import may_tag, record_step
 from ..sim_helpers.map_loader import (
@@ -1565,6 +1566,30 @@ class BatchSimulator:
         if not plan_is_live(actor, second):
             actor.is_hiding = True
 
+    @staticmethod
+    def _hide_goal(
+        player, all_alive: list, second: int, movement_ctx
+    ) -> tuple[int, int] | None:
+        """MECH-23: a hider's goal this tick (its own cell when it stays put),
+        or None when ``holds_in_place`` keeps it still. ``holds_in_place`` is
+        not consulted while the Downed plan is live (decision 18a): a Downed
+        Stay hidden player always walks out of its attacker's sight.
+
+        Recomputed every tick, outside MOVE-04's Goal commitment. At Active the
+        Downed plan and the committed goal are cleared here, as ``downed_goal``
+        does on the ``choose_goal_cell`` path this one skips. Draws no RNG.
+        """
+        if getattr(player, "downed_plan", None) is not None and player.is_active_at(
+            second
+        ):
+            player.downed_plan = None
+            player._committed_goal = None
+        if not plan_is_live(player, second) and holds_in_place(
+            player, all_alive, movement_ctx
+        ):
+            return None
+        return hide_cell(player, second, movement_ctx)
+
     def _advance_player(
         self,
         player,
@@ -1577,43 +1602,51 @@ class BatchSimulator:
 
         Mirrors RBS._advance_player. Performed for every non-stationary player
         every tick, independent of the weighted action roll. Stationary set
-        (suppress the Advance this tick): ``player.is_hiding`` is True, OR this
+        (suppress the Advance this tick): ``player.is_holding`` is True, OR this
         tick's chosen action is ``capture_base`` (frozen, anchored to base).
-        When this tick's action is ``only_move`` the Advance is a single 2×
-        step in one astar_advance call. No-op when there is no map path.
+        MECH-23: a hider walks to its ``hiding.hide_cell`` at normal speed (see
+        ``_hide_goal``). When this tick's action is ``only_move`` the Advance is
+        a single 2× step in one astar_advance call. No-op when there is no map
+        path.
         """
         if movement_ctx is None or player.cell_row is None:
             return
         chosen = getattr(player, "last_chosen_action", "")
-        # Stationary set: hiding, holding (MOVE-03 Overwatch — anchored to its
-        # current cell watching its sightline), or anchored to a base capture
-        # this tick. MOVE-08: while a Downed option is live only its own hide
-        # (Stay hidden) holds the player still; hold / capture_base rolls do not.
+        # Stationary set: holding (MOVE-03 Overwatch — anchored to its current
+        # cell watching its sightline), or anchored to a base capture this tick.
+        # MOVE-08: while a Downed option is live hold / capture_base rolls do
+        # not hold the player still.
+        hiding = False
         if plan_is_live(player, second):
             if player.is_hiding:
                 # MOVE-08 decisions 13-14: the nuke-cancel exception and the
                 # critical-resource seek still pull a Stay hidden player out.
-                if not overrides_stay_hidden(player, second, all_alive):
-                    return
-                player.is_hiding = False
-        elif (
-            player.is_hiding
-            or getattr(player, "is_holding", False)
-            or chosen == "capture_base"
-        ):
+                if overrides_stay_hidden(player, second, all_alive):
+                    player.is_hiding = False
+                else:
+                    hiding = True
+        elif getattr(player, "is_holding", False) or chosen == "capture_base":
             return
-        goal_cell = choose_goal_cell(
-            player,
-            all_alive,
-            movement_ctx.get_spawn_cells(),
-            movement_ctx,
-            prev_action,
-            second,
-            time_domain="ticks",
-        )
-        # only_move = one single 2× step; all other (non-stationary) actions
-        # Advance the normal speed-scaled distance while they act.
-        multiplier = 2 if chosen == "only_move" else 1
+        elif player.is_hiding:
+            hiding = True
+        if hiding:
+            goal_cell = self._hide_goal(player, all_alive, second, movement_ctx)
+            if goal_cell is None:
+                return
+            multiplier = 1
+        else:
+            goal_cell = choose_goal_cell(
+                player,
+                all_alive,
+                movement_ctx.get_spawn_cells(),
+                movement_ctx,
+                prev_action,
+                second,
+                time_domain="ticks",
+            )
+            # only_move = one single 2× step; all other (non-stationary)
+            # actions Advance the normal speed-scaled distance while they act.
+            multiplier = 2 if chosen == "only_move" else 1
         start = (player.cell_row, player.cell_col)
         self._move_player_in_memory(
             player, second, goal_cell, movement_ctx, multiplier, all_alive
