@@ -341,6 +341,17 @@ Lock starts; a preference for Reset-window targets; when a locker keeps the Lock
 (and which Shots cancel it: Reaction, Follow-up and Overwatch shots count today); the real figures
 to match (Locks per game, target state, conversion by state); the Heavy's missiles per round
 (3.23 against a real 1.76), moved here from MECH-24's acceptance. Depends on MECH-24.
+MECH-24's `round_probe` Lock block (seeds 1-2, before MECH-24b) read 82.5 Locks a round, 9%
+conversion and 52% of Locks ended by the locker's own Shot: start this grill from its acceptance run.
+
+### MECH-29 · Only a Downed player flees a nuke (MECH-24 review, 2026-11-13)
+
+Owner (2026-11-13): fleeing an incoming nuke should happen only while a player is deactivated; an
+Active one fights on. Today `round_loop.py` sets `reacting_to_nuke` on every target-team player who
+passes the awareness roll, Active or not, and the Medic and Ammo weight functions then move all
+their Tag weight into Resupply (`weights.py`, the MECH-04 nuke blocks). **Open for the grill:**
+whether the flag (or only its weight shift) needs not Active; what the goal override
+(`choose_goal_cell`'s nuke reaction) does for an Active player; the real figures to check against.
 
 ### CAL-05 · The Medic is tagged at twice the real rate in the opening (owner, 2026-11-11)
 

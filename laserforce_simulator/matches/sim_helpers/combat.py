@@ -294,8 +294,9 @@ def plan_action(
     seconds. ``"ticks"`` selects the tick-native thresholds from
     ``time_constants`` — used by the fully tick-native BatchSimulator.
     """
-    # MOVE-03: 9-slot action array — index 8 is the new ``hold`` Action
-    # (Overwatch). Per-role weight redistribution is applied in weights.py.
+    # MOVE-03: index 8 is the ``hold`` Action (Overwatch); MECH-24: index 9 is
+    # ``dodge``, a trailing 0 here (10 slots). Per-role weight redistribution is
+    # applied in weights.py.
     # Copy the module constant — plan_action mutates the list in place.
     weights = list(BASELINE_ACTION_WEIGHTS)
 
@@ -992,7 +993,7 @@ def start_missile_lock(
         cancel_missile_lock(ctx, attacker, int(second), "retarget")
 
     ctx.events.locking(attacker, defender, int(second))
-    lock = PendingMissileLock(attacker=attacker, defender=defender)
+    lock = PendingMissileLock(attacker=attacker, defender=defender, started=int(second))
     ctx.missile_locks[attacker.player_id] = lock
     return lock
 
@@ -1029,18 +1030,24 @@ def cancel_missile_lock(
     return lock
 
 
-def resolve_dodge(dodger, ctx: RoundContext, tick: int) -> list[bool]:
+def resolve_dodge(dodger: Any, ctx: RoundContext, tick: int) -> list[bool]:
     """MECH-24 (spec #611): resolve a ``dodge`` plan in the tick loop's dispatch.
 
     One ``random.random() * 100 < flexibility / 2`` roll per live Lock on the
     dodger, in ``ctx.missile_locks`` insertion order. A success ends that Lock
     with ``cancel_missile_lock(..., "dodge")`` (nothing spent); a failure writes
     nothing. A Lock already ended earlier in the dispatch is gone from
-    ``ctx.missile_locks`` and is not rolled. Returns one entry per roll, True
+    ``ctx.missile_locks`` and is not rolled, and a Lock started on this tick
+    (by a plan dispatched before the Dodge) is not rolled either: its one roll
+    is on its locked plan tick, the next one. Returns one entry per roll, True
     for a success.
     """
     chance = getattr(dodger, "flexibility", 50) / 2
-    on_dodger = [lock for lock in ctx.missile_locks.values() if lock.defender is dodger]
+    on_dodger = [
+        lock
+        for lock in ctx.missile_locks.values()
+        if lock.defender is dodger and lock.started != tick
+    ]
     results: list[bool] = []
     for lock in on_dodger:
         dodged = random.random() * 100 < chance

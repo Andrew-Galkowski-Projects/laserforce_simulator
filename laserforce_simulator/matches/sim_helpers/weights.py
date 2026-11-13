@@ -273,7 +273,7 @@ def _apply_hold_baseline(w: list, c: dict, i: dict, player: Any) -> None:
     is a local defensive guard. Later subtractions (missile, capture, seek-ally)
     can still drive the source slot negative; ``plan_action`` clamps the final
     vector through ``finalize_action_weights`` (SIM-12) before the draw.
-    Additive on the 9-slot array; consumes no RNG.
+    Additive on the 10-slot array; consumes no RNG.
 
     MECH-17: a map round reads ``baseline_hold``, because a Hold there lasts
     ``HOLD_TICKS``. A map-less round (``known_threats`` is None) has no such
@@ -285,7 +285,7 @@ def _apply_hold_baseline(w: list, c: dict, i: dict, player: Any) -> None:
         return
     # Legacy 7/8-slot callers (older unit tests build a pre-MOVE-03
     # action-index dict without "hold"); the production path always passes the
-    # 9-slot _ACTION_IDX. Guarding here keeps those callers KeyError-free
+    # 10-slot _ACTION_IDX. Guarding here keeps those callers KeyError-free
     # without widening every legacy fixture.
     if "hold" not in i or len(w) <= i["hold"]:
         return

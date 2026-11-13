@@ -17,10 +17,11 @@ Base weights before any role function: ``BASELINE_ACTION_WEIGHTS`` =
 single source of truth that ``combat.plan_action`` copies). ``_fresh()`` returns
 a fresh mutable copy of it for every call.
 
-SINGLE 9-slot fixture: SIM-01 collapsed the previously-separate legacy 7-slot
+SINGLE fixture: SIM-01 collapsed the previously-separate legacy 7-slot
 (``_BASE`` / 7-key ``_ACTION_IDX``) and 9-slot (``_BASE9`` / ``_ACTION_IDX9``)
-fixtures into the one 9-key ``_ACTION_IDX`` + ``_fresh()`` below, sourced from
-the production constant. Production always passes the 9-slot array.
+fixtures into the one ``_ACTION_IDX`` + ``_fresh()`` below, sourced from
+the production constant. Production always passes the full array: 10 slots
+since MECH-24 added the trailing ``dodge``.
 
 request_resupply (index 7): the role functions set it via
 ``_apply_request_resupply_weight`` whenever the player has *room* to receive a
@@ -59,7 +60,7 @@ from matches.sim_helpers.combat import (
 from matches.sim_helpers.player_state import PlayerState
 from matches.tests.conftest import make_team_with_slots
 
-# Single 9-slot action-index map. Mirrors combat._ACTION_IDX exactly.
+# Single 10-slot action-index map. Mirrors combat._ACTION_IDX exactly.
 _ACTION_IDX = {
     "tag_player": 0,
     "only_move": 1,
@@ -85,7 +86,7 @@ class TestWeightFunctions:
     """Unit tests for per-role action weight functions in sim_helpers/weights.py."""
 
     def _fresh(self):
-        """Fresh mutable copy of the production baseline (9 slots)."""
+        """Fresh mutable copy of the production baseline (10 slots)."""
         return list(BASELINE_ACTION_WEIGHTS)
 
     def _state(self, gr, player, role, team_color="red", **kwargs):
@@ -458,7 +459,7 @@ class TestWeightFunctions:
     def test_heavy_with_missiles_drives_only_move_negative(self):
         """Heavy with missiles available: tag/missile split, but only_move goes negative.
 
-        With the 9-slot array the hold draw takes 20 off only_move (25 -> 5)
+        With the hold slot in the array the hold draw takes 20 off only_move (25 -> 5)
         BEFORE the missile branch takes a further 15 (5 -> -10). The role
         function therefore returns only_move = -10; ``plan_action`` clamps it
         to 0 via ``finalize_action_weights`` (SIM-12, pinned at both layers by
@@ -732,7 +733,7 @@ class TestWeightFunctions:
 # --------------------------------------------------------------------------- #
 # SIM-01 regression: plan_action's REAL production invariant.
 #
-# ``combat.plan_action`` builds the 9-slot weight vector internally and feeds it
+# ``combat.plan_action`` builds the 10-slot weight vector internally and feeds it
 # to ``random.choices``. CPython's ``random.choices`` raises ``ValueError`` only
 # when the TOTAL weight is <= 0 — it does NOT reject individual negative weights
 # (a negative bucket is just unreachable in the cumulative-weight bisect). So the

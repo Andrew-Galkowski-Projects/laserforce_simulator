@@ -493,6 +493,22 @@ class TestTwoLocksOnOneTarget:
         assert drawn == [0.0]  # one roll: the cancelled Lock was skipped
         assert _cancels(ctx) == [(T + 1, 1, 2, "shot"), (T + 1, 3, 2, "dodge")]
 
+    def test_a_lock_started_earlier_in_the_same_dispatch_is_not_rolled(self) -> None:
+        """Review (spec #611 c1): a Lock started on this tick, by a plan dispatched
+        before the Dodge, gets its one roll on its own locked plan tick (start + 1),
+        so a roll now would be a second roll and a dodge one tick early."""
+        a = _lock_ps(1)
+        b = _lock_ps(3, role="commander")
+        target = _lock_ps(2, team_color="blue", role="scout")
+        ctx = _lock_ctx(a, b, target)
+        start_missile_lock(a, target, T, None, ctx=ctx)
+        start_missile_lock(b, target, T + 1, None, ctx=ctx)  # earlier this dispatch
+        patcher, drawn = _draws(0.99)
+        with patcher:
+            assert resolve_dodge(target, ctx, T + 1) == [False]
+        assert drawn == [0.99]  # one roll, for a's Lock only
+        assert list(ctx.missile_locks) == [a.player_id, b.player_id]
+
 
 # --- the dispatch, the Stationary check and the launch, in the tick loop -----
 
