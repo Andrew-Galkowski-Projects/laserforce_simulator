@@ -3,7 +3,8 @@
 At every Down a player rolls one **Downed option** and keeps to it until
 they are Active again (``last_downed_time + RESPAWN_TICKS``):
 
-- **Stay hidden**: hide on the Down cell (the 50% hide-miss applies).
+- **Stay hidden**: hide for the whole Down. Since MECH-23 the hide walks out of
+  the sight of the enemies the player remembers (``hiding.hide_cell``).
 - **Shuffle to cover**: walk to the nearest cell no remembered enemy can see.
 - **Make a trail**: walk to a cell ``TRAIL_FEET`` away and back to the
   spot, so an enemy who follows becomes a Chaser (MECH-10). Allowed only

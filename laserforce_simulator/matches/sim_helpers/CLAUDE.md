@@ -12,6 +12,7 @@ Paths are relative to the repo root.
 - life loss, `record_down`, medic-reset chain, nuke cancellation — `docs/agents/matches/sim-helpers.md#downpy`
 - Follow rule: Trails, Chases, `may_tag` (MECH-10) — `docs/agents/matches/sim-helpers.md#follow_rulepy`
 - Downed option: Stay hidden / Shuffle to cover / Make a trail, the tunable formula (MOVE-08) — `docs/agents/matches/sim-helpers.md#downed_optionpy`
+- the walking hide: `hide_cell` (out of remembered enemies' sight, lowest `los_rank`, within 15 ft), `holds_in_place` (MECH-23) — `docs/agents/matches/sim-helpers.md#hidingpy`
 - scored positioning-goal draw, held goals, the tunable formula (MOVE-06+07) — `docs/agents/matches/sim-helpers.md#goal_scoringpy`
 - Player Modes: Mode state, switching triggers, goal rules, the teamwork closeness term, the weight nudge (MECH-07) — `docs/agents/matches/sim-helpers.md#modespy`
 - shot resolver, hit roll, follow-ups, reactions, Overwatch shot — `docs/agents/matches/sim-helpers.md#shotpy`

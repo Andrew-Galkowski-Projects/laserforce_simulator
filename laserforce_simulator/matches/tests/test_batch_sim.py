@@ -2013,6 +2013,69 @@ class TestMove01DeterminismPreserved:
         assert serial["side_advantage"] == parallel["side_advantage"]
 
 
+# 12x12 with wall blocks, so some cells are out of others' sight and a hider has
+# somewhere to walk to (an open floor sees everything).
+_WALLED_12X12 = [
+    [
+        0 if (r in (3, 8) and c in (2, 3, 8, 9)) or (r == 5 and 4 <= c <= 7) else 1
+        for c in range(12)
+    ]
+    for r in range(12)
+]
+
+
+@pytest.mark.django_db
+class TestMech23HidingDeterminism:
+    """MECH-23a (#607): ``hiding.hide_cell`` and ``holds_in_place`` draw no RNG and
+    break ties on ``(row, col)``, so a map round where players walk to hide plays
+    the same serial and parallel."""
+
+    def test_serial_equals_parallel_where_players_hide(self, monkeypatch):
+        from matches.simulation import entrypoints
+
+        team_red, _ = make_team_with_slots("M23ParR")
+        team_blue, _ = make_team_with_slots("M23ParB")
+        arena_map = _move01_make_map("M23ParMap", zone_data=_WALLED_12X12)
+        sim = BatchSimulator()
+
+        walks: list = []
+        real_hide_cell = entrypoints.hide_cell
+
+        def spy(player, tick, movement_ctx):
+            goal = real_hide_cell(player, tick, movement_ctx)
+            if goal != (player.cell_row, player.cell_col):
+                walks.append(goal)
+            return goal
+
+        # The spy reaches only the serial run: spawned workers import afresh.
+        monkeypatch.setattr(entrypoints, "hide_cell", spy)
+        serial = sim.run(team_red, team_blue, n=4, arena_map=arena_map, master_seed=606)
+        monkeypatch.undo()
+        assert walks, "no player walked to a hide cell"
+        try:
+            parallel = sim.run(
+                team_red,
+                team_blue,
+                n=4,
+                arena_map=arena_map,
+                master_seed=606,
+                workers=2,
+            )
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Parallel worker pool unavailable: {exc!r}")
+
+        for key in (
+            "red_wins",
+            "blue_wins",
+            "ties",
+            "red_scores",
+            "blue_scores",
+            "avg_seeds",
+            "side_advantage",
+        ):
+            assert serial[key] == parallel[key], key
+
+
 # ---------------------------------------------------------------------------
 # MOVE-02 — path commitment via a goal-keyed A* cache (BatchSimulator only)
 #

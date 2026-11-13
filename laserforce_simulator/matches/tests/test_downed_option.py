@@ -560,6 +560,8 @@ class TestStationaryWhileDowned(unittest.TestCase):
         self.assertNotEqual((downed.cell_row, downed.cell_col), (7, 2))
 
     def test_stay_hidden_holds_without_an_override(self) -> None:
+        # MECH-23 (#607): Stay hidden's hide walks now (test_hiding.py); it holds
+        # here only because no enemy is remembered, so its hide cell is its own.
         from matches.simulation import BatchSimulator
 
         downed = _ps("blue_scout_1", "blue", (7, 2))

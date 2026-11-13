@@ -711,8 +711,8 @@ class TestHideWhileArming(unittest.TestCase):
     """CAL #558: while the nuke fuse runs, the Commander only hides.
 
     `nuke_arming.HIDE_WHILE_ARMING` (default on): `_get_commander_weights` hands
-    back a vector whose only positive slot is `hide`, so the Commander is
-    Stationary, missed half the time and passed over as a target. Switched off,
+    back a vector whose only positive slot is `hide`. MECH-23 (#607): the hide is
+    no longer Stationary; it walks out of sight (`test_hiding.py`). Switched off,
     the vector is the ordinary one.
     """
 
