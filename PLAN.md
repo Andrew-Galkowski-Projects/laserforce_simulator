@@ -192,112 +192,7 @@ CAL-04 (Resupply visits stick together, supports last the round) is **[DONE]**; 
 
 MECH-23 (Hiding means getting out of sight, not a 50% miss) is **[DONE]**; see `PLAN-completed.md`.
 
-### MECH-24 · Missile dodge as an Action while being locked (owner, 2026-11-12)
-
-Spec: #611
-
-From real play. A new **Action** a player can roll only while an enemy holds a Lock on it: it
-stands in place and tries to dodge. A success either breaks the Lock or makes the attacker's
-missile miss. Today the only dodge is the passive roll at launch, `min(20, survival / 5)` percent
-(`simulation/entrypoints.py`, MECH-21's Lock advance), and SM5-04 plans to move that roll to
-flexibility. **Open for the grill:** whether this replaces the passive launch dodge or adds to it,
-and how it sits with SM5-04; break-the-Lock vs missile-misses (one outcome or a roll between
-them); the chance and which stats set it (flexibility, survival); the Action's weight while
-locked; whether standing still costs it the Advance and leaves it open to other shots; the real
-figure to check against (missiles taken per game).
-
-**Grill decisions (owner, 2026-11-13, round 1).** Facts: a Lock lasts `LOCK_TICKS` = 2 ticks
-(1 s), so the target gets one plan tick while locked (two if it plans after the locker); nothing
-reads `missile_locks` for the target today; `flexibility` is never read; real Locks convert to a
-missile 53% of the time (TDF, 165 games), and the sim already lands too few missiles.
-1. A dodge only breaks the Lock (`lock_cancelled`, reason `dodge`, on the dodge tick). No
-   missile-misses outcome: a launched Missile always hits (GLOSSARY *Missile*).
-2. The dodge Action **replaces** the passive launch roll, which is deleted.
-3. MECH-24 absorbs SM5-04: the dodge chance comes from `flexibility` (added to
-   `_SIMULATION_STATS`), `survival` keeps only the hit roll; SM5-04 closes as done by MECH-24.
-4. The Action is open on every tick the player is the target of a live Lock; no sight check on
-   the locker (the Lock already needs sight).
-5. The dodging player is Stationary that tick (no Advance, no Shot), still Taggable by others at
-   the normal hit chance. The owner's model: the missiled player is usually in the **Reset
-   window** and cannot shoot back; an Active target would, and should, shoot back instead.
-6. The dodge is rolled in the dodger's own dispatch on the tick it is chosen; a success cancels
-   the Lock at once, a failure leaves it running and the dodge may be chosen again next tick.
-7. A Holder that is locked does **not** stay in its Hold: it tries to dodge or break line of
-   sight.
-8. The new Action slot has weight 0 when not locked and is appended last in `_CHOICES`, so a
-   round with no Locks replays identically under one seed (pinned by a test). Seeded results
-   still shift and fold into CAL-01.
-9. Acceptance: Lock-to-missile conversion against the real 53%, and missiles per game by role
-   not below the current sim baseline beyond noise (baseline `round_probe` before the spec).
-10. Out: a new Playback drawing, any model / column / migration, any API or HTML change, and
-    fleeing or hiding across the arena in response to a Lock (MECH-25 / MECH-26).
-
-**Round 2 (owner, 2026-11-13).** Facts: a Reset-window player can be Locked (a Lock needs only a
-Taggable target) but has tag, resupply and hold zeroed (`combat.py` `plan_action`); Lock sight is
-re-checked at the top of each tick from the positions after the last Advance, so walking out of
-sight forces the locker's `special_usage` save.
-11. The response depends on the target's state. In the **Reset window**: the dodge Action and
-    breaking line of sight. **Active**: it shoots back (tag weight boosted, tag target forced to
-    the locker) and keeps a smaller dodge weight.
-12. Breaking line of sight is the existing **hide** Action, boosted while locked, its hide cell
-    picked out of the locker's sight; for every locked target, the ex-Holder included. It
-    cancels the Lock through the existing `sight` save; no new mechanism.
-13. A locked Holder's Hold ends at its next plan, which rolls as usual with 11 and 12 open (the
-    Hold commitment check adds "not the target of a live Lock").
-14. A dodge succeeds with probability `flexibility / 2` percent (25% at 50), the starting value,
-    checked by the Syracuse prototype run before the spec.
-15. One constant `DODGE_WEIGHT`, no stat scaling, tuned so a Reset-window target picks the dodge
-    on about 40% of its locked plan ticks; an Active target gets a third of it. Aim: the
-    expected dodge share of Locks near today's ~10%.
-16. A successful dodge writes only the existing `lock_cancelled` row (reason `dodge`); a failed
-    one writes nothing. `round_probe` counts attempts and successes from the chosen Action.
-    RV-08's Playback dodge mark moves to the dodge tick.
-17. `GLOSSARY.md` gets a **Dodge** entry; *Missile* and *Lock* drop "at the launch".
-
-**Round 3 (owner, 2026-11-13).** Baseline on today's code, Syracuse, default rosters, seeds 1-24
-(scratch `mech24_baseline.py`), against the 165 TDF games (`mech24_tdf_lock_state.py`, state rows
-`9 ... 2` = Reset window): locks per round 66.5 +/- 2.3 (real 15.9); conversion 18% +/- 1% (real
-53%); Locks on a Reset-window target 33% (real 69%), converting 29% (real 65%), on an Active one
-12% (real 23%); 47% of sim Locks end in the locker's own Shot (real 17% on Reset-window targets);
-missiles per round per Commander 2.71 +/- 0.20 (real 2.47), per Heavy 3.23 +/- 0.27 (real 1.76).
-The target gets exactly one locked plan tick in 1092 of 1097 Locks. The pre-MECH-21 "too few
-missiles" figure no longer holds.
-18. A dodge choice survives both post-roll overrides (the Resupply visit step and the 1-3 lives
-    call-out).
-19. With several Locks on the target, a dodge rolls **once per Lock**: it can break both, but not
-    surely. Each success writes its own `lock_cancelled` (`dodge`).
-20. Map-less rounds get the dodge and the Active shoot-back; the hide boost is map rounds only.
-21. The locker's side (Lock rate, Locks on Active targets, Locks ended by the locker's own Shot,
-    hence conversion) is a separate task, **MECH-28**.
-22. Acceptance (replaces decision 9): the mechanism as set (a Reset-window target picks the dodge
-    on ~40% of its locked plan ticks, ~25% of attempts succeed at flexibility 50); Heavy missiles
-    per round fall from 3.23 toward the real 1.76; Commander missiles per round no lower than one
-    standard error under the real 2.47; conversion by target state reported beside the real 65% /
-    23% for information only (MECH-28 owns it).
-23. Decisions 14 and 15 keep `flexibility / 2`% and the ~40% pick rate as starting values; the
-    Syracuse prototype run checks them against 22.
-
-**Prototype (2026-11-13, scratch `mech24_prototype.py`, patched over the real engine, seeds
-1-24, every rule above on its engine path).** Reset-window dodge pick 39% of 441 locked plans,
-success 25% of 174 rolls; Active pick 15% of 736, success 22%; dodge cancels per round 2.79 +/-
-0.36 (baseline 1.50 +/- 0.22); shoot-backs 349, locked hides 94, Holds broken 53. Missiles per
-Heavy per round 3.46 +/- 0.19 (baseline 3.23 +/- 0.27, real 1.76), per Commander 2.90 +/- 0.21
-(baseline 2.71 +/- 0.20, real 2.47); conversion 18% (Reset-window 26%, real 65%); Locks per
-round 72.8 (baseline 66.5). The new dodge (~10% of locked Reset-window targets) and the deleted
-passive roll (~10% of launches) roughly cancel: the Heavy's excess is the locker's side.
-
-**Round 4 (owner, 2026-11-13).**
-24. Acceptance (replaces 22): the mechanism as set (pick ~40% / success ~25% on a Reset-window
-    target); missiles per role per round unchanged beyond noise from the baseline (Heavy 3.23
-    +/- 0.27, Commander 2.71 +/- 0.20); conversion by target state reported beside the real 65% /
-    23%. The Heavy toward 1.76 moves to **MECH-28**.
-25. The constants are **shares** of the final weight vector, so the rates hold whatever the role
-    weights: `DODGE_SHARE_RESET` 0.40, `DODGE_SHARE_ACTIVE` 0.13, `LOCKED_HIDE_SHARE` 0.35 of a
-    Reset-window target's other plans (map rounds only), `SHOOT_BACK_SHARE` 0.50 of an Active
-    target's other plans when its Shot is ready, plus every tag it would roll anyway, aimed at
-    the locker.
-26. The dodge resolves in the action dispatch (`ptype == "dodge"`), and the `_advance_player`
-    Stationary check adds `chosen == "dodge"`.
+MECH-24 (Missile dodge as an Action while being locked) is **[DONE]**; see `PLAN-completed.md`.
 
 ### MECH-25 · Board flip: supports move across the arena when hiding fails (owner, 2026-11-12)
 
@@ -394,13 +289,7 @@ enemy's lives into memory and nothing reads them back. Two parts:
 likely-nukes estimate is made. Reads memory, so it composes with MECH-13. The importer writes
 resource_awareness = 50 for everyone until the TDF route exists.
 
-### SM5-04 · Missile dodge from flexibility
-
-flexibility is never read. Move the missile dodge (`simulation/entrypoints.py`) from
-`min(20, survival / 5)` to `min(20, flexibility / 5)`; survival keeps only the hit roll. Add
-flexibility to `_SIMULATION_STATS` and the `PlayerRoundState` forwarding properties. The
-importer writes flexibility = 50 for everyone; `times_hit_by_missile` per game is the candidate
-source.
+SM5-04 (Missile dodge from flexibility) is **[DONE]**; see `PLAN-completed.md`.
 
 ### SM5-05 · Losing-state modifier (adaptability)
 
