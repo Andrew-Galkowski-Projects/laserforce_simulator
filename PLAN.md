@@ -266,6 +266,12 @@ fired, so Tags per round hold (408 / 415, real 403) while survival climbs. Doubl
 18. Decision 9's exemption extends to the supports: while a teammate's visit is in its `at` phase
     and sees a Medic or Ammo, that support hides without walking. If doubles per visit still sit
     more than 2 se below the baseline, that is a second departure for CAL-05.
+18a. (owner, 2026-11-12, after the acceptance run) Decisions 9 and 18 do not apply while a Downed
+    plan is live: a Downed Stay hidden player always walks out of sight, even beside a visitor.
+    Prototype 3 never held a Downed hider; the spec did, and the first acceptance run (a9b2947)
+    missed M s9 (37.9) and Tags (375.3). With 18a: pooled 0.722, Medic 0-5 8.3 +/- 0.2, M s9
+    47.7 +/- 3.1, Tags both teams 405.9 +/- 6.6, all in range; C s9 93.8, A s9 89.5, doubles
+    per visit C 0.43 / H 0.41 (departures for CAL-05).
 
 **Prototype 3 (2026-11-12, decisions 13-18, base 49):** pooled shots hit / fired 0.724 (real 0.719);
 Medic lives lost to Tags 0-5 min 8.3 +/- 0.2 (baseline 9.0 +/- 0.3: a 0.7 drop against 2 se of 0.72,

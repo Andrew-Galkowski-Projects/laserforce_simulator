@@ -1571,7 +1571,9 @@ class BatchSimulator:
         player, all_alive: list, second: int, movement_ctx
     ) -> tuple[int, int] | None:
         """MECH-23: a hider's goal this tick (its own cell when it stays put),
-        or None when ``holds_in_place`` keeps it still.
+        or None when ``holds_in_place`` keeps it still. ``holds_in_place`` is
+        not consulted while the Downed plan is live (decision 18a): a Downed
+        Stay hidden player always walks out of its attacker's sight.
 
         Recomputed every tick, outside MOVE-04's Goal commitment. At Active the
         Downed plan and the committed goal are cleared here, as ``downed_goal``
@@ -1582,7 +1584,9 @@ class BatchSimulator:
         ):
             player.downed_plan = None
             player._committed_goal = None
-        if holds_in_place(player, all_alive, movement_ctx):
+        if not plan_is_live(player, second) and holds_in_place(
+            player, all_alive, movement_ctx
+        ):
             return None
         return hide_cell(player, second, movement_ctx)
 

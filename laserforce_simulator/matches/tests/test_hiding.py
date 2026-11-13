@@ -237,6 +237,26 @@ class TestStayHiddenWalks:
         assert _advance(downed, [downed], NOW + 1) == (6, 2)
         assert downed.is_hiding
 
+    def test_a_downed_support_an_arrived_visitor_sees_still_walks(self) -> None:
+        # Decision 18a (acceptance run, 2026-11-12): holds_in_place does not apply
+        # while the Downed plan is live, so a Downed Medic beside a visitor still
+        # leaves its attacker's sight. Once Active, decision 18 holds it.
+        medic = _ps("blue_medic", "blue", (7, 2), role="medic")
+        _remember(medic, _ps("red_scout_1", "red", ENEMY), NOW)
+        _down(medic, None, NOW, OPEN, 0.0)
+        assert medic.downed_plan.option == STAY_HIDDEN
+        visitor = _ps("blue_scout_9", "blue", (7, 10))  # sees row 7
+        visitor.visit = Visit(phase="at", started=90)
+        assert holds_in_place(medic, [medic, visitor], OPEN)
+        assert _advance(medic, [medic, visitor], NOW + 1) == (6, 2)
+
+    def test_once_active_a_support_an_arrived_visitor_sees_holds(self) -> None:
+        medic = _hider((7, 2), role="medic")
+        _remember(medic, _ps("red_scout_1", "red", ENEMY), NOW)
+        visitor = _ps("blue_scout_9", "blue", (7, 10))
+        visitor.visit = Visit(phase="at", started=90)
+        assert _advance(medic, [medic, visitor]) == (7, 2)
+
     def test_at_active_the_plan_and_the_commitment_are_cleared(self) -> None:
         # The hide path skips choose_goal_cell, whose downed_goal clears them
         # otherwise; no remembered enemy, so the player also stays put.
