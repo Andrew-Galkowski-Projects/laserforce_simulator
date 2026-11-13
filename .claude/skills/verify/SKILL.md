@@ -48,6 +48,10 @@ The script:
    repo references; an `import` alone is not a use, and a production def only
    tests reference is dead too. WARN as well: delete it,
    or say why it stays (reached only through `getattr`).
+   `scripts/check_test_durations.py` (the `durations` row, when a test module
+   changed or was deleted) lists `.test_durations` ids pytest no longer
+   collects. WARN too: refresh the file with the command it prints
+   (`docs/agents/ci.md`, The durations file).
    `scripts/check_sqlite_json_lookups.py` (the `sqlite` row, also in CI's
    lint step) FAILs on a JSONField `__contains` / `__contained_by` lookup:
    SQLite, the dev database, raises `NotSupportedError` for both. Filter on a

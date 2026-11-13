@@ -15,8 +15,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   worktree (worktrees have no `.venv`). The `python` on PATH is the `.conda`
   env, which has no Django or pytest.
 - black fails with `An Application Control policy has blocked this file`: run
-  `python scripts/install_pure_black.py` once and set the `PYTHONPATH` it prints
-  (`/verify` uses that copy on its own).
+  `python scripts/install_pure_black.py` once (it installs into the main checkout,
+  shared by every worktree) and set the `PYTHONPATH` it prints (`/verify` uses that
+  copy on its own).
 - Shell: PowerShell on Windows (use PowerShell-compatible commands, not bash-isms like `&&`)
 - Path separators: prefer forward slashes or `os.path.join` in Python
 - **Never prepend `cd` to any command — git especially.** The shell already
@@ -42,8 +43,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   output; the Windows cp1252 console will crash. Use ASCII equivalents
   (`+--+`, `|`, `+--+`) instead of `┌─┐│└─┘`.
 - PowerShell 5.1 strips inner quotes from native-command arguments and adds a
-  BOM to text it pipes or `Set-Content`s. So: run a script through the **Bash
-  tool** with `python laserforce_simulator/manage.py shell -c "exec(open(r'<path>').read())"`.
+  BOM to text it pipes or `Set-Content`s. So: run `gh … --jq '<expr>'` and a script
+  through the **Bash tool**, a script with `python laserforce_simulator/manage.py shell -c "exec(open(r'<path>').read())"`.
   Commit with `git commit -F <message-file>`, and edit source files with Write / Edit:
   a Bash-tool heredoc (even `<<'EOF'`) drops every `\` at a line end, so a shell
   continuation or an escape in the spliced text comes out mangled (ANG-07).

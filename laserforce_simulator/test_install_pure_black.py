@@ -5,6 +5,8 @@ version lookup is tested; the pip call is a thin wrapper.
 """
 
 import importlib.util
+import subprocess
+import tempfile
 from pathlib import Path
 from types import ModuleType
 from unittest import TestCase
@@ -36,3 +38,39 @@ class CiBlackVersionTests(TestCase):
     def test_no_pin_is_an_error(self) -> None:
         with self.assertRaisesRegex(ValueError, "black=="):
             install.ci_black_version("python -m pip install ruff==0.17.1")
+
+
+def _git(cwd: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+class TargetDirTests(TestCase):
+    """MECH-23 retro: a worktree has no ``.tools``, so black failed in each new one."""
+
+    def test_a_worktree_installs_into_the_main_checkout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            main = Path(tmp, "main")
+            main.mkdir()
+            _git(main, "init", "-q")
+            _git(
+                main,
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "base",
+            )
+            tree = Path(tmp, "tree")
+            _git(main, "worktree", "add", "-q", str(tree))
+            self.assertEqual(
+                install.target_dir(tree).resolve(),
+                (main / ".tools" / "black").resolve(),
+            )
+            self.assertEqual(
+                install.target_dir(main).resolve(),
+                (main / ".tools" / "black").resolve(),
+            )

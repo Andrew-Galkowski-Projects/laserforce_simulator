@@ -277,6 +277,27 @@ class BlackStepTests(TestCase):
         assert envs[1] is not None
         self.assertEqual(envs[1]["PYTHONPATH"], str(pure))
 
+    def test_a_worktree_uses_the_main_checkouts_pure_copy(self) -> None:
+        # MECH-23 retro: a worktree has no .tools of its own.
+        envs: list[dict[str, str] | None] = []
+
+        def fake_run(
+            cmd: list[str], cwd: str, env: dict[str, str] | None = None
+        ) -> tuple[int, str]:
+            envs.append(env)
+            return (1, _BLOCKED) if env is None else (0, "")
+
+        with tempfile.TemporaryDirectory() as repo, tempfile.TemporaryDirectory() as main:
+            shared = Path(main, ".tools", "black")
+            shared.mkdir(parents=True)
+            with mock.patch.object(verify, "_run", fake_run), mock.patch.object(
+                verify._install, "target_dir", return_value=shared
+            ):
+                status, _ = verify.black_step(["a.py"], repo)
+        self.assertEqual(status, "PASS")
+        assert envs[-1] is not None
+        self.assertEqual(envs[-1]["PYTHONPATH"], str(shared))
+
     def test_an_unformatted_file_still_fails(self) -> None:
         with tempfile.TemporaryDirectory() as repo:
             with mock.patch.object(
@@ -285,3 +306,36 @@ class BlackStepTests(TestCase):
                 status, note = verify.black_step(["a.py"], repo)
         self.assertEqual(status, "FAIL")
         self.assertIn("would reformat a.py", note)
+
+
+class DurationsStepTests(TestCase):
+    """MECH-23 retro: deleted tests stayed listed in .test_durations."""
+
+    def test_no_changed_test_module_skips(self) -> None:
+        with mock.patch.object(verify, "_run") as run:
+            status, _ = verify.durations_step(["matches/models.py"], ".")
+        self.assertEqual(status, "SKIP")
+        run.assert_not_called()
+
+    def test_stale_ids_warn_with_the_refresh_command(self) -> None:
+        out = "a.py::test_gone\nb.py::T::test_x\n2 stale\nrefresh: python scripts/refresh_test_durations.py <run-id>"
+        with mock.patch.object(verify, "_run", return_value=(0, out)):
+            status, note = verify.durations_step(
+                ["laserforce_simulator/matches/tests/test_hiding.py"], "."
+            )
+        self.assertEqual(status, "WARN")
+        self.assertIn("2 stale", note)
+        self.assertIn("a.py::test_gone", note)
+        self.assertIn("refresh_test_durations.py", note)
+
+    def test_a_deleted_test_module_still_triggers_it(self) -> None:
+        # Deleted paths are in data["changed"]; a removal PR may delete a whole file.
+        with mock.patch.object(verify, "_run", return_value=(0, "0 stale")) as run:
+            status, _ = verify.durations_step(["x/tests_gone_tests.py"], ".")
+        self.assertEqual(status, "PASS")
+        run.assert_called_once()
+
+    def test_a_collection_error_fails(self) -> None:
+        with mock.patch.object(verify, "_run", return_value=(1, "RuntimeError: boom")):
+            status, _ = verify.durations_step(["test_a.py"], ".")
+        self.assertEqual(status, "FAIL")
