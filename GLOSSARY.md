@@ -185,8 +185,12 @@ An enemy **Chases** a Downed player by advancing ten feet along their **Trail** 
 _Avoid_: "follow" for the act (the **Follow rule** is the rule; the act is a Chase)
 
 **Downed option**:
-What a **Downed** player does until they are **Active** again, chosen once at the **Down**: **Stay hidden** (hide on the cell where they were Downed), **Shuffle to cover** (step to the nearest cell no enemy they remember can see), or **Make a trail** (walk ten feet out and back to their spot, so a **Chaser** who follows is barred). A **Resupply** can also lead to Make a trail.
-_Avoid_: "retreat" for all three (only two of them move)
+What a **Downed** player does until they are **Active** again, chosen once at the **Down**: **Stay hidden** (a **Hide**: walk up to 15 feet to a cell no enemy they remember can see, then hold it), **Shuffle to cover** (step up to five feet to the nearest such cell), or **Make a trail** (walk ten feet out and back to their spot, so a **Chaser** who follows is barred). A **Resupply** can also lead to Make a trail.
+_Avoid_: reading Stay hidden as "stay on the cell" (since MECH-23 it walks out of sight first); "retreat" for all three
+
+**Hide**:
+Getting out of sight, then staying there. A hiding player walks up to 15 feet to the nearest cell that no enemy it remembers can see, preferring cells few places can see, and holds that cell without moving. When a remembered enemy can see it again, it walks to a new cell. A hiding player is as easy to hit as anyone once it is seen: hiding protects only by being out of sight. A support waiting in a **Resupply visit** hides without walking off.
+_Avoid_: "hiding miss" (the flat 50% miss on a hider was retired by MECH-23); confusing it with **Hold**, which watches a sightline to shoot
 
 **Map scale**:
 How many real-world feet one square of a map's grid covers, from the map's drawing scale and its square size. Every distance and every player speed is set in feet and turned into squares by the Map scale, so a finer grid on the same map keeps the same real distances.
@@ -351,7 +355,7 @@ _Avoid_: confusing **Hold** with **hide** — hide seeks a low-LOS cell to *avoi
 The state of a **Hold**ing player: every tick, the moment any enemy enters (or **Advances** through) the holder's **Line of sight**, the holder fires an **Overwatch shot** at it pre-emptively. Persists for as long as the **Hold** lasts.
 
 **Stationary**:
-The state in which a player does **not Advance** this tick. True only while **hiding** (`hide` Action / hide carried over), while in **Overwatch** (for the length of a **Hold** — the holder is anchored to its sightline), or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
+The state in which a player does **not Advance** this tick. True only while **hiding** on the cell a **Hide** chose (a hider still walking out of sight Advances), while in **Overwatch** (for the length of a **Hold** — the holder is anchored to its sightline), or when the tick's **Action** is **capture_base** (the player is anchored to the **Base** being captured). Every other Action Advances toward the **Goal cell** while it acts.
 
 **Weight**:
 The per-action numeric likelihood, derived from role, situation, and **Stats**, that drives the random **Action** choice.

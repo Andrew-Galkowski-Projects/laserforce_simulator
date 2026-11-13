@@ -192,6 +192,8 @@ CAL-04 (Resupply visits stick together, supports last the round) is **[DONE]**; 
 
 ### MECH-23 · Hiding means getting out of sight, not a 50% miss (owner, 2026-11-11)
 
+Spec: #606
+
 From CAL-04's diagnosis. Hiding today hides nothing: no LOS, memory or detection code reads
 `is_hiding`. Its effects are a flat 50% miss on every shot kind (`shot.py:229`), no missile lock
 (`combat.py:925`), being passed over by `_priority_targets` while a non-hiding enemy is in sight
@@ -204,6 +206,117 @@ in its attacker's sight). **Open for the grill:** what replaces the missile-lock
 effects, the Downed option Stay hidden (`downed_option.py:236`), how far a hider may walk and
 whether it Advances while hiding, which stats scale it, and the real figures to calibrate against
 (per-role hit ratio, shots hit / fired, Medic Tags per alive minute 1.05).
+
+**Grill decisions (owner, 2026-11-12):**
+1. The 50% hiding miss goes for every shot kind. Its event (`miss`, `reason="hiding"`) and
+   round_probe's `hiding_misses` figure are retired. `is_hiding` (column and API field) stays and
+   means "in the hide posture". No migration.
+2. A hide has two parts. **Getting out of sight:** the goal is the nearest reachable cell that no
+   enemy in the hider's memory can see (Shuffle to cover's test: remembered cells, `can_see`, walk
+   distance), ties to the lower `los_rank`; the hider Advances while walking there (not
+   Stationary). **Holding:** on that cell it is Stationary, as today. When a remembered enemy can
+   see its cell again, it picks a new cell and walks again.
+3. The search reaches 15 ft of walking. With no cell out of every known enemy's sight in reach, it
+   takes the cell seen by the fewest of them, then the lowest `los_rank`; if its own cell is
+   already best, it stays.
+4. No new stat scaling (hide weights already read decision_making and low lives; speed sets pace).
+5. The missile-lock gate on a hider (`combat.py:925`) goes: a lock needs sight already.
+6. `_priority_targets`' pass-over of hiders (`mechanics.py:102`) goes.
+7. The Downed option Stay hidden runs the new hide (out of sight within 15 ft, then hold). The
+   three options and their weights stay; Shuffle to cover stays the 5 ft step.
+8. The arming Commander's forced hide is the new hide: it walks out of sight during the fuse.
+9. Resupply visits are exempt: the wait / at phases' "hide" stays Stationary on its cell (without
+   the miss).
+10. The hide search uses no RNG (fixed tie-break order). Removing the miss draw changes seeded
+    rounds, accepted. A serial-vs-parallel determinism test is added.
+11. Done means, on the baseline `round_probe`'s seeds (numbers and standard errors in the spec):
+    (a) Medic Tags per alive minute in the opening fall by more than 2 se (1.05 is CAL-05's);
+    (b) per-role hit ratio and shots hit / fired move toward real without overshooting;
+    (c) CAL-02/03/04 guard figures hold (C s9, M s9, resupply pacing).
+12. Out: showing hiding on the Playback map, a new hide event, re-tuning hide or Downed option
+    weights, and CAL-05's Medic work beyond re-measuring.
+
+**Prototype (2026-11-12, 128 Test games, master seed 42, against the baseline on the same seeds).**
+Dropping the miss with decisions 2-3 as first written (nearest out-of-sight cell) left the Medic's
+opening Tags where they were (lives lost to Tags in minutes 0-5: 9.0 +/- 0.3 to 8.7 +/- 0.2; M s9
+41.8 to 45.7, real 62) and pushed shots hit / fired to 0.83-0.93 for every role (real 0.53-0.83):
+the hiding miss had been most of the sim's misses. A 32-game diagnostic: half the Medic's opening
+Tags land while it hides, 81% of those from an attacker it did not remember at that cell, 70% with
+the Medic already on its best hide cell; the other half land while it is not hiding.
+
+**Grill decisions, round 2 (owner, 2026-11-12):**
+13. MECH-23 retunes the hit roll's base constant (70 in `70 + accuracy - survival`) so pooled
+    shots hit / fired over both teams matches real; per-role figures are reported beside it (one
+    constant cannot split Ammo / Medic 0.53 / 0.57 from Commander / Heavy 0.82 / 0.83).
+14. Replaces the nearest-cell rule of decisions 2-3: among the cells within 15 ft that no known
+    enemy sees, the hider takes the lowest `los_rank`, ties to the nearer, then (row, col).
+15. If the Medic's opening Tags still do not fall by more than 2 se, decision 11(a) becomes a guard:
+    not worse than the baseline; the rest is CAL-05's.
+
+**Sweep (2026-11-12, decision 14 in place):** base 52: pooled shots hit / fired 0.750 (real 0.719),
+Medic lives lost to Tags 0-5 min 8.0 +/- 0.2, M s9 52.7, C s9 93.0 +/- 1.6, A s9 90.2 (real 80);
+base 48: 0.707, 7.4 +/- 0.2, M s9 54.7, C s9 95.7 +/- 1.3, A s9 89.8. Lower accuracy raises Shots
+fired, so Tags per round hold (408 / 415, real 403) while survival climbs. Doubles per visit fell
+(C 0.58 to 0.41-0.44, H 0.53 to 0.41-0.45): the supports walked off to hide during visits.
+
+**Grill decisions, round 3 (owner, 2026-11-12):**
+16. The base constant is 49 (pooled shots hit / fired about 0.718).
+17. C s9 above CAL-03's 90 ceiling (about 93-96, real 85) and A s9 about 90 (real 80) are a recorded
+    departure from decision 11(c), moved to CAL-05.
+18. Decision 9's exemption extends to the supports: while a teammate's visit is in its `at` phase
+    and sees a Medic or Ammo, that support hides without walking. If doubles per visit still sit
+    more than 2 se below the baseline, that is a second departure for CAL-05.
+
+**Prototype 3 (2026-11-12, decisions 13-18, base 49):** pooled shots hit / fired 0.724 (real 0.719);
+Medic lives lost to Tags 0-5 min 8.3 +/- 0.2 (baseline 9.0 +/- 0.3: a 0.7 drop against 2 se of 0.72,
+so decision 15 makes 11(a) a guard); M s9 50.4 (real 62); C s9 90.6 +/- 1.8; A s9 87.1 (real 80);
+doubles per visit C 0.44, H 0.45 (baseline 0.58 / 0.53): decision 18's exemption did not restore
+them, so the doubles drop is a second departure for CAL-05; Tags per round both teams 391.8 (real
+403). The owner watched a prototype round on Syracuse (2026-11-12).
+
+### MECH-24 · Missile dodge as an Action while being locked (owner, 2026-11-12)
+
+From real play. A new **Action** a player can roll only while an enemy holds a Lock on it: it
+stands in place and tries to dodge. A success either breaks the Lock or makes the attacker's
+missile miss. Today the only dodge is the passive roll at launch, `min(20, survival / 5)` percent
+(`simulation/entrypoints.py`, MECH-21's Lock advance), and SM5-04 plans to move that roll to
+flexibility. **Open for the grill:** whether this replaces the passive launch dodge or adds to it,
+and how it sits with SM5-04; break-the-Lock vs missile-misses (one outcome or a roll between
+them); the chance and which stats set it (flexibility, survival); the Action's weight while
+locked; whether standing still costs it the Advance and leaves it open to other shots; the real
+figure to check against (missiles taken per game).
+
+### MECH-25 · Board flip: supports move across the arena when hiding fails (owner, 2026-11-12)
+
+From real play. After MECH-23, when a Medic's or Ammo's hide fails twice, it looks for a hiding
+spot across the arena instead of nearby. **Open for the grill:** what "a hide fails" means
+(Tagged while hiding, spotted on its hold cell, Downed in the Reset window); twice within what
+window; how "across the arena" picks the cell (far half, away from the known enemies, low
+`los_rank`); whether its partner (Heavy / Commander) follows or the visit pairing breaks; when it
+returns to the old side. Shares a trigger with MECH-26.
+
+### MECH-26 · Base run by the supports (owner, 2026-11-12)
+
+From real play. Medic and Ammo run for one or both enemy **Bases**: (a) right after an allied
+nuke goes off, and (b) when hiding is not working, the same trigger as MECH-25's board flip.
+Afterwards a support either stays over there as a board flip (MECH-25) or, if not flipping, comes
+back to the last place it saw its Heavy and hides again. **Open for the grill:** the chance of a
+run and which stats set it; one Base or both, and in what order; whether both supports go; the
+stay-or-return choice; the real figures (support base captures per game in LFstats, the TDF
+logs' base events after a nuke). Depends on MECH-23 and MECH-25.
+
+### MECH-27 · Field of view: a heading and a sight cone (owner, 2026-11-12)
+
+From real play. Every player on the map has a **heading** and a sight cone of 75-110 degrees
+(width to be settled). The heading faces the direction of movement, except while tagging, when
+it faces the player being tagged. Inside the cone a player trades Tags more readily, and an
+Active player never leaves a taggable enemy in its cone untagged; outside the cone or behind, the
+trading chance is lower. The cone shows on the Playback map. **Open for the grill:** the cone
+width and whether a stat sets it; how "higher" and "lower" trading chances enter the shot and
+Reaction-shot rolls; whether the cone also limits memory updates and detection (who "sees"
+whom); heading while Stationary (hide, hold, capture); how "never leaves untagged" sits with
+shot cadence and the stamina spend; the Playback drawing; the engine cost of an angle check per
+pair per tick.
 
 ### CAL-05 · The Medic is tagged at twice the real rate in the opening (owner, 2026-11-11)
 
