@@ -86,7 +86,7 @@ calibration set that to 1.0, so a preferred role no longer adds a bonus; it was 
 
 | Stat | Sim effect | LFstats source | Formula | Status |
 |---|---|---|---|---|
-| accuracy | Hit chance = `70 + accuracy - defender.survival` (clamped 10-95), `matches/sim_helpers/shot.py` | `avg_accuracy`, all positions combined | `round(avg_accuracy * 100)` | Decided |
+| accuracy | Hit chance = `HIT_BASE + accuracy - defender.survival`, `HIT_BASE` 49 (70 before MECH-23) (clamped 10-95), `matches/sim_helpers/shot.py` | `avg_accuracy`, all positions combined | `round(avg_accuracy * 100)` | Decided |
 | survival | Subtracted from attacker hit chance, `matches/sim_helpers/shot.py`; missile dodge `min(20, survival/5)`%, `matches/simulation/entrypoints.py` | `avg_times_hit` per position + `elimination_rate` | Mean of a times-hit part and a non-elimination part (see below) | Decided |
 | player_awareness | As the target: return-fire chance, blocks attacker follow-up chains (`shot.py`); nuke reaction `(ga + pa)/200` (`round_loop.py`) | `avg_hit_diff` + `avg_nukes_canceled` per position | Hit-diff part plus a nukes-canceled bonus of up to +10 (see below) | Decided |
 | game_awareness | Below 35, sometimes shoots enemies who are already down (`mechanics.py`); commander nuke SP banking tiers 30/50/70 (`weights.py` `_commander_nuke_gate`); half of the nuke-reaction roll | `avg_mvp` per position | `50 + 25 * log2(player_mvp / position_avg_mvp)`, weighted by games (see below) | Decided |
@@ -464,8 +464,8 @@ freely) and C (teamwork call-outs with 30-tick support memory).
 
 The side-alternation strength test (`test_batch_sim.py::TestSim08SideAlternation`) fell to a coin
 flip once target priority changed the draws. Its "strong" team had survival 0 on the reading that
-low survival was hard to miss, but the hit roll is `70 + accuracy - survival`, so both sides hit
-at 70%. All three stats at 100 against 1 wins 100% of games with the switches on, so the test's
+low survival was hard to miss, but the hit roll was `70 + accuracy - survival`, so both sides hit
+at 70% (the base is 49 since MECH-23). All three stats at 100 against 1 wins 100% of games with the switches on, so the test's
 matchup was corrected and target priority kept.
 
 ### Nukes and missiles (2026-11-06, CAL #558, #559, #560)
@@ -520,7 +520,7 @@ Commander-round):
   the Commander keeps shooting (and drawing reactions) while arming, and the MECH-06 activation
   broadcast sends every enemy toward its cell. Owner's direction: find a hidden spot or hide behind
   teammates while nuking. Hiding for the whole fuse (`nuke_arming.HIDE_WHILE_ARMING`: Stationary,
-  missed 50%, passed over as a target, no missile lock) cut the cancels 1.29 -> 0.75 and raised
+  missed 50%, passed over as a target, no missile lock; MECH-23 later removed all three) cut the cancels 1.29 -> 0.75 and raised
   detonations to 1.58 at a cost of 7 Commander tags. Walking to a low-sight-line cell near a
   teammate first fired fewer nukes and cancelled no fewer, alone or with the hide, so it was not
   kept. The remaining cancels are the enemy rush; the broadcast itself was not changed.
@@ -534,7 +534,7 @@ launch, and every lock that ends without one writes a `lock_cancelled` row
 |---|---|---|
 | `missile_player` rolls that planned a lock | 33.0 | 35.0 |
 | ... of which from a Downed player (plan made, lock refused) | 18.6 | 20.3 |
-| ... refused because the target was hiding | 6.5 | 6.7 |
+| ... refused because the target was hiding (a gate MECH-23 removed) | 6.5 | 6.7 |
 | locks started | 7.9 | 8.1 |
 | lost line of sight during the 3 ticks and failed the `special_usage` save | 2.7 | 2.8 |
 | completed the lock | 5.3 | 5.1 |

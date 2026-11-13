@@ -22,6 +22,10 @@ tick's Advance distance, applying no other deliberate effect. Each cell stepped
 through accumulates into a per-player **Movement trail** (ordered cell list, the
 basis for the future RES-04 heatmap).
 
+> **Superseded by MECH-23 (#606) for hiding:** a hiding player is no longer
+> Stationary. It walks up to 15 ft to a cell no remembered enemy can see, then
+> holds there. `hold` and `capture_base` stay Stationary.
+
 **Considered options:**
 (a) *Keep `change_zone`/move as a normal weighted Action that simply gates
 movement* — rejected: this is the broken status quo (zero-weight roles never

@@ -220,22 +220,16 @@ class EventLog:
         *,
         kind: str = "initial",
         chain_depth: int = 0,
-        reason: Optional[str] = None,
     ) -> None:
         """Emit ``event_type='miss'``. points_awarded=0.
 
-        ``reason='hiding'`` is the only non-None value in production
-        (defender's is_hiding triggered the 50% hide-miss roll); when
-        present, metadata gets ``reason="hiding"`` and description
-        becomes ``"X misses Y (hiding)"``.
+        MECH-23 removed the ``reason`` parameter: its only value was
+        ``"hiding"`` (the 50% hide-miss roll), and that roll is gone.
         """
         if not self._persist:
             return
         extras = _kind_extras(kind, chain_depth)
-        if reason is not None:
-            extras["reason"] = reason
-            desc = f"{attacker.name} misses {defender.name} ({reason})"
-        elif kind == "follow_up":
+        if kind == "follow_up":
             desc = f"{attacker.name} follow-up miss on {defender.name}"
         elif kind == "reaction":
             desc = f"{attacker.name} reaction miss on {defender.name}"

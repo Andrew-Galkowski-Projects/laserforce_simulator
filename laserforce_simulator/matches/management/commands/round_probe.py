@@ -448,7 +448,6 @@ def _role_lines(
         + _real(targets, role, "elimination_tick"),
         f"  Times tagged per round: {measure('times_tagged')}",
         f"  Shots fired per round: {measure('shots_fired')}",
-        f"  Misses at a hiding target per round: {measure('hiding_misses')}",
         f"  Downs given per round: {measure('downs_given')}",
         f"  Downs taken per round: {measure('downs_taken')}",
         f"  Active %: {measure('active_share', 100.0)}",

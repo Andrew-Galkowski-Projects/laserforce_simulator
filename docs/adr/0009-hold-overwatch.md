@@ -46,6 +46,10 @@ joins `is_hiding` / `chosen == "capture_base"` in the `_advance_player`
 stationary predicate. A holder that drifts off its sightline is not holding;
 `choose_goal_cell` is moot during Hold (as during Hide).
 
+> **Superseded by MECH-23 (#606) for hiding:** `is_hiding` has left the
+> stationary predicate. A hider walks to a hide cell out of every remembered
+> enemy's sight and holds there; Hold itself stays Stationary as above.
+
 **4. The "moved through LoS" trigger reads the BatchSim path-commitment cache;
 Overwatch resolution is `BatchSimulator`-only.** The edge case requires that an
 enemy crossing the holder's LoS *between* its Advance start and end cells still

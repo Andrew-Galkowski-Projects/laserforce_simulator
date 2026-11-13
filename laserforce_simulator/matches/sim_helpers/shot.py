@@ -15,10 +15,11 @@ spec). Two behaviour changes are deliberate and fold into the
 already-pending post-MOVE-01 Score Calibration re-baseline:
 
   - **Uniform hide-50%-miss roll** across all four ``kind`` s
-    (pre-refactor only ``SHOT_KIND_INITIAL`` rolled it).
+    (pre-refactor only ``SHOT_KIND_INITIAL`` rolled it). MECH-23 removed
+    the roll altogether: a hider is shot like anyone else.
   - **Uniform Ammo non-decrement of ``final_shots``** across all four
-    ``kind`` s + the ``miss_hid`` branch (pre-refactor the initial-tag
-    hit/miss branches decremented even for Ammo).
+    ``kind`` s (pre-refactor the initial-tag hit/miss branches
+    decremented even for Ammo).
 
 Per-attempt one-pass interleaving means seeded games **differ** from
 pre-refactor; the internal SIM-07/SIM-08 contract (same seed +
@@ -57,6 +58,12 @@ _VALID_KINDS = frozenset(
     }
 )
 
+#: The hit roll's base: ``(HIT_BASE + accuracy - survival) * elevation *
+#: stamina``, clamped to 10-95. MECH-23 (decisions 13 and 16) dropped it from
+#: 70 to 49 when it retired the 50% miss on a hider, so pooled Tags made over
+#: Shots fired matches real.
+HIT_BASE: int = 49
+
 #: Maximum follow-up chain depth. A ``SHOT_KIND_FOLLOW_UP`` at
 #: ``chain_depth == _MAX_CHAIN_DEPTH`` will NOT schedule another follow-up
 #: regardless of the player_awareness roll.
@@ -67,7 +74,7 @@ _MAX_CHAIN_DEPTH: int = 2
 class ShotOutcome:
     """Per-shot summary returned by ``resolve_shot``.
 
-    ``invalid`` / ``miss_hid`` / plain ``miss`` all surface as
+    ``invalid`` / ``miss`` both surface as
     ``hit=False, downed=False, eliminated=False``. Tests pin on the
     fields directly; production callers ignore the return value.
     """
@@ -202,8 +209,8 @@ def resolve_shot(
     """Resolve one Shot end-to-end. See the module docstring and the
     seam contract for the 10-phase spec.
 
-    Returns ``ShotOutcome(hit, downed, eliminated)``. Invalid /
-    miss_hid / miss all return ``(False, False, False)``.
+    Returns ``ShotOutcome(hit, downed, eliminated)``. Invalid / miss
+    both return ``(False, False, False)``.
     """
     assert kind in _VALID_KINDS, f"unknown shot kind {kind!r}"
 
@@ -225,21 +232,8 @@ def resolve_shot(
     # MECH-21: a trigger pull ends the shooter's own Lock, every kind.
     cancel_missile_lock(ctx, attacker, tick, "shot")
 
-    # ── Phase 2. Hide-50%-miss roll (uniform across all kinds) ────────
-    if defender.is_hiding and random.random() > 0.5:
-        if attacker.role != "ammo":
-            attacker.final_shots = max(0, attacker.final_shots - 1)
-        attacker.counters.shots_missed += 1
-        attacker.last_shot_time = tick
-        ctx.events.miss(
-            attacker,
-            defender,
-            tick,
-            kind=kind,
-            chain_depth=chain_depth,
-            reason="hiding",
-        )
-        return ShotOutcome(False, False, False)
+    # ── Phase 2. (retired) The 50% hiding miss went with MECH-23: a hider is
+    # shot like anyone else, and hiding protects only by being out of sight.
 
     # ── Phase 3. Hit roll ─────────────────────────────────────────────
     elev_mod = _elevation_hit_modifier(
@@ -254,7 +248,7 @@ def resolve_shot(
         min(
             95,
             int(
-                (70 + attacker.accuracy - defender.survival)
+                (HIT_BASE + attacker.accuracy - defender.survival)
                 * elev_mod
                 * attacker.stamina_hit_modifier
             ),

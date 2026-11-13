@@ -96,12 +96,10 @@ def choose_tag_target(player, all_alive, second, movement_ctx=None, *, los_filte
 
 
 def _priority_targets(targets: list, second: float) -> list:
-    """Support-survival switch 1: the targets worth a shot. A hiding enemy is passed
-    over while one in sight is not hiding, and an enemy Medic only while no other
-    enemy in sight is Active. Keeps *targets*' order; never empties it."""
-    in_the_open = [t for t in targets if not t.is_hiding]
-    if in_the_open:
-        targets = in_the_open
+    """Support-survival switch 1: the targets worth a shot. An enemy Medic is passed
+    over while another enemy in sight is Active. A hider in sight is a target like
+    any other (MECH-23 removed the pass-over of hiders). Keeps *targets*' order;
+    never empties it."""
     others_active = any(t.role != "medic" and t.is_active_at(second) for t in targets)
     if others_active:
         targets = [t for t in targets if t.role != "medic"]
