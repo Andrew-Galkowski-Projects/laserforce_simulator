@@ -60,6 +60,7 @@ STEPS: tuple[str, ...] = (
     "sqlite",
     "glossary",
     "dead-code",
+    "durations",
     "mypy",
     "pytest",
     "ng-lint",
@@ -76,18 +77,20 @@ FRONTEND_STEPS: tuple[tuple[str, str], ...] = (
 )
 
 
-def _load_check_encoding() -> ModuleType:
-    # scripts/ is not a package; load the CI script by path so its
-    # TEXT_SUFFIXES stays the single source of truth.
-    path = Path(__file__).resolve().parents[4] / "scripts" / "check_encoding.py"
-    spec = importlib.util.spec_from_file_location("check_encoding", path)
+def _load_script(name: str) -> ModuleType:
+    # scripts/ is not a package; load a repo script by path so it stays the
+    # single source of truth (check_encoding's TEXT_SUFFIXES, install_pure_black's
+    # target_dir).
+    path = Path(__file__).resolve().parents[4] / "scripts" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-TEXT_SUFFIXES: tuple[str, ...] = _load_check_encoding().TEXT_SUFFIXES
+TEXT_SUFFIXES: tuple[str, ...] = _load_script("check_encoding").TEXT_SUFFIXES
+_install = _load_script("install_pure_black")
 
 
 def _run(
@@ -183,20 +186,33 @@ PURE_BLACK_DIR = Path(".tools", "black")
 _BLOCKED_BY_POLICY = "Application Control policy"
 
 
+def _pure_black_dir(repo_root: str) -> Path | None:
+    """This checkout's ``.tools/black``, else the main checkout's: a worktree
+    has none of its own (MECH-23 retro)."""
+    local = Path(repo_root, PURE_BLACK_DIR)
+    if local.is_dir():
+        return local
+    try:
+        shared = _install.target_dir(Path(repo_root))
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return shared if shared.is_dir() else None
+
+
 def black_step(py_files: list[str], repo_root: str) -> tuple[str, str]:
     """``black --check`` on the changed files.
 
     An Application Control policy can block the venv's compiled black (CAL-04
     retro). Then the check re-runs on the pure-Python copy that
-    ``scripts/install_pure_black.py`` puts in ``.tools/black``.
+    ``scripts/install_pure_black.py`` puts in the main checkout's ``.tools/black``.
     """
     if not py_files:
         return ("SKIP", "no changed .py files")
     cmd = _tool("black", "--check", *py_files)
     code, out = _run(cmd, cwd=repo_root)
     if code != 0 and _BLOCKED_BY_POLICY in out:
-        pure = Path(repo_root, PURE_BLACK_DIR)
-        if not pure.is_dir():
+        pure = _pure_black_dir(repo_root)
+        if pure is None:
             return (
                 "FAIL",
                 "compiled black blocked by Application Control: run "
@@ -207,6 +223,28 @@ def black_step(py_files: list[str], repo_root: str) -> tuple[str, str]:
         if code == 0:
             return ("PASS", f"pure-Python black ({PURE_BLACK_DIR.as_posix()})")
     return ("PASS", "") if code == 0 else ("FAIL", _tail(out))
+
+
+def durations_step(changed: list[str], repo_root: str) -> tuple[str, str]:
+    """``.test_durations`` ids no collected test answers to; WARN only.
+
+    Runs when a test module changed or was deleted (``changed`` keeps deleted
+    paths): pytest-split ignores the dead ids, so nothing else ever says the
+    file needs a refresh (MECH-23 retro).
+    """
+    if not any(cf._is_test_file(Path(p).name) for p in changed):
+        return ("SKIP", "no changed test modules")
+    script = os.path.join(repo_root, "scripts", "check_test_durations.py")
+    code, out = _run([sys.executable, script], cwd=repo_root)
+    if code != 0:
+        return ("FAIL", _tail(out))
+    lines = out.splitlines()
+    count = next((ln for ln in lines if ln.endswith(" stale")), "0 stale")
+    if count == "0 stale":
+        return ("PASS", "")
+    ids = [ln for ln in lines if "::" in ln]
+    hint = next((ln for ln in lines if ln.startswith("refresh:")), "")
+    return ("WARN", " | ".join([count, *ids[:3], hint]))
 
 
 def mypy_step(py_files: list[str], diff_ref: str, repo_root: str) -> tuple[str, str]:
@@ -313,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
     else:
         results["dead-code"] = ("SKIP", "no changed .py files")
 
+    results["durations"] = durations_step(list(data["changed"]), repo_root)
     results["mypy"] = mypy_step(py_files, diff_ref, repo_root)
 
     # --- pytest ---

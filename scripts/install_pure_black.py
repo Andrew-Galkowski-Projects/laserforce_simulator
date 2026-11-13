@@ -1,5 +1,8 @@
 #!/usr/bin/env python
-"""Install a pure-Python black into ``.tools/black`` (gitignored).
+"""Install a pure-Python black into the main checkout's ``.tools/black`` (gitignored).
+
+Run from a worktree, it still installs into the main checkout, which every
+worktree's ``/verify`` then uses.
 
 On a machine whose Application Control policy blocks the venv's compiled black
 (``ImportError: DLL load failed while importing black: An Application Control
@@ -23,8 +26,23 @@ import sys
 from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
-_TARGET = _REPO / ".tools" / "black"
 _CI = _REPO / ".github" / "workflows" / "ci.yml"
+
+
+def target_dir(checkout: Path) -> Path:
+    """``.tools/black`` in the main checkout that owns ``checkout``.
+
+    Every worktree shares the main checkout's ``.git``, so one install serves
+    them all: a per-worktree copy failed black in each new worktree (MECH-23 retro).
+    """
+    common = subprocess.run(
+        ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        cwd=checkout,
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    return Path(common).parent / ".tools" / "black"
 
 
 def ci_black_version(ci_text: str) -> str:
@@ -37,6 +55,7 @@ def ci_black_version(ci_text: str) -> str:
 
 def main() -> int:
     version = ci_black_version(_CI.read_text(encoding="utf-8"))
+    target = target_dir(_REPO)
     # Pure py3-none-any wheels only: black, pytokens and every dependency ship one.
     cmd = [
         sys.executable,
@@ -45,14 +64,14 @@ def main() -> int:
         "install",
         "--upgrade",
         "--target",
-        str(_TARGET),
+        str(target),
     ]
     cmd += ["--only-binary", ":all:", "--platform", "any", "--implementation", "py"]
     cmd += [f"black=={version}"]
     code = subprocess.run(cmd).returncode
     if code == 0:
-        print(f"black {version} installed in {_TARGET}")
-        print(f'PowerShell: $env:PYTHONPATH = "{_TARGET}"')
+        print(f"black {version} installed in {target}")
+        print(f'PowerShell: $env:PYTHONPATH = "{target}"')
     return code
 
 

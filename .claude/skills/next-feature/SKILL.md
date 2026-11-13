@@ -198,6 +198,9 @@ Every new rule a target depends on gets one prototype run on the fixture map bef
 is published. MECH-17's search toward the enemy base was unmeasured and did nothing on
 Syracuse, whose base cells are in walls: two rounds in 12 planned no Shots from Commanders,
 Heavies or Scouts, and the ticket had to depart from the spec.
+Map each rule the spec gives to the prototype path that ran it. A rule on a path the
+prototype skipped is a new rule, so it gets its own prototype run: MECH-23's spec put
+hold-in-place on the Downed path as well, and the acceptance run missed M s9 and Tags.
 
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.

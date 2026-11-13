@@ -76,6 +76,8 @@ It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `
 `laserforce_simulator/.test_durations` balances the shards (pytest-split's default
 `duration_based_chunks`, which keeps a test class in one shard). A test missing from it
 still runs, at the average duration, so a stale file only unbalances the shards.
+A deleted or renamed test stays listed until a refresh: `/verify`'s `durations` row
+(`scripts/check_test_durations.py`) WARNs on those ids when a test module changed.
 
 Every green shard keeps its own tests' CI timings as the `durations-shard-<n>`
 artifact for 30 days (PERF-04). **Refresh** when the slowest shard's pytest is more than
