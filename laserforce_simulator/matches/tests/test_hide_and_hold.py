@@ -762,8 +762,12 @@ class TestMapLessRoundsAreUnchanged:
     # Re-pinned 2026-11-12 for MECH-23b (#608): the 50% hiding miss is gone (one
     # draw fewer per Shot at a hider) and the hit roll's base is 49 (was 70), so
     # every map-less round with a Shot redraws (the values before were
-    # d15c339ffa382116 and f238b2457f36a9bf).
-    PINNED = {7: "0b547f9b3f4484d9", 21: "be28da2854982ffd"}
+    # d15c339ffa382116 and f238b2457f36a9bf). Re-pinned 2026-11-13 for MECH-24a
+    # (#612): a launch rolls no passive dodge (one draw fewer per launch) and a
+    # locked target may roll the Dodge, so every map-less round with a Lock
+    # redraws; a round with no Lock replays (test_dodge's zero-slot invariant)
+    # (the values before were 0b547f9b3f4484d9 and be28da2854982ffd).
+    PINNED = {7: "625319fbd594f91e", 21: "7758f82de9017db4"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:

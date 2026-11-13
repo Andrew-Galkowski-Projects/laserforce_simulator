@@ -134,8 +134,10 @@ class TestHoldActionSlot:
         p = _ps("scout", cell_row=None, cell_col=None)
         plan_action(p, [p], 0, None)
 
-        assert len(captured["weights"]) == 9
-        assert len(captured["choices"]) == 9
+        # MECH-24: 10 slots (a trailing zero ``dodge``, index 9); the invariant
+        # is unchanged, hold is still slot 8.
+        assert len(captured["weights"]) == 10
+        assert len(captured["choices"]) == 10
 
     def test_forced_hold_choice_yields_hold_plan(self, monkeypatch):
         _force_choice(monkeypatch, "hold")

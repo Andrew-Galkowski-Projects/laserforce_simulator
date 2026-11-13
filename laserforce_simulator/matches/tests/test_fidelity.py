@@ -65,6 +65,9 @@ _SNAPSHOT_STATS = {
     # draw), so the snapshot carries 14 keys; the "exactly the sim-stat keys"
     # invariant is unchanged.
     "positioning",
+    # MECH-24: flexibility joined _SIMULATION_STATS (the Dodge chance), so the
+    # snapshot carries 15 keys; the invariant is unchanged.
+    "flexibility",
 }
 
 
@@ -198,7 +201,7 @@ class TestFidelityGating:
                 assert {"player_id", "name", "role", "stats"} <= set(entry), entry
                 stats = entry["stats"]
                 assert isinstance(stats, dict)
-                # Exactly the 14 sim-stat keys, every value an int.
+                # Exactly the 15 sim-stat keys, every value an int.
                 assert set(stats) == _SNAPSHOT_STATS, set(stats) ^ _SNAPSHOT_STATS
                 for v in stats.values():
                     assert isinstance(v, int), stats

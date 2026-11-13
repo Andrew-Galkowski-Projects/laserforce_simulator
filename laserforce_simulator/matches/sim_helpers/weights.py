@@ -149,15 +149,25 @@ _COMMANDER: dict[str, Any] = dict(
 # role weight function applies its deltas on top.  Adjust these numbers to
 # retune the opening behaviour without touching any logic code.
 #
-# The 9 entries map by index to the action array (see ``_ACTION_IDX`` /
+# The 10 entries map by index to the action array (see ``_ACTION_IDX`` /
 # ``_CHOICES`` in combat.py):
 #   0 tag_player        5 resupply_ally
 #   1 only_move         6 missile_player
 #   2 hide              7 request_resupply
 #   3 capture_base      8 hold
-#   4 use_special
+#   4 use_special       9 dodge (MECH-24)
+#
+# ``dodge`` is a trailing zero that no role function writes: ``plan_action``
+# gives it a weight only for a player under a live Lock (``apply_dodge_share``).
 # ---------------------------------------------------------------------------
-BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0]
+BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0, 0]
+
+# MECH-24 (spec #611, decision 25): the share of a locked player's final vector
+# the Dodge takes, so the rate holds whatever the role weights. A target that is
+# not Active is in the Reset window (a Lock needs a Taggable target). Prototype
+# values (Syracuse, seeds 1-24): pick 39% / 15% of locked plans.
+DODGE_SHARE_RESET = 0.40
+DODGE_SHARE_ACTIVE = 0.13
 
 # Index of the ``hide`` slot in the documented layout above. Used by
 # ``finalize_action_weights`` for the UXP-23 fallback; weights.py does not
@@ -182,6 +192,24 @@ def finalize_action_weights(weights: list[int]) -> list[int]:
         clamped = [0] * len(clamped)
         clamped[_HIDE_IDX] = 1
     return clamped
+
+
+# Index of the ``dodge`` slot (MECH-24); mirrors ``combat._ACTION_IDX["dodge"]``.
+_DODGE_IDX = 9
+
+
+def apply_dodge_share(weights: list[int], share: float) -> list[float]:
+    """MECH-24: give the ``dodge`` slot ``share`` of the vector a locked player draws.
+
+    With ``S`` the total of every other slot, the dodge weight becomes
+    ``S * share / (1 - share)``, so ``random.choices`` picks it with probability
+    ``share`` whatever the role weights are; the other slots are unchanged. Runs
+    after ``finalize_action_weights`` (so ``S > 0``). Returns a new list.
+    """
+    out: list[float] = [float(w) for w in weights]
+    others = sum(out) - out[_DODGE_IDX]
+    out[_DODGE_IDX] = others * share / (1.0 - share)
+    return out
 
 
 # ---------------------------------------------------------------------------

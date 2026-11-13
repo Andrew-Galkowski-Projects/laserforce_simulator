@@ -596,11 +596,19 @@ class TestTickLoopWiring:
             all_alive: list,
             tick: int,
             movement_ctx: MapContext | None = None,
+            lockers: tuple = (),
         ) -> list:
             # Updates run in tick order, so the newest dozen hold this tick's.
             assert (tick, player.tag_id) in updates[-12:]
             planned.add((tick, player.tag_id))
-            return real_plan(self, player, all_alive, tick, movement_ctx=movement_ctx)
+            return real_plan(
+                self,
+                player,
+                all_alive,
+                tick,
+                movement_ctx=movement_ctx,
+                lockers=lockers,
+            )
 
         monkeypatch.setattr(entrypoints, "update_mode", update_spy)
         monkeypatch.setattr(BatchSimulator, "_plan_action", plan_spy)

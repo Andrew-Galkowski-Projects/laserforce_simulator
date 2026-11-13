@@ -44,6 +44,8 @@ class PlayerState:
     speed: int = 50  # 0-100, from Player model; 5-10 ft/s (MOVE-08)
     # MOVE-06: sharpens the positioning-goal draw (goal_scoring.temperature).
     positioning: int = 50
+    # MECH-24: the Dodge chance, flexibility / 2 percent per Lock on the dodger.
+    flexibility: int = 50
     final_missiles: int = 0
     shields: int = 1
     player_awareness: int = 50  # 0-100, from Player model

@@ -863,6 +863,7 @@ def _probe_round(task: tuple) -> _RoundTally:
         *,
         save_player=None,
         time_domain="seconds",
+        lockers=(),
     ):
         plans = real_plan(
             player,
@@ -871,6 +872,7 @@ def _probe_round(task: tuple) -> _RoundTally:
             movement_ctx,
             save_player=save_player,
             time_domain=time_domain,
+            lockers=lockers,  # MECH-24: the Locks on the player
         )
         tally = tallies[player.role]
         for plan in plans:

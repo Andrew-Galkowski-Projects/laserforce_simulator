@@ -304,6 +304,7 @@ class TestActionShares(SimpleTestCase):
                 "missile_player",
                 "request_resupply",
                 "hold",
+                "dodge",  # MECH-24: the 10th Action slot
             },
         )
 

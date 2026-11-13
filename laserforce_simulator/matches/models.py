@@ -632,6 +632,11 @@ class PlayerRoundState(models.Model):
         return self.player.stat_for_simulation("survival", self.role)
 
     @property
+    def flexibility(self) -> int:
+        """MECH-24: the Dodge chance stat, like ``survival``."""
+        return self.player.stat_for_simulation("flexibility", self.role)
+
+    @property
     def name(self) -> str:
         return self.player.name
 

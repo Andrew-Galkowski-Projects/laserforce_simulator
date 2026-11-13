@@ -25,6 +25,7 @@ from ..sim_helpers.combat import (
     capture_base as _capture_base_shared,
     award_bases as _award_bases_shared,
     cancel_missile_lock,
+    resolve_dodge,
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
@@ -125,6 +126,7 @@ _SIMULATION_STATS = (
     "resource_awareness",
     "speed",
     "positioning",
+    "flexibility",  # MECH-24: the Dodge chance
 )
 
 
@@ -132,13 +134,14 @@ def _roster_from_snapshot(side_list) -> list:
     """GEN-01: rebuild a ``list[(role, _PlayerData)]`` from a snapshot side.
 
     Each entry in ``side_list`` is a roster-snapshot dict
-    ``{"player_id", "name", "role", "stats": {<14 sim-stats>: int}}``. The
+    ``{"player_id", "name", "role", "stats": {<15 sim-stats>: int}}``. The
     snapshot already holds the boosted (post-``stat_for_simulation``) values,
     so ``_PlayerData.stat_for_simulation`` returning them verbatim re-bakes
-    IDENTICAL ``PlayerState``s — exact reproduction. The 14 ``"stats"`` keys
+    IDENTICAL ``PlayerState``s — exact reproduction. The 15 ``"stats"`` keys
     are exactly the keys ``_make_players`` reads (``_SIMULATION_STATS``), so
     no ``KeyError``. MOVE-06: a snapshot from before a stat joined
-    ``_SIMULATION_STATS`` (``positioning``) gets that stat's default, 50, so
+    ``_SIMULATION_STATS`` (``positioning``; MECH-24 ``flexibility``) gets that
+    stat's default, 50, so
     an old round still re-simulates (on today's engine, so not identically).
     """
     return [
@@ -1142,6 +1145,7 @@ class BatchSimulator:
                 ),
                 speed=player_model.stat_for_simulation("speed", role),
                 positioning=player_model.stat_for_simulation("positioning", role),
+                flexibility=player_model.stat_for_simulation("flexibility", role),
                 starting_lives=resources["lives"],
                 starting_shots=resources["shots"],
                 final_lives=resources["lives"],
@@ -1234,7 +1238,7 @@ class BatchSimulator:
             # retained only to avoid a 50-site mechanical rename in this
             # SIM-09-doomed engine; no value here is in real seconds.
             second = tick
-            # --- advance the Locks (MECH-21): sight, launch, dodge ---
+            # --- advance the Locks (MECH-21): sight, launch ---
             self._advance_missile_locks(second, ctx)
 
             # --- process pending reactions (deferred by shot cooldown) ---
@@ -1363,11 +1367,21 @@ class BatchSimulator:
                 for player in all_alive
             }
 
+            # MECH-24: the lockers of every live Lock on each player, in
+            # ``ctx.missile_locks`` insertion order (no RNG). Planning starts no
+            # Lock and ends none, so one snapshot before planning holds for all.
+            lockers_on: dict[int, list] = {}
+            for lock in ctx.missile_locks.values():
+                lockers_on.setdefault(id(lock.defender), []).append(lock.attacker)
             plans = []
             for player in all_alive:
                 plans.extend(
                     self._plan_action(
-                        player, all_alive, second, movement_ctx=movement_ctx
+                        player,
+                        all_alive,
+                        second,
+                        movement_ctx=movement_ctx,
+                        lockers=tuple(lockers_on.get(id(player), ())),
                     )
                 )
 
@@ -1417,6 +1431,11 @@ class BatchSimulator:
                         movement_ctx,
                         ctx=ctx,
                     )
+                elif ptype == "dodge":
+                    # MECH-24: one flexibility / 2 roll per live Lock on the
+                    # actor; a success cancels it (``dodge``), a failure writes
+                    # nothing. The dodger is Stationary (``_advance_player``).
+                    resolve_dodge(actor, ctx, second)
                 elif ptype == "use_special":
                     scheduled = self._use_special(actor, second, all_alive, ctx)
                     if scheduled and scheduled[0] == "nuke":
@@ -1554,10 +1573,19 @@ class BatchSimulator:
     # Action planning — reuses weight functions from weights.py
     # ------------------------------------------------------------------ #
 
-    def _plan_action(self, player, all_alive, tick, movement_ctx=None):
+    def _plan_action(self, player, all_alive, tick, movement_ctx=None, lockers=()):
         # TIME-01: BatchSimulator is fully tick-native — pass the integer tick
         # and select tick-domain thresholds in the shared planning helpers.
-        return plan_action(player, all_alive, tick, movement_ctx, time_domain="ticks")
+        # MECH-24: ``lockers`` holds the locking players of the live Locks on
+        # ``player`` (the tick loop builds it from ``ctx.missile_locks``).
+        return plan_action(
+            player,
+            all_alive,
+            tick,
+            movement_ctx,
+            time_domain="ticks",
+            lockers=lockers,
+        )
 
     @staticmethod
     def _apply_hide(actor, second) -> None:
@@ -1603,7 +1631,8 @@ class BatchSimulator:
         Mirrors RBS._advance_player. Performed for every non-stationary player
         every tick, independent of the weighted action roll. Stationary set
         (suppress the Advance this tick): ``player.is_holding`` is True, OR this
-        tick's chosen action is ``capture_base`` (frozen, anchored to base).
+        tick's chosen action is ``capture_base`` (frozen, anchored to base) or
+        ``dodge`` (MECH-24).
         MECH-23: a hider walks to its ``hiding.hide_cell`` at normal speed (see
         ``_hide_goal``). When this tick's action is ``only_move`` the Advance is
         a single 2× step in one astar_advance call. No-op when there is no map
@@ -1625,7 +1654,10 @@ class BatchSimulator:
                     player.is_hiding = False
                 else:
                     hiding = True
-        elif getattr(player, "is_holding", False) or chosen == "capture_base":
+        elif getattr(player, "is_holding", False) or chosen in (
+            "capture_base",
+            "dodge",  # MECH-24: the dodger stands in place
+        ):
             return
         elif player.is_hiding:
             hiding = True
@@ -1920,10 +1952,10 @@ class BatchSimulator:
 
         Over a copy of ``ctx.missile_locks`` (insertion order), skipping a
         lock an earlier launch this pass already cancelled: ``"sight"``
-        cancels; ``"launch"`` rolls the one dodge, ``min(20, survival / 5)``
-        percent. A dodge cancels (``"dodge"``, nothing spent, no
-        ``missiled``); otherwise the lock is removed, then
-        ``_complete_missile`` spends the missile and lands it.
+        cancels; on ``"launch"``, after the gates, the lock is removed, then
+        ``_complete_missile`` spends the missile and lands it. MECH-24: a launch
+        rolls no dodge and draws no RNG; the target dodges with the Dodge
+        Action (``resolve_dodge``, in the dispatch).
         """
         for lock in list(ctx.missile_locks.values()):
             # An earlier launch this pass can Down a player and so cancel a
@@ -1935,7 +1967,7 @@ class BatchSimulator:
                 cancel_missile_lock(ctx, lock.attacker, tick, "sight")
             elif result == "launch":
                 # Every lock ends in exactly one row (spec #583): a launch the
-                # gates refuse cancels before any dodge roll. ``record_down``
+                # gates refuse cancels. ``record_down``
                 # already ends most of these; this catches the rest.
                 if not (
                     lock.attacker.is_active_at(tick)
@@ -1947,13 +1979,8 @@ class BatchSimulator:
                     # The Follow rule takes the target off the locker's sights.
                     cancel_missile_lock(ctx, lock.attacker, tick, "sight")
                     continue
-                survival = getattr(lock.defender, "survival", 50)
-                dodge_pct = min(20.0, survival / 5.0)
-                if random.random() * 100 < dodge_pct:
-                    cancel_missile_lock(ctx, lock.attacker, tick, "dodge")
-                else:
-                    del ctx.missile_locks[lock.attacker.player_id]
-                    self._complete_missile(lock.attacker, lock.defender, tick, ctx)
+                del ctx.missile_locks[lock.attacker.player_id]
+                self._complete_missile(lock.attacker, lock.defender, tick, ctx)
 
     def _complete_missile(
         self,
@@ -1964,7 +1991,7 @@ class BatchSimulator:
     ):
         # MECH-21 (ADR-0050): the launch. It spends the missile and always
         # hits, writing ``missiled`` at the launch tick (lock start +
-        # LOCK_TICKS); a dodge was rolled, and cancelled the lock, before.
+        # LOCK_TICKS). MECH-24: a Dodge ends a Lock earlier, in the dispatch.
         if (
             attacker.is_active_at(second)
             and defender.is_taggable_at(second)

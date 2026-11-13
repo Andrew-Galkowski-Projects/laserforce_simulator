@@ -1,18 +1,19 @@
 """
 Per-role action weight function unit tests (sim_helpers/weights.py).
 
-Weight array layout — indices 0-8 (the production 9-slot array; MOVE-03):
+Weight array layout — indices 0-9 (the production 10-slot array; MECH-24):
   0 tag_player        5 resupply_ally
   1 only_move         6 missile_player
   2 hide              7 request_resupply
   3 capture_base      8 hold
-  4 use_special
+  4 use_special       9 dodge
 
   (MOVE-01: index 1 renamed change_zone -> only_move; same slot/weights.)
   (MOVE-03: index 8 ``hold`` is the Overwatch slot — see ADR-0009.)
+  (MECH-24: index 9 ``dodge`` is a trailing zero unless the player is locked.)
 
 Base weights before any role function: ``BASELINE_ACTION_WEIGHTS`` =
-``[70, 30, 0, 0, 0, 0, 0, 0, 0]`` (imported from sim_helpers.weights — the
+``[70, 30, 0, 0, 0, 0, 0, 0, 0, 0]`` (imported from sim_helpers.weights — the
 single source of truth that ``combat.plan_action`` copies). ``_fresh()`` returns
 a fresh mutable copy of it for every call.
 
@@ -69,6 +70,7 @@ _ACTION_IDX = {
     "missile_player": 6,
     "request_resupply": 7,
     "hold": 8,
+    "dodge": 9,  # MECH-24: a trailing zero no role function writes
 }
 
 # Full-resource defaults per role so request_resupply (idx 7) is 0 at baseline
@@ -107,10 +109,14 @@ class TestWeightFunctions:
             team_red=self.team, team_blue=self.team2, round_number=1
         )
 
-    def test_baseline_constant_is_nine_slots(self):
-        """BASELINE_ACTION_WEIGHTS is the documented 9-slot opening vector."""
-        assert list(BASELINE_ACTION_WEIGHTS) == [70, 30, 0, 0, 0, 0, 0, 0, 0]
-        assert len(BASELINE_ACTION_WEIGHTS) == 9
+    def test_baseline_constant_is_ten_slots(self):
+        """BASELINE_ACTION_WEIGHTS is the documented 10-slot opening vector.
+
+        MECH-24 appended ``dodge`` (index 9, weight 0); the invariant is
+        unchanged: a trailing zero slot changes nothing ``random.choices`` picks.
+        """
+        assert list(BASELINE_ACTION_WEIGHTS) == [70, 30, 0, 0, 0, 0, 0, 0, 0, 0]
+        assert len(BASELINE_ACTION_WEIGHTS) == 10
 
     def test_local_action_idx_matches_production(self):
         """Our action-index map matches combat._ACTION_IDX exactly (no drift)."""
@@ -127,7 +133,7 @@ class TestWeightFunctions:
         """
         s = self._state(self.gr, self.players["medic"], "medic")
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [15, 0, 30, 0, 0, 65, 0, 0, 0]
+        assert w == [15, 0, 30, 0, 0, 65, 0, 0, 0, 0]
 
     def test_medic_baseline_sum(self):
         # CAL-02 D6: 110, the 10 extra on tag_player (was 100).
@@ -143,7 +149,7 @@ class TestWeightFunctions:
         """
         s = self._state(self.gr, self.players["medic"], "medic", final_lives=3)
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [0, 0, 0, 0, 0, 110, 0, 0, 0]
+        assert w == [0, 0, 0, 0, 0, 110, 0, 0, 0, 0]
 
     def test_medic_can_capture_base_gets_small_boost(self):
         """In neutral zone, medic gets a small capture weight boost while resupply stays dominant."""
@@ -185,7 +191,7 @@ class TestWeightFunctions:
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic, heavy], 0)
         # SM5-02: the whole tag_player (15 since CAL-02 D6) and resupply_ally (65)
         # drain into hide (30 + 80), not the old fixed 60 off resupply_ally.
-        assert w == [0, 0, 110, 0, 0, 0, 0, 0, 0]
+        assert w == [0, 0, 110, 0, 0, 0, 0, 0, 0, 0]
 
     def test_medic_not_active_no_heavy_changes_zone(self):
         """Downed medic with no nearby heavy moves to find protection."""
@@ -199,7 +205,7 @@ class TestWeightFunctions:
         w = _get_medic_weights(medic, _ACTION_IDX, self._fresh(), [medic], 0)
         # SM5-02: tag_player (15 since CAL-02 D6) + resupply_ally (65) drain into
         # only_move.
-        assert w == [0, 80, 30, 0, 0, 0, 0, 0, 0]
+        assert w == [0, 80, 30, 0, 0, 0, 0, 0, 0, 0]
 
     def test_pooled_drain_ignores_a_negative_tag_weight(self):
         """A negative tag_player moves nothing and takes nothing from resupply_ally.
@@ -207,7 +213,7 @@ class TestWeightFunctions:
         Unclamped, the pooled sum would send 50 - 10 = 40 to only_move.
         """
         medic = self._state(self.gr, self.players["medic"], "medic", last_downed_time=0)
-        w = [-10, 0, 0, 0, 0, 50, 0, 0, 0]
+        w = [-10, 0, 0, 0, 0, 50, 0, 0, 0, 0]
         _apply_not_active(
             w,
             {},
@@ -219,7 +225,7 @@ class TestWeightFunctions:
             "red",
             also_drain_resupply=True,
         )
-        assert w == [0, 50, 0, 0, 0, 0, 0, 0, 0]
+        assert w == [0, 50, 0, 0, 0, 0, 0, 0, 0, 0]
 
     # --- Ammo ---
 
@@ -232,7 +238,7 @@ class TestWeightFunctions:
         """
         s = self._state(self.gr, self.players["ammo"], "ammo")
         w = _get_ammo_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [25, 0, 0, 0, 0, 55, 0, 0, 20]
+        assert w == [25, 0, 0, 0, 0, 55, 0, 0, 20, 0]
 
     def test_ammo_baseline_sum(self):
         s = self._state(self.gr, self.players["ammo"], "ammo")
@@ -267,7 +273,7 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
-        assert w == [5, 0, 30, 0, 0, 45, 0, 25, 20]
+        assert w == [5, 0, 30, 0, 0, 45, 0, 25, 20, 0]
 
     def test_ammo_low_lives_medic_different_zone_moves_toward_medic(self):
         """Low-life ammo crosses zones to reach the medic."""
@@ -287,13 +293,13 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo, medic], 0)
-        assert w == [5, 50, 0, 0, 0, 25, 0, 25, 20]
+        assert w == [5, 50, 0, 0, 0, 25, 0, 25, 20, 0]
 
     def test_ammo_low_lives_no_medic_no_heavy_hides(self):
         """Low-life ammo with no support hides to preserve the last few lives."""
         ammo = self._state(self.gr, self.players["ammo"], "ammo", final_lives=2)
         w = _get_ammo_weights(ammo, _ACTION_IDX, self._fresh(), [ammo], 0)
-        assert w == [5, 0, 50, 0, 0, 25, 0, 25, 20]
+        assert w == [5, 0, 50, 0, 0, 25, 0, 25, 20, 0]
 
     # --- Scout ---
 
@@ -306,7 +312,7 @@ class TestWeightFunctions:
         """
         s = self._state(self.gr, self.players["scout"], "scout")
         w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [40, 50, 0, 0, 0, 0, 0, 0, 10]
+        assert w == [40, 50, 0, 0, 0, 0, 0, 0, 10, 0]
 
     def test_scout_baseline_sum(self):
         s = self._state(self.gr, self.players["scout"], "scout")
@@ -324,7 +330,7 @@ class TestWeightFunctions:
         """Scout in neutral zone switches priority to capturing the base."""
         s = self._state(self.gr, self.players["scout"], "scout", zone_fallback=1)
         w = _get_scout_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [20, 50, 0, 20, 0, 0, 0, 0, 10]
+        assert w == [20, 50, 0, 20, 0, 0, 0, 0, 10, 0]
 
     def test_scout_low_lives_medic_same_zone_hides(self):
         """Critical-health scout hides next to medic to recover lives.
@@ -349,7 +355,7 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
-        assert w == [20, 30, 40, 0, 0, 0, 0, 25, 10]
+        assert w == [20, 30, 40, 0, 0, 0, 0, 25, 10, 0]
 
     def test_scout_low_lives_medic_different_zone_moves_toward_medic(self):
         """Critical-health scout moves into medic's zone instead of hiding."""
@@ -369,7 +375,7 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, medic], 0)
-        assert w == [10, 80, 0, 0, 0, 0, 0, 25, 10]
+        assert w == [10, 80, 0, 0, 0, 0, 0, 25, 10, 0]
 
     def test_scout_low_shots_ammo_different_zone_moves_toward_ammo(self):
         """Shot-depleted scout crosses zones to resupply from ammo carrier."""
@@ -389,7 +395,7 @@ class TestWeightFunctions:
             zone_fallback=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout, ammo], 0)
-        assert w == [10, 80, 0, 0, 0, 0, 0, 25, 10]
+        assert w == [10, 80, 0, 0, 0, 0, 0, 25, 10, 0]
 
     def test_scout_special_available_raises_use_special(self):
         """Scout with special ready is more likely to use rapid-fire as ammo allows."""
@@ -421,7 +427,7 @@ class TestWeightFunctions:
             last_downed_time=0,
         )
         w = _get_scout_weights(scout, _ACTION_IDX, self._fresh(), [scout], 0)
-        assert w == [0, 60, 30, 0, 0, 0, 0, 25, 10]
+        assert w == [0, 60, 30, 0, 0, 0, 0, 25, 10, 0]
 
     # --- Heavy ---
 
@@ -435,7 +441,7 @@ class TestWeightFunctions:
         """
         s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
         w = _get_heavy_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [70, 5, 5, 0, 0, 0, 0, 0, 20]
+        assert w == [70, 5, 5, 0, 0, 0, 0, 0, 20, 0]
 
     def test_heavy_baseline_no_missiles_sum(self):
         s = self._state(self.gr, self.players["heavy"], "heavy", missiles_landed=5)
@@ -511,7 +517,7 @@ class TestWeightFunctions:
             missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
-        assert w == [40, 35, 5, 0, 0, 0, 0, 25, 20]
+        assert w == [40, 35, 5, 0, 0, 0, 0, 25, 20, 0]
 
     def test_heavy_not_active_always_escapes(self):
         """Downed heavy always moves zone regardless of medic presence.
@@ -537,7 +543,7 @@ class TestWeightFunctions:
             missiles_landed=5,
         )
         w = _get_heavy_weights(heavy, _ACTION_IDX, self._fresh(), [heavy, medic], 0)
-        assert w == [0, 75, 5, 0, 0, 0, 0, 25, 20]
+        assert w == [0, 75, 5, 0, 0, 0, 0, 25, 20, 0]
 
     # --- Commander ---
 
@@ -554,7 +560,7 @@ class TestWeightFunctions:
             self.gr, self.players["commander"], "commander", missiles_landed=5
         )
         w = _get_commander_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert w == [80, 5, 0, 0, 0, 0, 0, 0, 10]
+        assert w == [80, 5, 0, 0, 0, 0, 0, 0, 10, 0]
 
     def test_commander_baseline_no_missiles_sum(self):
         s = self._state(
@@ -653,7 +659,7 @@ class TestWeightFunctions:
         w = _get_commander_weights(
             cmd, _ACTION_IDX, self._fresh(), [cmd, allied_medic], 0
         )
-        assert w == [0, 5, 80, 0, 0, 0, 0, 25, 10]
+        assert w == [0, 5, 80, 0, 0, 0, 0, 25, 10, 0]
 
     def test_commander_not_active_no_allied_medic_changes_zone(self):
         """Downed commander moves zone to find allied medic.
@@ -670,7 +676,7 @@ class TestWeightFunctions:
             missiles_landed=5,
         )
         w = _get_commander_weights(cmd, _ACTION_IDX, self._fresh(), [cmd], 0)
-        assert w == [0, 85, 0, 0, 0, 0, 0, 25, 10]
+        assert w == [0, 85, 0, 0, 0, 0, 0, 25, 10, 0]
 
     # --- hold slot, baseline-per-role ---
 
@@ -678,7 +684,8 @@ class TestWeightFunctions:
         """Medic never holds at baseline — hold weight stays 0 (no source slot)."""
         s = self._state(self.gr, self.players["medic"], "medic")
         w = _get_medic_weights(s, _ACTION_IDX, self._fresh(), [s], 0)
-        assert len(w) == 9
+        # MECH-24: 10 slots (a trailing zero ``dodge``); the invariant is unchanged.
+        assert len(w) == 10
         assert w[_ACTION_IDX["hold"]] == 0
 
     # --- documented intentional clamp / nudge behaviour ---
@@ -888,7 +895,8 @@ def test_plan_action_total_weight_is_positive(role, state_name):
     random.seed(42)
     player = _make_player_state(role, **_EDGE_STATES[state_name])
     weights = _plan_action_internal_weights(player, [player], 1.0)
-    assert len(weights) == 9
+    # MECH-24: 10 slots (a trailing zero ``dodge``); the invariant is unchanged.
+    assert len(weights) == 10
     assert (
         sum(weights) > 0
     ), f"{role}/{state_name} produced non-positive total: {weights}"
@@ -907,7 +915,8 @@ def test_plan_action_every_weight_is_non_negative(role: str, state_name: str) ->
     random.seed(42)
     player = _make_player_state(role, **_EDGE_STATES[state_name])
     weights = _plan_action_internal_weights(player, [player], 1.0)
-    assert len(weights) == 9
+    # MECH-24: 10 slots (a trailing zero ``dodge``); the invariant is unchanged.
+    assert len(weights) == 10
     negative = [idx for idx, w in enumerate(weights) if w < 0]
     assert (
         not negative
@@ -1066,7 +1075,7 @@ def test_finalize_action_weights_hide_index_matches_combat_layout() -> None:
 def test_finalize_action_weights_positive_vector_is_identical() -> None:
     """A vector with no negative slot comes back value-for-value identical."""
     raw = list(BASELINE_ACTION_WEIGHTS)
-    assert finalize_action_weights(raw) == [70, 30, 0, 0, 0, 0, 0, 0, 0]
+    assert finalize_action_weights(raw) == [70, 30, 0, 0, 0, 0, 0, 0, 0, 0]
 
 
 def test_finalize_action_weights_returns_new_list_and_leaves_input_untouched() -> None:

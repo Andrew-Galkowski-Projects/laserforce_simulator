@@ -341,7 +341,7 @@ The graph of which **Cells** a player can step between (≠ **Sight line** adjac
 The engine that advances a round tick-by-tick. The project consolidated onto **`BatchSimulator`** as the sole engine (SIM-09, May 2026; [ADR-0002](docs/adr/0002-two-simulation-engines.md) superseded). The legacy `ResourceBasedSimulator` is removed; its view-path responsibilities (`simulate_match`, `simulate_single_round_detailed`, DB-flush) now live on `BatchSimulator`.
 
 **Action**:
-The single *deliberate* choice a player makes per tick — **tag**, **only_move**, **hide**, **capture**, **special**, **resupply**, **missile**, **request resupply**, or **hold** — chosen by weighted random. Independent of the always-on **Advance**: movement toward the **Goal cell** happens every non-**stationary** tick regardless of which Action was chosen. The Action does not gate movement.
+The single *deliberate* choice a player makes per tick — **tag**, **only_move**, **hide**, **capture**, **special**, **resupply**, **missile**, **request resupply**, **hold**, or **dodge** (open only to the target of a live **Lock**, see **Dodge**) — chosen by weighted random. Independent of the always-on **Advance**: movement toward the **Goal cell** happens every non-**stationary** tick regardless of which Action was chosen. The Action does not gate movement.
 _Avoid_: treating "move" as something done *instead of* acting — movement is decoupled from the Action choice (MOVE-01); the only movement-flavoured Action is **only_move**, which merely *doubles* that tick's Advance.
 
 **only_move**:

@@ -87,7 +87,7 @@ calibration set that to 1.0, so a preferred role no longer adds a bonus; it was 
 | Stat | Sim effect | LFstats source | Formula | Status |
 |---|---|---|---|---|
 | accuracy | Hit chance = `HIT_BASE + accuracy - defender.survival`, `HIT_BASE` 49 (70 before MECH-23) (clamped 10-95), `matches/sim_helpers/shot.py` | `avg_accuracy`, all positions combined | `round(avg_accuracy * 100)` | Decided |
-| survival | Subtracted from attacker hit chance, `matches/sim_helpers/shot.py`; missile dodge `min(20, survival/5)`%, `matches/simulation/entrypoints.py` | `avg_times_hit` per position + `elimination_rate` | Mean of a times-hit part and a non-elimination part (see below) | Decided |
+| survival | Subtracted from attacker hit chance, `matches/sim_helpers/shot.py` (MECH-24: no longer the missile dodge, which moved to flexibility) | `avg_times_hit` per position + `elimination_rate` | Mean of a times-hit part and a non-elimination part (see below) | Decided |
 | player_awareness | As the target: return-fire chance, blocks attacker follow-up chains (`shot.py`); nuke reaction `(ga + pa)/200` (`round_loop.py`) | `avg_hit_diff` + `avg_nukes_canceled` per position | Hit-diff part plus a nukes-canceled bonus of up to +10 (see below) | Decided |
 | game_awareness | Below 35, sometimes shoots enemies who are already down (`mechanics.py`); commander nuke SP banking tiers 30/50/70 (`weights.py` `_commander_nuke_gate`); half of the nuke-reaction roll | `avg_mvp` per position | `50 + 25 * log2(player_mvp / position_avg_mvp)`, weighted by games (see below) | Decided |
 | resource_awareness | None today: `_observe_lives` (`round_loop.py`) records enemy lives, but nothing reads them back | Per-game event timeline (TDF) | `50` for now (see below) | Deferred |
@@ -104,7 +104,7 @@ calibration set that to 1.0, so a preferred role no longer adds a bonus; it was 
 | resupply_synergy | Medic/ammo `resupply_ally` weight x`rs/50` (`weights.py`); combo resupply chance `min(0.95, 0.20 + rsA*rsM/1e4 + reA*reM/1e4)` (`resupply_queue.py`) | `avg_resupplies_given` at ammo/medic | Log ratio vs position average over ammo/medic games; others count 50 (see below) | Decided |
 | resupply_efficiency | All roles: `request_resupply` weight `re/2` when below max (`weights.py`); part of the combo chance | `avg_uptime_pct` per position | `50 + 100 * log2(player_uptime / position_avg_uptime)`, weighted by games | Decided |
 | special_usage | Medic/ammo team boost weight, scout rapid-fire weight, commander nuke weight (`weights.py`); missile lock survives lost line of sight with probability `su/100` (`combat.py`) | `avg_nukes_detonated`, `avg_rapid_fire`, `avg_missiles_hit`, `avg_resupplies_given` | Per-position special log ratio vs position average, weighted by games (see below) | Decided |
-| flexibility | None (only feeds `overall_rating`) | Community opinion (later); candidate: `times_hit_by_missile` per game (Kodama: yoga, contorting into angles, dodging missiles) | `50` for now | Deferred |
+| flexibility | The **Dodge** chance, `flexibility / 2`% per Lock on the dodger, `matches/sim_helpers/combat.py` `resolve_dodge` (MECH-24, a sim stat in `_SIMULATION_STATS`); also feeds `overall_rating` | Community opinion (later); candidate: `times_hit_by_missile` per game (Kodama: yoga, contorting into angles, dodging missiles) | `50` for now | Deferred |
 
 ### accuracy
 
