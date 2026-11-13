@@ -48,8 +48,9 @@ _TARGETS: dict[str, tuple[str, tuple[str, ...], bool]] = {
 }
 _ROSTER_SLOTS = ("commander", "heavy", "scout", "scout", "medic", "ammo")
 _GOAL_SOURCES = ("action", "positioning", "override")
-# A hide roll stops the player on the tick it lands, before is_hiding reads True.
-_STILL_ROLLS = ("capture_base", "hide")
+# Still %: a hold or a capture_base roll anchors the player for the tick. A hider
+# (is_hiding, or a hide roll, before is_hiding reads True) walks to its hide cell
+# since MECH-23, so on a map it is still only on a tick its Advance did not move it.
 _RESUPPLY_PLANS = ("resupply_ammo", "resupply_lives")
 
 # A lineup: the red and the blue roster, each ``(role, _PlayerData)`` pairs.
@@ -172,7 +173,6 @@ class RoleMeasures:
     # CAL-02: the tag measures, per player-round.
     times_tagged: Measure
     shots_fired: Measure
-    hiding_misses: Measure
     downs_given: Measure
     downs_taken: Measure
     active_share: Measure
@@ -252,7 +252,6 @@ class _PlayerRound:
 
     times_tagged: int = 0
     shots_fired: int = 0
-    hiding_misses: int = 0
     downs_given: int = 0
     downs_taken: int = 0
     ticks_active: int = 0
@@ -637,7 +636,6 @@ def _measures(role: str, tally: _RoleTally) -> RoleMeasures:
         ),
         times_tagged=measure("times_tagged"),
         shots_fired=measure("shots_fired"),
-        hiding_misses=measure("hiding_misses"),
         downs_given=measure("downs_given"),
         downs_taken=measure("downs_taken"),
         active_share=measure("active_share"),
@@ -742,6 +740,9 @@ def _probe_round(task: tuple) -> _RoundTally:
     real_visit_step = resupply_visit.visit_step
     real_end_visit = resupply_visit.end_visit
     open_visits: dict[int, _EngineVisit] = {}
+    # MECH-23: the Advance that follows a hider's roll decides its Still tick.
+    real_advance = BatchSimulator._advance_player
+    hiding_at: dict[int, float] = {}
 
     def observed_visit_step(player, all_alive, movement_ctx, tick):
         critical = resupply_visit.is_critical(player)
@@ -808,7 +809,6 @@ def _probe_round(task: tuple) -> _RoundTally:
         def observe(attacker, defender, tick, *, kind, ctx, chain_depth=0):
             tags_before = attacker.counters.tags_made
             misses_before = attacker.counters.shots_missed
-            defender_hiding = defender.is_hiding
             outcome = real(
                 attacker, defender, tick, kind=kind, ctx=ctx, chain_depth=chain_depth
             )
@@ -819,8 +819,6 @@ def _probe_round(task: tuple) -> _RoundTally:
                 if last is not None:
                     tallies[attacker.role].gaps.append(tick - last)
                 last_shot_tick[id(attacker)] = tick
-            if missed and defender_hiding:
-                rows[id(attacker)].hiding_misses += 1
             if hit:
                 tags_by_pair[(attacker.role, defender.role)] += 1
                 if outcome.downed:
@@ -841,6 +839,16 @@ def _probe_round(task: tuple) -> _RoundTally:
             tallies[player.role].captures += 1
             team_captures[player.team_color] += 1
         return captured
+
+    def observed_advance(sim, player, all_alive, second, *args, **kwargs):
+        # MECH-23 Still %: a hider marked at this tick's roll is still when its
+        # Advance leaves it on its cell.
+        hider = hiding_at.pop(id(player), None) == second
+        before = (player.cell_row, player.cell_col)
+        outcome = real_advance(sim, player, all_alive, second, *args, **kwargs)
+        if hider and (player.cell_row, player.cell_col) == before:
+            tallies[player.role].still_ticks += 1
+        return outcome
 
     def close_run(player) -> None:
         length = open_runs.pop(id(player), 0)
@@ -891,12 +899,13 @@ def _probe_round(task: tuple) -> _RoundTally:
                     ] += 1
             if not plans:
                 tally.empty_rolls[player.last_chosen_action] += 1
-            if (
-                player.is_hiding
-                or player.is_holding
-                or player.last_chosen_action in _STILL_ROLLS
-            ):
+            if player.is_holding or player.last_chosen_action == "capture_base":
                 tally.still_ticks += 1
+            elif player.is_hiding or player.last_chosen_action == "hide":
+                if movement_ctx is None:
+                    tally.still_ticks += 1  # no map, no Advance: the hider stays
+                else:
+                    hiding_at[id(player)] = second  # still unless the Advance moves
         if not player.is_holding:
             close_run(player)
         elif active:
@@ -939,6 +948,7 @@ def _probe_round(task: tuple) -> _RoundTally:
     shot_module.resolve_shot = observed_resolve(real_shot_resolve)
     BatchSimulator._complete_missile = observed_missile  # type: ignore[method-assign]
     BatchSimulator._complete_nuke = observed_nuke  # type: ignore[method-assign]
+    BatchSimulator._advance_player = observed_advance  # type: ignore[method-assign, assignment]
     resupply_visit.visit_step = observed_visit_step
     resupply_visit.end_visit = observed_end_visit
     EventLog.resupply_lives = observed_resupply(  # type: ignore[method-assign]
@@ -990,6 +1000,7 @@ def _probe_round(task: tuple) -> _RoundTally:
         shot_module.resolve_shot = real_shot_resolve
         BatchSimulator._complete_missile = real_missile  # type: ignore[method-assign]
         BatchSimulator._complete_nuke = real_nuke  # type: ignore[method-assign]
+        BatchSimulator._advance_player = real_advance  # type: ignore[method-assign]
         resupply_visit.visit_step = real_visit_step
         resupply_visit.end_visit = real_end_visit
         EventLog.resupply_lives = real_resupply_lives  # type: ignore[method-assign]

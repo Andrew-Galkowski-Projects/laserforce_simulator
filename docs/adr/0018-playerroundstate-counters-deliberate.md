@@ -86,6 +86,11 @@ Load-bearing arguments:
    derivable, half move to a derived view, and every consumer has to know
    which is which.
 
+   > **Superseded by MECH-23 (#606) for hiding:** `is_hiding` stays a column
+   > and API field, but it no longer changes a Shot's outcome (the 50% hiding
+   > miss, the hiding Lock gate and the target pass-over are gone), and a hider
+   > walks out of sight instead of standing still.
+
 4. **The aggregate-vs-directional split is already documented and
    load-bearing.** GLOSSARY.md's **Player head-to-head record** entry says
    explicitly:

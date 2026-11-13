@@ -23,9 +23,9 @@ from typing import Any, Literal, Optional
 
 from .time_constants import _stale_table
 
-#: 1. Target priority (``mechanics.choose_tag_target``): a hiding enemy is passed over
-#: while a visible one is not hiding, and an enemy Medic is a target only while no
-#: other enemy in sight is Active. The Active bonus multiplies the role weight.
+#: 1. Target priority (``mechanics.choose_tag_target``): an enemy Medic is a target
+#: only while no other enemy in sight is Active. The Active bonus multiplies the
+#: role weight. (MECH-23 removed the pass-over of hiding enemies.)
 TARGET_PRIORITY: bool = True
 _PRIORITY_ROLE_WEIGHTS: dict[str, int] = {
     "commander": 10,

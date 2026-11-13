@@ -182,10 +182,18 @@ def _tick(
     active: bool = True,
     hiding: bool = False,
     holding: bool = False,
+    moved: bool = False,
 ) -> SimpleNamespace:
-    """One scripted ``plan_action`` result: what the player rolled and now shows."""
+    """One scripted ``plan_action`` result: what the player rolled and now shows.
+    ``moved``: on a map round (``_probe_scripted(on_map=True)``), the Advance
+    after the roll moves the player one cell."""
     return SimpleNamespace(
-        action=action, plans=plans, active=active, hiding=hiding, holding=holding
+        action=action,
+        plans=plans,
+        active=active,
+        hiding=hiding,
+        holding=holding,
+        moved=moved,
     )
 
 
@@ -227,9 +235,16 @@ def _scripted(
     )
 
 
-def _probe_scripted(*rounds: list[SimpleNamespace]) -> ProbeResult:
-    """Run the probe over scripted rounds, seeds 1 up, one list of players each."""
+def _probe_scripted(
+    *rounds: list[SimpleNamespace], on_map: bool = False
+) -> ProbeResult:
+    """Run the probe over scripted rounds, seeds 1 up, one list of players each.
+
+    ``on_map``: each tick passes a map to ``plan_action`` and then runs the
+    Advance (``BatchSimulator._advance_player``), which moves a player whose
+    step says ``moved``. Map-less, there is no Advance, as in the engine."""
     remaining = iter(rounds)
+    a_map = object()
 
     def scripted_plan(player, all_alive, tick, movement_ctx=None, **kwargs):
         step = player.script[tick]
@@ -238,17 +253,26 @@ def _probe_scripted(*rounds: list[SimpleNamespace]) -> ProbeResult:
         player.is_holding = step.holding
         return [{"type": plan, "actor": player} for plan in step.plans]
 
+    def scripted_advance(self, player, all_alive, tick, movement_ctx, prev_action):
+        if player.script[tick].moved:
+            player.cell_col = (player.cell_col or 0) + 1
+
     def fake_round(self, red, blue, movement_ctx=None):
         players = next(remaining)
+        ctx = a_map if on_map else None
         for tick in range(max((len(p.script) for p in players), default=0)):
-            for player in players:
-                if tick < len(player.script):
-                    entrypoints.plan_action(player, [], tick, None, time_domain="ticks")
+            live = [p for p in players if tick < len(p.script)]
+            for player in live:
+                entrypoints.plan_action(player, [], tick, ctx, time_domain="ticks")
+            if on_map:
+                for player in live:
+                    self._advance_player(player, [], tick, ctx, "")
         return {}, players, []
 
     with patch.object(entrypoints, "plan_action", scripted_plan):
-        with patch.object(BatchSimulator, "_simulate_round", fake_round):
-            return run_probe(None, range(1, len(rounds) + 1))
+        with patch.object(BatchSimulator, "_advance_player", scripted_advance):
+            with patch.object(BatchSimulator, "_simulate_round", fake_round):
+                return run_probe(None, range(1, len(rounds) + 1))
 
 
 class TestActionShares(SimpleTestCase):
@@ -307,7 +331,45 @@ class TestEmptyRollShare(SimpleTestCase):
 
 
 class TestStillShare(SimpleTestCase):
+    # MECH-23 (#606): a hider walks to its hide cell, so on a map a hiding
+    # player is still only on an Active tick its Advance did not move it. The
+    # two map-less tests below hold as before: with no map there is no Advance.
+    def test_on_a_map_a_walking_hider_is_not_still(self) -> None:
+        player = _scripted(
+            _tick("hide", hiding=True, moved=True),
+            _tick("hide", hiding=True),
+            _tick("tag_player", hiding=True, moved=True),
+            _tick("tag_player", hiding=True),
+            # The tick of a hide roll: the flag still reads False at the roll.
+            _tick("hide", moved=True),
+            _tick("hide"),
+            _tick("only_move", moved=True),
+            _tick("only_move"),
+        )
+        share = _probe_scripted([player], on_map=True).roles["scout"].still_share
+        self.assertEqual(share, 3 / 8)
+
+    def test_on_a_map_hold_and_a_capture_roll_count_as_today(self) -> None:
+        player = _scripted(
+            _tick("hold", holding=True),
+            _tick("capture_base"),
+            _tick("tag_player", moved=True),
+            _tick("tag_player"),
+        )
+        share = _probe_scripted([player], on_map=True).roles["scout"].still_share
+        self.assertEqual(share, 0.5)
+
+    def test_on_a_map_a_hider_not_active_is_on_neither_side(self) -> None:
+        player = _scripted(
+            _tick("hide", hiding=True),
+            _tick("tag_player", moved=True),
+            _tick("hide", active=False, hiding=True),
+        )
+        share = _probe_scripted([player], on_map=True).roles["scout"].still_share
+        self.assertEqual(share, 0.5)
+
     def test_hiding_holding_and_a_capture_roll_count_as_still(self) -> None:
+        # Map-less: no Advance, so a hider does not move.
         player = _scripted(
             _tick("tag_player", hiding=True),
             _tick("hold", holding=True),
@@ -321,8 +383,8 @@ class TestStillShare(SimpleTestCase):
         self.assertEqual(_probe_scripted([player]).roles["scout"].still_share, 3 / 8)
 
     def test_the_tick_of_a_hide_roll_is_still(self) -> None:
-        # The dispatch sets is_hiding after plan_action and before the Advance, so
-        # the player does not move on this tick though the flag still reads False.
+        # The dispatch sets is_hiding after plan_action, so the flag still reads
+        # False at the roll. Map-less, the hider does not move on this tick.
         player = _scripted(_tick("hide"), _tick("tag_player"))
         self.assertEqual(_probe_scripted([player]).roles["scout"].still_share, 0.5)
 
@@ -897,21 +959,17 @@ class TestWhoTagsWhom(SimpleTestCase):
         self.assertEqual(result.who_downs_whom["heavy"]["ammo"], 0.0)
         self.assertEqual(result.who_tags_whom["heavy"]["ammo"], 1.0)
 
-    def test_a_miss_at_a_hiding_defender_is_counted_against_the_attacker(self) -> None:
+    def test_the_hiding_miss_measure_is_retired(self) -> None:
+        # MECH-23 (#606): replaces
+        # test_a_miss_at_a_hiding_defender_is_counted_against_the_attacker.
+        # The hiding miss is gone, so the probe no longer measures misses at a
+        # hider; a miss at one is an ordinary Shot fired.
         scout = _scripted(_tick(), role="scout", team="red")
         hidden = _scripted(_tick(), role="medic", team="blue")
         hidden.is_hiding = True
-        seen = _scripted(_tick(), role="ammo", team="blue")
-        result = _probe_shots(
-            [
-                (scout, hidden, 10, "miss"),
-                (scout, hidden, 11, "miss"),
-                (scout, seen, 12, "miss"),
-                (scout, hidden, 13, "hit"),
-            ]
-        )
-        self.assertEqual(result.roles["scout"].hiding_misses.mean, 2.0)
-        self.assertEqual(result.roles["scout"].shots_fired.mean, 4.0)
+        result = _probe_shots([(scout, hidden, 10, "miss"), (scout, hidden, 13, "hit")])
+        self.assertFalse(hasattr(result.roles["scout"], "hiding_misses"))
+        self.assertEqual(result.roles["scout"].shots_fired.mean, 2.0)
 
 
 class TestShotCadence(SimpleTestCase):
@@ -1349,9 +1407,8 @@ class TestFormatTagMeasures(SimpleTestCase):
         # read 3.0 and 9.0.
         self.assertIn("  Times tagged per round: 5.0 +/- 2.3 (3.0-9.0)", lines)
         self.assertIn("  Shots fired per round: 20.0 +/- 5.8 (20.0-20.0)", lines)
-        self.assertIn(
-            "  Misses at a hiding target per round: 0.0 +/- 0.0 (0.0-0.0)", lines
-        )
+        # MECH-23 (#606): the hiding-miss line is retired with the hiding miss.
+        self.assertFalse(any("hiding target" in line for line in lines))
         self.assertIn("  Downs given per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
         self.assertIn("  Downs taken per round: 0.0 +/- 0.0 (0.0-0.0)", lines)
         self.assertIn("  Active %: 50.0 +/- 0.0 (50.0-50.0)", lines)
