@@ -113,7 +113,11 @@ _Avoid_: "special" alone (overloaded — say **SP** for the resource, **Special*
 A role's activatable ability — the Commander's **Nuke** or the Scout's **Rapid Fire**; "activating the special" spends **SP**.
 
 **Missile**:
-A long-range attack available to Commander and Heavy, launched at the end of a **Lock** and scored separately from tag points. A launched Missile always hits; the target's dodge happens before the launch and ends the Lock.
+A long-range attack available to Commander and Heavy, launched at the end of a **Lock** and scored separately from tag points. A launched Missile always hits; the target's **Dodge** happens during the Lock and ends it.
+
+**Dodge**:
+The **Action** a player may choose while it is the target of a **Lock**: it stands in place and contorts out of the locker's sights, and with a chance set by its flexibility the Lock ends with no missile spent. A player in the **Reset window** dodges or gets out of sight; an **Active** one mostly shoots back at the locker.
+_Avoid_: a missile that misses (a launched Missile always hits); calling a walk out of sight a Dodge (that ends the Lock on sight).
 
 **Resupply**:
 A support transfer of a resource to an ally — **Medic** gives **Lives**, **Ammo** gives **Shots**. Needs **Line of sight** to the ally on a map round; a map-less round uses the same zone.
@@ -232,7 +236,7 @@ _Avoid_: calling every shared enemy position a Call-out (that is the general com
 The Scout **Special** that removes the shot-rate cooldown while active.
 
 **Lock**:
-A Commander or Heavy holding their sights on one valid enemy without pulling the trigger. The pack sounds three tones as the Lock builds; only once the third tone has sounded does pulling the trigger launch the **Missile**, and only then is the missile spent. A Lock ends with no missile spent when the target dodges out of the sights, when someone walks into the sight line, when the locker aims at another player for more than half a second (which starts a new Lock on them), or when the locker pulls the trigger early, which fires an ordinary **Shot** (often on purpose, to land a **Tag** before the target gets behind a wall). A player holds at most one Lock at a time.
+A Commander or Heavy holding their sights on one valid enemy without pulling the trigger. The pack sounds three tones as the Lock builds; only once the third tone has sounded does pulling the trigger launch the **Missile**, and only then is the missile spent. A Lock ends with no missile spent when the target **Dodge**s out of the sights, when someone walks into the sight line, when the locker aims at another player for more than half a second (which starts a new Lock on them), or when the locker pulls the trigger early, which fires an ordinary **Shot** (often on purpose, to land a **Tag** before the target gets behind a wall). A player holds at most one Lock at a time.
 _Avoid_: reading a Lock as a launched missile (a Lock can end without one); calling anything but the target breaking the Lock a dodge.
 
 **Locking event**:
@@ -244,7 +248,7 @@ The `GameEvent` row written when a **Lock** launches its **Missile** (`event_typ
 _Avoid_: a missed missile (there is none since MECH-21: a target that gets away breaks the Lock, which is a **Lock cancelled event**).
 
 **Lock cancelled event**:
-The `GameEvent` row written when a **Lock** ends without a launch (`event_type="lock_cancelled"`), at the tick it ends, with one reason: **sight** (the locker lost the target), **dodge** (the target got out of the sights at the launch), **shot** (the locker fired an ordinary **Shot** instead), **retarget** (the locker started a new Lock on someone else), **down** (either player was **Down**ed) or **out** (either player was eliminated). No missile is spent.
+The `GameEvent` row written when a **Lock** ends without a launch (`event_type="lock_cancelled"`), at the tick it ends, with one reason: **sight** (the locker lost the target), **dodge** (the target's **Dodge** succeeded), **shot** (the locker fired an ordinary **Shot** instead), **retarget** (the locker started a new Lock on someone else), **down** (either player was **Down**ed) or **out** (either player was eliminated). No missile is spent.
 _Avoid_: calling every cancel a dodge (only the target breaking the Lock is one).
 
 **Friendly fire**:
