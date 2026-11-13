@@ -17,6 +17,7 @@ from core.models import ArenaMap
 from matches.lfstats_calibration import load_map_fixture
 from matches.management.commands.round_probe import calibration_lineups, format_result
 from matches.round_probe import (
+    Measure,
     ProbeResult,
     _default_roster,
     _goal_source,
@@ -26,11 +27,13 @@ from matches.round_probe import (
     run_probe,
 )
 from matches.sim_helpers import resupply_visit, shot, support_survival
+from matches.sim_helpers.combat import cancel_missile_lock
 from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
 from matches.sim_helpers.map_loader import load_map_context
 from matches.sim_helpers.resupply_visit import VisitEnd
 from matches.sim_helpers.modes import Mode
+from matches.sim_helpers.round_context import RoundContext
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.shot import ShotOutcome
 from matches.sim_helpers.time_constants import SURVIVED_SENTINEL
@@ -687,6 +690,24 @@ class TestRunProbe(TestCase):
         )
         self.assertEqual(resupply_visit.visit_step.__name__, "visit_step")
         self.assertEqual(resupply_visit.end_visit.__name__, "end_visit")
+        # MECH-24c: the Lock start, cancel and dodge observers ran in that same
+        # round: its missiles are the ones the players took, and Locks were
+        # planned against, dodged and rolled.
+        locks = observed.locks
+        self.assertEqual(
+            sum(sum(per_round) for per_round in locks.missiles.values()),
+            sum(p.counters.times_missiled for p in reds + blues),
+        )
+        self.assertGreater(locks.all_locks[0], 0.0)
+        self.assertGreater(sum(locks.locked_plans.values()), 0)
+        self.assertGreater(sum(locks.dodge_rolls.values()), 0)
+        cancelled = sum(m.mean for e, m in locks.endings["all"].items() if e != "open")
+        self.assertGreater(cancelled, locks.conversion["all"].mean)
+        self.assertEqual(
+            entrypoints._start_missile_lock_shared.__name__, "start_missile_lock"
+        )
+        self.assertEqual(entrypoints.resolve_dodge.__name__, "resolve_dodge")
+        self.assertEqual(EventLog.lock_cancelled.__name__, "lock_cancelled")
 
     @staticmethod
     def _count(players: list, role: str) -> int:
@@ -1914,6 +1935,306 @@ class TestFormatCal04Measures(SimpleTestCase):
         )
 
 
+def _lock_cast() -> SimpleNamespace:
+    """MECH-24c: a red Commander and Heavy with missiles; blue targets, two of
+    them in the Reset window at their Lock ticks (Downed 8 ticks before: Taggable
+    again, not yet Active)."""
+    cast = SimpleNamespace(
+        commander=_player("commander", "red", player_id=1, final_missiles=5),
+        heavy=_player("heavy", "red", player_id=2, final_missiles=5),
+        scout=_player("scout", "blue", player_id=3),
+        medic=_player("medic", "blue", player_id=4, last_downed_time=92),
+        ammo=_player("ammo", "blue", player_id=5),
+        reset=_player("scout", "blue", player_id=6, last_downed_time=113),
+        blue_heavy=_player("heavy", "blue", player_id=7),
+    )
+    cast.everyone = list(vars(cast).values())
+    return cast
+
+
+def _probe_locks(*rounds: tuple[list, Any]) -> ProbeResult:
+    """Run the probe over hand-built Lock rounds, seeds 1 up: each round is
+    ``(players, play)`` and ``play(sim, ctx)`` drives the engine's own Lock calls
+    (the observers installed). A locked plan's Action is ``plans[(player, tick)]``
+    in ``play``'s scope, read by the scripted ``plan_action`` below."""
+    remaining = iter(rounds)
+    scripted: dict[tuple[int, int], str] = {}
+
+    def scripted_plan(player, all_alive, tick, movement_ctx=None, **kwargs):
+        action = scripted.pop((id(player), tick), "only_move")
+        player.last_chosen_action = action
+        return [{"type": action, "actor": player}]
+
+    def fake_round(self, red, blue, movement_ctx=None):
+        players, play = next(remaining)
+        if play is not None:
+            play(self, RoundContext(), scripted)
+        return {}, players, []
+
+    with patch.object(entrypoints, "plan_action", scripted_plan):
+        with patch.object(BatchSimulator, "_simulate_round", fake_round):
+            return run_probe(None, range(1, len(rounds) + 1))
+
+
+def _launch(sim, ctx: RoundContext, locker, tick: int) -> None:
+    """The tick loop's launch: the Lock leaves ``ctx.missile_locks``, then the
+    missile lands."""
+    lock = ctx.missile_locks.pop(locker.player_id)
+    sim._complete_missile(locker, lock.defender, tick, ctx)
+
+
+class TestLockCounts(SimpleTestCase):
+    """MECH-24c (#614): Locks and missiles per locker role, per round."""
+
+    def test_locks_and_missiles_per_locker_role_per_round(self) -> None:
+        one, two = _lock_cast(), _lock_cast()
+
+        def first(sim, ctx, scripted) -> None:
+            sim._start_missile_lock(one.commander, one.scout, 100, ctx=ctx)
+            sim._start_missile_lock(one.heavy, one.ammo, 100, ctx=ctx)
+            cancel_missile_lock(ctx, one.heavy, 101, "sight")
+            _launch(sim, ctx, one.commander, 102)
+            # Still open when the round ends: a Lock, no missile.
+            sim._start_missile_lock(one.commander, one.ammo, 110, ctx=ctx)
+
+        def second(sim, ctx, scripted) -> None:
+            sim._start_missile_lock(two.heavy, two.scout, 100, ctx=ctx)
+            _launch(sim, ctx, two.heavy, 102)
+
+        locks = _probe_locks((one.everyone, first), (two.everyone, second)).locks
+        self.assertEqual(locks.locks, {"commander": (2.0, 0.0), "heavy": (1.0, 1.0)})
+        self.assertEqual(locks.missiles, {"commander": (1.0, 0.0), "heavy": (0.0, 1.0)})
+        # Each round has one Commander and two Heavies (red and blue).
+        self.assertEqual(
+            locks.missiles_per_player,
+            {"commander": (1.0, 0.0), "heavy": (0.0, 0.5)},
+        )
+        self.assertEqual(locks.all_locks, (3.0, 1.0))
+
+
+def _every_ending(cast: SimpleNamespace):
+    """One round in which eight Locks end once each way, and one stays open:
+
+    1. Commander on the Scout (active) at 100, launched at 102: ``missile``.
+    2. Heavy on the Medic (reset) at 100, dodged at 101: ``dodge``.
+    3. Heavy on the Ammo (active) at 110, ``sight`` at 111.
+    4. Commander on the Ammo (active) at 110, ``shot`` at 111.
+    5. Commander on the blue Heavy (active) at 120, ``retarget`` at 121 by
+    6. Commander on the Reset-window Scout (reset) at 121, ``down`` at 125.
+    7. Heavy on the blue Heavy (active) at 130, ``out`` at 131.
+    8. Heavy on the Scout (active again) at 140, open at the round's end.
+
+    The locked plans: the Medic dodges at 101 (reset, its roll succeeds), the
+    Scout tags at 101 (active), the Ammo dodges at 111 (active, both rolls fail),
+    the Reset-window Scout dodges at 122 (its roll fails) and hides at 123. The
+    blue Heavy's plan at 130 is not locked: the Heavy's Lock starts after it.
+    """
+
+    def play(sim, ctx, scripted) -> None:
+        def plan(player, tick: int, action: str, lockers: tuple) -> None:
+            scripted[(id(player), tick)] = action
+            entrypoints.plan_action(player, cast.everyone, tick, lockers=lockers)
+
+        def dodge(player, tick: int, draws: list[float]) -> None:
+            with patch("random.random", side_effect=draws):
+                entrypoints.resolve_dodge(player, ctx, tick)
+
+        c, h = cast.commander, cast.heavy
+        sim._start_missile_lock(c, cast.scout, 100, ctx=ctx)
+        sim._start_missile_lock(h, cast.medic, 100, ctx=ctx)
+        plan(cast.medic, 101, "dodge", (h,))
+        plan(cast.scout, 101, "tag", (c,))
+        dodge(cast.medic, 101, [0.0])
+        _launch(sim, ctx, c, 102)
+        sim._start_missile_lock(h, cast.ammo, 110, ctx=ctx)
+        sim._start_missile_lock(c, cast.ammo, 110, ctx=ctx)
+        plan(cast.ammo, 111, "dodge", (h, c))
+        dodge(cast.ammo, 111, [0.99, 0.99])
+        cancel_missile_lock(ctx, h, 111, "sight")
+        cancel_missile_lock(ctx, c, 111, "shot")
+        sim._start_missile_lock(c, cast.blue_heavy, 120, ctx=ctx)
+        sim._start_missile_lock(c, cast.reset, 121, ctx=ctx)  # the retarget
+        plan(cast.reset, 122, "dodge", (c,))
+        dodge(cast.reset, 122, [0.99])
+        plan(cast.reset, 123, "hide", (c,))
+        cancel_missile_lock(ctx, c, 125, "down")
+        plan(cast.blue_heavy, 130, "dodge", ())
+        sim._start_missile_lock(h, cast.blue_heavy, 130, ctx=ctx)
+        cancel_missile_lock(ctx, h, 131, "out")
+        sim._start_missile_lock(h, cast.scout, 140, ctx=ctx)
+
+    return play
+
+
+class TestLockConversion(SimpleTestCase):
+    """MECH-24c (#614): missiles over Locks, pooled and by the target's state at
+    the Lock start, and the share of Locks on each state."""
+
+    def test_conversion_and_the_share_of_locks_by_target_state(self) -> None:
+        cast = _lock_cast()
+        locks = _probe_locks((cast.everyone, _every_ending(cast))).locks
+        self.assertEqual(locks.all_locks, (8.0,))
+        self.assertEqual(
+            {scope: round(m.mean, 6) for scope, m in locks.conversion.items()},
+            {"all": 12.5, "active": round(100 / 6, 6), "reset": 0.0},
+        )
+        self.assertEqual(
+            {state: m.mean for state, m in locks.state_share.items()},
+            {"active": 75.0, "reset": 25.0},
+        )
+
+    def test_lock_endings_by_reason_pooled_and_by_target_state(self) -> None:
+        cast = _lock_cast()
+        endings = _probe_locks((cast.everyone, _every_ending(cast))).locks.endings
+
+        def means(scope: str) -> dict[str, float]:
+            return {end: round(m.mean, 6) for end, m in endings[scope].items()}
+
+        sixth = round(100 / 6, 6)
+        self.assertEqual(
+            means("all"),
+            {
+                end: 12.5
+                for end in (
+                    "missile",
+                    "sight",
+                    "dodge",
+                    "shot",
+                    "retarget",
+                    "down",
+                    "out",
+                    "open",
+                )
+            },
+        )
+        self.assertEqual(
+            means("active"),
+            {
+                "missile": sixth,
+                "sight": sixth,
+                "dodge": 0.0,
+                "shot": sixth,
+                "retarget": sixth,
+                "down": 0.0,
+                "out": sixth,
+                "open": sixth,
+            },
+        )
+        self.assertEqual(
+            {end: m for end, m in means("reset").items() if m},
+            {"dodge": 50.0, "down": 50.0},
+        )
+
+    def test_dodge_pick_and_success_by_target_state(self) -> None:
+        cast = _lock_cast()
+        locks = _probe_locks((cast.everyone, _every_ending(cast))).locks
+        # Locked plans: reset 3 (two dodges), active 2 (one dodge); the blue
+        # Heavy's unlocked dodge at 130 is not one.
+        self.assertEqual(locks.locked_plans, {"active": 2, "reset": 3})
+        self.assertEqual(
+            {state: round(m.mean, 6) for state, m in locks.dodge_pick.items()},
+            {"active": 50.0, "reset": round(200 / 3, 6)},
+        )
+        # Rolls: reset 2 (one success), active 2 (the Ammo's two Locks, none).
+        self.assertEqual(locks.dodge_rolls, {"active": 2, "reset": 2})
+        self.assertEqual(
+            {state: m.mean for state, m in locks.dodge_success.items()},
+            {"active": 0.0, "reset": 50.0},
+        )
+
+    def test_the_lock_observers_are_put_back(self) -> None:
+        cast = _lock_cast()
+        _probe_locks((cast.everyone, _every_ending(cast)))
+        self.assertEqual(
+            entrypoints._start_missile_lock_shared.__name__, "start_missile_lock"
+        )
+        self.assertEqual(entrypoints.resolve_dodge.__name__, "resolve_dodge")
+        self.assertEqual(EventLog.lock_cancelled.__name__, "lock_cancelled")
+
+    def test_a_round_with_no_lock_converts_nothing(self) -> None:
+        locks = _probe_locks((_lock_cast().everyone, None)).locks
+        self.assertEqual(locks.conversion["all"], Measure(0.0, 0.0))
+        self.assertEqual(locks.state_share["reset"], Measure(0.0, 0.0))
+
+
+class TestFormatLocks(SimpleTestCase):
+    """MECH-24c (#614): the ``locks`` block, after the existing lines."""
+
+    def _result(self) -> ProbeResult:
+        one, two = _lock_cast(), _lock_cast()
+        return _probe_locks((one.everyone, _every_ending(one)), (two.everyone, None))
+
+    def test_the_block_prints_after_the_existing_lines(self) -> None:
+        lines = format_result(self._result())
+        start = lines.index("Missile Locks per round, both teams:")
+        self.assertTrue(lines[start - 1].startswith("Per seed: "))
+        block = lines[start:]
+        for text in (
+            # Two rounds, 8 Locks and none: standard error 4 over the rounds.
+            "  Locks, every locker: 4.0 +/- 4.0 (0.0-8.0)",
+            "  commander Locks: 2.0 +/- 2.0 (0.0-4.0)",
+            "  commander missiles: 0.5 +/- 0.5 (0.0-1.0)",
+            "  commander missiles per player-round: 0.50 +/- 0.50 (0.00-1.00)",
+            "  heavy Locks: 2.0 +/- 2.0 (0.0-4.0)",
+            "  heavy missiles: 0.0 +/- 0.0 (0.0-0.0)",
+            "  heavy missiles per player-round: 0.00 +/- 0.00 (0.00-0.00)",
+            "  Conversion % (missiles / Locks): 12.5 +/- 0.0",
+            "  Conversion % on an active target: 16.7 +/- 0.0",
+            "  Conversion % on a reset target: 0.0 +/- 0.0",
+            "  Locks on an active target %: 75.0 +/- 0.0",
+            "  Locks on a reset target %: 25.0 +/- 0.0",
+            "  Lock endings %, all: missile 12.5 +/- 0.0, sight 12.5 +/- 0.0, "
+            "dodge 12.5 +/- 0.0, shot 12.5 +/- 0.0, retarget 12.5 +/- 0.0, "
+            "down 12.5 +/- 0.0, out 12.5 +/- 0.0, open 12.5 +/- 0.0",
+            "  Lock endings %, reset: missile 0.0 +/- 0.0, sight 0.0 +/- 0.0, "
+            "dodge 50.0 +/- 0.0, shot 0.0 +/- 0.0, retarget 0.0 +/- 0.0, "
+            "down 50.0 +/- 0.0, out 0.0 +/- 0.0, open 0.0 +/- 0.0",
+            "  Dodge pick % (dodge plans / locked plans), active: 50.0 +/- 0.0 "
+            "over 2 plans",
+            "  Dodge pick % (dodge plans / locked plans), reset: 66.7 +/- 0.0 "
+            "over 3 plans",
+            "  Dodge success % (successful rolls / rolls), active: 0.0 +/- 0.0 "
+            "over 2 rolls",
+            "  Dodge success % (successful rolls / rolls), reset: 50.0 +/- 0.0 "
+            "over 2 rolls",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, block)
+        self.assertTrue(
+            any(line.startswith("  Lock endings %, active: ") for line in block)
+        )
+        self.assertFalse([line for line in block if "real" in line])
+
+    def test_a_targets_run_prints_the_real_figures_beside_them(self) -> None:
+        block = format_result(self._result(), targets=_TARGETS)
+        block = block[block.index("Missile Locks per round, both teams:") :]
+        for text in (
+            "  Locks, every locker: 4.0 +/- 4.0 (0.0-8.0) | real 15.9",
+            "  commander missiles per player-round: 0.50 +/- 0.50 (0.00-1.00) "
+            "| real 2.47",
+            "  heavy missiles per player-round: 0.00 +/- 0.00 (0.00-0.00) "
+            "| real 1.76",
+            "  Conversion % (missiles / Locks): 12.5 +/- 0.0 | real 53",
+            "  Conversion % on an active target: 16.7 +/- 0.0 | real 23",
+            "  Conversion % on a reset target: 0.0 +/- 0.0 | real 65",
+            "  Locks on a reset target %: 25.0 +/- 0.0 | real 69",
+        ):
+            with self.subTest(line=text):
+                self.assertIn(text, block)
+        # No real figure for these: printed as without targets.
+        self.assertIn("  commander Locks: 2.0 +/- 2.0 (0.0-4.0)", block)
+        self.assertIn("  Locks on an active target %: 75.0 +/- 0.0", block)
+
+    def test_a_result_with_no_round_prints_no_block(self) -> None:
+        result = ProbeResult(
+            roles={},
+            sharing_by_seed={1: 0.1},
+            by_seed={},
+            team_captures_by_seed={1: {"red": 0, "blue": 0}},
+        )
+        self.assertNotIn("Missile Locks per round, both teams:", format_result(result))
+
+
 class TestCalibrationLineups(SimpleTestCase):
     """CAL-02 (#567): the Test games' rosters, built as the Calibration harness does."""
 
@@ -1975,6 +2296,11 @@ class TestLineupsProbe(TestCase):
             sum(m.mean for m in serial.roles["medic"].lives_by_band["tag"].values()),
             0.0,
         )
+        # MECH-24c: the Lock tallies ride the per-round tally through the merge.
+        self.assertEqual(len(serial.locks.all_locks), 2)
+        self.assertGreater(sum(serial.locks.all_locks), 0.0)
+        self.assertGreater(sum(serial.locks.locked_plans.values()), 0)
+        self.assertGreater(sum(serial.locks.dodge_rolls.values()), 0)
 
 
 class TestRoundProbeCommand(TestCase):
@@ -2003,6 +2329,12 @@ class TestRoundProbeCommand(TestCase):
             "Not-ready arrival causes %",
             "Lives lost to missiles by minute band",
             "Medic-Ammo distance, squares: median",
+            # MECH-24c: the locks block, with its real figures.
+            "Missile Locks per round, both teams:",
+            "| real 15.9",
+            "| real 2.47",
+            "Lock endings %, reset:",
+            "Dodge success % (successful rolls / rolls), reset:",
         ):
             self.assertIn(text, output)
         self.assertTrue(output.isascii())

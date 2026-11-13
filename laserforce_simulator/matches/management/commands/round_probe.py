@@ -23,7 +23,10 @@ from matches.management.commands.lfstats_calibrate import (
     _map_context,
 )
 from matches.round_probe import (
+    LOCKER_ROLES,
+    TARGET_STATES,
     Lineup,
+    LockMeasures,
     Measure,
     ProbeResult,
     RoleMeasures,
@@ -91,6 +94,13 @@ _CAL03_REAL: dict[str, dict[str, float]] = {
 # Team-wide real figures (PLAN.md CAL-03): Tags per round, doubles % of Resupplies.
 _CAL03_REAL_ROUND_TAGS = 403.0
 _CAL03_REAL_DOUBLES = 32.1
+# MECH-24c (#614): the real Lock figures (spec #611, the 165 Internationals TDF
+# games), printed beside the ``locks`` block in a targets run.
+_LOCKS_REAL_PER_ROUND = 15.9
+_LOCKS_REAL_MISSILES_PER_PLAYER = {"commander": 2.47, "heavy": 1.76}
+_LOCKS_REAL_CONVERSION = {"all": 53, "active": 23, "reset": 65}
+_LOCKS_REAL_STATE_SHARE = {"reset": 69}
+_STATE_LABEL = {"active": "an active target", "reset": "a reset target"}
 
 
 def calibration_lineups(limit: int | None = None) -> list[Lineup]:
@@ -490,6 +500,89 @@ def _matrix_lines(
     return lines
 
 
+def _lock_lines(locks: LockMeasures, targets: Mapping | None) -> list[str]:
+    """MECH-24c (#614): the ``locks`` block. The per-round counts read
+    ``mean +/- se (min-max)`` over the rounds; the shares ``mean +/- se`` with a
+    cluster-robust error over the rounds. A targets run adds the real figures."""
+
+    def real(value: float | None, form: str = ".0f") -> str:
+        if targets is None or value is None:
+            return ""
+        return f" | real {value:{form}}"
+
+    def per_round(label: str, values: tuple[float, ...], form: str = ".1f") -> str:
+        return f"  {label}: {_margin_spread(_mean(values), list(values), form)}"
+
+    def share(label: str, measure: Measure, real_value: float | None = None) -> str:
+        return f"  {label}: {measure.mean:.1f} +/- {measure.se:.1f}" + real(real_value)
+
+    lines = [
+        "Missile Locks per round, both teams:",
+        per_round("Locks, every locker", locks.all_locks)
+        + real(_LOCKS_REAL_PER_ROUND, ".1f"),
+    ]
+    for role in LOCKER_ROLES:
+        lines += [
+            per_round(f"{role} Locks", locks.locks[role]),
+            per_round(f"{role} missiles", locks.missiles[role]),
+            per_round(
+                f"{role} missiles per player-round",
+                locks.missiles_per_player[role],
+                ".2f",
+            )
+            + real(_LOCKS_REAL_MISSILES_PER_PLAYER.get(role), ".2f"),
+        ]
+    lines.append(
+        share(
+            "Conversion % (missiles / Locks)",
+            locks.conversion["all"],
+            _LOCKS_REAL_CONVERSION["all"],
+        )
+    )
+    lines += [
+        share(
+            f"Conversion % on {_STATE_LABEL[state]}",
+            locks.conversion[state],
+            _LOCKS_REAL_CONVERSION[state],
+        )
+        for state in TARGET_STATES
+    ]
+    lines += [
+        share(
+            f"Locks on {_STATE_LABEL[state]} %",
+            locks.state_share[state],
+            _LOCKS_REAL_STATE_SHARE.get(state),
+        )
+        for state in TARGET_STATES
+    ]
+    lines += [
+        f"  Lock endings %, {scope}: {_pooled(locks.endings[scope])}"
+        for scope in ("all", *TARGET_STATES)
+    ]
+    lines += [
+        share(
+            f"Dodge pick % (dodge plans / locked plans), {state}",
+            locks.dodge_pick[state],
+        )
+        + f" over {locks.locked_plans[state]} plans"
+        for state in TARGET_STATES
+    ]
+    lines += [
+        share(
+            f"Dodge success % (successful rolls / rolls), {state}",
+            locks.dodge_success[state],
+        )
+        + f" over {locks.dodge_rolls[state]} rolls"
+        for state in TARGET_STATES
+    ]
+    return lines
+
+
+def _mean(values: tuple[float, ...]) -> float:
+    """The mean of ``values`` (0.0 with none)."""
+    return sum(values) / len(values) if values else 0.0
+
+
 def format_result(result: ProbeResult, targets: Mapping | None = None) -> list[str]:
     """The probe's numbers as ASCII lines, one block per Role, then the team-wide ones.
 
@@ -545,6 +638,8 @@ def format_result(result: ProbeResult, targets: Mapping | None = None) -> list[s
             for seed, share in result.sharing_by_seed.items()
         )
     )
+    if result.locks.all_locks:  # a result built with rounds played
+        lines += _lock_lines(result.locks, targets)
     return lines
 
 
