@@ -391,7 +391,7 @@ class TestTickMissileLock:
 class TestLaunch:
     def test_launch_at_t_plus_lock_ticks_spends_and_hits(self) -> None:
         locker, target, ctx = _locked()
-        with patch("random.random", return_value=0.99):  # no dodge
+        with patch("random.random", return_value=0.99):
             _advance(ctx, range(T + 1, T + LOCK_TICKS + 1))
 
         missiled = _rows(ctx, "missiled")
@@ -412,24 +412,21 @@ class TestLaunch:
         assert _rows(ctx, "missiled", "lock_cancelled") == []
         assert locker.final_missiles == 5
 
-    def test_dodge_cancels_at_launch_with_nothing_spent(self) -> None:
+    def test_a_launch_rolls_no_dodge(self) -> None:
+        """MECH-24 (spec #611, decision 2) replaced the old contract on purpose:
+        the launch used to roll a passive dodge, ``min(20, survival / 5)``
+        percent, and a draw under it cancelled with ``dodge``. The Dodge is now
+        an Action (``test_dodge.py``); a launch draws no RNG, so even a draw of
+        0.0 lands the missile, and no ``missile_dodge`` row exists."""
         locker, target, ctx = _locked()
-        with patch("random.random", return_value=0.0):  # 0 < dodge 10%
+        with patch("random.random", return_value=0.0):
             _advance(ctx, range(T + 1, T + LOCK_TICKS + 1))
 
-        assert _rows(ctx, "missiled") == []
-        assert _cancels(ctx) == [(T + LOCK_TICKS, 1, 2, "dodge")]
-        assert locker.final_missiles == 5
-        assert locker.counters.missiles_landed == 0
+        assert [e["timestamp"] for e in _rows(ctx, "missiled")] == [T + LOCK_TICKS]
+        assert _cancels(ctx) == []
+        assert locker.final_missiles == 4
         assert ctx.missile_locks == {}
         assert _rows(ctx, "missile_dodge") == []
-
-    def test_dodge_roll_is_min_20_survival_over_5(self) -> None:
-        """survival 50 -> 10%: a draw of 0.10 (10.0 >= 10) does not dodge."""
-        locker, target, ctx = _locked()
-        with patch("random.random", return_value=0.10):
-            _advance(ctx, range(T + 1, T + LOCK_TICKS + 1))
-        assert len(_rows(ctx, "missiled")) == 1
 
     def test_out_of_sight_failed_save_cancels_on_that_tick(self) -> None:
         locker, target, ctx = _locked()
@@ -443,7 +440,7 @@ class TestLaunch:
     def test_out_of_sight_passed_save_holds_and_launches(self) -> None:
         locker, target, ctx = _locked()
         target.current_zone = locker.current_zone + 1
-        # 0.3: the save passes (30 < 50) and the dodge fails (30 >= 10).
+        # 0.3: the save passes (30 < 50); MECH-24: the launch rolls nothing more.
         with patch("random.random", return_value=0.3):
             _advance(ctx, range(T + 1, T + LOCK_TICKS + 1))
         assert _cancels(ctx) == []
@@ -480,7 +477,7 @@ class TestLaunch:
     ) -> None:
         """Spec #583 gap (owner, 2026-11-09): a launch-tick gate that fails
         without a ``record_down`` (state set directly here) still writes
-        exactly one ``lock_cancelled``, before any dodge roll, with nothing
+        exactly one ``lock_cancelled``, with no draw, with nothing
         spent: ``down`` for the activity gates, ``sight`` for a Chase ban."""
         locker, target, ctx = _locked()
         launch = T + LOCK_TICKS
@@ -504,7 +501,7 @@ class TestLaunch:
         assert _rows(ctx, "missiled") == []
         assert locker.final_missiles == 5
         assert ctx.missile_locks == {}
-        assert draws == []  # no dodge roll for a refused launch
+        assert draws == []  # a refused launch draws nothing
 
     def test_launch_removes_the_lock_before_the_down_cancels(self) -> None:
         """The missile Downs the target; the launching lock must not also end
@@ -790,3 +787,22 @@ class TestSyracuseRoundInvariants:
         log = _syracuse_round(seed)
         assert any(e["event_type"] == "locking" for e in log)
         assert lock_invariant_violations(log, BatchSimulator.ROUND_TICKS - 1) == []
+
+    def test_the_audit_runs_with_the_dodge_on(self) -> None:
+        """MECH-24: the Dodge Action ends Locks in these rounds, so the audit
+        above covers its ``lock_cancelled`` (``dodge``) rows (seed 1 has some).
+        A Dodge ends a Lock on the target's plan tick, before the launch; the
+        old passive roll could only end one at start + LOCK_TICKS."""
+        log = _syracuse_round(1)
+        starts: dict[int, int] = {}
+        early_dodges = 0
+        for e in log:
+            if e["event_type"] == "locking":
+                starts[e["actor_id"]] = e["timestamp"]
+            elif (
+                e["event_type"] == "lock_cancelled"
+                and e["metadata"].get("reason") == "dodge"
+                and e["timestamp"] < starts[e["actor_id"]] + LOCK_TICKS
+            ):
+                early_dodges += 1
+        assert early_dodges > 0

@@ -81,3 +81,6 @@ class PendingMissileLock:
     attacker: Any
     defender: Any
     ticks_remaining: int = LOCK_TICKS
+    # MECH-24: the tick the Lock started; ``resolve_dodge`` skips a Lock started
+    # on the dodge's own tick (its one roll comes on the next tick).
+    started: int | None = None

@@ -615,7 +615,7 @@ def _one_shot_round(sim, red_roster, blue_roster, shot_tick, ticks):
     100 reacts and a defender with awareness 0 is followed up.
     """
 
-    def plan_one_shot(self, player, all_alive, tick, movement_ctx=None):
+    def plan_one_shot(self, player, all_alive, tick, movement_ctx=None, lockers=()):
         if tick == shot_tick and player.team_color == "red":
             target = next(p for p in all_alive if p.team_color == "blue")
             return [{"type": "tag", "actor": player, "target": target}]
@@ -2074,6 +2074,93 @@ class TestMech23HidingDeterminism:
             "side_advantage",
         ):
             assert serial[key] == parallel[key], key
+
+
+@pytest.mark.django_db
+class TestMech24DodgeDeterminism:
+    """MECH-24a (#612): the Dodge draws its rolls in the dispatch, in the
+    shuffled plan order and ``ctx.missile_locks`` order, and building
+    ``lockers`` draws nothing, so a map round with Locks and dodges plays the
+    same serial and parallel, and a replay from its seed writes the same
+    ``lock_cancelled`` (``dodge``) rows."""
+
+    def test_serial_equals_parallel_where_players_dodge(self, monkeypatch):
+        from matches.simulation import entrypoints
+
+        team_red, _ = make_team_with_slots("M24ParR")
+        team_blue, _ = make_team_with_slots("M24ParB")
+        arena_map = _move01_make_map("M24ParMap", zone_data=_WALLED_12X12)
+        sim = BatchSimulator()
+
+        dodges: list = []
+        real_resolve = entrypoints.resolve_dodge
+
+        def spy(dodger, ctx, tick):
+            rolls = real_resolve(dodger, ctx, tick)
+            dodges.extend(rolls)
+            return rolls
+
+        # The spy reaches only the serial run: spawned workers import afresh.
+        monkeypatch.setattr(entrypoints, "resolve_dodge", spy)
+        serial = sim.run(team_red, team_blue, n=4, arena_map=arena_map, master_seed=624)
+        monkeypatch.undo()
+        assert any(dodges), "no Dodge succeeded in the serial run"
+        try:
+            parallel = sim.run(
+                team_red,
+                team_blue,
+                n=4,
+                arena_map=arena_map,
+                master_seed=624,
+                workers=2,
+            )
+        except Exception as exc:  # pragma: no cover - environment dependent
+            pytest.skip(f"Parallel worker pool unavailable: {exc!r}")
+
+        for key in (
+            "red_wins",
+            "blue_wins",
+            "ties",
+            "red_scores",
+            "blue_scores",
+            "avg_seeds",
+            "side_advantage",
+        ):
+            assert serial[key] == parallel[key], key
+
+    def test_replay_reproduces_the_dodge_rows(self):
+        from matches.sim_helpers.map_loader import load_map_context
+
+        team_red, _ = make_team_with_slots("M24RepR")
+        team_blue, _ = make_team_with_slots("M24RepB")
+        red = list(team_red.active_roster)
+        blue = list(team_blue.active_roster)
+        movement_ctx, _ = load_map_context(
+            _move01_make_map("M24RepMap", zone_data=_WALLED_12X12)
+        )
+        sim = BatchSimulator()
+
+        def dodge_rows(seed: int) -> list:
+            *_, events = sim.replay_round(
+                red, blue, seed, flipped=False, movement_ctx=movement_ctx
+            )
+            return [
+                (e["timestamp"], e["actor_id"], e["target_id"])
+                for e in events
+                if e["event_type"] == "lock_cancelled"
+                and e["metadata"]["reason"] == "dodge"
+            ]
+
+        # MECH-24b (#613): the locked responses moved seed 2412's round to one
+        # with no Dodge success, so the test takes the first seed from 2412 on
+        # whose round has one (a seeded search: a later reshape cannot leave it
+        # without a Dodge to replay).
+        seed, rows = next(
+            ((s, r) for s in range(2412, 2432) if (r := dodge_rows(s))),
+            (None, []),
+        )
+        assert rows, "no Dodge in 20 replayed rounds"
+        assert dodge_rows(seed) == rows  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

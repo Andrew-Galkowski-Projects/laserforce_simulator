@@ -192,17 +192,7 @@ CAL-04 (Resupply visits stick together, supports last the round) is **[DONE]**; 
 
 MECH-23 (Hiding means getting out of sight, not a 50% miss) is **[DONE]**; see `PLAN-completed.md`.
 
-### MECH-24 · Missile dodge as an Action while being locked (owner, 2026-11-12)
-
-From real play. A new **Action** a player can roll only while an enemy holds a Lock on it: it
-stands in place and tries to dodge. A success either breaks the Lock or makes the attacker's
-missile miss. Today the only dodge is the passive roll at launch, `min(20, survival / 5)` percent
-(`simulation/entrypoints.py`, MECH-21's Lock advance), and SM5-04 plans to move that roll to
-flexibility. **Open for the grill:** whether this replaces the passive launch dodge or adds to it,
-and how it sits with SM5-04; break-the-Lock vs missile-misses (one outcome or a roll between
-them); the chance and which stats set it (flexibility, survival); the Action's weight while
-locked; whether standing still costs it the Advance and leaves it open to other shots; the real
-figure to check against (missiles taken per game).
+MECH-24 (Missile dodge as an Action while being locked) is **[DONE]**; see `PLAN-completed.md`.
 
 ### MECH-25 · Board flip: supports move across the arena when hiding fails (owner, 2026-11-12)
 
@@ -235,6 +225,28 @@ Reaction-shot rolls; whether the cone also limits memory updates and detection (
 whom); heading while Stationary (hide, hold, capture); how "never leaves untagged" sits with
 shot cadence and the stamina spend; the Playback drawing; the engine cost of an angle check per
 pair per tick.
+
+### MECH-28 · The locker Locks like a real player (MECH-24 grill, 2026-11-13)
+
+From MECH-24's baseline (its round 3 in this file): the sim starts 66.5 Locks a round against a
+real 15.9, puts 33% of them on a Reset-window target against a real 69%, and ends 47% of them in
+the locker's own Shot, so only 18% become a missile against a real 53% (65% on a Reset-window
+target, 23% on an Active one). **Open for the grill:** the `missile_player` weight and how often a
+Lock starts; a preference for Reset-window targets; when a locker keeps the Lock instead of firing
+(and which Shots cancel it: Reaction, Follow-up and Overwatch shots count today); the real figures
+to match (Locks per game, target state, conversion by state); the Heavy's missiles per round
+(3.23 against a real 1.76), moved here from MECH-24's acceptance. Depends on MECH-24.
+MECH-24's `round_probe` Lock block (seeds 1-2, before MECH-24b) read 82.5 Locks a round, 9%
+conversion and 52% of Locks ended by the locker's own Shot: start this grill from its acceptance run.
+
+### MECH-29 · Only a Downed player flees a nuke (MECH-24 review, 2026-11-13)
+
+Owner (2026-11-13): fleeing an incoming nuke should happen only while a player is deactivated; an
+Active one fights on. Today `round_loop.py` sets `reacting_to_nuke` on every target-team player who
+passes the awareness roll, Active or not, and the Medic and Ammo weight functions then move all
+their Tag weight into Resupply (`weights.py`, the MECH-04 nuke blocks). **Open for the grill:**
+whether the flag (or only its weight shift) needs not Active; what the goal override
+(`choose_goal_cell`'s nuke reaction) does for an Active player; the real figures to check against.
 
 ### CAL-05 · The Medic is tagged at twice the real rate in the opening (owner, 2026-11-11)
 
@@ -277,13 +289,7 @@ enemy's lives into memory and nothing reads them back. Two parts:
 likely-nukes estimate is made. Reads memory, so it composes with MECH-13. The importer writes
 resource_awareness = 50 for everyone until the TDF route exists.
 
-### SM5-04 · Missile dodge from flexibility
-
-flexibility is never read. Move the missile dodge (`simulation/entrypoints.py`) from
-`min(20, survival / 5)` to `min(20, flexibility / 5)`; survival keeps only the hit roll. Add
-flexibility to `_SIMULATION_STATS` and the `PlayerRoundState` forwarding properties. The
-importer writes flexibility = 50 for everyone; `times_hit_by_missile` per game is the candidate
-source.
+SM5-04 (Missile dodge from flexibility) is **[DONE]**; see `PLAN-completed.md`.
 
 ### SM5-05 · Losing-state modifier (adaptability)
 

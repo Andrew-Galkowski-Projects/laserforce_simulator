@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 import random
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Sequence
 
 if TYPE_CHECKING:
     from .map_context import MapContext
@@ -39,6 +39,12 @@ from .mechanics import (
 from .pending_events import LockCancelReason, PendingMissileLock
 from .weights import (
     BASELINE_ACTION_WEIGHTS,
+    DODGE_SHARE_ACTIVE,
+    DODGE_SHARE_RESET,
+    LOCKED_HIDE_SHARE,
+    SHOOT_BACK_SHARE,
+    apply_boost_share,
+    apply_dodge_share,
     _get_medic_weights,
     _get_ammo_weights,
     _get_scout_weights,
@@ -75,6 +81,9 @@ _ACTION_IDX = {
     "missile_player": 6,
     "request_resupply": 7,
     "hold": 8,
+    # MECH-24: the Dodge, last, so a player who is not locked (weight 0) draws
+    # exactly what the 9-slot vector drew.
+    "dodge": 9,
 }
 _CHOICES = [
     "tag_player",
@@ -86,6 +95,7 @@ _CHOICES = [
     "missile_player",
     "request_resupply",
     "hold",
+    "dodge",
 ]
 
 
@@ -260,8 +270,14 @@ def plan_action(
     *,
     save_player=None,
     time_domain: str = "seconds",
+    lockers: Sequence = (),
 ) -> list:
     """Return a list of planned action dicts for player at this tick.
+
+    lockers (MECH-24): the locking players of every live Lock on *player*, in
+    ``ctx.missile_locks`` insertion order. Non-empty, the ``dodge`` slot gets its
+    share of the draw (``weights.apply_dodge_share``); empty, the player plans
+    exactly as before.
 
     Does not apply any state changes except:
     - player.last_chosen_action is updated
@@ -278,8 +294,9 @@ def plan_action(
     seconds. ``"ticks"`` selects the tick-native thresholds from
     ``time_constants`` — used by the fully tick-native BatchSimulator.
     """
-    # MOVE-03: 9-slot action array — index 8 is the new ``hold`` Action
-    # (Overwatch). Per-role weight redistribution is applied in weights.py.
+    # MOVE-03: index 8 is the ``hold`` Action (Overwatch); MECH-24: index 9 is
+    # ``dodge``, a trailing 0 here (10 slots). Per-role weight redistribution is
+    # applied in weights.py.
     # Copy the module constant — plan_action mutates the list in place.
     weights = list(BASELINE_ACTION_WEIGHTS)
 
@@ -301,10 +318,12 @@ def plan_action(
     resupply_visit.update_backline(player, all_alive, movement_ctx)
     # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
     # tick spends no RNG; anything else ends it, and this tick then rolls as usual.
+    # MECH-24b (decisions 7, 13): a Lock on the Holder ends it too.
     hold_until = getattr(player, "hold_until", None)
     if hold_until is not None:
         if (
             second < hold_until
+            and not lockers
             and is_active
             and player.final_shots > 0
             and not getattr(player, "reacting_to_nuke", False)
@@ -367,7 +386,8 @@ def plan_action(
         # 2, every other role 1, a rapid-fire Scout 0), the way the deferred
         # queues already space their shots.
         cooldown = cooldown_ticks(player, second)
-    if cooldown > 0 and (second - player.last_shot_time) < cooldown:
+    cooling_down = cooldown > 0 and (second - player.last_shot_time) < cooldown
+    if cooling_down:
         weights[_ACTION_IDX["tag_player"]] = 0
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1
@@ -420,10 +440,32 @@ def plan_action(
     # ticks replay byte-identically.
     weights = finalize_action_weights(weights)
 
-    choice = _visit_choice(visit, random.choices(_CHOICES, weights)[0], player, second)
+    # MECH-24: a locked player may Dodge, at a fixed share of its draw (the other
+    # slots keep their proportions). Not locked, the slot stays a trailing 0.
+    # MECH-24b: first its response: an Active target whose Shot is ready shoots
+    # back. The Dodge share goes on last, so it holds exactly.
+    draw_weights: list[float] | list[int] = weights
+    if lockers:
+        if is_active and player.final_shots > 0 and not cooling_down:
+            draw_weights = apply_boost_share(
+                draw_weights, _ACTION_IDX["tag_player"], SHOOT_BACK_SHARE
+            )
+        # A Reset-window target on a map hides, to walk out of the locker's sight
+        # (the existing hide, so the existing ``sight`` save ends the Lock).
+        if not is_active and movement_ctx is not None:
+            draw_weights = apply_boost_share(
+                draw_weights, _ACTION_IDX["hide"], LOCKED_HIDE_SHARE
+            )
+        share = DODGE_SHARE_ACTIVE if is_active else DODGE_SHARE_RESET
+        draw_weights = apply_dodge_share(draw_weights, share)
+
+    choice = _visit_choice(
+        visit, random.choices(_CHOICES, draw_weights)[0], player, second
+    )
     # CAL-03 rule 7: at 1-3 lives with no own support in sight, hide and call out.
+    # MECH-24 (decision 18): a Dodge stands; the missile one second away comes first.
     called_out = resupply_visit.call_out(player, all_alive, movement_ctx, second)
-    if called_out and choice != "tag_player":
+    if called_out and choice not in ("tag_player", "dodge"):
         choice = "hide"
     player.last_chosen_action = choice
 
@@ -476,9 +518,11 @@ def plan_action(
     if choice == "tag_player":
         if not is_active:
             return plans
-        target = choose_tag_target(
-            player, all_alive, second, movement_ctx, los_filter=_get_los_targets
-        )
+        target = _shoot_back_target(player, lockers, second)
+        if target is None:
+            target = choose_tag_target(
+                player, all_alive, second, movement_ctx, los_filter=_get_los_targets
+            )
         if target and player.final_shots > 0:
             plans.append({"type": "tag", "actor": player, "target": target})
             if player.role == "scout" and player.special_active_until > second:
@@ -583,6 +627,10 @@ def plan_action(
             plans.append({"type": "hide", "actor": player})
     elif choice == "request_resupply":
         plans.append({"type": "request_resupply", "actor": player})
+    elif choice == "dodge":
+        # MECH-24: Stationary, no Shot; the tick loop's dispatch rolls it once per
+        # Lock on the player (``resolve_dodge``).
+        plans.append({"type": "dodge", "actor": player})
     elif choice == "hold":
         # MOVE-03: enter/maintain Overwatch. Stationary; the actual Overwatch
         # shots are resolved by the BatchSimulator tick loop (BatchSim-only by
@@ -590,6 +638,18 @@ def plan_action(
         plans.append({"type": "hold", "actor": player})
 
     return plans
+
+
+def _shoot_back_target(player: Any, lockers: Sequence, second: float) -> Any:
+    """MECH-24b (decision 11): the first locker, when *player* is locked and the
+    Follow rule (``may_tag``) lets it Tag that locker and the locker is Taggable;
+    None otherwise (``choose_tag_target`` picks). No RNG."""
+    if not lockers:
+        return None
+    locker = lockers[0]
+    if may_tag(player, locker, second) and locker.is_taggable_at(second):
+        return locker
+    return None
 
 
 #: CAL-03 rule 6: the roll each ``VisitAction`` makes of a non-Tag roll (a
@@ -606,7 +666,9 @@ def _visit_choice(
 ) -> str:
     """CAL-03 rule 6: what a Resupply visit makes of the rolled *choice*. A Tag roll
     stands, except that a player the visit has at its supports requests while it
-    can be resupplied (and hides otherwise)."""
+    can be resupplied (and hides otherwise). MECH-24: a Dodge always stands."""
+    if choice == "dodge":
+        return choice
     if visit == "request" and player.is_resupplyable_at(second):
         return "request_resupply"
     if visit is None or choice == "tag_player":
@@ -931,7 +993,7 @@ def start_missile_lock(
         cancel_missile_lock(ctx, attacker, int(second), "retarget")
 
     ctx.events.locking(attacker, defender, int(second))
-    lock = PendingMissileLock(attacker=attacker, defender=defender)
+    lock = PendingMissileLock(attacker=attacker, defender=defender, started=int(second))
     ctx.missile_locks[attacker.player_id] = lock
     return lock
 
@@ -966,6 +1028,33 @@ def cancel_missile_lock(
     if lock is not None:
         ctx.events.lock_cancelled(locker, lock.defender, tick, reason=reason)
     return lock
+
+
+def resolve_dodge(dodger: Any, ctx: RoundContext, tick: int) -> list[bool]:
+    """MECH-24 (spec #611): resolve a ``dodge`` plan in the tick loop's dispatch.
+
+    One ``random.random() * 100 < flexibility / 2`` roll per live Lock on the
+    dodger, in ``ctx.missile_locks`` insertion order. A success ends that Lock
+    with ``cancel_missile_lock(..., "dodge")`` (nothing spent); a failure writes
+    nothing. A Lock already ended earlier in the dispatch is gone from
+    ``ctx.missile_locks`` and is not rolled, and a Lock started on this tick
+    (by a plan dispatched before the Dodge) is not rolled either: its one roll
+    is on its locked plan tick, the next one. Returns one entry per roll, True
+    for a success.
+    """
+    chance = getattr(dodger, "flexibility", 50) / 2
+    on_dodger = [
+        lock
+        for lock in ctx.missile_locks.values()
+        if lock.defender is dodger and lock.started != tick
+    ]
+    results: list[bool] = []
+    for lock in on_dodger:
+        dodged = random.random() * 100 < chance
+        if dodged:
+            cancel_missile_lock(ctx, lock.attacker, tick, "dodge")
+        results.append(dodged)
+    return results
 
 
 def cancel_missile_locks_involving(ctx: RoundContext, player, tick: int) -> int:

@@ -11,9 +11,12 @@ survival by minute, minutes in play, Tag Downs per minute in play, lives lost by
 cause, life Resupplies received, doubles, hit ratio, shot-first, Resupply visits and
 Tags per round. CAL-04a (#599) added the engine's own visits (starts, end reasons,
 arrival and readiness), the lives lost per minute band and the Medic-Ammo distance.
+MECH-24c (#614) added the missile Locks: Locks and missiles per locker Role,
+conversion and endings by the target's state, and the dodge's pick and success.
 Each measure is pooled over the rounds and kept per round. Read-only: it observes
-``plan_action``, ``choose_goal_cell``, the capture, ``resolve_shot``, the missile
-launch, the nuke, the two Resupply events, ``resupply_visit.visit_step`` and
+``plan_action``, ``choose_goal_cell``, the capture, ``resolve_shot``, the Lock
+start, its cancel row, ``resolve_dodge``, the missile launch, the nuke, the two
+Resupply events, ``resupply_visit.visit_step`` and
 ``resupply_visit.end_visit`` without drawing from the RNG, so a seed plays the same
 round as it would unobserved. One round is one task, so ``workers`` processes give
 the serial numbers.
@@ -33,6 +36,7 @@ from matches.sim_helpers import shot as shot_module
 from matches.sim_helpers.combat import _CHOICES
 from matches.sim_helpers.parallel_worker import worker_django_init
 from matches.sim_helpers.event_log import EventLog
+from matches.sim_helpers.pending_events import LOCK_CANCEL_REASONS
 from matches.sim_helpers.time_constants import SURVIVED_SENTINEL, TICK_SECONDS
 from matches.simulation import BatchSimulator, entrypoints
 from matches.simulation.entrypoints import _SIMULATION_STATS, _PlayerData
@@ -92,6 +96,14 @@ NOT_READY_CAUSES = (
     "ammo unseen",
 )
 VISIT_ENDS: tuple[str, ...] = get_args(resupply_visit.VisitEnd)
+# MECH-24c (#614): the Roles that Lock, the target's state at the Lock start
+# (``active``, else ``reset``: Taggable in the Reset window), and how a Lock ends
+# (a launched missile, or a ``lock_cancelled`` reason).
+LOCKER_ROLES = ("commander", "heavy")
+TARGET_STATES = ("active", "reset")
+LOCK_ENDS: tuple[str, ...] = ("missile", *LOCK_CANCEL_REASONS)
+# The endings shares add ``open``: a Lock still live when the round ends.
+LOCK_OUTCOMES: tuple[str, ...] = (*LOCK_ENDS, "open")
 
 
 @dataclass(frozen=True)
@@ -211,6 +223,34 @@ class RoleMeasures:
 
 
 @dataclass(frozen=True)
+class LockMeasures:
+    """MECH-24c (#614): the missile Locks. The per-round counts are one value
+    per round in seed order, keyed by locker Role (``LOCKER_ROLES``), both
+    teams: Locks started, missiles launched, and missiles per player-round of
+    that Role. ``all_locks`` is every Lock per round."""
+
+    locks: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    missiles: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    missiles_per_player: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    all_locks: tuple[float, ...] = ()
+    # Percentages with a cluster-robust error over the rounds. ``conversion``
+    # (missiles / Locks) is keyed ``all`` and by ``TARGET_STATES``;
+    # ``state_share`` is the % of Locks on each target state.
+    conversion: dict[str, Measure] = field(default_factory=dict)
+    state_share: dict[str, Measure] = field(default_factory=dict)
+    # Scope (``all`` or a target state) to each ``LOCK_OUTCOMES`` entry, as a %
+    # of that scope's Locks, so a scope's shares add to 100.
+    endings: dict[str, dict[str, Measure]] = field(default_factory=dict)
+    # By the target's state at the plan (the roll) tick: the dodge plans over
+    # the locked plans (``plan_action`` with ``lockers``), and the successful
+    # ``resolve_dodge`` rolls over the rolls, with the counts they are over.
+    dodge_pick: dict[str, Measure] = field(default_factory=dict)
+    dodge_success: dict[str, Measure] = field(default_factory=dict)
+    locked_plans: dict[str, int] = field(default_factory=dict)
+    dodge_rolls: dict[str, int] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class ProbeResult:
     """``roles`` pools every seed; ``by_seed`` holds the same measures per seed.
 
@@ -228,6 +268,7 @@ class ProbeResult:
     # as a % of every Resupply episode received, all roles pooled.
     round_tags: Measure = Measure(0.0, 0.0)
     doubles_share: Measure = Measure(0.0, 0.0)
+    locks: LockMeasures = field(default_factory=LockMeasures)
 
 
 @dataclass
@@ -362,6 +403,21 @@ class _RoleTally:
 
 
 @dataclass
+class _LockTally:
+    """MECH-24c: one round's Locks. ``locks`` counts ``(locker role, target
+    state)``; ``ends`` counts ``(locker role, target state, LOCK_ENDS entry)``,
+    the state read at the Lock start. The dodge counters are by the target's
+    state at the plan or roll tick."""
+
+    locks: Counter = field(default_factory=Counter)
+    ends: Counter = field(default_factory=Counter)
+    locked_plans: Counter = field(default_factory=Counter)
+    dodge_plans: Counter = field(default_factory=Counter)
+    rolls: Counter = field(default_factory=Counter)
+    dodges: Counter = field(default_factory=Counter)
+
+
+@dataclass
 class _RoundTally:
     """Everything one round's observers saw: plain counts a worker can return.
 
@@ -375,6 +431,7 @@ class _RoundTally:
     tags_by_pair: Counter = field(default_factory=Counter)
     downs_by_pair: Counter = field(default_factory=Counter)
     tags: int = 0  # Tags made in the round, both teams
+    locks: _LockTally = field(default_factory=_LockTally)
 
 
 def goal_sharing_share(goals_by_team_tick: Mapping) -> float:
@@ -743,6 +800,45 @@ def _probe_round(task: tuple) -> _RoundTally:
     # MECH-23: the Advance that follows a hider's roll decides its Still tick.
     real_advance = BatchSimulator._advance_player
     hiding_at: dict[int, float] = {}
+    # MECH-24c: the Lock start (the name ``BatchSimulator._start_missile_lock``
+    # calls). Each live Lock's (locker role, target state) by the locker's id.
+    real_lock_start = entrypoints._start_missile_lock_shared
+    lock_tally = _LockTally()
+    open_locks: dict[int, tuple[str, str]] = {}
+
+    def target_state(player, tick) -> str:
+        return "active" if player.is_active_at(tick) else "reset"
+
+    def observed_lock_start(attacker, defender, second, *args, **kwargs):
+        lock = real_lock_start(attacker, defender, second, *args, **kwargs)
+        if lock is not None:
+            state = target_state(defender, second)
+            open_locks[id(attacker)] = (attacker.role, state)
+            lock_tally.locks[(attacker.role, state)] += 1
+        return lock
+
+    def end_lock(locker, end: str) -> None:
+        held = open_locks.pop(id(locker), None)
+        if held is not None:
+            lock_tally.ends[(*held, end)] += 1
+
+    # The cancel: every ``cancel_missile_lock``, from whichever module calls it,
+    # writes its row through this one ``EventLog`` verb.
+    real_lock_cancelled = EventLog.lock_cancelled
+
+    def observed_lock_cancelled(log, locker, defender, tick, *, reason):
+        real_lock_cancelled(log, locker, defender, tick, reason=reason)
+        end_lock(locker, reason)
+
+    # The dodge rolls: the name the tick loop's ``dodge`` dispatch calls.
+    real_resolve_dodge = entrypoints.resolve_dodge
+
+    def observed_resolve_dodge(dodger, ctx, tick):
+        state = target_state(dodger, tick)
+        results = real_resolve_dodge(dodger, ctx, tick)
+        lock_tally.rolls[state] += len(results)
+        lock_tally.dodges[state] += sum(results)
+        return results
 
     def observed_visit_step(player, all_alive, movement_ctx, tick):
         critical = resupply_visit.is_critical(player)
@@ -791,6 +887,8 @@ def _probe_round(task: tuple) -> _RoundTally:
         last_enemy_tag[(id(attacker), id(defender))] = tick
 
     def observed_missile(sim, attacker, defender, second, ctx=None):
+        # The tick loop takes the Lock out of ``ctx.missile_locks`` just before.
+        end_lock(attacker, "missile")
         lives = defender.final_lives
         real_missile(sim, attacker, defender, second, ctx)
         lost = lives - defender.final_lives
@@ -863,6 +961,7 @@ def _probe_round(task: tuple) -> _RoundTally:
         *,
         save_player=None,
         time_domain="seconds",
+        lockers=(),
     ):
         plans = real_plan(
             player,
@@ -871,8 +970,14 @@ def _probe_round(task: tuple) -> _RoundTally:
             movement_ctx,
             save_player=save_player,
             time_domain=time_domain,
+            lockers=lockers,  # MECH-24: the Locks on the player
         )
         tally = tallies[player.role]
+        if lockers:  # MECH-24c: a locked plan, and whether it dodges
+            state = target_state(player, second)
+            lock_tally.locked_plans[state] += 1
+            if any(plan["type"] == "dodge" for plan in plans):
+                lock_tally.dodge_plans[state] += 1
         for plan in plans:
             if plan["type"] == "tag":
                 tally.tag_plans += 1
@@ -943,6 +1048,8 @@ def _probe_round(task: tuple) -> _RoundTally:
 
     entrypoints.choose_goal_cell = observed_choose
     entrypoints.plan_action = observed_plan
+    entrypoints._start_missile_lock_shared = observed_lock_start
+    entrypoints.resolve_dodge = observed_resolve_dodge
     entrypoints._capture_base_shared = observed_capture
     entrypoints.resolve_shot = observed_resolve(real_resolve)
     shot_module.resolve_shot = observed_resolve(real_shot_resolve)
@@ -957,6 +1064,7 @@ def _probe_round(task: tuple) -> _RoundTally:
     EventLog.resupply_ammo = observed_resupply(  # type: ignore[method-assign]
         real_resupply_ammo, "shots"
     )
+    EventLog.lock_cancelled = observed_lock_cancelled  # type: ignore[method-assign]
     try:
         random.seed(seed)
         result, reds, blues = BatchSimulator()._simulate_round(
@@ -995,6 +1103,8 @@ def _probe_round(task: tuple) -> _RoundTally:
     finally:
         entrypoints.choose_goal_cell = real_choose
         entrypoints.plan_action = real_plan
+        entrypoints._start_missile_lock_shared = real_lock_start
+        entrypoints.resolve_dodge = real_resolve_dodge
         entrypoints._capture_base_shared = real_capture
         entrypoints.resolve_shot = real_resolve
         shot_module.resolve_shot = real_shot_resolve
@@ -1005,6 +1115,7 @@ def _probe_round(task: tuple) -> _RoundTally:
         resupply_visit.end_visit = real_end_visit
         EventLog.resupply_lives = real_resupply_lives  # type: ignore[method-assign]
         EventLog.resupply_ammo = real_resupply_ammo  # type: ignore[method-assign]
+        EventLog.lock_cancelled = real_lock_cancelled  # type: ignore[method-assign]
     return _RoundTally(
         seed=seed,
         roles=dict(tallies),
@@ -1013,6 +1124,104 @@ def _probe_round(task: tuple) -> _RoundTally:
         tags_by_pair=tags_by_pair,
         downs_by_pair=downs_by_pair,
         tags=round_tags,
+        locks=lock_tally,
+    )
+
+
+def _lock_measures(rounds: Sequence[_RoundTally]) -> LockMeasures:
+    """MECH-24c: the ``LockMeasures`` of the rounds, in their order."""
+
+    def per_round(read) -> dict[str, tuple[float, ...]]:
+        return {
+            role: tuple(float(read(played, role)) for played in rounds)
+            for role in LOCKER_ROLES
+        }
+
+    def locks(played: _RoundTally, role: str) -> int:
+        return sum(played.locks.locks[(role, state)] for state in TARGET_STATES)
+
+    def missiles(played: _RoundTally, role: str) -> int:
+        return sum(
+            played.locks.ends[(role, state, "missile")] for state in TARGET_STATES
+        )
+
+    def players(played: _RoundTally, role: str) -> int:
+        tally = played.roles.get(role)
+        return tally.player_rounds if tally is not None else 0
+
+    def in_scope(counter: Counter, scope: str, *tail: str) -> float:
+        """``counter``'s count over every locker role, for one target state
+        (``scope``) or both (``all``), ending in ``tail``."""
+        states = TARGET_STATES if scope == "all" else (scope,)
+        return float(
+            sum(
+                counter[(role, state, *tail)]
+                for role in LOCKER_ROLES
+                for state in states
+            )
+        )
+
+    def share(read) -> Measure:
+        return _ratio_measure([read(played.locks) for played in rounds], 100.0)
+
+    def ended(tally: _LockTally, scope: str, outcome: str) -> float:
+        if outcome != "open":
+            return in_scope(tally.ends, scope, outcome)
+        closed = sum(in_scope(tally.ends, scope, end) for end in LOCK_ENDS)
+        return in_scope(tally.locks, scope) - closed
+
+    scopes = ("all", *TARGET_STATES)
+
+    return LockMeasures(
+        locks=per_round(locks),
+        missiles=per_round(missiles),
+        missiles_per_player=per_round(
+            lambda played, role: _ratio(missiles(played, role), players(played, role))
+        ),
+        all_locks=tuple(float(sum(played.locks.locks.values())) for played in rounds),
+        conversion={
+            scope: share(
+                lambda t, s=scope: (
+                    in_scope(t.ends, s, "missile"),
+                    in_scope(t.locks, s),
+                )
+            )
+            for scope in scopes
+        },
+        state_share={
+            state: share(
+                lambda t, s=state: (in_scope(t.locks, s), in_scope(t.locks, "all"))
+            )
+            for state in TARGET_STATES
+        },
+        endings={
+            scope: {
+                outcome: share(
+                    lambda t, s=scope, o=outcome: (
+                        ended(t, s, o),
+                        in_scope(t.locks, s),
+                    )
+                )
+                for outcome in LOCK_OUTCOMES
+            }
+            for scope in scopes
+        },
+        dodge_pick={
+            state: share(lambda t, s=state: (t.dodge_plans[s], t.locked_plans[s]))
+            for state in TARGET_STATES
+        },
+        dodge_success={
+            state: share(lambda t, s=state: (t.dodges[s], t.rolls[s]))
+            for state in TARGET_STATES
+        },
+        locked_plans={
+            state: sum(played.locks.locked_plans[state] for played in rounds)
+            for state in TARGET_STATES
+        },
+        dodge_rolls={
+            state: sum(played.locks.rolls[state] for played in rounds)
+            for state in TARGET_STATES
+        },
     )
 
 
@@ -1076,4 +1285,5 @@ def run_probe(
         doubles_share=_doubles_share(
             [row for tally in pooled.values() for row in tally.rows]
         ),
+        locks=_lock_measures(rounds),
     )

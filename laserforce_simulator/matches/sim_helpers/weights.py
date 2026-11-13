@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Sequence
 
 from . import nuke_arming
 
@@ -149,15 +149,32 @@ _COMMANDER: dict[str, Any] = dict(
 # role weight function applies its deltas on top.  Adjust these numbers to
 # retune the opening behaviour without touching any logic code.
 #
-# The 9 entries map by index to the action array (see ``_ACTION_IDX`` /
+# The 10 entries map by index to the action array (see ``_ACTION_IDX`` /
 # ``_CHOICES`` in combat.py):
 #   0 tag_player        5 resupply_ally
 #   1 only_move         6 missile_player
 #   2 hide              7 request_resupply
 #   3 capture_base      8 hold
-#   4 use_special
+#   4 use_special       9 dodge (MECH-24)
+#
+# ``dodge`` is a trailing zero that no role function writes: ``plan_action``
+# gives it a weight only for a player under a live Lock (``apply_dodge_share``).
 # ---------------------------------------------------------------------------
-BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0]
+BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0, 0]
+
+# MECH-24 (spec #611, decision 25): the share of a locked player's final vector
+# the Dodge takes, so the rate holds whatever the role weights. A target that is
+# not Active is in the Reset window (a Lock needs a Taggable target). Prototype
+# values (Syracuse, seeds 1-24): pick 39% / 15% of locked plans.
+DODGE_SHARE_RESET = 0.40
+DODGE_SHARE_ACTIVE = 0.13
+
+# MECH-24b (decisions 11, 12, 20, 25): the share a locked player's response adds
+# to its slot in the non-dodge part of the vector (``apply_boost_share``). An
+# Active target whose Shot is ready shoots back at the locker; a Reset-window
+# target on a map hides, to walk out of the locker's sight (map rounds only).
+SHOOT_BACK_SHARE = 0.50
+LOCKED_HIDE_SHARE = 0.35
 
 # Index of the ``hide`` slot in the documented layout above. Used by
 # ``finalize_action_weights`` for the UXP-23 fallback; weights.py does not
@@ -182,6 +199,44 @@ def finalize_action_weights(weights: list[int]) -> list[int]:
         clamped = [0] * len(clamped)
         clamped[_HIDE_IDX] = 1
     return clamped
+
+
+# Index of the ``dodge`` slot (MECH-24); mirrors ``combat._ACTION_IDX["dodge"]``.
+_DODGE_IDX = 9
+
+
+def apply_dodge_share(weights: Sequence[float], share: float) -> list[float]:
+    """MECH-24: give the ``dodge`` slot ``share`` of the vector a locked player draws.
+
+    With ``S`` the total of every other slot, the dodge weight becomes
+    ``S * share / (1 - share)``, so ``random.choices`` picks it with probability
+    ``share`` whatever the role weights are; the other slots are unchanged. Runs
+    after ``finalize_action_weights`` (so ``S > 0``) and after any
+    ``apply_boost_share``, so the share holds exactly. Returns a new list.
+    """
+    out: list[float] = [float(w) for w in weights]
+    others = sum(out) - out[_DODGE_IDX]
+    out[_DODGE_IDX] = others * share / (1.0 - share)
+    return out
+
+
+def apply_boost_share(weights: Sequence[float], idx: int, boost: float) -> list[float]:
+    """MECH-24b: raise slot *idx*'s share of the non-dodge vector by *boost*.
+
+    With ``p`` the slot's share of the total of every slot but ``dodge``, its
+    weight becomes the one that makes that share ``p + boost * (1 - p)``; the
+    other non-dodge slots keep their weights, so their proportions hold. A slot
+    that already holds the whole non-dodge vector is left alone. Returns a new
+    list of floats.
+    """
+    out: list[float] = [float(w) for w in weights]
+    rest = sum(out) - out[_DODGE_IDX] - out[idx]
+    if rest <= 0:
+        return out
+    target = out[idx] / (out[idx] + rest)
+    target += boost * (1.0 - target)
+    out[idx] = rest * target / (1.0 - target)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -218,7 +273,7 @@ def _apply_hold_baseline(w: list, c: dict, i: dict, player: Any) -> None:
     is a local defensive guard. Later subtractions (missile, capture, seek-ally)
     can still drive the source slot negative; ``plan_action`` clamps the final
     vector through ``finalize_action_weights`` (SIM-12) before the draw.
-    Additive on the 9-slot array; consumes no RNG.
+    Additive on the 10-slot array; consumes no RNG.
 
     MECH-17: a map round reads ``baseline_hold``, because a Hold there lasts
     ``HOLD_TICKS``. A map-less round (``known_threats`` is None) has no such
@@ -230,7 +285,7 @@ def _apply_hold_baseline(w: list, c: dict, i: dict, player: Any) -> None:
         return
     # Legacy 7/8-slot callers (older unit tests build a pre-MOVE-03
     # action-index dict without "hold"); the production path always passes the
-    # 9-slot _ACTION_IDX. Guarding here keeps those callers KeyError-free
+    # 10-slot _ACTION_IDX. Guarding here keeps those callers KeyError-free
     # without widening every legacy fixture.
     if "hold" not in i or len(w) <= i["hold"]:
         return
