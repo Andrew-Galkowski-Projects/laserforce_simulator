@@ -185,9 +185,11 @@ class TestDodgeShare:
         assert total > 0
         assert locked[9] == pytest.approx(total * share / (1 - share))
         assert locked[9] / sum(locked) == pytest.approx(share)
-        # This ticket boosts nothing else: the other slots are the unlocked ones.
-        assert locked[:9] == unlocked[:9]
         assert unlocked[9] == 0
+        if state == "reset":
+            # Map-less, a Reset-window target gets no other boost (MECH-24b's
+            # shoot-back is for an Active one, its locked hide map rounds only).
+            assert locked[:9] == unlocked[:9]
 
 
 def _force_roll(monkeypatch: pytest.MonkeyPatch, action: str) -> None:

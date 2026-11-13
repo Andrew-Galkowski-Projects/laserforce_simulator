@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Sequence
 
 from . import nuke_arming
 
@@ -169,6 +169,13 @@ BASELINE_ACTION_WEIGHTS = [70, 30, 0, 0, 0, 0, 0, 0, 0, 0]
 DODGE_SHARE_RESET = 0.40
 DODGE_SHARE_ACTIVE = 0.13
 
+# MECH-24b (decisions 11, 12, 20, 25): the share a locked player's response adds
+# to its slot in the non-dodge part of the vector (``apply_boost_share``). An
+# Active target whose Shot is ready shoots back at the locker; a Reset-window
+# target on a map hides, to walk out of the locker's sight (map rounds only).
+SHOOT_BACK_SHARE = 0.50
+LOCKED_HIDE_SHARE = 0.35
+
 # Index of the ``hide`` slot in the documented layout above. Used by
 # ``finalize_action_weights`` for the UXP-23 fallback; weights.py does not
 # import combat, so this mirrors ``combat._ACTION_IDX["hide"]``.
@@ -198,17 +205,37 @@ def finalize_action_weights(weights: list[int]) -> list[int]:
 _DODGE_IDX = 9
 
 
-def apply_dodge_share(weights: list[int], share: float) -> list[float]:
+def apply_dodge_share(weights: Sequence[float], share: float) -> list[float]:
     """MECH-24: give the ``dodge`` slot ``share`` of the vector a locked player draws.
 
     With ``S`` the total of every other slot, the dodge weight becomes
     ``S * share / (1 - share)``, so ``random.choices`` picks it with probability
     ``share`` whatever the role weights are; the other slots are unchanged. Runs
-    after ``finalize_action_weights`` (so ``S > 0``). Returns a new list.
+    after ``finalize_action_weights`` (so ``S > 0``) and after any
+    ``apply_boost_share``, so the share holds exactly. Returns a new list.
     """
     out: list[float] = [float(w) for w in weights]
     others = sum(out) - out[_DODGE_IDX]
     out[_DODGE_IDX] = others * share / (1.0 - share)
+    return out
+
+
+def apply_boost_share(weights: Sequence[float], idx: int, boost: float) -> list[float]:
+    """MECH-24b: raise slot *idx*'s share of the non-dodge vector by *boost*.
+
+    With ``p`` the slot's share of the total of every slot but ``dodge``, its
+    weight becomes the one that makes that share ``p + boost * (1 - p)``; the
+    other non-dodge slots keep their weights, so their proportions hold. A slot
+    that already holds the whole non-dodge vector is left alone. Returns a new
+    list of floats.
+    """
+    out: list[float] = [float(w) for w in weights]
+    rest = sum(out) - out[_DODGE_IDX] - out[idx]
+    if rest <= 0:
+        return out
+    target = out[idx] / (out[idx] + rest)
+    target += boost * (1.0 - target)
+    out[idx] = rest * target / (1.0 - target)
     return out
 
 

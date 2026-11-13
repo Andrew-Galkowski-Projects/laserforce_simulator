@@ -2151,9 +2151,16 @@ class TestMech24DodgeDeterminism:
                 and e["metadata"]["reason"] == "dodge"
             ]
 
-        rows = dodge_rows(2412)
-        assert rows, "no Dodge in the replayed round"
-        assert dodge_rows(2412) == rows
+        # MECH-24b (#613): the locked responses moved seed 2412's round to one
+        # with no Dodge success, so the test takes the first seed from 2412 on
+        # whose round has one (a seeded search: a later reshape cannot leave it
+        # without a Dodge to replay).
+        seed, rows = next(
+            ((s, r) for s in range(2412, 2432) if (r := dodge_rows(s))),
+            (None, []),
+        )
+        assert rows, "no Dodge in 20 replayed rounds"
+        assert dodge_rows(seed) == rows  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

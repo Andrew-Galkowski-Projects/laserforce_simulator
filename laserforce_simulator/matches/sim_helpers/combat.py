@@ -41,6 +41,9 @@ from .weights import (
     BASELINE_ACTION_WEIGHTS,
     DODGE_SHARE_ACTIVE,
     DODGE_SHARE_RESET,
+    LOCKED_HIDE_SHARE,
+    SHOOT_BACK_SHARE,
+    apply_boost_share,
     apply_dodge_share,
     _get_medic_weights,
     _get_ammo_weights,
@@ -314,10 +317,12 @@ def plan_action(
     resupply_visit.update_backline(player, all_alive, movement_ctx)
     # MECH-17: a Hold is a commitment. While one stands no Action is drawn, so the
     # tick spends no RNG; anything else ends it, and this tick then rolls as usual.
+    # MECH-24b (decisions 7, 13): a Lock on the Holder ends it too.
     hold_until = getattr(player, "hold_until", None)
     if hold_until is not None:
         if (
             second < hold_until
+            and not lockers
             and is_active
             and player.final_shots > 0
             and not getattr(player, "reacting_to_nuke", False)
@@ -380,7 +385,8 @@ def plan_action(
         # 2, every other role 1, a rapid-fire Scout 0), the way the deferred
         # queues already space their shots.
         cooldown = cooldown_ticks(player, second)
-    if cooldown > 0 and (second - player.last_shot_time) < cooldown:
+    cooling_down = cooldown > 0 and (second - player.last_shot_time) < cooldown
+    if cooling_down:
         weights[_ACTION_IDX["tag_player"]] = 0
         if sum(weights) == 0:
             weights[_ACTION_IDX["hide"]] = 1
@@ -435,10 +441,22 @@ def plan_action(
 
     # MECH-24: a locked player may Dodge, at a fixed share of its draw (the other
     # slots keep their proportions). Not locked, the slot stays a trailing 0.
+    # MECH-24b: first its response: an Active target whose Shot is ready shoots
+    # back. The Dodge share goes on last, so it holds exactly.
     draw_weights: list[float] | list[int] = weights
     if lockers:
+        if is_active and player.final_shots > 0 and not cooling_down:
+            draw_weights = apply_boost_share(
+                draw_weights, _ACTION_IDX["tag_player"], SHOOT_BACK_SHARE
+            )
+        # A Reset-window target on a map hides, to walk out of the locker's sight
+        # (the existing hide, so the existing ``sight`` save ends the Lock).
+        if not is_active and movement_ctx is not None:
+            draw_weights = apply_boost_share(
+                draw_weights, _ACTION_IDX["hide"], LOCKED_HIDE_SHARE
+            )
         share = DODGE_SHARE_ACTIVE if is_active else DODGE_SHARE_RESET
-        draw_weights = apply_dodge_share(weights, share)
+        draw_weights = apply_dodge_share(draw_weights, share)
 
     choice = _visit_choice(
         visit, random.choices(_CHOICES, draw_weights)[0], player, second
@@ -499,9 +517,11 @@ def plan_action(
     if choice == "tag_player":
         if not is_active:
             return plans
-        target = choose_tag_target(
-            player, all_alive, second, movement_ctx, los_filter=_get_los_targets
-        )
+        target = _shoot_back_target(player, lockers, second)
+        if target is None:
+            target = choose_tag_target(
+                player, all_alive, second, movement_ctx, los_filter=_get_los_targets
+            )
         if target and player.final_shots > 0:
             plans.append({"type": "tag", "actor": player, "target": target})
             if player.role == "scout" and player.special_active_until > second:
@@ -617,6 +637,18 @@ def plan_action(
         plans.append({"type": "hold", "actor": player})
 
     return plans
+
+
+def _shoot_back_target(player: Any, lockers: Sequence, second: float) -> Any:
+    """MECH-24b (decision 11): the first locker, when *player* is locked and the
+    Follow rule (``may_tag``) lets it Tag that locker and the locker is Taggable;
+    None otherwise (``choose_tag_target`` picks). No RNG."""
+    if not lockers:
+        return None
+    locker = lockers[0]
+    if may_tag(player, locker, second) and locker.is_taggable_at(second):
+        return locker
+    return None
 
 
 #: CAL-03 rule 6: the roll each ``VisitAction`` makes of a non-Tag roll (a

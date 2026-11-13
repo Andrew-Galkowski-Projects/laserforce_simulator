@@ -766,8 +766,12 @@ class TestMapLessRoundsAreUnchanged:
     # (#612): a launch rolls no passive dodge (one draw fewer per launch) and a
     # locked target may roll the Dodge, so every map-less round with a Lock
     # redraws; a round with no Lock replays (test_dodge's zero-slot invariant)
-    # (the values before were 0b547f9b3f4484d9 and be28da2854982ffd).
-    PINNED = {7: "625319fbd594f91e", 21: "7758f82de9017db4"}
+    # (the values before were 0b547f9b3f4484d9 and be28da2854982ffd). Re-pinned
+    # 2026-11-13 for MECH-24b (#613): an Active locked target with its Shot ready
+    # gets SHOOT_BACK_SHARE on tag_player and aims at the locker (no target draw),
+    # so every map-less round with a Lock redraws; with the boost and the aim both
+    # off, both seeds replay the old values (625319fbd594f91e and 7758f82de9017db4).
+    PINNED = {7: "4707c2f4a119fe5e", 21: "665a76bba71012cf"}
 
     @pytest.mark.parametrize("seed", sorted(PINNED))
     def test_a_seeded_round_replays_as_it_did(self, seed: int) -> None:
