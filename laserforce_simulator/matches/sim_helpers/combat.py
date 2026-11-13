@@ -445,7 +445,7 @@ def plan_action(
         and not plan_is_live(player, second)
     ):
         player.is_hiding = False
-        # MOVE-04 / ADR-0010: exiting Stationary (hide→non-hide) is a force
+        # MOVE-04 / ADR-0010: leaving a hide (hide→non-hide) is a force
         # trigger — drop the committed goal so the next ``choose_goal_cell``
         # recomputes immediately rather than reusing a stale hide-time goal.
         # Safe for RBS: RBS never sets ``_committed_goal``, so the assignment

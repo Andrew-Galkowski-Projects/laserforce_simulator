@@ -21,6 +21,7 @@ already-pending post-MOVE-01 Score Calibration re-baseline):
 
 from __future__ import annotations
 
+import contextlib
 import unittest
 from unittest.mock import patch
 
@@ -118,8 +119,8 @@ def _patch_miss():
 
 def _patch_see_through_hide():
     # random.random() <= 0.5 was "hide does NOT cause a miss_hid". MECH-23
-    # removed the hiding miss; the patch stays harmless on the older tests.
-    return patch("matches.sim_helpers.shot.random.random", return_value=0.0)
+    # removed the hiding miss, so this is a no-op kept for the older tests.
+    return contextlib.nullcontext()
 
 
 def _patch_hide_misses():

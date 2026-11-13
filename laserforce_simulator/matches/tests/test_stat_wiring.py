@@ -396,31 +396,29 @@ class TestSpecialUsageMultiplier:
 
 
 class TestAccuracySurvivalFormula:
-    """Regression: hit_chance base formula is 70 + accuracy - survival.
+    """Regression: hit_chance base formula is HIT_BASE + accuracy - survival.
 
-    This test verifies the formula hasn't drifted from the spec. It tests the
-    pure arithmetic rather than the full simulation path.
+    MECH-23 dropped the base from 70 to 49 (``shot.HIT_BASE``). The resolver's
+    own pins are ``test_shot_resolver.py::TestHitBase``; these keep the
+    arithmetic the docs quote.
     """
 
-    def test_formula_base_accuracy80_survival50(self):
-        """accuracy=80, survival=50 → base = 70 + 80 - 50 = 100."""
-        accuracy = 80
-        survival = 50
-        base = 70 + accuracy - survival
-        assert base == 100
+    def test_hit_base_is_49(self):
+        from matches.sim_helpers.shot import HIT_BASE
 
-    def test_formula_base_accuracy50_survival50_gives_70(self):
-        """accuracy=50, survival=50 → base = 70 + 50 - 50 = 70 (neutral stats)."""
-        base = 70 + 50 - 50
-        assert base == 70
+        assert HIT_BASE == 49
+
+    def test_formula_base_accuracy80_survival50(self):
+        """accuracy=80, survival=50 → base = 49 + 80 - 50 = 79."""
+        from matches.sim_helpers.shot import HIT_BASE
+
+        assert HIT_BASE + 80 - 50 == 79
 
     def test_formula_base_high_evasion_reduces_chance(self):
-        """High survival reduces hit_chance below 70."""
-        accuracy = 50
-        survival = 90
-        base = 70 + accuracy - survival
-        # 70 + 50 - 90 = 30 → clamped to 10 by max(10, ...)
-        assert base == 30  # raw formula; caller applies max(10, min(95, base))
+        """High survival lowers the raw chance; the resolver clamps to 10-95."""
+        from matches.sim_helpers.shot import HIT_BASE
+
+        assert HIT_BASE + 50 - 90 == 9  # raw; resolver applies max(10, min(95, .))
 
     def test_formula_clamped_to_10_minimum(self):
         """Formula result <10 → clamped to 10."""

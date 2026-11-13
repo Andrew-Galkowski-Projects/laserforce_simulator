@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .downed_option import _remembered_enemy_cells
+from .downed_option import remembered_enemy_cells
 from .resupply_visit import sees
 from .support_survival import SUPPORT_ROLES
 
@@ -34,7 +34,7 @@ def hide_cell(player: Any, tick: float, movement_ctx: Any) -> Cell:
     watchers; then the lowest ``los_rank``; then the nearer; then ``(row, col)``.
     """
     here: Cell = (player.cell_row, player.cell_col)
-    watchers = _remembered_enemy_cells(player, tick)
+    watchers = remembered_enemy_cells(player, tick)
     if not watchers:
         return here
     distances = movement_ctx.walk_distances(here, movement_ctx.squares(HIDE_MAX_FEET))

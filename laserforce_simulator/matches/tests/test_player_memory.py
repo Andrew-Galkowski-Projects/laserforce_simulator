@@ -1119,8 +1119,9 @@ class TestUpdatePlayerMemory(unittest.TestCase):
 
 
 def _hit(attacker: PlayerState, defender: PlayerState, ctx: RoundContext) -> None:
-    """Resolve one certain Hit: randint 1 is under every hit chance, and
-    random 0.0 means a hide never causes a miss."""
+    """Resolve one certain Hit: randint 1 is under every hit chance. Pinning
+    random at 0.0 keeps the shot's other draws fixed (MECH-23 retired the
+    hiding miss this once guarded against)."""
     with patch("random.randint", return_value=1), patch(
         "random.random", return_value=0.0
     ):

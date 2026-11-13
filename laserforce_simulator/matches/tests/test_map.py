@@ -2490,8 +2490,9 @@ class TestMoveInMemoryMultiCell:
 #   1. action `change_zone` renamed `only_move` (index 1 unchanged).
 #   2. every non-stationary player Advances toward their goal cell EVERY tick,
 #      regardless of which weighted action was chosen (map path only).
-#   3. Stationary = is_hiding True OR chosen action == capture_base.
-#      (MECH-23: is_hiding left the set; a hider walks to its hide cell.)
+#   3. Stationary = holding OR chosen action == capture_base. (MECH-23:
+#      is_hiding left the set; a hider walks to its hide cell, and stays only
+#      once it is there.)
 #      Every other action (tag/missile/use_special/resupply/request/only_move)
 #      Advances while acting.
 #   4. only_move = ONE single 2× step: cells_to_move(...) * 2 in one
