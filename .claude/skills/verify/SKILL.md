@@ -50,7 +50,8 @@ The script:
    or say why it stays (reached only through `getattr`).
    `scripts/check_test_durations.py` (the `durations` row, when a test module
    changed or was deleted) lists `.test_durations` ids pytest no longer
-   collects. WARN too: refresh the file with the command it prints
+   collects. WARN too, and harmless: pytest-split runs an unlisted test at the
+   average duration. Refresh only on a `shard balance:` warning
    (`docs/agents/ci.md`, The durations file).
    `scripts/check_sqlite_json_lookups.py` (the `sqlite` row, also in CI's
    lint step) FAILs on a JSONField `__contains` / `__contained_by` lookup:

@@ -100,7 +100,10 @@ Before starting tickets that run in parallel, prepare the integration tip yourse
 
 ## Merge each ticket (Step 6)
 
-Merge each finished ticket branch yourself. Into the branch checked out in your
+Merge each finished ticket branch yourself. When the integration tip moves while an
+implementer still runs, leave the agent alone and merge its ticket into the tip after it
+reports: a `SendMessage` waits for the agent's next tool round and resumes it even after its
+report (MECH-24c's agent was woken to repeat a merge already made). Into the branch checked out in your
 worktree, use `git merge`. Into a branch checked out nowhere (a
 `prototype/<task>` branch), use `python scripts/merge_into_branch.py <target>
 <ticket branch>`. It fast-forwards when it can, otherwise writes the merge
