@@ -25,6 +25,7 @@ from matches.management.commands.lfstats_calibrate import (
 from matches.round_probe import (
     LOCKER_ROLES,
     TARGET_STATES,
+    FlipMeasures,
     Lineup,
     LockMeasures,
     Measure,
@@ -640,7 +641,26 @@ def format_result(result: ProbeResult, targets: Mapping | None = None) -> list[s
     )
     if result.locks.all_locks:  # a result built with rounds played
         lines += _lock_lines(result.locks, targets)
+    if result.flips.per_medic:
+        lines += _flip_lines(result.flips)
     return lines
+
+
+def _flip_lines(flips: FlipMeasures) -> list[str]:
+    """MECH-25b (#619): the Board flips. Flips per Medic-round read
+    ``mean +/- se (min-max)`` over the rounds; the endings are a % of the
+    started flips with a cluster-robust error over the rounds."""
+    per_medic = list(flips.per_medic)
+    arrive = flips.arrive_ticks
+    return [
+        "Board flips (MECH-25):",
+        "  Flips per Medic-round: "
+        + _margin_spread(_mean(flips.per_medic), per_medic, ".2f"),
+        f"  Most flips by one Medic in a round: {flips.most_per_medic}",
+        f"  Flip endings %: {_pooled(flips.endings)}",
+        f"  Ticks from start to arrival: {arrive.mean:.1f} +/- {arrive.se:.1f} "
+        f"over {flips.arrivals}",
+    ]
 
 
 class Command(BaseCommand):

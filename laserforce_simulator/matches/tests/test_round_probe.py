@@ -26,7 +26,8 @@ from matches.round_probe import (
     probe_seeds,
     run_probe,
 )
-from matches.sim_helpers import resupply_visit, shot, support_survival
+from matches.sim_helpers import board_flip, resupply_visit, shot, support_survival
+from matches.sim_helpers.board_flip import Flip
 from matches.sim_helpers.combat import cancel_missile_lock
 from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
@@ -2064,6 +2065,106 @@ def _every_ending(cast: SimpleNamespace):
         sim._start_missile_lock(h, cast.scout, 140, ctx=ctx)
 
     return play
+
+
+def _flip_round(sim, ctx: RoundContext, cast: SimpleNamespace) -> None:
+    """Three Board flips, driven through the engine's own verb and
+    ``board_flip.end_flip`` (the observers installed):
+
+    1. Red Medic, started 100, arrived 120, ``stayed`` at 241.
+    2. Red Medic, started 300, ``down`` at 310 before arriving.
+    3. Blue Medic, started 500, arrived 530, still open at the round's end.
+
+    A pending flip (never started) ends ``eliminated``: not a flip."""
+    red, blue = cast.red_medic, cast.blue_medic
+    red.flip = Flip(from_cell=(1, 1), target=(9, 9), started=100, arrived=120)
+    ctx.events.board_flip(red, 100, (9, 9))
+    board_flip.end_flip(red, 241, "stayed")
+    red.flip = Flip(from_cell=(1, 1), target=(8, 8), started=300)
+    ctx.events.board_flip(red, 300, (8, 8))
+    board_flip.end_flip(red, 310, "down")
+    red.flip = Flip(from_cell=(1, 1))
+    board_flip.end_flip(red, 400, "eliminated")
+    blue.flip = Flip(from_cell=(2, 2), target=(7, 7), started=500, arrived=530)
+    ctx.events.board_flip(blue, 500, (7, 7))
+
+
+def _flip_cast() -> SimpleNamespace:
+    cast = SimpleNamespace(
+        red_medic=_player("medic", "red", player_id=1),
+        blue_medic=_player("medic", "blue", player_id=2),
+        scout=_player("scout", "red", player_id=3),
+    )
+    cast.everyone = list(vars(cast).values())
+    return cast
+
+
+class TestFlipMeasures(SimpleTestCase):
+    """MECH-25b (#619): the Board flips, read off ``EventLog.board_flip`` and
+    ``board_flip.end_flip``."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        one, two = _flip_cast(), _flip_cast()
+        cls.flips = _probe_locks(
+            (one.everyone, lambda sim, ctx, _: _flip_round(sim, ctx, one)),
+            (two.everyone, None),
+        ).flips
+
+    def test_flips_per_medic_round_per_round(self) -> None:
+        # Round 1: three flips over two Medics; round 2: none.
+        self.assertEqual(self.flips.per_medic, (1.5, 0.0))
+
+    def test_the_most_flips_by_one_medic_in_a_round(self) -> None:
+        self.assertEqual(self.flips.most_per_medic, 2)
+
+    def test_endings_are_a_share_of_started_flips(self) -> None:
+        shares = {k: round(m.mean, 1) for k, m in self.flips.endings.items()}
+        self.assertEqual(
+            shares,
+            {
+                "down": 33.3,
+                "eliminated": 0.0,
+                "not_arrived": 0.0,
+                "stayed": 33.3,
+                "round_end": 33.3,
+            },
+        )
+
+    def test_ticks_to_arrive_over_the_arrived_flips(self) -> None:
+        self.assertEqual(self.flips.arrive_ticks, Measure(mean=25.0, se=5.0))
+        self.assertEqual(self.flips.arrivals, 2)
+
+    def test_the_observers_are_put_back(self) -> None:
+        real_end, real_verb = board_flip.end_flip, EventLog.board_flip
+        _probe_locks((_flip_cast().everyone, None))
+        self.assertIs(board_flip.end_flip, real_end)
+        self.assertIs(EventLog.board_flip, real_verb)
+
+    def test_the_block_prints(self) -> None:
+        # A run with no flip still prints the block (a baseline reads 0).
+        lines = "\n".join(format_result(_probe_locks((_flip_cast().everyone, None))))
+        self.assertIn("  Flips per Medic-round: 0.00 +/- 0.00 (0.00-0.00)", lines)
+        lines = "\n".join(
+            format_result(
+                _probe_locks(
+                    (
+                        (cast := _flip_cast()).everyone,
+                        lambda sim, ctx, _: _flip_round(sim, ctx, cast),
+                    )
+                )
+            )
+        )
+        self.assertIn("Board flips (MECH-25):", lines)
+        self.assertIn("  Flips per Medic-round: 1.50 +/- 0.00 (1.50-1.50)", lines)
+        self.assertIn("  Most flips by one Medic in a round: 2", lines)
+        self.assertIn(
+            "  Flip endings %: down 33.3 +/- 0.0, eliminated 0.0 +/- 0.0, "
+            "not_arrived 0.0 +/- 0.0, stayed 33.3 +/- 0.0, round_end 33.3 +/- 0.0",
+            lines,
+        )
+        self.assertIn("  Ticks from start to arrival: 25.0 +/- 5.0 over 2", lines)
 
 
 class TestLockConversion(SimpleTestCase):
