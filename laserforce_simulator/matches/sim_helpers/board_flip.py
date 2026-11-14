@@ -14,10 +14,11 @@ Pure and Django-free; draws no RNG. Every ending goes through ``end_flip``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal, get_args
 
 from .downed_option import remembered_enemy_cells
 from .map_context import zone_from_cell
+from .resupply_visit import manhattan
 
 Cell = tuple[int, int]
 
@@ -29,7 +30,8 @@ FLIP_ARRIVE_TICKS = 60
 FLIP_STAY_TICKS = 120
 FLIP_CROSS_FEET = 15.0
 
-FLIP_END_REASONS = ("down", "eliminated", "not_arrived", "stayed")
+FlipEndReason = Literal["down", "eliminated", "not_arrived", "stayed"]
+FLIP_END_REASONS: tuple[str, ...] = get_args(FlipEndReason)
 
 
 @dataclass
@@ -64,11 +66,12 @@ def note_tag(defender: Any, tick: int) -> None:
     if not streak or tick - streak[-1] > TAG_STREAK_GAP_TICKS:
         streak = []
     defender.tag_streak = [*streak, tick]
-    if len(defender.tag_streak) >= TAG_STREAK_LENGTH:
+    # A started flip ends only through ``end_flip``; the streak waits for it.
+    if len(defender.tag_streak) >= TAG_STREAK_LENGTH and defender.flip is None:
         defender.flip = Flip(from_cell=(defender.cell_row, defender.cell_col))
 
 
-def end_flip(player: Any, tick: int, reason: str) -> None:
+def end_flip(player: Any, tick: int, reason: FlipEndReason) -> None:
     """End *player*'s flip for *reason* (one of ``FLIP_END_REASONS``)."""
     if reason not in FLIP_END_REASONS:
         raise ValueError(f"unknown board flip end reason {reason!r}")
@@ -96,39 +99,25 @@ def flip_cell(player: Any, tick: int, ctx: Any, from_cell: Cell) -> Cell | None:
     enemy_zone = 2 if player.team_color == "red" else 0
     spawn = ctx.get_spawn_cells()
     distances = ctx.walk_distances((player.cell_row, player.cell_col))
-    best: Cell | None = None
-    best_key: tuple | None = None
-    for cell, walk in distances.items():
-        if walk < FLIP_MIN_SQUARES:
-            continue
-        if zone_from_cell(cell[0], cell[1], spawn) == enemy_zone:
-            continue
-        if any(ctx.can_see(w, cell) for w in watchers):
-            continue
-        away = min(abs(cell[0] - w[0]) + abs(cell[1] - w[1]) for w in watchers)
-        key = (-away, ctx.los_rank(cell), walk, cell)
-        if best_key is None or key < best_key:
-            best, best_key = cell, key
-    return best
+    candidates = [
+        (-min(manhattan(cell, w) for w in watchers), ctx.los_rank(cell), walk, cell)
+        for cell, walk in distances.items()
+        if walk >= FLIP_MIN_SQUARES
+        and zone_from_cell(cell[0], cell[1], spawn) != enemy_zone
+        and not any(ctx.can_see(w, cell) for w in watchers)
+    ]
+    return min(candidates)[-1] if candidates else None
 
 
 def tick_flip(player: Any, tick: int, ctx: Any, events: Any) -> None:
     """Once per tick for a player with a flip, while it is Active and placed:
-    start a pending flip (the cell is chosen once, a ``board_flip`` row is
-    written), mark the arrival, or end it (``not_arrived``, ``stayed``)."""
+    start a pending flip (``_start_flip``), mark the arrival, or end it
+    (``not_arrived``, ``stayed``)."""
     flip = player.flip
     if flip is None or player.cell_row is None or not player.is_active_at(tick):
         return
     if flip.target is None:
-        target = flip_cell(player, tick, ctx, flip.from_cell)
-        if target is None:
-            player.flip = None  # no flip; the streak stays for a retry
-            return
-        flip.target, flip.started = target, tick
-        flip.to_target = ctx.walk_distances(target)
-        player.flips_started += 1
-        player.tag_streak = []
-        events.board_flip(player, tick, target)
+        _start_flip(player, flip, tick, ctx, events)
         return
     if flip.arrived is None:
         if (player.cell_row, player.cell_col) == flip.target:
@@ -138,6 +127,20 @@ def tick_flip(player: Any, tick: int, ctx: Any, events: Any) -> None:
         return
     if tick - flip.arrived > FLIP_STAY_TICKS:
         end_flip(player, tick, "stayed")
+
+
+def _start_flip(player: Any, flip: Flip, tick: int, ctx: Any, events: Any) -> None:
+    """Start a pending flip: the cell is chosen once and a ``board_flip`` row
+    written. With no cell there is no flip, and the streak stays for a retry."""
+    target = flip_cell(player, tick, ctx, flip.from_cell)
+    if target is None:
+        player.flip = None  # no flip; the streak stays for a retry
+        return
+    flip.target, flip.started = target, tick
+    flip.to_target = ctx.walk_distances(target)
+    player.flips_started += 1
+    player.tag_streak = []
+    events.board_flip(player, tick, target)
 
 
 def is_flipping(player: Any) -> bool:
@@ -164,14 +167,14 @@ def flip_goal(player: Any, tick: int, ctx: Any) -> Cell:
     here: Cell = (player.cell_row, player.cell_col)
     near = ctx.walk_distances(here, ctx.squares(FLIP_CROSS_FEET))
     to = flip.to_target
-    best: Cell | None = None
-    best_key: tuple | None = None
-    for cell, walk in near.items():
-        if cell not in to or any(ctx.can_see(w, cell) for w in watchers):
-            continue
-        key = (to[cell], walk, cell)
-        if best_key is None or key < best_key:
-            best, best_key = cell, key
-    if best is None or best == here:
+    best = min(
+        (
+            (to[cell], walk, cell)
+            for cell, walk in near.items()
+            if cell in to and not any(ctx.can_see(w, cell) for w in watchers)
+        ),
+        default=None,
+    )
+    if best is None or best[-1] == here:
         return target
-    return best
+    return best[-1]

@@ -126,6 +126,16 @@ class TestTagStreak:
         _tags(medic, T, T + 30, T + 60)
         assert medic.flip is not None
 
+    def test_a_third_tag_never_replaces_a_started_flip(self) -> None:
+        # Only a Down ends a started flip (through ``end_flip``); a streak
+        # completed during it waits for it to end.
+        medic = _medic()
+        started = Flip(from_cell=(1, 1), target=(9, 9), started=T - 50)
+        medic.flip = started
+        _tags(medic, T, T + 30, T + 60)
+        assert medic.flip is started
+        assert medic.tag_streak == [T, T + 30, T + 60]
+
     def test_a_tag_on_a_started_flip_counts_toward_the_next(self) -> None:
         medic = _medic()
         medic.flip = Flip(from_cell=(1, 1), target=(9, 9), started=T)
@@ -158,7 +168,7 @@ class TestEnds:
         medic = _medic()
         medic.flip = Flip(from_cell=(1, 1))
         with pytest.raises(ValueError):
-            end_flip(medic, T, "bored")
+            end_flip(medic, T, "bored")  # type: ignore[arg-type]
         assert medic.flip is not None
 
 
