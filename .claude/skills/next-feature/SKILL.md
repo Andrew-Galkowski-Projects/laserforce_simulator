@@ -181,6 +181,10 @@ the other three untested.
 An invariant that every X ends in exactly one Y lists each early `return` on X's
 existing code path, each with a fixture: MECH-21's "every Lock ends in one row" missed
 `_complete_missile`'s `may_tag` return, so a Chase ban at launch ended the Lock with no row.
+A roll or check made once per live X during a tick gets a fixture where an earlier actor in
+the same tick creates X, and the spec says whether that new X counts this tick: MECH-24's
+Dodge rolled a Lock another enemy started earlier in the same dispatch, then rolled it again
+on the Lock's own locked tick.
 
 A criterion measured over seeded rounds states its number, its seeds, its per-seed
 spread and its standard error, taken from a baseline `round_probe` before the spec is published

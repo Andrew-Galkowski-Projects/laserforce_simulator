@@ -77,7 +77,9 @@ It runs on every PR, on pushes to `main` (and a few legacy branches), and on a `
 `duration_based_chunks`, which keeps a test class in one shard). A test missing from it
 still runs, at the average duration, so a stale file only unbalances the shards.
 A deleted or renamed test stays listed until a refresh: `/verify`'s `durations` row
-(`scripts/check_test_durations.py`) WARNs on those ids when a test module changed.
+(`scripts/check_test_durations.py`) WARNs on those ids when a test module changed. That WARN
+alone is no reason to refresh, and neither is a PR's own CI run: MECH-24 refreshed on it
+after the PR's last push, and the commit missed the squash merge.
 
 Every green shard keeps its own tests' CI timings as the `durations-shard-<n>`
 artifact for 30 days (PERF-04). **Refresh** when the slowest shard's pytest is more than

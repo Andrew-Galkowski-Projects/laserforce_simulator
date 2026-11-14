@@ -4,7 +4,8 @@
 pytest-split ignores an unknown name, so nothing fails when a PR deletes or
 renames tests, and the file drifts until a refresh (MECH-23 deleted the
 hiding-miss tests and left them listed). ``/verify`` runs this as its
-``durations`` row, a WARN, when a branch changes a test module.
+``durations`` row, a WARN, when a branch changes a test module. The WARN is
+information: a refresh waits for a shard balance warning (``REFRESH_HINT``).
 
 The ids come from ``pytest --collect-only``, so tests a class inherits from a
 mixin in another module count, as do parametrised ids.
@@ -25,7 +26,13 @@ from pathlib import Path
 
 _REPO = Path(__file__).resolve().parent.parent
 DURATIONS_FILE = _REPO / "laserforce_simulator" / ".test_durations"
-REFRESH_HINT = "python scripts/refresh_test_durations.py <run-id> [<run-id> ...]"
+# Stale ids only cost the shards some balance, so the refresh waits for a
+# `shard balance:` warning (docs/agents/ci.md). MECH-24 refreshed on this WARN
+# alone, after the PR's last push, and the commit missed the squash merge.
+REFRESH_HINT = (
+    "harmless until watch_pr_ci.py prints a shard balance warning on two runs; then "
+    "python scripts/refresh_test_durations.py <run-id> [<run-id> ...] (docs/agents/ci.md)"
+)
 
 
 def parse_collected(output: str) -> set[str]:

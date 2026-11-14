@@ -60,6 +60,12 @@ class StaleEntriesTests(TestCase):
             ["matches/tests/test_a.py::TestA::test_gone"],
         )
 
+    def test_the_hint_says_stale_ids_wait_for_a_shard_balance_warning(self) -> None:
+        # MECH-24 retro: the old hint read as "refresh now", and the refresh
+        # commit landed after the PR's last push and missed the squash merge.
+        self.assertIn("shard balance", check.REFRESH_HINT)
+        self.assertIn("refresh_test_durations.py", check.REFRESH_HINT)
+
     def test_a_dropped_parameter_is_stale(self) -> None:
         durations = {"t.py::test_p[1]": 0.1, "t.py::test_p[2]": 0.1}
         self.assertEqual(
