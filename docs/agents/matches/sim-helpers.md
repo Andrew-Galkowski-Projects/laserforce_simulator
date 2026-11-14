@@ -15,7 +15,7 @@ The **single source of truth for the `GameEvent`-dict shape**. Lands as deepenin
 | `iter(events)` / `len(events)` | Convenience for iteration / length |
 | `repr(events)` | Distinguishes `persist` vs `null` modes |
 
-**13 per-event-type verbs** — each emits one entry into `self._entries` (or no-ops when `persist=False`). Verb signatures:
+**14 per-event-type verbs** — each emits one entry into `self._entries` (or no-ops when `persist=False`). Verb signatures:
 
 | Verb | Signature | event_type | points | Description (varies by kind) |
 |---|---|---|---|---|
@@ -28,6 +28,7 @@ The **single source of truth for the `GameEvent`-dict shape**. Lands as deepenin
 | `locking` | `(attacker, defender, tick)` | `"locking"` | 0 | `"X locks on Y"`: the Lock start, nothing spent; metadata carries `lock_ticks` (= `LOCK_TICKS`, MECH-21) |
 | `missiled` | `(attacker, defender, tick, *, friendly_fire)` | `"missiled"` | 500 | `"X hits Y with missile"`: the launch, which always hits (MECH-21, ADR-0050); metadata `result="hit"` |
 | `lock_cancelled` | `(locker, defender, tick, *, reason)` | `"lock_cancelled"` | 0 | `"X loses the lock on Y (<reason>)"`: a Lock that ended without a missile; metadata `reason` in `pending_events.LOCK_CANCEL_REASONS`, any other reason raises `ValueError` (MECH-21; replaces `missile_dodge`) |
+| `board_flip` | `(medic, tick, target)` | `"board_flip"` | 0 | `"X flips across the arena"`: a Board flip started (MECH-25); no target player; metadata `target_row` / `target_col`, the flip cell |
 | `resupply_lives` | `(supporter, requestor, tick, *, amount=None)` | `"resupply_lives"` | 0 | `"X heals Y"` |
 | `resupply_ammo` | `(supporter, requestor, tick, *, amount=None)` | `"resupply_ammo"` | 0 | `"X resupplies Y"` |
 | `combo_resupply` | `(requestor, medic, ammo, tick)` | `"combo_resupply"` | 0 | `"medic combo-resupplies requestor"` — actor=medic by convention, target=requestor, metadata extras = `medic_tag` / `ammo_tag` |
@@ -144,6 +145,18 @@ Measured on Syracuse (4 seeded rounds, PLAN.md MOVE-08 round 5): Downs that move
 
 **Tests:** `matches/tests/test_hiding.py` — every `hide_cell` ordering rule, the 15 ft reach at 5 ft a square, staleness, one `holds_in_place` fixture per condition, and `_advance_player` (walks, holds, walks again when seen, normal speed, Stay hidden, the Active clear, the arming Commander). Serial == parallel on a walled map where players hide: `test_batch_sim.py::TestMech23HidingDeterminism`.
 
+## board_flip.py
+
+**MECH-25 the Board flip** (spec #617; GLOSSARY.md **Tag streak**, **Board flip**). A Medic Tagged three times in a row slips across the arena out of the remembered enemies' sight, stays a while, then the normal rules take it back. Its Ammo comes along on the existing Ammo leash; the Ammo never flips. Pure: no Django, no RNG. State on `PlayerState`: `tag_streak` (the streak's ticks), `flip` (a `Flip`: `from_cell`, `target` None while pending, `started`, `arrived`, `to_target` walk distances from the target) and `flips_started`.
+
+- **`note_tag(defender, tick)`** — the Tag streak, called by `shot.resolve_shot` right after `times_tagged` goes up, before `record_down`. Counts only a Tag on the Medic while Active, with no flip pending and `flips_started < MAX_FLIPS_PER_ROUND` (3); hiding or pinned by a visit does not matter. The streak continues when the previous Tag is at most `TAG_STREAK_GAP_TICKS` (60) earlier, else restarts. The third Tag (`TAG_STREAK_LENGTH`) makes the flip pending; the streak is kept until the flip starts. With 1 shield, that Tag is also a Down, so the flip waits for the Medic's next Active tick.
+- **`tick_flip(player, tick, ctx, events)`** — in `BatchSimulator._advance_player`, first, while the player is Active and placed. Pending: `flip_cell`; None clears the flip and keeps the streak (the next Tag in the window retries); else it sets the target once, clears the streak, counts `flips_started` and writes `events.board_flip`. Started: standing on the target is the arrival; not arrived more than `FLIP_ARRIVE_TICKS` (60) after the start ends it (`not_arrived`); more than `FLIP_STAY_TICKS` (120) after arriving ends it (`stayed`). While crossing and no Downed plan is live, `_advance_player` clears `is_hiding` and `is_holding`, so the Medic walks (and `holds_in_place` does not pin it); after arrival the normal hide and Hold rules apply at the new spot.
+- **`flip_cell(player, tick, ctx, from_cell)`** — cells at least `FLIP_MIN_SQUARES` (40) walk away, not in the enemy base's zone (`map_context.zone_from_cell`), seen by no watcher; the minimum of `(-Manhattan to the nearest watcher, los_rank, walk, cell)`. Watchers are `remembered_enemy_cells`, or `[from_cell]` with none.
+- **`flip_goal(player, tick, ctx)`** — `choose_goal_cell` returns it for a started flip right after the Join rule (so a live Downed plan and Join beat it; it beats link return, call-outs, the commitment and the Mode goal, the Medic's back included; a pending flip changes nothing). Crossing with remembered enemies: among the cells within `FLIP_CROSS_FEET` (15 ft) walk no remembered enemy sees, the minimum of `(to_target, walk, cell)`; the target itself after arrival, with no remembered enemy, or when no cell beats the Medic's own.
+- **`end_on_down(player, tick)`** — from `record_down`, before the Downed option: an Elimination ends any flip (`eliminated`), another Down a started one (`down`); a pending flip survives a Down. **`end_flip(player, tick, reason)`** is the one ending path (`FLIP_END_REASONS`; anything else raises `ValueError`), which `round_probe` wraps. A flip open at round end just ends with the Round.
+
+**Tests:** `matches/tests/test_board_flip.py` — one `note_tag` fixture per condition, every ending and its off-by-one, `flip_cell`'s rules, `flip_goal`, the `choose_goal_cell` order, `_advance_player`, the event row, and seeded Syracuse rounds (flips happen, at most 3 per Medic, a Down ends one, the same seed twice, serial == parallel).
+
 ## shot.py
 
 `resolve_shot(attacker, defender, tick, *, kind, ctx, chain_depth=0) -> ShotOutcome` is the **wide Shot resolver** — the single Shot → Hit → Tag → Down → Elimination ladder consumed by all four call-site `kind` s. Pure free function; sim_helpers imports only (`combat._elevation_hit_modifier`, `down.record_down`, `mechanics.cooldown_ticks`, `pending_events`, `round_context`); the MECH-06 side-effect helpers (`_check_medic_under_fire`, `_update_player_memory`, `_broadcast_communication`) are **lazy-imported** from `matches.simulation` at the hit-emit site to avoid a circular import. EventLog candidate retired the local `_actor_meta` / `_target_meta` / `_build_meta` / `_kind_extras` / `_emit_*` helpers — emits now route through `ctx.events.tag(...)` / `.miss(...)` / `.elimination(...)`; only the shot-specific `_elimination_action(kind)` (kind → action-string translation) and `_cooldown_ticks(player, tick)` (the seconds→ticks helper) remain private to shot.py.
@@ -248,6 +261,7 @@ Baked from `Player.stat_for_simulation(<stat>, role)` at construction (no per-ti
 | `downs_taken` | `int` | Downs this round, counted in `record_down` |
 | `downs_in_resupply_cooldown` | `int` | Downs within `RESPAWN_TICKS` of `last_resupplied_at` (the resupply death % numerator in `score_averages`) |
 | `_trail` / `_chases` | `Trail \| None` / `dict` | The Follow rule's open Trail and, as attacker, Chase progress per enemy (`follow_rule`) |
+| `tag_streak` / `flip` / `flips_started` | `list[int]` / `Flip \| None` / `int` | MECH-25: the Tag streak's ticks, the pending or started Board flip, and the flips started this Round (`board_flip`) |
 
 ### MOVE-08 transient fields (no DB columns)
 
@@ -895,7 +909,7 @@ Map-loading helpers used by `BatchSimulator` (the sole simulator post-SIM-09 —
 
 **`build_movement_ctx(zone_data, spawn_cells, *, sight_data, base_sight_data, cell_los_counts, high_los_cells, strong_spots, wall_meta, team_spawn_pools, elevation_grid) -> MapContext`** — legacy shim wrapping `MapContext` construction. Returns a `MapContext` (was a plain 11-key dict pre-MapContext refactor). New callers should prefer `load_map_context`.
 
-**`zone_from_cell(row, col, spawn_cells: dict | None) -> int`** — returns zone index (0=red, 1=neutral, 2=blue) by Manhattan-distance proximity to base cells. Nearest base type wins; neutral bases take precedence when closer than or equidistant to both team bases. Returns `1` (neutral) when `spawn_cells` is `None`/empty or the red/blue base is absent.
+**`zone_from_cell(row, col, spawn_cells: dict | None) -> int`** — returns zone index (0=red, 1=neutral, 2=blue) by Manhattan-distance proximity to base cells. Nearest base type wins; neutral bases take precedence when closer than or equidistant to both team bases. Returns `1` (neutral) when `spawn_cells` is `None`/empty or the red/blue base is absent. MECH-25: defined in the pure `map_context.py` (so `board_flip` imports it without Django) and re-exported here; import it from either.
 
 **`build_spawn_assignments(roster_roles, team_color, spawn_cells, team_spawn_pools) -> dict[int, tuple[int, int] | None]`** — delegation shim calling [`spawn_assigner.assign_spawn_cells`](#spawn_assignerpy); retained for legacy callsites that referenced the method by name.
 

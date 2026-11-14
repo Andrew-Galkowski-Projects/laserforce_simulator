@@ -7,12 +7,13 @@ Helper modules for `BatchSimulator`, the sole engine. Mostly pure Python, Django
 This file is the **index**. Read the section a pointer names before touching that module.
 Paths are relative to the repo root.
 
-- GameEvent dict shape, the 13 event verbs, null-object log — `docs/agents/matches/sim-helpers.md#event_logpy`
+- GameEvent dict shape, the 14 event verbs, null-object log — `docs/agents/matches/sim-helpers.md#event_logpy`
 - `RoundContext`, the per-round mutable bundle — `docs/agents/matches/sim-helpers.md#round_contextpy`
 - life loss, `record_down`, medic-reset chain, nuke cancellation — `docs/agents/matches/sim-helpers.md#downpy`
 - Follow rule: Trails, Chases, `may_tag` (MECH-10) — `docs/agents/matches/sim-helpers.md#follow_rulepy`
 - Downed option: Stay hidden / Shuffle to cover / Make a trail, the tunable formula (MOVE-08) — `docs/agents/matches/sim-helpers.md#downed_optionpy`
 - the walking hide: `hide_cell` (out of remembered enemies' sight, lowest `los_rank`, within 15 ft), `holds_in_place` (MECH-23) — `docs/agents/matches/sim-helpers.md#hidingpy`
+- the Board flip: the Tag streak (`note_tag`), the flip cell, the safe crossing, the 120-tick stay, the endings (`end_flip`) (MECH-25) — `docs/agents/matches/sim-helpers.md#board_flippy`
 - scored positioning-goal draw, held goals, the tunable formula (MOVE-06+07) — `docs/agents/matches/sim-helpers.md#goal_scoringpy`
 - Player Modes: Mode state, switching triggers, goal rules, the teamwork closeness term, the weight nudge (MECH-07) — `docs/agents/matches/sim-helpers.md#modespy`
 - shot resolver, hit roll, follow-ups, reactions, Overwatch shot — `docs/agents/matches/sim-helpers.md#shotpy`

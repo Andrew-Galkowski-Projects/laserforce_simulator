@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 
 from matches.sim_helpers.modes import Mode, default_mode
 from matches.sim_helpers.player_counters import PlayerCounters
@@ -16,6 +16,9 @@ from matches.sim_helpers.time_constants import (
     SCORE_BROADCAST_PERIOD_TICKS,
     SURVIVED_SENTINEL,
 )
+
+if TYPE_CHECKING:
+    from matches.sim_helpers.board_flip import Flip
 
 
 @dataclass
@@ -222,6 +225,12 @@ class PlayerState:
     support_callouts: list[Callout] = field(default_factory=list)
     downs_taken: int = 0
     downs_in_resupply_cooldown: int = 0
+    # MECH-25: the Board flip, managed by ``board_flip``: the ticks of the
+    # current Tag streak, the pending or started flip (None without one) and
+    # the flips started this Round.
+    tag_streak: list[int] = field(default_factory=list)
+    flip: Optional["Flip"] = None
+    flips_started: int = 0
 
     # MECH-10 Follow rule state (transient — not persisted to DB), managed
     # by ``follow_rule``: this player's open Trail (``follow_rule.Trail`` or

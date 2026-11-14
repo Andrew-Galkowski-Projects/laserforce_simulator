@@ -32,6 +32,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass
 
+from .board_flip import note_tag
 from .combat import _elevation_hit_modifier, cancel_missile_lock
 from .down import record_down
 from .follow_rule import may_tag
@@ -284,6 +285,7 @@ def resolve_shot(
         attacker.counters.points_scored += 100
         attacker.last_tagged_id = defender.tag_id
         defender.counters.times_tagged += 1
+        note_tag(defender, tick)  # MECH-25: the Tag streak, before the Down
         defender.counters.points_scored -= 20
         if not defender.is_active_at(tick) and defender.is_taggable_at(tick):
             defender.counters.times_tagged_in_reset_window += 1

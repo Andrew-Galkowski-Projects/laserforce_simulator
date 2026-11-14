@@ -100,7 +100,7 @@ def _kind_extras(kind: str, chain_depth: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# EventLog — 13 per-event-type verbs
+# EventLog — 14 per-event-type verbs
 # ---------------------------------------------------------------------------
 
 
@@ -108,7 +108,7 @@ class EventLog:
     """Null-object-pattern event recorder.
 
     Single source of truth for the ``GameEvent``-dict shape. Every
-    emit site in the simulation path goes through one of the 13
+    emit site in the simulation path goes through one of the 14
     verbs below; the dict shape and metadata schemas are constructed
     internally so no caller sees the 7-key literal.
 
@@ -451,6 +451,26 @@ class EventLog:
                     f"{locker.name} loses the lock on {defender.name} ({reason})"
                 ),
                 "metadata": _build_meta(locker, defender, reason=reason),
+            }
+        )
+
+    def board_flip(self, medic, tick: int, target: tuple[int, int]) -> None:
+        """Emit ``event_type='board_flip'``: a Board flip started (MECH-25).
+        points_awarded=0, no target player; ``metadata`` is the actor block
+        plus the flip cell as ``target_row`` / ``target_col``."""
+        if not self._persist:
+            return
+        self._entries.append(
+            {
+                "event_type": "board_flip",
+                "actor_id": medic.player_id,
+                "target_id": None,
+                "timestamp": int(tick),
+                "points_awarded": 0,
+                "description": f"{medic.name} flips across the arena",
+                "metadata": _build_meta(
+                    medic, target_row=target[0], target_col=target[1]
+                ),
             }
         )
 

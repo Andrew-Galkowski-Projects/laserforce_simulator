@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from .board_flip import end_on_down
 from .combat import cancel_missile_locks_involving
 from .downed_option import choose_downed_option
 from .follow_rule import round_map, start_trail
@@ -92,6 +93,8 @@ def record_down(
     # MOVE-08: a Down clears the pre-Down hide, then rolls the Downed option
     # (which may set it again: Stay hidden). A Reset-window Down rolls afresh.
     player.is_hiding = False
+    # MECH-25: a Down ends a started Board flip; an Elimination any flip.
+    end_on_down(player, tick)
     choose_downed_option(player, tagger, tick, ctx)
 
     # MECH-10: resupply death % counts

@@ -629,8 +629,10 @@ class TestSeededRoundsMove:
         moved_by_plan: dict = {}
         real_advance = entrypoints.BatchSimulator._advance_player
 
-        def spy(self, player, all_alive, second, movement_ctx, prev_action):
-            real_advance(self, player, all_alive, second, movement_ctx, prev_action)
+        def spy(self, player, all_alive, second, movement_ctx, prev_action, *rest):
+            real_advance(
+                self, player, all_alive, second, movement_ctx, prev_action, *rest
+            )
             plan: Any = player.downed_plan
             if plan is not None and not player.is_active_at(second):
                 moved = (player.cell_row, player.cell_col) != plan.spot
