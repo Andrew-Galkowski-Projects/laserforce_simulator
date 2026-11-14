@@ -196,6 +196,14 @@ _Avoid_: reading Stay hidden as "stay on the cell" (since MECH-23 it walks out o
 Getting out of sight, then staying there. A hiding player walks up to 15 feet to the nearest cell that no enemy it remembers can see, preferring cells few places can see, and holds that cell without moving. When a remembered enemy can see it again, it walks to a new cell. A hiding player is as easy to hit as anyone once it is seen: hiding protects only by being out of sight. A support waiting in a **Resupply visit** hides without walking off.
 _Avoid_: "hiding miss" (the flat 50% miss on a hider was retired by MECH-23); confusing it with **Hold**, which watches a sightline to shoot
 
+**Tag streak**:
+Three **Tags** in a row on the Medic while it is **Active**, each soon after the one before. It means the Medic's spot is not working, whether it was hiding or not, and sets off a **Board flip**.
+_Avoid_: "failed hide" (the Medic need not be hiding); counting a Tag in the **Reset window**
+
+**Board flip**:
+After a **Tag streak**, the Medic slips out of sight to a hiding spot far across the arena from the enemies it remembers, stays there a while, then goes back to its usual place near its team. Its Ammo comes along on the **Ammo leash**. A Medic flips at most three times a **Round**; a **Resupply visit** still finds it there.
+_Avoid_: "retreat" (it may move toward the enemy base's end of the arena, just not into the enemy **Base**); reading it as the whole team moving
+
 **Map scale**:
 How many real-world feet one square of a map's grid covers, from the map's drawing scale and its square size. Every distance and every player speed is set in feet and turned into squares by the Map scale, so a finer grid on the same map keeps the same real distances.
 _Avoid_: reading a square as a fixed distance (on Syracuse's 20 px grid one square is one foot; the hand-built test grids use five)
