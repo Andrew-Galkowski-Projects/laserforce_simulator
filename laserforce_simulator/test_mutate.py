@@ -8,11 +8,12 @@ import contextlib
 import importlib.util
 import io
 import json
+import os
 import sys
 import tempfile
 from pathlib import Path
 from types import ModuleType
-from unittest import TestCase
+from unittest import TestCase, mock
 
 _SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "mutate.py"
 
@@ -173,6 +174,27 @@ class MutateTests(TestCase):
                 )
         self.assertEqual(caught.exception.code, 2)
         self.assertIn("BASELINE TIMED OUT after 5 s", out.getvalue())
+
+    def test_a_mutated_run_sees_the_marker_and_the_env_flag(self) -> None:
+        # MECH-25 retro: a parallel test re-imported a mutated module from disk
+        # and read as nondeterminism. While a mutation is on disk, the checkout
+        # holds a marker naming it; mutate.py's own runs carry LF_MUTATE_RUN=1.
+        (self.root / "test_calc.py").write_text(
+            "import os\nfrom pathlib import Path\nfrom calc import add\n\n\n"
+            "def test_add():\n"
+            "    assert add(2, 3) == 5\n"
+            "    assert os.environ.get('LF_MUTATE_RUN') == '1'\n"
+            f"    assert 'calc.py' in Path({mutate.MARKER!r}).read_text()\n"
+        )
+        # A run under mutate.py itself inherits the flag; this one must set it.
+        with mock.patch.dict(os.environ):
+            os.environ.pop("LF_MUTATE_RUN", None)
+            [outcome] = self._mutate(("no-op", "return a + b", "return (a + b)"))
+        self.assertEqual(outcome.status, "survived", outcome.output)
+
+    def test_the_marker_is_gone_after_the_runs(self) -> None:
+        self._mutate(("plus to minus", "a + b", "a - b"), ("gone", "zzz", "y"))
+        self.assertFalse((self.root / mutate.MARKER).exists())
 
     def test_main_exits_0_when_every_mutation_is_caught(self) -> None:
         mutations = self.root / "mutations.json"

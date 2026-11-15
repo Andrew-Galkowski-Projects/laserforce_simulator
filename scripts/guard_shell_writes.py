@@ -7,7 +7,9 @@ worktree that shares this ``.git`` (CLAUDE.md, *Tooling*). A Bash call that writ
 redirect is refused (exit 2, the message goes back to the agent). Large heredocs
 fail with ``ENAMETOOLONG`` on Windows and PowerShell adds a BOM, so the project
 writes files with Write / Edit (CLAUDE.md, *Windows Shell Conventions*). Writes
-under a temp or scratchpad directory, and reads such as ``sed -n``, pass.
+under a temp or scratchpad directory, and reads such as ``sed -n``, pass. A
+variable the command sets (``S=<scratchpad>; cat > "$S/x.json"``) is expanded
+before the target is checked; an unset one is not trusted.
 
 Wired in ``.claude/settings.json``; reads the hook payload as JSON on stdin.
 """
@@ -60,6 +62,19 @@ _SOURCE_SUFFIX = re.compile(
 _SCRATCH = re.compile(r"(^/tmp/|/dev/null$|[\\/]temp[\\/]|scratchpad)", re.I)
 
 
+# A shell variable set in the command: `S=x`, `S="x"`, `export S='x'` (MECH-25 retro).
+_ASSIGN = re.compile(
+    r"(?:^|[;&|(\n]|\bexport)\s*([A-Za-z_]\w*)=(\"[^\"]*\"|'[^']*'|[^\s;&|)]*)"
+)
+_VAR = re.compile(r"\$\{([A-Za-z_]\w*)\}|\$([A-Za-z_]\w*)")
+
+
+def _expand(path: str, variables: dict[str, str]) -> str:
+    """``path`` with each variable the command set replaced by its value; an
+    unset one stays as written, so its target is not taken for a scratch path."""
+    return _VAR.sub(lambda m: variables.get(m.group(1) or m.group(2), m.group(0)), path)
+
+
 def _is_scratch(path: str) -> bool:
     return bool(_SCRATCH.search(path.strip("'\"")))
 
@@ -72,11 +87,16 @@ def refusal(command: str) -> str | None:
         return GIT_C_MESSAGE
     # Each `sed -i` segment's target is that segment's last token (BUG-SL-01
     # retro: the whole command's last token was a later pipe's `head`).
+    variables = {name: value.strip("'\"") for name, value in _ASSIGN.findall(command)}
     for segment in _SEPARATOR.split(command):
         if _SED_IN_PLACE.search(segment + " "):
-            if not _is_scratch(segment.split()[-1]):
+            if not _is_scratch(_expand(segment.split()[-1], variables)):
                 return MESSAGE
-    targets = [t for t in _TARGET.findall(command) if not _is_scratch(t)]
+    targets = [
+        t
+        for t in (_expand(t, variables) for t in _TARGET.findall(command))
+        if not _is_scratch(t)
+    ]
     if not targets:
         return None
     if _HEREDOC.search(command):

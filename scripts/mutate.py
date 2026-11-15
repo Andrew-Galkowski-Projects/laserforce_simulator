@@ -18,6 +18,10 @@ mutation and proves nothing. Every run is killed after ``--timeout`` seconds
 (default 300): a mutation whose run hangs is ``TIMEOUT`` and counts as caught,
 and a baseline that hangs exits 2 (``BASELINE TIMED OUT``).
 
+Run it from the checkout root: while a mutation is on disk, ``.mutate-active``
+there names the target, and any other pytest run in that checkout stops at once
+instead of testing the mutant (``MARKER``).
+
 Usage::
 
     python scripts/mutate.py <target file> <mutations.json> -- <pytest args>
@@ -52,6 +56,13 @@ import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
+
+# While a mutation is on disk, this file in the working directory (the checkout
+# root) names the target, and every other pytest run there stops at once
+# (``laserforce_simulator/testing.py``, ``mutation_in_progress``). Spawned workers
+# re-import modules from disk, so a run beside a mutation tests the mutant
+# (MECH-25 retro). This script's own runs carry ``LF_MUTATE_RUN=1``.
+MARKER = ".mutate-active"
 
 
 class Mutation(NamedTuple):
@@ -140,7 +151,12 @@ def _run(command: list[str], cwd: Path, timeout: float | None = None) -> Run:
         text=True,
         encoding="utf-8",
         errors="replace",
-        env={**os.environ, "NO_COLOR": "1", "PYTHONDONTWRITEBYTECODE": "1"},
+        env={
+            **os.environ,
+            "NO_COLOR": "1",
+            "PYTHONDONTWRITEBYTECODE": "1",
+            "LF_MUTATE_RUN": "1",
+        },
         shell=sys.platform == "win32" and Path(command[0]).suffix == "",
     )
     try:
@@ -207,6 +223,8 @@ def mutate_with(
     """
     original = _read(target)
     outcomes = []
+    marker = cwd / MARKER
+    marker.write_text(f"{target}\n", encoding="utf-8")
     try:
         for mutation in mutations:
             old, new = _match_line_endings(original, mutation.old, mutation.new)
@@ -229,6 +247,7 @@ def mutate_with(
             outcomes.append(Outcome(mutation.name, status, failed, run.output))
     finally:
         _write(target, original)
+        marker.unlink(missing_ok=True)
     return outcomes
 
 

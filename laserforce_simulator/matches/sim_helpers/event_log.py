@@ -121,7 +121,8 @@ class EventLog:
         Consumed by ``BatchSimulator._flush_to_db`` (constructs
         ``GameEvent`` rows) and by tests inspecting emitted events.
         Returns the live list, not a copy.
-      - ``iter(events)`` / ``len(events)`` — convenience.
+      - ``iter(events)`` / ``len(events)`` — convenience. A log is always
+        true, even with no entries; test emptiness with ``len``.
     """
 
     __slots__ = ("_persist", "_entries")
@@ -166,6 +167,11 @@ class EventLog:
 
     def __len__(self) -> int:
         return len(self._entries)
+
+    def __bool__(self) -> bool:
+        """Always true, also when empty: ``events or EventLog(...)`` must keep a
+        real log that has no rows yet (MECH-25 retro). Test emptiness with ``len``."""
+        return True
 
     def __repr__(self) -> str:
         kind = "persist" if self._persist else "null"

@@ -95,7 +95,10 @@ python manage.py round_probe                  # seeds 1-12 on data/maps/syracuse
 python manage.py round_probe --seeds 24 --map-fixture <path>
 python manage.py round_probe --lineups test --workers 3   # the 128 Test games, about 15 min; more than 3 workers has run out of memory
 python manage.py round_probe --lineups test --games 2 --seed 7 --targets <json>
+python manage.py round_probe --lineups test --workers 2 --progress 2> <scratchpad>/progress.txt
 ```
+
+**`--progress`** (MECH-25 retro) writes `round <n>/<total>` to stderr, flushed, as each round comes back (in round order, so under `--workers` a line can wait on a slower earlier round); stdout is unchanged. Send stderr to its own file and follow a long run with one Monitor on `tail -f` of it, rather than a sleep loop counting lines.
 
 Prints, per Role, each measure as `mean (min-max)`: the mean pools every seed and the range is across the seeds (`ProbeResult.roles` and `by_seed`). A measure a target can read adds its standard error, `mean +/- se (min-max)`: the seeds' sample deviation over the root of their count, 0 with one seed. A move inside about two of them can be seed noise (MECH-17: Scout tags read 67.1 to 71.5 across runs against a floor of 70), so state a target with this margin.
 

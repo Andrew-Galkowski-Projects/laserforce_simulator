@@ -12,7 +12,7 @@ The **single source of truth for the `GameEvent`-dict shape**. Lands as deepenin
 |-----|---------|
 | `EventLog(*, persist=True, buffer=None)` | Constructor. `persist=False` ⇒ null-object (each verb early-returns). `buffer=<list>` is a transitional shim letting the caller's pre-existing list and the internal storage reference the same list (used by `simulation.py` during the candidate-#2 migration; removable once `_simulate_round` is refactored to read `events.entries` directly) |
 | `events.entries` | The live `list[dict]` of recorded events (NOT a copy). Consumed by `BatchSimulator._flush_to_db` to construct `GameEvent` rows |
-| `iter(events)` / `len(events)` | Convenience for iteration / length |
+| `iter(events)` / `len(events)` | Convenience for iteration / length. A log is always true, also when empty (`events or EventLog(persist=False)` keeps a real log); test emptiness with `len` |
 | `repr(events)` | Distinguishes `persist` vs `null` modes |
 
 **14 per-event-type verbs** — each emits one entry into `self._entries` (or no-ops when `persist=False`). Verb signatures:

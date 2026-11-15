@@ -709,6 +709,11 @@ class Command(BaseCommand):
             help="processes to play the rounds across (default: 1)",
         )
         parser.add_argument(
+            "--progress",
+            action="store_true",
+            help="print 'round <n>/<total>' to stderr as each round finishes",
+        )
+        parser.add_argument(
             "--targets",
             default=str(DEFAULT_TARGETS),
             help="real per-role targets JSON to print beside the sim's "
@@ -735,7 +740,16 @@ class Command(BaseCommand):
             lineups = None
             seeds = list(range(1, options["seeds"] + 1))
         result = run_probe(
-            movement_ctx, seeds, lineups=lineups, workers=options["workers"]
+            movement_ctx,
+            seeds,
+            lineups=lineups,
+            workers=options["workers"],
+            progress=self._report_round if options["progress"] else None,
         )
         for line in format_result(result, targets):
             self.stdout.write(line)
+
+    def _report_round(self, done: int, total: int) -> None:
+        """One flushed stderr line per finished round, for a watcher to tail."""
+        self.stderr.write(f"round {done}/{total}")
+        self.stderr.flush()
