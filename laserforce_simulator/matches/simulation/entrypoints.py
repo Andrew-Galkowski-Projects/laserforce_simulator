@@ -29,6 +29,7 @@ from ..sim_helpers.combat import (
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
+from ..sim_helpers.board_flip import crossing, tick_flip
 from ..sim_helpers.down import record_down
 from ..sim_helpers.downed_option import overrides_stay_hidden, plan_is_live
 from ..sim_helpers.hiding import hide_cell, holds_in_place
@@ -1470,6 +1471,7 @@ class BatchSimulator:
                         second,
                         movement_ctx,
                         prev_actions.get(id(actor), ""),
+                        ctx.events,
                     )
 
             # MOVE-03: Overwatch resolution (BatchSimulator-only, ADR-0009).
@@ -1625,6 +1627,7 @@ class BatchSimulator:
         second,
         movement_ctx,
         prev_action: str,
+        events: EventLog | None = None,
     ) -> None:
         """MOVE-01: always-on goal-directed Advance for one player this tick.
 
@@ -1637,9 +1640,17 @@ class BatchSimulator:
         ``_hide_goal``). When this tick's action is ``only_move`` the Advance is
         a single 2× step in one astar_advance call. No-op when there is no map
         path.
+        MECH-25: a Board flip starts, arrives or ends here first (``tick_flip``,
+        rows to *events*); a crossing Medic neither hides nor holds.
         """
         if movement_ctx is None or player.cell_row is None:
             return
+        if player.flip is not None:
+            log = events if events is not None else EventLog(persist=False)
+            tick_flip(player, second, movement_ctx, log)
+            if crossing(player):  # a Down ends a started flip: no live plan
+                player.is_hiding = False
+                player.is_holding = False
         chosen = getattr(player, "last_chosen_action", "")
         # Stationary set: holding (MOVE-03 Overwatch — anchored to its current
         # cell watching its sightline), or anchored to a base capture this tick.

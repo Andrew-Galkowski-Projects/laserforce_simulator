@@ -196,12 +196,79 @@ MECH-24 (Missile dodge as an Action while being locked) is **[DONE]**; see `PLAN
 
 ### MECH-25 · Board flip: supports move across the arena when hiding fails (owner, 2026-11-12)
 
+Spec: #617
+
 From real play. After MECH-23, when a Medic's or Ammo's hide fails twice, it looks for a hiding
 spot across the arena instead of nearby. **Open for the grill:** what "a hide fails" means
 (Tagged while hiding, spotted on its hold cell, Downed in the Reset window); twice within what
 window; how "across the arena" picks the cell (far half, away from the known enemies, low
 `los_rank`); whether its partner (Heavy / Commander) follows or the visit pairing breaks; when it
 returns to the old side. Shares a trigger with MECH-26.
+
+**Grill decisions (owner, 2026-11-13):**
+
+1. A **Failed hide** is a Tag landed on a Medic or Ammo while it is hiding (`is_hiding`),
+   counted where the Tag is recorded (`shot.py`). Re-picking a hide cell and a Down in the Reset
+   window are not failures.
+2. The trigger is 2 Failed hides within 120 ticks. The count clears when a flip starts.
+3. No roll: the trigger always flips. The hide path stays RNG-free.
+4. The flip cell: cells at least 40 squares' walk away, seen by no remembered enemy, not in the
+   enemy base's zone (`zone_from_cell`); pick the largest distance to the nearest remembered
+   enemy, then lowest `los_rank`, then shortest walk.
+5. Only the support that failed flips. The Ammo leash is off while the Ammo flips; a flipping
+   Medic drags its Ammo along through the existing leash.
+6. Nothing follows the support. Visits work as today: a visit's `wait` / `at` phase and Join
+   beat the flip.
+7. The support crosses as an Active player at normal speed, visible and Taggable, not hiding;
+   on arrival it hides with the normal 15-square hide anchored at the new spot.
+8. It stays 120 ticks after arriving; the flip spot replaces the Medic's `_back_goal` and the
+   Ammo's link return. Then the normal rules walk it back. A new trigger there flips it again
+   from where it is.
+9. Priority in `choose_goal_cell`: live Downed plan, then a visit's `wait` / `at` / Join, then the
+   flip, which beats the leash, `_back_goal`, link return and call-out walks. Elimination and
+   round end end it.
+10. The trigger is a pure helper (`hide_failing(player, tick)`) and the GLOSSARY term
+    **Failed hide**, so MECH-26 reuses it.
+11. Acceptance is not a calibration target: a 128-game Test `round_probe` (seed 42) against a
+    baseline taken before the spec reports flips per support per round; Medic and Ammo times
+    tagged and lives lost don't get worse by more than 2 SE; C/H/M/A s9 and Tags are reported
+    with bands from the baseline.
+12. No flip cell under decision 4: no flip; the Failed hides stay counted, so the next one in the
+    window retries.
+13. "Away" is measured from the remembered enemies, or, with none, from the cell of the second
+    Failed hide.
+14. The flip cell is chosen once, at the trigger; on arrival the normal hide may shift it.
+15. A Down ends the flip (the Downed option takes over). Not arrived 60 ticks after the trigger
+    ends it. A Tag while crossing is not a Failed hide (not hiding).
+16. Tags while a visit holds the support in place (`holds_in_place`) are not Failed hides.
+17. A new GameEvent type `board_flip` at the trigger, target cell in its metadata (a choices-only
+    migration); the probe counts flips from these rows and Playback's log shows them.
+18. Medic and Ammo have 1 shield, so every Failed hide is also a Down. The second Failed hide
+    makes the flip *pending*; it starts the tick the support is next Active (after the Respawn
+    cooldown and the Downed option), and the flip cell is chosen then (decision 14's "at the
+    trigger" moves to that tick). Decision 15's "a Down ends the flip" covers only Downs after
+    the flip started; an Elimination also clears a pending flip.
+
+**After the prototype runs (owner, 2026-11-13; probes in the spec):** prototype 1 (decisions
+1-18 as written) flipped 0.14 times per Medic-round and moved nothing: only 1.4 of the Medic's
+13.4 Tags land while it hides. Prototype 2 (any Tag, safe crossing) flipped 3.9 / 7.3 times per
+Medic / Ammo round and overshot survival (Medic s9 74.6 against real 62, Ammo Eliminated 26%
+against 44%). These replace decisions 1, 2, 5, 7 and 16:
+
+19. (replaces 1, 2, 16) The trigger is **3 Tags in a row** on the Medic: each Tag while Active
+    lands within 60 ticks of the one before (hiding or not, pinned by a visit or not). The
+    Failed hide term is renamed to match: **Tag streak** (GLOSSARY.md).
+20. At most **3 flips per Medic per round** (the most the owner has seen in a game). No cooldown.
+21. (replaces 5) **Only the Medic flips.** The Ammo has no trigger of its own; it comes along
+    through the existing leash, which stays on.
+22. (replaces 7) **The safe crossing:** each tick of the crossing the Medic walks to the cell
+    within 15 squares that no remembered enemy sees and that is nearest the flip cell by walk;
+    straight to the flip cell when there is none. It is not hiding (`is_hiding` False).
+23. (owner, 2026-11-14) Prototype 3 (decisions 3, 4, 6, 8-15, 17-22) is the spec. Its 128-game
+    probe: 1.37 flips per Medic-round, Medic s9 57.8 +/- 3.1 (baseline 49.6, real 62.0), Tags
+    412.7 +/- 7.3 (baseline 399.6, real 403). Acceptance bands at about 2 SE: flips per
+    Medic-round 1.0-1.8; Medic s9 >= 52; Medic times tagged <= 13.8; Tags <= 427; every other
+    role's Eliminated % within 2 SE of the baseline.
 
 ### MECH-26 · Base run by the supports (owner, 2026-11-12)
 

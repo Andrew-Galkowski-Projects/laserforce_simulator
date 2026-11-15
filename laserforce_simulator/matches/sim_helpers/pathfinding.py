@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-from . import support_survival
+from . import board_flip, support_survival
 from .support_survival import SUPPORT_ROLES
 from .resupply_visit import chebyshev, freshest_callout, manhattan, nearest_cell
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
@@ -836,6 +836,11 @@ def choose_goal_cell(
     if join is not None:
         player._committed_goal = None
         return join
+
+    # MECH-25: a started Board flip (after Join; a pending one changes nothing).
+    if board_flip.is_flipping(player):
+        player._committed_goal = None
+        return board_flip.flip_goal(player, int(second), movement_ctx)
 
     # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.
     link_goal = _link_return_goal(player, all_alive, movement_ctx, second)

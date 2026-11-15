@@ -31,7 +31,7 @@ from math import sqrt
 from statistics import median, stdev
 from typing import Any, Iterable, Mapping, Sequence, get_args
 
-from matches.sim_helpers import resupply_visit, support_survival
+from matches.sim_helpers import board_flip, resupply_visit, support_survival
 from matches.sim_helpers import shot as shot_module
 from matches.sim_helpers.combat import _CHOICES
 from matches.sim_helpers.parallel_worker import worker_django_init
@@ -250,6 +250,26 @@ class LockMeasures:
     dodge_rolls: dict[str, int] = field(default_factory=dict)
 
 
+FLIP_ENDINGS = (*board_flip.FLIP_END_REASONS, "round_end")
+
+
+@dataclass(frozen=True)
+class FlipMeasures:
+    """MECH-25b (#619): the Board flips. ``per_medic`` is one value per round
+    in seed order, the flips started over the round's Medics; ``most_per_medic``
+    the most any one Medic started in a round. ``endings`` is each
+    ``FLIP_ENDINGS`` entry as a % of the started flips (``round_end``: still
+    open at the end), with a cluster-robust error over the rounds.
+    ``arrive_ticks`` is the ticks from the start to the arrival over the
+    ``arrivals`` flips that arrived."""
+
+    per_medic: tuple[float, ...] = ()
+    most_per_medic: int = 0
+    endings: dict[str, Measure] = field(default_factory=dict)
+    arrive_ticks: Measure = Measure(0.0, 0.0)
+    arrivals: int = 0
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     """``roles`` pools every seed; ``by_seed`` holds the same measures per seed.
@@ -269,6 +289,7 @@ class ProbeResult:
     round_tags: Measure = Measure(0.0, 0.0)
     doubles_share: Measure = Measure(0.0, 0.0)
     locks: LockMeasures = field(default_factory=LockMeasures)
+    flips: FlipMeasures = field(default_factory=FlipMeasures)
 
 
 @dataclass
@@ -418,6 +439,25 @@ class _LockTally:
 
 
 @dataclass
+class _FlipTally:
+    """MECH-25b: one round's Board flips. ``started`` counts the flips each
+    Medic started (by ``tag_id``); ``ends`` counts ``FLIP_ENDINGS``;
+    ``arrive_ticks`` holds start-to-arrival ticks of the flips that arrived."""
+
+    started: Counter = field(default_factory=Counter)
+    ends: Counter = field(default_factory=Counter)
+    arrive_ticks: list[int] = field(default_factory=list)
+
+    def close(self, flip: Any, reason: str) -> None:
+        """Count a started flip's ending (a pending one is not a flip)."""
+        if flip is None or flip.started is None:
+            return
+        self.ends[reason] += 1
+        if flip.arrived is not None:
+            self.arrive_ticks.append(flip.arrived - flip.started)
+
+
+@dataclass
 class _RoundTally:
     """Everything one round's observers saw: plain counts a worker can return.
 
@@ -432,6 +472,7 @@ class _RoundTally:
     downs_by_pair: Counter = field(default_factory=Counter)
     tags: int = 0  # Tags made in the round, both teams
     locks: _LockTally = field(default_factory=_LockTally)
+    flips: _FlipTally = field(default_factory=_FlipTally)
 
 
 def goal_sharing_share(goals_by_team_tick: Mapping) -> float:
@@ -830,6 +871,21 @@ def _probe_round(task: tuple) -> _RoundTally:
         real_lock_cancelled(log, locker, defender, tick, reason=reason)
         end_lock(locker, reason)
 
+    # MECH-25b: the Board flips. A start writes the ``board_flip`` row; every
+    # ending goes through ``board_flip.end_flip`` (module-global lookups, so
+    # ``tick_flip`` and ``end_on_down`` reach the observer too).
+    real_board_flip = EventLog.board_flip
+    real_end_flip = board_flip.end_flip
+    flip_tally = _FlipTally()
+
+    def observed_board_flip(log, medic, tick, target):
+        real_board_flip(log, medic, tick, target)
+        flip_tally.started[medic.tag_id] += 1
+
+    def observed_end_flip(player, tick, reason):
+        flip_tally.close(player.flip, reason)
+        real_end_flip(player, tick, reason)
+
     # The dodge rolls: the name the tick loop's ``dodge`` dispatch calls.
     real_resolve_dodge = entrypoints.resolve_dodge
 
@@ -1065,6 +1121,8 @@ def _probe_round(task: tuple) -> _RoundTally:
         real_resupply_ammo, "shots"
     )
     EventLog.lock_cancelled = observed_lock_cancelled  # type: ignore[method-assign]
+    EventLog.board_flip = observed_board_flip  # type: ignore[method-assign]
+    board_flip.end_flip = observed_end_flip
     try:
         random.seed(seed)
         result, reds, blues = BatchSimulator()._simulate_round(
@@ -1100,6 +1158,8 @@ def _probe_round(task: tuple) -> _RoundTally:
             row.lives_nuke = counters.lives_lost_to_nukes
             round_tags += counters.tags_made
             tally.rows.append(row)
+            # A scripted test player has no ``flip``.
+            flip_tally.close(getattr(player, "flip", None), "round_end")
     finally:
         entrypoints.choose_goal_cell = real_choose
         entrypoints.plan_action = real_plan
@@ -1116,6 +1176,8 @@ def _probe_round(task: tuple) -> _RoundTally:
         EventLog.resupply_lives = real_resupply_lives  # type: ignore[method-assign]
         EventLog.resupply_ammo = real_resupply_ammo  # type: ignore[method-assign]
         EventLog.lock_cancelled = real_lock_cancelled  # type: ignore[method-assign]
+        EventLog.board_flip = real_board_flip  # type: ignore[method-assign]
+        board_flip.end_flip = real_end_flip
     return _RoundTally(
         seed=seed,
         roles=dict(tallies),
@@ -1125,6 +1187,36 @@ def _probe_round(task: tuple) -> _RoundTally:
         downs_by_pair=downs_by_pair,
         tags=round_tags,
         locks=lock_tally,
+        flips=flip_tally,
+    )
+
+
+def _flip_measures(rounds: Sequence[_RoundTally]) -> FlipMeasures:
+    """MECH-25b: the ``FlipMeasures`` of the rounds, in their order."""
+
+    def medics(played: _RoundTally) -> int:
+        tally = played.roles.get("medic")
+        return tally.player_rounds if tally is not None else 0
+
+    def started(played: _RoundTally) -> int:
+        return sum(played.flips.started.values())
+
+    arrive = [float(t) for played in rounds for t in played.flips.arrive_ticks]
+    return FlipMeasures(
+        per_medic=tuple(_ratio(started(played), medics(played)) for played in rounds),
+        most_per_medic=max(
+            (n for played in rounds for n in played.flips.started.values()),
+            default=0,
+        ),
+        endings={
+            end: _ratio_measure(
+                [(played.flips.ends[end], started(played)) for played in rounds],
+                100.0,
+            )
+            for end in FLIP_ENDINGS
+        },
+        arrive_ticks=_measure(arrive),
+        arrivals=len(arrive),
     )
 
 
@@ -1286,4 +1378,5 @@ def run_probe(
             [row for tally in pooled.values() for row in tally.rows]
         ),
         locks=_lock_measures(rounds),
+        flips=_flip_measures(rounds),
     )

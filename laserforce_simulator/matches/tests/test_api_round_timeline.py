@@ -177,6 +177,18 @@ class TestTimelineShape(_TimelineTestCase):
             ["movement", "base_capture", "combo_resupply", "lock_cancelled"],
         )
 
+    def test_board_flip_rows_are_included(self) -> None:
+        """MECH-25: a Board flip shows in the event log with its flip cell."""
+        self.event(
+            timestamp=7,
+            event_type="board_flip",
+            actor=self.red_med,
+            metadata={"target_row": 4, "target_col": 59},
+        )
+        (row,) = self.data()["events"]
+        self.assertEqual(row["event_type"], "board_flip")
+        self.assertEqual(row["metadata"], {"target_row": 4, "target_col": 59})
+
     def test_events_in_timestamp_then_insertion_order(self) -> None:
         self.event(timestamp=20, description="late")
         self.event(timestamp=5, description="tie-first")

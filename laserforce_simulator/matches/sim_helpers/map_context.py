@@ -32,6 +32,41 @@ def comms_reach(zone: list | None) -> float:
     return math.hypot(len(zone), len(zone[0])) / 2 if zone else math.inf
 
 
+def zone_from_cell(row: int, col: int, spawn_cells: dict | None) -> int:
+    """Return zone index (0=red, 1=neutral, 2=blue) via proximity to base cells.
+
+    Nearest base type determines the zone. Neutral bases take precedence
+    over team bases when equidistant or closer. Returns ``1`` (neutral)
+    when ``spawn_cells`` is ``None``/empty or either team base is missing.
+    Lives here, Django-free, so ``board_flip`` can use it (MECH-25);
+    ``map_loader`` re-exports it.
+    """
+    if not spawn_cells:
+        return 1
+    red_base = spawn_cells.get("red")
+    blue_base = spawn_cells.get("blue")
+    if red_base is None or blue_base is None:
+        return 1
+    dist_red = abs(row - red_base[0]) + abs(col - red_base[1])
+    dist_blue = abs(row - blue_base[0]) + abs(col - blue_base[1])
+    neutral_bases = [
+        spawn_cells[f"neutral_{i}"]
+        for i in range(1, 5)
+        if f"neutral_{i}" in spawn_cells
+    ]
+    dist_neutral = min(
+        (abs(row - nb[0]) + abs(col - nb[1]) for nb in neutral_bases),
+        default=float("inf"),
+    )
+    if dist_neutral < dist_red and dist_neutral < dist_blue:
+        return 1  # nearest to a neutral base
+    if dist_red < dist_blue:
+        return 0  # red zone
+    if dist_blue < dist_red:
+        return 2  # blue zone
+    return 1  # equidistant = neutral
+
+
 def _main_floor(
     adj: dict[tuple[int, int], list[tuple[int, int]]],
 ) -> set[tuple[int, int]]:
