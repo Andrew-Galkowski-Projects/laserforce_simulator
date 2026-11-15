@@ -34,7 +34,15 @@ def pytest_configure(config: pytest.Config) -> None:
     from django.contrib.auth.hashers import get_hashers
 
     from laserforce_simulator.celery_app import celery_app
-    from laserforce_simulator.testing import install_close_in_transaction_guard
+    from laserforce_simulator.testing import (
+        install_close_in_transaction_guard,
+        mutation_in_progress,
+    )
+
+    # MECH-25 retro: a run beside scripts/mutate.py tests its mutant.
+    stop = mutation_in_progress(Path(__file__).resolve().parent.parent, os.environ)
+    if stop:
+        pytest.exit(stop, returncode=3)
 
     celery_app.conf.task_always_eager = True
     celery_app.conf.task_eager_propagates = True

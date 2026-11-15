@@ -29,7 +29,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from math import sqrt
 from statistics import median, stdev
-from typing import Any, Iterable, Mapping, Sequence, get_args
+from typing import Any, Callable, Iterable, Mapping, Sequence, get_args
 
 from matches.sim_helpers import board_flip, resupply_visit, support_survival
 from matches.sim_helpers import shot as shot_module
@@ -1323,16 +1323,32 @@ def probe_seeds(seed: int, count: int) -> list[int]:
     return [generator.getrandbits(63) for _ in range(count)]
 
 
-def _run_rounds(tasks: list[tuple], workers: int) -> list[_RoundTally]:
-    """``_probe_round`` over ``tasks`` in order, in this process or ``workers``."""
+def _run_rounds(
+    tasks: list[tuple],
+    workers: int,
+    progress: Callable[[int, int], None] | None = None,
+) -> list[_RoundTally]:
+    """``_probe_round`` over ``tasks`` in order, in this process or ``workers``.
+
+    ``progress(done, total)`` hears each round as it comes back, in order.
+    """
+    rounds: list[_RoundTally] = []
+
+    def collect(played: Iterable[_RoundTally]) -> list[_RoundTally]:
+        for tally in played:
+            rounds.append(tally)
+            if progress is not None:
+                progress(len(rounds), len(tasks))
+        return rounds
+
     if workers > 1:
         from concurrent.futures import ProcessPoolExecutor  # noqa: PLC0415
 
         with ProcessPoolExecutor(
             max_workers=workers, initializer=worker_django_init
         ) as executor:
-            return list(executor.map(_probe_round, tasks))
-    return [_probe_round(task) for task in tasks]
+            return collect(executor.map(_probe_round, tasks))
+    return collect(_probe_round(task) for task in tasks)
 
 
 def run_probe(
@@ -1340,13 +1356,15 @@ def run_probe(
     seeds: Iterable[int],
     lineups: Sequence[Lineup] | None = None,
     workers: int = 1,
+    progress: Callable[[int, int], None] | None = None,
 ) -> ProbeResult:
     """Play one round per seed on ``movement_ctx`` and measure it.
 
     With no ``lineups`` every seed plays the default-stat rosters. With them, seed
     ``i`` plays ``lineups[i]`` (red roster, blue roster), one round per lineup.
     ``workers`` above 1 plays the rounds across that many processes; the numbers
-    are the serial ones.
+    are the serial ones. ``progress(done, total)`` is called as each round comes
+    back (MECH-25 retro).
     """
     seed_list = list(seeds)
     if lineups is None:
@@ -1356,7 +1374,7 @@ def run_probe(
         (red, blue, movement_ctx, seed)
         for seed, (red, blue) in zip(seed_list, lineups, strict=True)
     ]
-    rounds = _run_rounds(tasks, workers)
+    rounds = _run_rounds(tasks, workers, progress)
 
     pooled: dict[str, _RoleTally] = defaultdict(_RoleTally)
     tags_by_pair: Counter = Counter()

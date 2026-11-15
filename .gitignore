@@ -31,6 +31,8 @@ media/
 # Pure-Python black for a machine that blocks the compiled one
 # (scripts/install_pure_black.py)
 .tools/
+# scripts/mutate.py's marker while a mutation is on disk
+.mutate-active
 
 # Environment variable files — never commit real secrets
 .env

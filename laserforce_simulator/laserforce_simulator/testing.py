@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Mapping
 
     from django.contrib.auth.models import AbstractBaseUser
     from django.db.backends.base.base import BaseDatabaseWrapper
@@ -85,6 +85,29 @@ def install_close_in_transaction_guard() -> None:
 def stable_seed(name: str) -> int:
     """A seed fixed by *name* across processes, unlike ``hash(name)``."""
     return zlib.crc32(name.encode())
+
+
+# ``scripts/mutate.py``'s ``MARKER``, in the checkout root while a mutation is on disk.
+MUTATION_MARKER = ".mutate-active"
+
+
+def mutation_in_progress(root: Path, environ: Mapping[str, str]) -> str | None:
+    """Why this pytest run must stop, or ``None`` when it may go ahead.
+
+    While ``scripts/mutate.py`` has a mutation on disk, any other run in the
+    checkout tests the mutant, and spawned workers re-import it mid-run (MECH-25
+    retro: a serial-vs-parallel test failed for no real reason). mutate.py's own
+    runs carry ``LF_MUTATE_RUN=1`` and go ahead.
+    """
+    marker = root / MUTATION_MARKER
+    if environ.get("LF_MUTATE_RUN") == "1" or not marker.exists():
+        return None
+    target = marker.read_text(encoding="utf-8").strip()
+    return (
+        f"scripts/mutate.py is rewriting {target}; rerun when it ends. If no "
+        f"mutate.py is running, one was killed mid-run: check `git diff {target}` "
+        f"and delete {marker}."
+    )
 
 
 def run_project_python(

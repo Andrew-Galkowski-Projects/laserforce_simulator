@@ -160,6 +160,36 @@ class TestAllowsEverydayCommands(TestCase):
                 self.assertIsNone(guard.refusal(command))
 
 
+class TestVariablePaths(TestCase):
+    """MECH-25 retro: `S=<scratchpad>; cat > "$S/x.json" <<'EOF'` was refused
+    seven times, because the guard read the literal `$S/x.json`. A variable set
+    earlier in the same command is expanded before the target is checked."""
+
+    def test_allows_a_scratch_write_through_a_variable(self) -> None:
+        for command in (
+            f"S={SCRATCH}; cat > \"$S/mut.json\" <<'EOF'\n[]\nEOF",
+            f'S="{SCRATCH}"; python x.py > "$S/out.json"',
+            f"export S='{SCRATCH}' && cat <<EOF > ${{S}}/a.md\nx\nEOF",
+            f'S="{SCRATCH}"; PY=python; for f in a b; do $PY x.py > "$S/$f.txt"; done',
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(guard.refusal(command))
+
+    def test_refuses_a_repo_write_through_a_variable(self) -> None:
+        for command in (
+            "D=laserforce_simulator/matches; cat > \"$D/x.py\" <<'EOF'\nx\nEOF",
+            'D=docs; echo x > "$D/notes.md"',
+        ):
+            with self.subTest(command=command):
+                self.assertEqual(guard.refusal(command), guard.MESSAGE)
+
+    def test_refuses_an_unset_variable_target(self) -> None:
+        # Nothing in the command says where `$OUT` points.
+        self.assertEqual(
+            guard.refusal("cat > \"$OUT/x.py\" <<'EOF'\nx\nEOF"), guard.MESSAGE
+        )
+
+
 class TestHookProtocol(TestCase):
     def test_exit_code_2_with_a_message_blocks_the_call(self) -> None:
         payload = {

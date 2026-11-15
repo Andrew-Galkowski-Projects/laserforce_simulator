@@ -121,6 +121,14 @@ class TestEventLogReadAPI(unittest.TestCase):
         log.miss(_attacker(), _defender(), 6)
         self.assertEqual(len(log), 2)
 
+    def test_an_empty_log_is_still_true(self) -> None:
+        """``events or EventLog(persist=False)`` keeps an empty real log
+        (MECH-25 retro: ``__len__`` alone made it falsy and the rows went
+        to a throwaway log)."""
+        log = EventLog(persist=True)
+        self.assertIs(log or None, log)
+        self.assertTrue(EventLog(persist=False))
+
     def test_repr_distinguishes_persist_modes(self) -> None:
         self.assertIn("persist", repr(EventLog(persist=True)))
         self.assertIn("null", repr(EventLog(persist=False)))

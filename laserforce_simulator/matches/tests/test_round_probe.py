@@ -146,6 +146,16 @@ class TestRunProbeTotals(SimpleTestCase):
             seeds_played, [random.Random(7).random(), random.Random(8).random()]
         )
 
+    def test_progress_hears_each_finished_round(self) -> None:
+        # MECH-25 retro: a long probe reports each round as it finishes.
+        def fake_round(self, red, blue, movement_ctx=None):
+            return {}, [], []
+
+        reported: list[tuple[int, int]] = []
+        with patch.object(BatchSimulator, "_simulate_round", fake_round):
+            run_probe(None, [7, 8, 9], progress=lambda d, t: reported.append((d, t)))
+        self.assertEqual(reported, [(1, 3), (2, 3), (3, 3)])
+
     def test_each_seed_measures_goal_sharing_on_its_own_round(self) -> None:
         def teammate(tag_id: str) -> SimpleNamespace:
             return SimpleNamespace(
@@ -2439,6 +2449,20 @@ class TestRoundProbeCommand(TestCase):
         ):
             self.assertIn(text, output)
         self.assertTrue(output.isascii())
+
+    def test_progress_reports_each_round_on_stderr(self) -> None:
+        # MECH-25 retro: a 30-minute probe printed nothing until it ended.
+        out, err = StringIO(), StringIO()
+        call_command(
+            "round_probe", "--seeds", "2", "--progress", stdout=out, stderr=err
+        )
+        self.assertEqual(err.getvalue().splitlines(), ["round 1/2", "round 2/2"])
+        self.assertNotIn("round 1/2", out.getvalue())
+
+    def test_no_progress_without_the_flag(self) -> None:
+        err = StringIO()
+        call_command("round_probe", "--seeds", "1", stdout=StringIO(), stderr=err)
+        self.assertEqual(err.getvalue(), "")
 
     def test_an_unknown_lineup_set_is_refused(self) -> None:
         with self.assertRaisesMessage(CommandError, "bogus"):
