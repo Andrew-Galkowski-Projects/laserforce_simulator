@@ -26,7 +26,14 @@ from matches.round_probe import (
     probe_seeds,
     run_probe,
 )
-from matches.sim_helpers import board_flip, resupply_visit, shot, support_survival
+from matches.sim_helpers import (
+    base_run,
+    board_flip,
+    resupply_visit,
+    shot,
+    support_survival,
+)
+from matches.sim_helpers.base_run import BaseRun
 from matches.sim_helpers.board_flip import Flip
 from matches.sim_helpers.combat import cancel_missile_lock
 from matches.sim_helpers.event_log import EventLog
@@ -2175,6 +2182,268 @@ class TestFlipMeasures(SimpleTestCase):
             lines,
         )
         self.assertIn("  Ticks from start to arrival: 25.0 +/- 5.0 over 2", lines)
+
+
+def _base_run_cast() -> SimpleNamespace:
+    """MECH-26c: red Commander, Medic and Ammo; blue Medic and Ammo. The red
+    pair stand in sight of each other at (2, 0) and (2, 2)."""
+    cast = SimpleNamespace(
+        commander=_player("commander", "red", player_id=1),
+        red_medic=_player("medic", "red", player_id=2, cell_row=2, cell_col=0),
+        red_ammo=_player("ammo", "red", player_id=3, cell_row=2, cell_col=2),
+        blue_medic=_player("medic", "blue", player_id=4),
+        blue_ammo=_player("ammo", "blue", player_id=5),
+    )
+    cast.everyone = list(vars(cast).values())
+    return cast
+
+
+def _start(ctx: RoundContext, player, tick: int, **fields: Any) -> BaseRun:
+    """A run on *player* and its start row, through the engine's own verb."""
+    run = BaseRun(started=tick, events=ctx.events, **fields)
+    player.base_run = run
+    ctx.events.base_run(player, tick, "start", run.trigger, run.bases)
+    return run
+
+
+def _base_run_round(sim, ctx: RoundContext, cast: SimpleNamespace) -> None:
+    """One round of five runs, driven through the observed calls:
+
+    1. Red nuke fired 100, detonated 110. The red Medic leads a pair run
+       (staged 108): its pre-run draw at 104 lands (Ammo tags Medic), it
+       captures at 115 (leg 5 ticks), its return draw at 140 is nothing, and
+       it is Downed on the return at 150.
+    2. The red Ammo follows it, captures at 125, ends ``partner_down`` at 151.
+    3. The blue Medic's streak run from 300 captures at 310 (leg 10 ticks) and
+       is Downed at 320.
+    4. Blue nuke fired 400, never detonated. The lone blue Ammo (not staged)
+       is Downed in the fuse at 405.
+    5. Red's second nuke fired 690, detonated 700, followed by no capture; the
+       red Medic's streak run from 600 is open at the round's end.
+    """
+    c = cast
+    sight = RoundContext(
+        events=ctx.events,
+        movement_ctx=_grid_map(sight=_sight(((2, 0), (2, 2)))),
+    )
+    reds = [c.commander, c.red_medic, c.red_ammo]
+    entrypoints.start_on_nuke_fire(c.commander, reds, 100, 110, ctx)
+    lead = _start(
+        ctx,
+        c.red_medic,
+        100,
+        trigger="nuke",
+        bases=["blue"],
+        leg_started=110,
+        detonation=110,
+        staging=(2, 0),
+        staged_at=108,
+        partner=c.red_ammo,
+    )
+    _start(
+        ctx,
+        c.red_ammo,
+        100,
+        trigger="nuke",
+        bases=[],
+        detonation=110,
+        follow=c.red_medic,
+        lead=lead,
+    )
+    with patch("random.random", return_value=0.5):
+        base_run._pair_draw(c.red_medic, c.red_ammo, 104, sight)
+    sim._complete_nuke(c.commander, 110, [], ctx)
+    sim._capture_base(c.red_medic, 14, ctx, 115)
+    sim._capture_base(c.red_ammo, 15, ctx, 125)
+    lead.returning_to, lead.return_started = (0, 0), 140
+    with patch("random.random", return_value=0.9):
+        base_run._pair_draw(c.red_medic, c.red_ammo, 140, sight)
+    base_run.end_base_run(c.red_medic, 150, "down")
+    base_run.end_base_run(c.red_ammo, 151, "partner_down")
+    _start(ctx, c.blue_medic, 300, trigger="streak", bases=["red"], leg_started=300)
+    sim._capture_base(c.blue_medic, 13, ctx, 310)
+    base_run.end_base_run(c.blue_medic, 320, "down")
+    blues = [c.blue_medic, c.blue_ammo]
+    entrypoints.start_on_nuke_fire(c.blue_medic, blues, 400, 410, ctx)
+    _start(
+        ctx,
+        c.blue_ammo,
+        400,
+        trigger="nuke",
+        bases=["red"],
+        leg_started=410,
+        detonation=410,
+        staging=(5, 5),
+    )
+    base_run.end_base_run(c.blue_ammo, 405, "down")
+    _start(ctx, c.red_medic, 600, trigger="streak", bases=["neutral_1"])
+    entrypoints.start_on_nuke_fire(c.commander, reds, 690, 700, ctx)
+    sim._complete_nuke(c.commander, 700, [], ctx)
+
+
+class TestBaseRunMeasures(SimpleTestCase):
+    """MECH-26c (#626): the Base runs, read off ``EventLog.base_run``,
+    ``base_run.end_base_run``, the capture, the fired nuke and its detonation,
+    the pair draws and the Resupply rows. Round 2 plays nothing."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        super().setUpClass()
+        one, two = _base_run_cast(), _base_run_cast()
+        cls.result = _probe_locks(
+            (one.everyone, lambda sim, ctx, _: _base_run_round(sim, ctx, one)),
+            (two.everyone, None),
+        )
+        cls.runs = cls.result.base_runs
+
+    def test_runs_per_support_round_by_trigger_and_role(self) -> None:
+        # Two Medics and two Ammos a round.
+        self.assertEqual(
+            self.runs.runs_per_support,
+            {
+                "nuke medic": (0.5, 0.0),
+                "nuke ammo": (1.0, 0.0),
+                "streak medic": (1.0, 0.0),
+                "streak ammo": (0.0, 0.0),
+            },
+        )
+
+    def test_bases_taken_per_run(self) -> None:
+        # Captures while running: 1, 1, 1, 0, 0.
+        self.assertEqual(self.runs.runs, 5)
+        self.assertAlmostEqual(self.runs.taken_per_run.mean, 0.6)
+
+    def test_nukes_followed_by_a_support_capture(self) -> None:
+        # Red's first detonation (110) is followed at 115; its second is not;
+        # blue's nuke never detonated. Round 2 has no nuke.
+        self.assertEqual(self.runs.nukes, 2)
+        self.assertEqual(self.runs.nukes_followed, Measure(50.0, 0.0))
+        self.assertEqual(self.runs.nukes_followed_pooled, Measure(50.0, 0.0))
+
+    def test_support_captures_near_an_allied_detonation_by_role(self) -> None:
+        near = self.runs.near_nuke_captures
+        self.assertEqual(self.runs.support_captures, {"medic": 2, "ammo": 1})
+        self.assertEqual(round(near["medic"].mean, 1), 50.0)
+        self.assertEqual(round(near["ammo"].mean, 1), 100.0)
+
+    def test_endings_with_round_end(self) -> None:
+        shares = {k: round(m.mean, 1) for k, m in self.runs.endings.items()}
+        self.assertEqual(
+            shares,
+            {
+                "down": 60.0,
+                "eliminated": 0.0,
+                "not_arrived": 0.0,
+                "nuke_cancelled": 0.0,
+                "partner_down": 20.0,
+                "stayed": 0.0,
+                "returned": 0.0,
+                "round_end": 20.0,
+            },
+        )
+
+    def test_downs_by_phase(self) -> None:
+        # Of 3 nuke runs: one Downed in the fuse, one on the return; of 2
+        # streak runs, one Downed.
+        shares = {k: round(m.mean, 1) for k, m in self.runs.downs_by_phase.items()}
+        self.assertEqual(
+            shares,
+            {
+                "fuse": 33.3,
+                "window": 0.0,
+                "outbound": 0.0,
+                "return": 33.3,
+                "streak": 50.0,
+            },
+        )
+
+    def test_the_pair_draws(self) -> None:
+        self.assertEqual(
+            self.runs.draws,
+            {
+                "pre": {"ammo_to_medic": 1, "mutual": 0, "nothing": 0, "skipped": 0},
+                "return": {"ammo_to_medic": 0, "mutual": 0, "nothing": 1, "skipped": 0},
+            },
+        )
+
+    def test_resupplies_near_a_nuke_per_team_round(self) -> None:
+        # The pre-run draw's Resupply at 104, in red's 100-130 window.
+        self.assertEqual(self.runs.resupplies_near_nuke, (0.5, 0.0))
+
+    def test_ticks_per_leg(self) -> None:
+        self.assertEqual(self.runs.legs, 2)
+        self.assertEqual(self.runs.leg_ticks.mean, 7.5)
+        self.assertEqual(self.runs.leg_median, 7.5)
+
+    def test_staging_reached_by_detonation(self) -> None:
+        # Two leader nuke runs (the red Medic, the lone blue Ammo); one staged.
+        self.assertEqual(self.runs.staging_runs, 2)
+        self.assertEqual(self.runs.staging_reach, Measure(50.0, 0.0))
+
+    def test_the_observers_are_put_back(self) -> None:
+        real = (
+            EventLog.base_run,
+            base_run.end_base_run,
+            base_run._pair_draw,
+            entrypoints.start_on_nuke_fire,
+        )
+        _probe_locks((_base_run_cast().everyone, None))
+        self.assertEqual(
+            (
+                EventLog.base_run,
+                base_run.end_base_run,
+                base_run._pair_draw,
+                entrypoints.start_on_nuke_fire,
+            ),
+            real,
+        )
+
+    def test_the_real_shares_print_only_with_targets(self) -> None:
+        lines = "\n".join(format_result(self.result))
+        self.assertIn(
+            "  Support captures within 20 ticks of an allied detonation %, medic: "
+            "50.0 +/- 0.0 over 2\n",
+            lines,
+        )
+
+    def test_the_block_prints(self) -> None:
+        lines = "\n".join(format_result(self.result, targets={}))
+        self.assertIn("Base runs (MECH-26):", lines)
+        for expected in (
+            "  Runs per support-round, nuke medic: 0.25 +/- 0.25 (0.00-0.50)",
+            "  Runs per support-round, nuke ammo: 0.50 +/- 0.50 (0.00-1.00)",
+            "  Runs per support-round, streak medic: 0.50 +/- 0.50 (0.00-1.00)",
+            "  Runs per support-round, streak ammo: 0.00 +/- 0.00 (0.00-0.00)",
+            "  Bases taken per run: 0.60 +/- 0.24 over 5 runs",
+            "  Live captures per support-round: medic 0.50, ammo 0.25",
+            "  Allied nukes followed by a support live capture within 60 ticks %: "
+            "50.0 +/- 0.0 over 1 rounds; pooled 50.0 +/- 0.0 over 2 nukes",
+            "  Support captures within 20 ticks of an allied detonation %, medic: "
+            "50.0 +/- 0.0 over 2 | real 23",
+            "  Support captures within 20 ticks of an allied detonation %, ammo: "
+            "100.0 +/- 0.0 over 1 | real 15",
+            "  Run endings %: down 60.0 +/- 0.0, eliminated 0.0 +/- 0.0, "
+            "not_arrived 0.0 +/- 0.0, nuke_cancelled 0.0 +/- 0.0, "
+            "partner_down 20.0 +/- 0.0, stayed 0.0 +/- 0.0, returned 0.0 +/- 0.0, "
+            "round_end 20.0 +/- 0.0",
+            "  Downs by phase % (of nuke runs; streak: of streak runs): fuse 33.3 "
+            "+/- 0.0, window 0.0 +/- 0.0, outbound 0.0 +/- 0.0, return 33.3 +/- "
+            "0.0, streak 50.0 +/- 0.0",
+            "  Pre-run draws: Ammo tags Medic 1, Mutual 0, nothing 0, skipped 0",
+            "  Return draws: Ammo tags Medic 0, Mutual 0, nothing 1, skipped 0",
+            "  Resupplies from fire to detonation + 20 ticks per team-round: "
+            "0.25 +/- 0.25 (0.00-0.50)",
+            "  Ticks per leg: 7.5 +/- 2.5, median 7.5 over 2 legs",
+            "  Staging reached by detonation %: 50.0 +/- 0.0 over 2 leader nuke runs",
+        ):
+            self.assertIn(expected, lines)
+
+    def test_a_round_with_no_run_prints_the_block(self) -> None:
+        lines = "\n".join(
+            format_result(_probe_locks((_base_run_cast().everyone, None)))
+        )
+        self.assertIn("  Bases taken per run: 0.00 +/- 0.00 over 0 runs", lines)
+        self.assertIn("  Ticks per leg: 0.0 +/- 0.0, median - over 0 legs", lines)
 
 
 class TestLockConversion(SimpleTestCase):

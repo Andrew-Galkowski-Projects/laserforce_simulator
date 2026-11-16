@@ -8,7 +8,9 @@ crosses to it keeping out of their sight where it can (``flip_goal``), stays
 ``FLIP_STAY_TICKS``, and the normal rules take it back. Its Ammo comes along on
 the existing Ammo leash. At most ``MAX_FLIPS_PER_ROUND`` flips per Round.
 
-Pure and Django-free; draws no RNG. Every ending goes through ``end_flip``.
+MECH-26c: a streak may start a Base run instead (``base_run.streak_roll``, its
+one draw, at the flip start). Pure and Django-free; this module itself draws no
+RNG. Every ending goes through ``end_flip``.
 """
 
 from __future__ import annotations
@@ -131,7 +133,13 @@ def tick_flip(player: Any, tick: int, ctx: Any, events: Any) -> None:
 
 def _start_flip(player: Any, flip: Flip, tick: int, ctx: Any, events: Any) -> None:
     """Start a pending flip: the cell is chosen once and a ``board_flip`` row
-    written. With no cell there is no flip, and the streak stays for a retry."""
+    written. With no cell there is no flip, and the streak stays for a retry.
+    MECH-26: ``base_run.streak_roll`` first; a live or new Base run means no
+    flip."""
+    from . import base_run  # base_run imports this module
+
+    if base_run.streak_roll(player, tick, ctx, events):
+        return
     target = flip_cell(player, tick, ctx, flip.from_cell)
     if target is None:
         player.flip = None  # no flip; the streak stays for a retry

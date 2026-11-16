@@ -13,7 +13,9 @@ Tags per round. CAL-04a (#599) added the engine's own visits (starts, end reason
 arrival and readiness), the lives lost per minute band and the Medic-Ammo distance.
 MECH-24c (#614) added the missile Locks: Locks and missiles per locker Role,
 conversion and endings by the target's state, and the dodge's pick and success.
-Each measure is pooled over the rounds and kept per round. Read-only: it observes
+MECH-25b (#619) added the Board flips, MECH-26c (#626) the Base runs: runs per
+support-round, captures near an allied nuke, endings, Downs by phase, the pair
+draws, Resupplies near a nuke, leg ticks and the staging reach. Each measure is pooled over the rounds and kept per round. Read-only: it observes
 ``plan_action``, ``choose_goal_cell``, the capture, ``resolve_shot``, the Lock
 start, its cancel row, ``resolve_dodge``, the missile launch, the nuke, the two
 Resupply events, ``resupply_visit.visit_step`` and
@@ -29,10 +31,11 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from math import sqrt
 from statistics import median, stdev
-from typing import Any, Callable, Iterable, Mapping, Sequence, get_args
+from typing import Any, Callable, Iterable, Literal, Mapping, Sequence, get_args
 
-from matches.sim_helpers import board_flip, resupply_visit, support_survival
+from matches.sim_helpers import base_run, board_flip, resupply_visit, support_survival
 from matches.sim_helpers import shot as shot_module
+from matches.sim_helpers.base_run import NUKE_WINDOW_TICKS, PAIR_DRAW_OUTCOMES
 from matches.sim_helpers.combat import _CHOICES
 from matches.sim_helpers.parallel_worker import worker_django_init
 from matches.sim_helpers.event_log import EventLog
@@ -270,6 +273,65 @@ class FlipMeasures:
     arrivals: int = 0
 
 
+BASE_RUN_ENDINGS = (*base_run.BASE_RUN_END_REASONS, "round_end")
+# MECH-26c (#626): the runs counted per support-round, as (trigger, role).
+RUN_KINDS: tuple[tuple[str, str], ...] = (
+    ("nuke", "medic"),
+    ("nuke", "ammo"),
+    ("streak", "medic"),
+    ("streak", "ammo"),
+)
+# Where a run was when a Down ended it: a nuke run in the fuse, in the
+# ``NUKE_WINDOW_TICKS`` after detonation, outbound after them, or returning;
+# a streak run anywhere.
+DOWN_PHASES = ("fuse", "window", "outbound", "return", "streak")
+PAIR_DRAWS = ("pre", "return")
+NUKE_FOLLOW_TICKS = 60  # a nuke "followed" by a support capture this soon after
+NUKE_NEAR_TICKS = 20  # a support capture "near" an allied detonation
+NUKE_RESUPPLY_AFTER_TICKS = 20  # Resupplies counted from fire to detonation + this
+
+
+@dataclass(frozen=True)
+class BaseRunMeasures:
+    """MECH-26c (#626): the Base runs. ``runs_per_support`` is one value per
+    round in seed order, keyed ``"<trigger> <role>"`` (``RUN_KINDS``): the
+    runs over the round's players of that role. ``taken_per_run`` is the live
+    captures each run made while it lived, over ``runs``. The shares are % with
+    a cluster-robust error over the rounds: ``nukes_followed`` is the mean of
+    the per-round shares of detonated allied nukes followed within
+    ``NUKE_FOLLOW_TICKS`` by a support live capture (over the rounds with a
+    nuke), ``nukes_followed_pooled`` the pooled share over ``nukes``;
+    ``near_nuke_captures`` the support captures within ``NUKE_NEAR_TICKS`` after
+    an allied detonation, by role, over ``support_captures``; ``endings`` each
+    ``BASE_RUN_ENDINGS`` entry over the runs; ``downs_by_phase`` the Downs that
+    ended a run, by ``DOWN_PHASES`` (the nuke phases over the nuke runs,
+    ``streak`` over the streak runs). ``draws`` counts each pair draw (pre-run,
+    return) by ``PAIR_DRAW_OUTCOMES``. ``resupplies_near_nuke`` is per round
+    per team, every landed Resupply from an allied nuke's fire to its detonation
+    plus ``NUKE_RESUPPLY_AFTER_TICKS``. ``leg_ticks`` is a leg's start to its
+    capture over ``legs``; ``staging_reach`` the leader nuke runs that reached
+    their staging cell by detonation, over ``staging_runs``."""
+
+    runs_per_support: dict[str, tuple[float, ...]] = field(default_factory=dict)
+    taken_per_run: Measure = Measure(0.0, 0.0)
+    runs: int = 0
+    nukes_followed: Measure = Measure(0.0, 0.0)
+    nukes_followed_pooled: Measure = Measure(0.0, 0.0)
+    nuke_rounds: int = 0
+    nukes: int = 0
+    near_nuke_captures: dict[str, Measure] = field(default_factory=dict)
+    support_captures: dict[str, int] = field(default_factory=dict)
+    endings: dict[str, Measure] = field(default_factory=dict)
+    downs_by_phase: dict[str, Measure] = field(default_factory=dict)
+    draws: dict[str, dict[str, int]] = field(default_factory=dict)
+    resupplies_near_nuke: tuple[float, ...] = ()
+    leg_ticks: Measure = Measure(0.0, 0.0)
+    leg_median: float | None = None
+    legs: int = 0
+    staging_reach: Measure = Measure(0.0, 0.0)
+    staging_runs: int = 0
+
+
 @dataclass(frozen=True)
 class ProbeResult:
     """``roles`` pools every seed; ``by_seed`` holds the same measures per seed.
@@ -290,6 +352,7 @@ class ProbeResult:
     doubles_share: Measure = Measure(0.0, 0.0)
     locks: LockMeasures = field(default_factory=LockMeasures)
     flips: FlipMeasures = field(default_factory=FlipMeasures)
+    base_runs: BaseRunMeasures = field(default_factory=BaseRunMeasures)
 
 
 @dataclass
@@ -458,6 +521,51 @@ class _FlipTally:
 
 
 @dataclass
+class _RunRecord:
+    """MECH-26c: one Base run as the observers saw it. ``leader``: a nuke run
+    that plans the bases (not a pair's follower). ``ending`` is the
+    ``BASE_RUN_ENDINGS`` entry, ``down_phase`` the ``DOWN_PHASES`` entry of a
+    run a Down ended, ``staged`` whether a leader nuke run reached its
+    staging cell (read at the end)."""
+
+    trigger: str
+    role: str
+    leader: bool
+    captures: int = 0
+    ending: str | None = None
+    down_phase: str | None = None
+    staged: bool = False
+
+
+@dataclass
+class _BaseRunTally:
+    """MECH-26c: one round's Base runs. ``nukes`` holds each detonated nuke as
+    (team, fire tick, detonation tick); ``captures`` each support live capture
+    as (team, role, tick); ``draws`` counts (``PAIR_DRAWS`` entry, outcome);
+    ``resupplies`` each landed Resupply as (team, tick)."""
+
+    records: list[_RunRecord] = field(default_factory=list)
+    nukes: list[tuple[str, int, int]] = field(default_factory=list)
+    captures: list[tuple[str, str, int]] = field(default_factory=list)
+    draws: Counter = field(default_factory=Counter)
+    resupplies: list[tuple[str, int]] = field(default_factory=list)
+    leg_ticks: list[int] = field(default_factory=list)
+
+
+def _down_phase(run: Any, tick: int) -> str:
+    """The ``DOWN_PHASES`` entry of *run* at *tick*."""
+    if run.trigger == "streak":
+        return "streak"
+    if run.returning_to is not None:
+        return "return"
+    if run.detonation is not None and tick < run.detonation:
+        return "fuse"
+    if run.detonation is not None and tick < run.detonation + NUKE_WINDOW_TICKS:
+        return "window"
+    return "outbound"
+
+
+@dataclass
 class _RoundTally:
     """Everything one round's observers saw: plain counts a worker can return.
 
@@ -473,6 +581,7 @@ class _RoundTally:
     tags: int = 0  # Tags made in the round, both teams
     locks: _LockTally = field(default_factory=_LockTally)
     flips: _FlipTally = field(default_factory=_FlipTally)
+    base_runs: _BaseRunTally = field(default_factory=_BaseRunTally)
 
 
 def goal_sharing_share(goals_by_team_tick: Mapping) -> float:
@@ -886,6 +995,64 @@ def _probe_round(task: tuple) -> _RoundTally:
         flip_tally.close(player.flip, reason)
         real_end_flip(player, tick, reason)
 
+    # MECH-26c: the Base runs. A start writes the ``base_run`` row (the run is
+    # on the player by then); every ending goes through ``base_run.end_base_run``
+    # and every pair draw through ``base_run._pair_draw`` (module-global
+    # lookups); the tick loop fires a nuke through the name ``entrypoints``
+    # imported. Each live run's record and run object by the player's id.
+    real_base_run_row = EventLog.base_run
+    real_end_base_run = base_run.end_base_run
+    real_pair_draw = base_run._pair_draw
+    real_nuke_fire = entrypoints.start_on_nuke_fire
+    run_tally = _BaseRunTally()
+    live_runs: dict[int, tuple[_RunRecord, Any]] = {}
+    drawn_runs: dict[int, Any] = {}  # holds each run, so its id stays its own
+    fired: dict[tuple[int, int], int] = {}
+
+    def observed_base_run_row(
+        log: EventLog,
+        player: Any,
+        tick: int,
+        phase: Literal["start", "end"],
+        trigger: str,
+        bases: list[str],
+        reason: str | None = None,
+        taken: list[str] | None = None,
+    ) -> None:
+        real_base_run_row(log, player, tick, phase, trigger, bases, reason, taken)
+        run = getattr(player, "base_run", None)
+        if phase == "start" and run is not None:
+            leader = trigger == "nuke" and run.lead is None
+            record = _RunRecord(trigger, player.role, leader)
+            run_tally.records.append(record)
+            live_runs[id(player)] = (record, run)
+
+    def close_base_run(player, tick: int, reason: str) -> None:
+        held = live_runs.pop(id(player), None)
+        if held is None:
+            return
+        record, run = held
+        record.ending = reason
+        record.staged = run.staged_at is not None
+        if reason in ("down", "eliminated"):
+            record.down_phase = _down_phase(run, tick)
+
+    def observed_end_base_run(player, tick, reason):
+        real_end_base_run(player, tick, reason)  # raises on an unknown reason
+        close_base_run(player, tick, reason)
+
+    def observed_pair_draw(medic, ammo, tick, rctx):
+        outcome = real_pair_draw(medic, ammo, tick, rctx)
+        run = medic.base_run
+        kind = "return" if id(run) in drawn_runs else "pre"
+        drawn_runs[id(run)] = run
+        run_tally.draws[(kind, outcome)] += 1
+        return outcome
+
+    def observed_nuke_fire(nuker, teammates, tick, detonation, ctx):
+        fired[(id(nuker), int(detonation))] = int(tick)
+        return real_nuke_fire(nuker, teammates, tick, detonation, ctx)
+
     # The dodge rolls: the name the tick loop's ``dodge`` dispatch calls.
     real_resolve_dodge = entrypoints.resolve_dodge
 
@@ -924,6 +1091,10 @@ def _probe_round(task: tuple) -> _RoundTally:
         return real_end_visit(player, tick, reason)
 
     def observed_nuke(sim, player, second, opposing_players, ctx=None):
+        # MECH-26c: a nuke detonates on the engine's own condition.
+        if player.is_active_at(second) and player.final_lives > 0:
+            fire = fired.get((id(player), int(second)), int(second))
+            run_tally.nukes.append((player.team_color, fire, int(second)))
         before = {id(p): p.counters.lives_lost_to_nukes for p in opposing_players}
         outcome = real_nuke(sim, player, second, opposing_players, ctx)
         for opp in opposing_players:
@@ -955,6 +1126,7 @@ def _probe_round(task: tuple) -> _RoundTally:
     def observed_resupply(real, kind: str):
         def observe(log, supporter, requestor, tick, *, amount=None):
             rows[id(requestor)].resupplies.append((int(tick), kind))
+            run_tally.resupplies.append((supporter.team_color, int(tick)))
             return real(log, supporter, requestor, tick, amount=amount)
 
         return observe
@@ -988,10 +1160,20 @@ def _probe_round(task: tuple) -> _RoundTally:
 
     def observed_capture(player, *args, **kwargs) -> bool:
         # Only a live capture comes through here; the round-end award does not.
+        run = getattr(player, "base_run", None)
         captured = real_capture(player, *args, **kwargs)
         if captured:
             tallies[player.role].captures += 1
             team_captures[player.team_color] += 1
+            # MECH-26c: (player, base_id, second, ...), the engine's order.
+            tick = int(args[1] if len(args) > 1 else kwargs.get("second", 0))
+            if player.role in support_survival.SUPPORT_ROLES:
+                run_tally.captures.append((player.team_color, player.role, tick))
+            held = live_runs.get(id(player))
+            if held is not None:
+                held[0].captures += 1
+                if run is not None and run.bases and tick >= run.leg_started:
+                    run_tally.leg_ticks.append(tick - run.leg_started)
         return captured
 
     def observed_advance(sim, player, all_alive, second, *args, **kwargs):
@@ -1123,6 +1305,10 @@ def _probe_round(task: tuple) -> _RoundTally:
     EventLog.lock_cancelled = observed_lock_cancelled  # type: ignore[method-assign]
     EventLog.board_flip = observed_board_flip  # type: ignore[method-assign]
     board_flip.end_flip = observed_end_flip
+    EventLog.base_run = observed_base_run_row  # type: ignore[method-assign, assignment]
+    base_run.end_base_run = observed_end_base_run
+    base_run._pair_draw = observed_pair_draw
+    entrypoints.start_on_nuke_fire = observed_nuke_fire
     try:
         random.seed(seed)
         result, reds, blues = BatchSimulator()._simulate_round(
@@ -1160,6 +1346,7 @@ def _probe_round(task: tuple) -> _RoundTally:
             tally.rows.append(row)
             # A scripted test player has no ``flip``.
             flip_tally.close(getattr(player, "flip", None), "round_end")
+            close_base_run(player, round_end, "round_end")
     finally:
         entrypoints.choose_goal_cell = real_choose
         entrypoints.plan_action = real_plan
@@ -1178,6 +1365,10 @@ def _probe_round(task: tuple) -> _RoundTally:
         EventLog.lock_cancelled = real_lock_cancelled  # type: ignore[method-assign]
         EventLog.board_flip = real_board_flip  # type: ignore[method-assign]
         board_flip.end_flip = real_end_flip
+        EventLog.base_run = real_base_run_row  # type: ignore[method-assign]
+        base_run.end_base_run = real_end_base_run
+        base_run._pair_draw = real_pair_draw
+        entrypoints.start_on_nuke_fire = real_nuke_fire
     return _RoundTally(
         seed=seed,
         roles=dict(tallies),
@@ -1188,6 +1379,126 @@ def _probe_round(task: tuple) -> _RoundTally:
         tags=round_tags,
         locks=lock_tally,
         flips=flip_tally,
+        base_runs=run_tally,
+    )
+
+
+def _base_run_measures(rounds: Sequence[_RoundTally]) -> BaseRunMeasures:
+    """MECH-26c: the ``BaseRunMeasures`` of the rounds, in their order."""
+
+    def players(played: _RoundTally, role: str) -> int:
+        tally = played.roles.get(role)
+        return tally.player_rounds if tally is not None else 0
+
+    def share(read) -> Measure:
+        return _ratio_measure([read(played.base_runs) for played in rounds], 100.0)
+
+    def followed(tally: _BaseRunTally, team: str, det: int) -> bool:
+        return any(
+            side == team and 0 <= tick - det <= NUKE_FOLLOW_TICKS
+            for side, _, tick in tally.captures
+        )
+
+    def near(tally: _BaseRunTally, team: str, tick: int) -> bool:
+        return any(
+            side == team and 0 <= tick - det <= NUKE_NEAR_TICKS
+            for side, _, det in tally.nukes
+        )
+
+    def follow_pair(tally: _BaseRunTally) -> tuple[float, float]:
+        hits = sum(followed(tally, team, det) for team, _, det in tally.nukes)
+        return float(hits), float(len(tally.nukes))
+
+    def near_pair(tally: _BaseRunTally, role: str) -> tuple[float, float]:
+        mine = [(team, tick) for team, r, tick in tally.captures if r == role]
+        return float(sum(near(tally, t, tick) for t, tick in mine)), float(len(mine))
+
+    def resupplies(tally: _BaseRunTally) -> float:
+        landed = sum(
+            any(
+                side == team and fire <= tick <= det + NUKE_RESUPPLY_AFTER_TICKS
+                for side, fire, det in tally.nukes
+            )
+            for team, tick in tally.resupplies
+        )
+        return landed / 2  # per team
+
+    def runs_of(tally: _BaseRunTally, trigger: str) -> float:
+        return float(sum(r.trigger == trigger for r in tally.records))
+
+    def phase_pair(tally: _BaseRunTally, phase: str) -> tuple[float, float]:
+        trigger = "streak" if phase == "streak" else "nuke"
+        downs = sum(r.down_phase == phase for r in tally.records)
+        return float(downs), runs_of(tally, trigger)
+
+    records = [r for played in rounds for r in played.base_runs.records]
+    legs = [float(t) for played in rounds for t in played.base_runs.leg_ticks]
+    with_nukes = [played.base_runs for played in rounds if played.base_runs.nukes]
+    leaders = [r for r in records if r.leader]
+    return BaseRunMeasures(
+        runs_per_support={
+            f"{trigger} {role}": tuple(
+                _ratio(
+                    sum(
+                        r.trigger == trigger and r.role == role
+                        for r in played.base_runs.records
+                    ),
+                    players(played, role),
+                )
+                for played in rounds
+            )
+            for trigger, role in RUN_KINDS
+        },
+        taken_per_run=_measure([float(r.captures) for r in records]),
+        runs=len(records),
+        nukes_followed=_measure(
+            [100.0 * hits / nukes for hits, nukes in map(follow_pair, with_nukes)]
+        ),
+        nukes_followed_pooled=share(follow_pair),
+        nuke_rounds=len(with_nukes),
+        nukes=sum(len(played.base_runs.nukes) for played in rounds),
+        near_nuke_captures={
+            role: share(lambda t, r=role: near_pair(t, r))
+            for role in support_survival.SUPPORT_ROLES
+        },
+        support_captures={
+            role: sum(
+                r == role for played in rounds for _, r, _ in played.base_runs.captures
+            )
+            for role in support_survival.SUPPORT_ROLES
+        },
+        endings={
+            end: share(
+                lambda t, e=end: (
+                    float(sum(r.ending == e for r in t.records)),
+                    float(len(t.records)),
+                )
+            )
+            for end in BASE_RUN_ENDINGS
+        },
+        downs_by_phase={
+            phase: share(lambda t, p=phase: phase_pair(t, p)) for phase in DOWN_PHASES
+        },
+        draws={
+            kind: {
+                outcome: sum(
+                    played.base_runs.draws[(kind, outcome)] for played in rounds
+                )
+                for outcome in PAIR_DRAW_OUTCOMES
+            }
+            for kind in PAIR_DRAWS
+        },
+        resupplies_near_nuke=tuple(resupplies(played.base_runs) for played in rounds),
+        leg_ticks=_measure(legs),
+        leg_median=float(median(legs)) if legs else None,
+        legs=len(legs),
+        staging_reach=share(
+            lambda t: (
+                float(sum(r.leader and r.staged for r in t.records)),
+                float(sum(r.leader for r in t.records)),
+            )
+        ),
+        staging_runs=len(leaders),
     )
 
 
@@ -1397,4 +1708,5 @@ def run_probe(
         ),
         locks=_lock_measures(rounds),
         flips=_flip_measures(rounds),
+        base_runs=_base_run_measures(rounds),
     )

@@ -24,7 +24,11 @@ from matches.management.commands.lfstats_calibrate import (
 )
 from matches.round_probe import (
     LOCKER_ROLES,
+    NUKE_FOLLOW_TICKS,
+    NUKE_NEAR_TICKS,
+    NUKE_RESUPPLY_AFTER_TICKS,
     TARGET_STATES,
+    BaseRunMeasures,
     FlipMeasures,
     Lineup,
     LockMeasures,
@@ -643,6 +647,87 @@ def format_result(result: ProbeResult, targets: Mapping | None = None) -> list[s
         lines += _lock_lines(result.locks, targets)
     if result.flips.per_medic:
         lines += _flip_lines(result.flips)
+    if result.base_runs.runs_per_support:
+        lines += _base_run_lines(result.base_runs, result.roles, real)
+    return lines
+
+
+# MECH-26c: the real share of support captures within 10 s (20 ticks) of an
+# allied nuke (165 Internationals 2026 TDF logs, spec #623).
+_BASE_RUN_REAL_NEAR_NUKE = {"medic": 23, "ammo": 15}
+_DRAW_LABELS = {
+    "ammo_to_medic": "Ammo tags Medic",
+    "mutual": "Mutual",
+    "nothing": "nothing",
+    "skipped": "skipped",
+}
+
+
+def _base_run_lines(
+    runs: BaseRunMeasures, roles: Mapping[str, RoleMeasures], real: bool
+) -> list[str]:
+    """MECH-26c (#626): the Base runs. Per-round values read
+    ``mean +/- se (min-max)`` over the rounds; the shares ``mean +/- se`` with a
+    cluster-robust error over the rounds. A targets run (*real*) adds the real
+    near-nuke capture shares."""
+
+    def per_round(label: str, values: tuple[float, ...]) -> str:
+        return f"  {label}: {_margin_spread(_mean(values), list(values), '.2f')}"
+
+    def pct(measure: Measure) -> str:
+        return f"{measure.mean:.1f} +/- {measure.se:.1f}"
+
+    def captures(role: str) -> str:
+        measures = roles.get(role)
+        return f"{measures.captures_per_round if measures else 0.0:.2f}"
+
+    taken, legs = runs.taken_per_run, runs.leg_ticks
+    median = "-" if runs.leg_median is None else f"{runs.leg_median:.1f}"
+    lines = ["Base runs (MECH-26):"]
+    lines += [
+        per_round(f"Runs per support-round, {kind}", values)
+        for kind, values in runs.runs_per_support.items()
+    ]
+    lines += [
+        f"  Bases taken per run: {taken.mean:.2f} +/- {taken.se:.2f} "
+        f"over {runs.runs} runs",
+        f"  Live captures per support-round: medic {captures('medic')}, "
+        f"ammo {captures('ammo')}",
+        "  Allied nukes followed by a support live capture within "
+        f"{NUKE_FOLLOW_TICKS} ticks %: {pct(runs.nukes_followed)} over "
+        f"{runs.nuke_rounds} rounds; pooled {pct(runs.nukes_followed_pooled)} "
+        f"over {runs.nukes} nukes",
+    ]
+    lines += [
+        f"  Support captures within {NUKE_NEAR_TICKS} ticks of an allied "
+        f"detonation %, {role}: {pct(runs.near_nuke_captures[role])} over "
+        f"{runs.support_captures[role]}" + (f" | real {share}" if real else "")
+        for role, share in _BASE_RUN_REAL_NEAR_NUKE.items()
+    ]
+    lines += [
+        f"  Run endings %: {_pooled(runs.endings)}",
+        "  Downs by phase % (of nuke runs; streak: of streak runs): "
+        f"{_pooled(runs.downs_by_phase)}",
+    ]
+    lines += [
+        f"  {label} draws: "
+        + ", ".join(
+            f"{_DRAW_LABELS[outcome]} {count}"
+            for outcome, count in runs.draws[kind].items()
+        )
+        for kind, label in (("pre", "Pre-run"), ("return", "Return"))
+    ]
+    lines += [
+        per_round(
+            f"Resupplies from fire to detonation + {NUKE_RESUPPLY_AFTER_TICKS} "
+            "ticks per team-round",
+            runs.resupplies_near_nuke,
+        ),
+        f"  Ticks per leg: {legs.mean:.1f} +/- {legs.se:.1f}, median {median} "
+        f"over {runs.legs} legs",
+        f"  Staging reached by detonation %: {pct(runs.staging_reach)} over "
+        f"{runs.staging_runs} leader nuke runs",
+    ]
     return lines
 
 

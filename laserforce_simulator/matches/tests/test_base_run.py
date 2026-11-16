@@ -20,6 +20,8 @@ from matches.sim_helpers.base_run import (
     PRE_DRAW_MIN_TICKS,
     RETURN_ARRIVE_TICKS,
     RUN_LEG_ARRIVE_TICKS,
+    RUN_STAY_CHANCE,
+    STREAK_RUN_CHANCE,
     BaseRun,
     base_run_goal,
     end_base_run,
@@ -27,10 +29,11 @@ from matches.sim_helpers.base_run import (
     run_order,
     squares_per_tick,
     start_on_nuke_fire,
+    streak_roll,
     tick_base_run,
     tick_draws,
 )
-from matches.sim_helpers.board_flip import MAX_FLIPS_PER_ROUND, Flip
+from matches.sim_helpers.board_flip import MAX_FLIPS_PER_ROUND, Flip, tick_flip
 from matches.sim_helpers.combat import plan_action
 from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
@@ -801,6 +804,145 @@ class TestSameTick:
         assert run.cancelled
 
 
+def _streaking(cell: Cell = (2, 0)) -> PlayerState:
+    """MECH-26c: a blue Medic with a pending flip, its Tag streak complete and
+    a remembered enemy at (0, 10), so the flip has a cell ((4, 59))."""
+    medic = _support("medic", cell)
+    _remember(medic, _ps("red_scout", "red", (0, 10)), T)
+    medic.flip = Flip(from_cell=cell)
+    medic.tag_streak = [T - 40, T - 20, T - 2]
+    return medic
+
+
+def _flip_rows(events: EventLog) -> list[dict]:
+    return [e for e in events.entries if e["event_type"] == "board_flip"]
+
+
+class TestStreakRun:
+    """MECH-26c: ``streak_roll``, called as ``board_flip._start_flip`` starts a
+    pending flip, before the flip cell is chosen."""
+
+    def test_a_draw_under_the_chance_starts_a_streak_run_and_no_flip(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        medic = _streaking()
+        _draws(monkeypatch, STREAK_RUN_CHANCE - 0.001, 0.9)
+        events = EventLog()
+        tick_flip(medic, T, _bases(), events)
+        run = medic.base_run
+        assert run is not None
+        assert (run.trigger, run.bases, run.started, run.leg_started) == (
+            "streak",
+            ["red", "neutral_1"],
+            T,
+            T,
+        )
+        assert not run.stays
+        assert run.detonation is None and run.staging is None
+        assert run.partner is None and run.pre_draw_at is None
+        assert medic.flip is None and medic.flips_started == 0
+        assert medic.tag_streak == []
+        assert _flip_rows(events) == []
+        (row,) = _rows(events)
+        assert row["timestamp"] == T
+        assert (row["metadata"]["phase"], row["metadata"]["trigger"]) == (
+            "start",
+            "streak",
+        )
+        assert row["metadata"]["bases"] == ["red", "neutral_1"]
+
+    def test_a_draw_at_the_chance_flips(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic = _streaking()
+        _draws(monkeypatch, STREAK_RUN_CHANCE)
+        events = EventLog()
+        tick_flip(medic, T, _bases(), events)
+        assert medic.base_run is None
+        assert medic.flip is not None and medic.flip.target == (4, 59)
+        assert medic.flips_started == 1
+        assert len(_flip_rows(events)) == 1 and _rows(events) == []
+
+    def test_the_roll_comes_before_the_flip_cell(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # From (2, 30) nothing is 40 squares' walk away: no flip cell, but the
+        # streak run still starts.
+        medic = _streaking((2, 30))
+        _draws(monkeypatch, 0.0, 0.9)
+        tick_flip(medic, T, _bases(), EventLog())
+        assert medic.base_run is not None and medic.base_run.trigger == "streak"
+
+    def test_the_stays_roll(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic = _streaking()
+        _draws(monkeypatch, 0.0, RUN_STAY_CHANCE - 0.001)
+        tick_flip(medic, T, _bases(), EventLog())
+        assert medic.base_run is not None and medic.base_run.stays
+
+    def test_a_medic_with_no_base_left_flips(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        medic = _streaking()
+        medic.neutral_base_destroyed = medic.opposing_base_destroyed = True
+        _draws(monkeypatch, 0.0)
+        events = EventLog()
+        tick_flip(medic, T, _bases(), events)
+        assert medic.base_run is None
+        assert medic.flip is not None and medic.flip.target == (4, 59)
+        assert medic.flips_started == 1
+
+    def test_a_live_run_blocks_the_flip(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic = _streaking()
+        team = _team()
+        run = _running(medic, team[0])
+        _draws(monkeypatch)  # no draw
+        events = EventLog()
+        tick_flip(medic, T, _bases(), events)
+        assert medic.base_run is run
+        assert medic.flip is None and medic.flips_started == 0
+        assert _flip_rows(events) == [] and _rows(events) == []
+
+    def test_streak_roll_says_whether_the_flip_goes_on(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _draws(monkeypatch, STREAK_RUN_CHANCE, 0.0, 0.9)
+        assert not streak_roll(_streaking(), T, _bases(), EventLog())
+        assert streak_roll(_streaking(), T, _bases(), EventLog())
+
+    def test_the_end_row_carries_the_streak_trigger(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        medic = _streaking()
+        _draws(monkeypatch, 0.0, 0.9)
+        events = EventLog()
+        tick_flip(medic, T, _bases(), events)
+        end_on_down(medic, T + 5)
+        start, end = _rows(events)
+        assert (end["metadata"]["trigger"], end["metadata"]["reason"]) == (
+            "streak",
+            "down",
+        )
+
+
+class TestStreakThenNukeSameTick:
+    def test_a_streak_run_makes_the_medic_ineligible_for_a_later_nuke(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A streak run started earlier in tick T: the nuke fired later in T
+        does not count the Medic; the Ammo, eligible alone, rolls and goes."""
+        team = _team()
+        medic = _streaking()
+        team[1] = medic
+        ctx = _rctx()
+        # The streak draw and its stays roll; then the team roll and the
+        # shared stays roll (one eligible: no pick draw).
+        _draws(monkeypatch, 0.0, 0.9, 0.0, 0.9)
+        tick_flip(medic, T, ctx.movement_ctx, ctx.events)
+        _fire(team, ctx)
+        assert medic.base_run is not None and medic.base_run.trigger == "streak"
+        ammo = team[2].base_run
+        assert ammo is not None and ammo.trigger == "nuke"
+        assert ammo.lead is None and ammo.partner is None
+
+
 class TestGoal:
     def test_in_the_fuse_the_staging_cell(self) -> None:
         team = _team()
@@ -1549,8 +1691,9 @@ class TestReturnDraw:
         assert _resupplies(ctx) == [] and not lead.return_draw
 
 
-#: A Syracuse seed with a pair run whose draw lands (MECH-26b).
-PAIR_SEED = 3
+#: A Syracuse seed with a pair run whose draw lands (MECH-26b; 7 since
+#: MECH-26c's streak draw moved the stream).
+PAIR_SEED = 7
 
 
 def _syracuse_round(seed: int) -> list[dict]:
@@ -1566,6 +1709,7 @@ class TestSyracuseRounds:
 
     @pytest.mark.parametrize("seed", [3, 6])
     def test_every_nuke_run_starts_as_its_commander_fires(self, seed: int) -> None:
+        """Seeds 3 and 6 have a streak run as well (MECH-26c)."""
         log = _syracuse_round(seed)
         fired = {
             e["timestamp"]
@@ -1574,17 +1718,41 @@ class TestSyracuseRounds:
         }
         runs = [e for e in log if e["event_type"] == "base_run"]
         starts = [e for e in runs if e["metadata"]["phase"] == "start"]
-        assert starts, f"no base run in Syracuse seed {seed}"
+        nuke_starts = [e for e in starts if e["metadata"]["trigger"] == "nuke"]
+        assert nuke_starts, f"no nuke base run in Syracuse seed {seed}"
         for row in starts:
-            assert row["metadata"]["trigger"] == "nuke"
             assert row["metadata"]["actor_role"] in ("medic", "ammo")
-            assert row["timestamp"] in fired
+            if row["metadata"]["trigger"] == "nuke":
+                assert row["timestamp"] in fired
+            else:
+                # MECH-26c: a streak run is the Medic's alone.
+                assert row["metadata"]["trigger"] == "streak"
+                assert row["metadata"]["actor_role"] == "medic"
         # One end row per run at most (a run may still be live at round end).
         per_actor: dict[int, list[str]] = {}
         for row in runs:
             per_actor.setdefault(row["actor_id"], []).append(row["metadata"]["phase"])
         for phases in per_actor.values():
             assert "".join(p[0] for p in phases).replace("se", "") in ("", "s")
+
+    def test_a_tag_streak_starts_a_run_in_a_whole_round(self) -> None:
+        """MECH-26c: the flip start's ``streak_roll`` is wired; Syracuse seed 6
+        has a streak run, and its Medic starts no flip in that tick."""
+        log = _syracuse_round(6)
+        streaks = [
+            e
+            for e in log
+            if e["event_type"] == "base_run"
+            and e["metadata"] == e["metadata"] | {"phase": "start", "trigger": "streak"}
+        ]
+        assert streaks, "no streak run in Syracuse seed 6"
+        for row in streaks:
+            assert not any(
+                e["event_type"] == "board_flip"
+                and e["actor_id"] == row["actor_id"]
+                and e["timestamp"] == row["timestamp"]
+                for e in log
+            )
 
     def test_the_same_seed_gives_the_same_events(self) -> None:
         first = _syracuse_round(6)
