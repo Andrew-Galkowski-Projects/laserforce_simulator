@@ -9,7 +9,7 @@ from collections.abc import Callable
 
 import pytest
 
-from matches.sim_helpers import base_run
+from matches.sim_helpers import base_run, combat, pathfinding
 from matches.sim_helpers.base_run import (
     NUKE_RUN_CHANCE,
     RETURN_ARRIVE_TICKS,
@@ -24,10 +24,13 @@ from matches.sim_helpers.base_run import (
     tick_base_run,
 )
 from matches.sim_helpers.board_flip import MAX_FLIPS_PER_ROUND, Flip
+from matches.sim_helpers.combat import plan_action
 from matches.sim_helpers.event_log import EventLog
 from matches.sim_helpers.map_context import MapContext
+from matches.sim_helpers.pathfinding import choose_goal_cell
 from matches.sim_helpers.player_state import PlayerState
 from matches.sim_helpers.round_context import RoundContext
+from matches.simulation import BatchSimulator
 from matches.tests.test_downed_option import _map, _ps, _remember
 
 Cell = tuple[int, int]
@@ -843,3 +846,231 @@ class TestGoal:
         _running(team[1], team[0], bases=["red"])
         _remember(team[1], _ps("red_scout", "red", (0, 30)), T)
         assert base_run_goal(team[1], line, T) == (0, 50)
+
+
+def _goal(player: PlayerState, everyone: list, mc: MapContext) -> Cell | None:
+    return choose_goal_cell(player, everyone, {}, mc, "", T, time_domain="ticks")
+
+
+class TestGoalOrder:
+    """``choose_goal_cell``: the nuke reaction, then a Downed or reset runner's
+    run goal ahead of its Downed option; an Active runner's right after the
+    flip, ahead of the link return; a runner skips the Ammo leash."""
+
+    def test_a_downed_runner_goes_ahead_of_its_downed_option(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pathfinding, "downed_goal", lambda *a: (1, 1))
+        team = _team()
+        medic = team[1]
+        medic.last_downed_time = T - 2
+        _running(medic, team[0])
+        medic._committed_goal = ((0, 0), False, 0)
+        assert _goal(medic, team, _bases()) == (2, 50)
+        assert medic._committed_goal is None
+        medic.base_run = None
+        assert _goal(medic, team, _bases()) == (1, 1)
+
+    def test_an_active_runner_with_a_live_downed_plan_goes_first(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pathfinding, "downed_goal", lambda *a: (1, 1))
+        monkeypatch.setattr(pathfinding, "plan_is_live", lambda *a: True)
+        team = _team()
+        _running(team[1], team[0])
+        assert _goal(team[1], team, _bases()) == (2, 50)
+
+    def test_a_started_flip_beats_an_active_runner(self) -> None:
+        team = _team()
+        medic = team[1]
+        medic.flip = Flip(from_cell=(2, 0), target=(4, 59), started=T, arrived=T)
+        _running(medic, team[0])
+        assert _goal(medic, team, _bases()) == (4, 59)
+
+    def test_an_active_runner_beats_the_link_return(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(pathfinding, "_link_return_goal", lambda *a: (0, 0))
+        team = _team()
+        medic = team[1]
+        _running(medic, team[0])
+        medic._committed_goal = ((0, 0), False, 0)
+        assert _goal(medic, team, _bases()) == (2, 50)
+        assert medic._committed_goal is None
+        medic.base_run = None
+        assert _goal(medic, team, _bases()) == (0, 0)
+
+    def test_the_enemy_nuke_reaction_beats_it(self) -> None:
+        team = _team()
+        medic = team[1]
+        medic.reacting_to_nuke = True
+        team[3].final_lives = 1  # the neediest ally: the Heavy on (4, 59)
+        _running(medic, team[0])
+        assert _goal(medic, team, _bases()) == (4, 59)
+
+    def test_a_runner_skips_the_leash(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(pathfinding, "_leash_goal", lambda *a: (0, 0))
+        team = _team(ammo_cell=(2, 0))
+        ammo = team[2]
+        _running(ammo, team[0])
+        assert _goal(ammo, team, _bases()) == (2, 50)
+        ammo.base_run = None
+        assert _goal(ammo, team, _bases()) == (0, 0)
+
+
+def _plan(
+    player: PlayerState,
+    team: list[PlayerState],
+    monkeypatch: pytest.MonkeyPatch,
+    choice: str = "hide",
+) -> list[dict]:
+    """``plan_action`` with the Action draw pinned to *choice*."""
+    monkeypatch.setattr(combat.random, "choices", lambda *a, **k: [choice])
+    return plan_action(player, team, T, _bases(), time_domain="ticks")
+
+
+class TestForcedCapture:
+    """One fixture per condition, each failing it alone, against the case
+    where all hold: an Active runner on a range cell with 3 Shots (or as the
+    Ammo) plans ``capture_base``."""
+
+    def _on_range(self, role: str = "medic") -> tuple[PlayerState, list]:
+        team = _team(medic_cell=(2, 50), ammo_cell=(2, 50))
+        player = team[1] if role == "medic" else team[2]
+        _running(player, team[0])
+        return player, team
+
+    def test_all_together_capture(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic, team = self._on_range()
+        plans = _plan(medic, team, monkeypatch)
+        assert [p["type"] for p in plans] == ["capture_base"]
+        assert plans[0]["base_id"] == 13  # blue takes the red base
+
+    def test_not_a_runner(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic, team = self._on_range()
+        medic.base_run = None
+        _plan(medic, team, monkeypatch)
+        assert medic.last_chosen_action == "hide"
+
+    def test_not_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic, team = self._on_range()
+        medic.last_downed_time = T - 2
+        _plan(medic, team, monkeypatch)
+        assert medic.last_chosen_action == "hide"
+
+    def test_not_on_a_range_cell(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic, team = self._on_range()
+        medic.cell_col = 40
+        _plan(medic, team, monkeypatch)
+        assert medic.last_chosen_action == "hide"
+
+    def test_a_medic_with_2_shots(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        medic, team = self._on_range()
+        medic.final_shots = 2
+        _plan(medic, team, monkeypatch)
+        assert medic.last_chosen_action == "hide"
+
+    def test_an_ammo_with_no_shots_captures(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        ammo, team = self._on_range("ammo")
+        ammo.final_shots = 0
+        _plan(ammo, team, monkeypatch)
+        assert ammo.last_chosen_action == "capture_base"
+
+
+class TestHold:
+    def test_a_runner_skips_the_hold(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team = _team()
+        medic = team[1]
+        _running(medic, team[0])
+        medic.is_holding, medic.hold_until = True, T + 10
+        plans = _plan(medic, team, monkeypatch)
+        assert medic.last_chosen_action == "hide"
+        assert medic.hold_until is None and plans != [{"type": "hold", "actor": medic}]
+
+    def test_without_a_run_the_hold_stands(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        team = _team()
+        medic = team[1]
+        medic.is_holding, medic.hold_until = True, T + 10
+        assert _plan(medic, team, monkeypatch) == [{"type": "hold", "actor": medic}]
+
+
+def _advance(player: PlayerState, team: list[PlayerState], tick: int = T) -> Cell:
+    BatchSimulator()._advance_player(player, team, tick, _bases(), "", EventLog())
+    assert player.cell_row is not None and player.cell_col is not None
+    return (player.cell_row, player.cell_col)
+
+
+class TestAdvance:
+    def test_a_runner_neither_hides_nor_holds_and_walks(self) -> None:
+        team = _team()
+        medic = team[1]
+        _running(medic, team[0])
+        medic.is_hiding = medic.is_holding = True
+        assert _advance(medic, team) != (2, 0)
+        assert (medic.is_hiding, medic.is_holding) == (False, False)
+
+    def test_the_advance_ticks_the_run(self, ends: list[str]) -> None:
+        team = _team()
+        _running(team[1], team[0])
+        _advance(team[1], team, T + RUN_LEG_ARRIVE_TICKS + 1)
+        assert ends == ["not_arrived"]
+
+
+class TestRecordDown:
+    def test_a_down_ends_the_run(self, ends: list[str]) -> None:
+        from matches.sim_helpers.down import record_down
+
+        team = _team()
+        _running(team[1], team[0])
+        record_down(team[1], T, RoundContext())
+        assert ends == ["down"]
+
+
+def _syracuse_round(seed: int) -> list[dict]:
+    from matches.tests.test_missile_lock import _syracuse_round as play
+
+    return play(seed)
+
+
+@pytest.mark.django_db
+class TestSyracuseRounds:
+    """Whole rounds on the fixture map: the dispatch hook, ``record_down``
+    and the Advance are wired, and a seeded round replays its runs."""
+
+    @pytest.mark.parametrize("seed", [3, 6])
+    def test_every_nuke_run_starts_as_its_commander_fires(self, seed: int) -> None:
+        log = _syracuse_round(seed)
+        fired = {
+            e["timestamp"]
+            for e in log
+            if e["event_type"] == "special" and "nuke" in e["description"]
+        }
+        runs = [e for e in log if e["event_type"] == "base_run"]
+        starts = [e for e in runs if e["metadata"]["phase"] == "start"]
+        assert starts, f"no base run in Syracuse seed {seed}"
+        for row in starts:
+            assert row["metadata"]["trigger"] == "nuke"
+            assert row["metadata"]["actor_role"] in ("medic", "ammo")
+            assert row["timestamp"] in fired
+        # One end row per run at most (a run may still be live at round end).
+        per_actor: dict[int, list[str]] = {}
+        for row in runs:
+            per_actor.setdefault(row["actor_id"], []).append(row["metadata"]["phase"])
+        for phases in per_actor.values():
+            assert "".join(p[0] for p in phases).replace("se", "") in ("", "s")
+
+    def test_the_same_seed_gives_the_same_events(self) -> None:
+        first = _syracuse_round(6)
+        assert any(e["event_type"] == "base_run" for e in first)
+        assert first == _syracuse_round(6)
+
+    def test_serial_equals_parallel(self) -> None:
+        from matches.round_probe import run_probe
+        from matches.tests.test_dodge import _syracuse_ctx
+
+        ctx = _syracuse_ctx()
+        assert run_probe(ctx, [3, 6], workers=1) == run_probe(ctx, [3, 6], workers=2)
