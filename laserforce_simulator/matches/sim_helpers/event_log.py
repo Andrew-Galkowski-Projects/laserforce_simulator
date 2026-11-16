@@ -100,7 +100,7 @@ def _kind_extras(kind: str, chain_depth: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# EventLog — 14 per-event-type verbs
+# EventLog — 15 per-event-type verbs
 # ---------------------------------------------------------------------------
 
 

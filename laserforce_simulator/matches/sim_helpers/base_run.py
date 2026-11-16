@@ -54,6 +54,9 @@ BaseRunEndReason = Literal[
     "returned",
 ]
 BASE_RUN_END_REASONS: tuple[str, ...] = get_args(BaseRunEndReason)
+#: MECH-26c: what a pair's Resupply draw did (``_pair_draw``).
+PairDrawOutcome = Literal["ammo_to_medic", "mutual", "nothing", "skipped"]
+PAIR_DRAW_OUTCOMES: tuple[str, ...] = get_args(PairDrawOutcome)
 
 
 @dataclass
@@ -251,6 +254,35 @@ def start_on_nuke_fire(
         pre = random.randint(PRE_DRAW_MIN_TICKS, PRE_DRAW_MAX_TICKS)
         run.pre_draw_at = max(tick + 1, detonation - pre)
         _begin(ammo, follower, tick, ctx.events)
+
+
+def streak_roll(player: Any, tick: int, ctx: Any, events: Any) -> bool:
+    """MECH-26c: called by ``board_flip._start_flip`` before the flip cell is
+    chosen (*ctx* the map, *events* the log for the start row). True means no
+    flip: a live run blocks it (the pending flip clears, no draw); a draw
+    under ``STREAK_RUN_CHANCE`` with a Base to take (``run_order``, no window)
+    starts a ``"streak"`` run, with its ``stays`` roll, and clears the flip
+    and the streak. A streak run has no window, no pair and no staging; the
+    Ammo comes on its leash. False: the flip goes on."""
+    if is_running(player):
+        player.flip = None
+        return True
+    if random.random() >= STREAK_RUN_CHANCE:
+        return False
+    order = run_order(player, ctx, None)
+    if not order:
+        return False
+    run = BaseRun(
+        trigger="streak",
+        bases=order,
+        started=tick,
+        stays=random.random() < RUN_STAY_CHANCE,
+        leg_started=tick,
+    )
+    player.flip = None
+    player.tag_streak = []
+    _begin(player, run, tick, events)
+    return True
 
 
 def _staging_cell(player: Any, base: str, tick: int, reach: int, mc: Any) -> Cell:
@@ -531,27 +563,31 @@ def tick_draws(tick: int, players: list, rctx: Any) -> None:
             _pair_draw(medic, run.partner, tick, rctx)
 
 
-def _pair_draw(medic: Any, ammo: Any, tick: int, rctx: Any) -> None:
+def _pair_draw(medic: Any, ammo: Any, tick: int, rctx: Any) -> PairDrawOutcome:
     """In reach (both Active and placed, the Ammo within ``PAIR_SQUARES`` of
     the Medic and seeing it), one draw: the Ammo tags the Medic under
     ``DRAW_AMMO_TO_MEDIC``; a Mutual resupply under ``+ DRAW_MUTUAL``, both
     halves this tick (the Medic's reset is lifted around its own Resupply so
-    it lands, then put back); else nothing. Out of reach, no draw."""
+    it lands, then put back); else nothing. Out of reach, no draw. Returns the
+    outcome (MECH-26c: ``round_probe`` reads it)."""
     mc = rctx.movement_ctx
     if mc is None or not (medic.is_active_at(tick) and ammo.is_active_at(tick)):
-        return
+        return "skipped"
     if not _sees_partner(ammo, medic, mc):
-        return
+        return "skipped"
     draw = random.random()
     if draw < DRAW_AMMO_TO_MEDIC:
         _give(ammo, medic, tick, rctx)
-    elif draw < DRAW_AMMO_TO_MEDIC + DRAW_MUTUAL:
+        return "ammo_to_medic"
+    if draw < DRAW_AMMO_TO_MEDIC + DRAW_MUTUAL:
         before = medic.last_downed_time
         _give(ammo, medic, tick, rctx)
         reset = medic.last_downed_time
         medic.last_downed_time = before
         _give(medic, ammo, tick, rctx)
         medic.last_downed_time = reset
+        return "mutual"
+    return "nothing"
 
 
 def _give(tagger: Any, receiver: Any, tick: int, rctx: Any) -> None:
