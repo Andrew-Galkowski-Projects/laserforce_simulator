@@ -24,6 +24,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from . import base_run
 from .board_flip import end_on_down
 from .combat import cancel_missile_locks_involving
 from .downed_option import choose_downed_option
@@ -95,6 +96,9 @@ def record_down(
     player.is_hiding = False
     # MECH-25: a Down ends a started Board flip; an Elimination any flip.
     end_on_down(player, tick)
+    # MECH-26: any Down ends a Base run (one started while Downed survives
+    # its own start tick).
+    base_run.end_on_down(player, tick)
     choose_downed_option(player, tagger, tick, ctx)
 
     # MECH-10: resupply death % counts

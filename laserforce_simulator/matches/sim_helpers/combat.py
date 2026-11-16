@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, Sequence
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-from . import resupply_visit, support_survival
+from . import base_run, resupply_visit, support_survival
 from .downed_option import choose_resupply_trail, plan_is_live
 from .follow_rule import may_tag, round_map, start_trail
 from .map_context import _NEUTRAL_BASE_TYPES, comms_reach
@@ -327,6 +327,7 @@ def plan_action(
             and is_active
             and player.final_shots > 0
             and not getattr(player, "reacting_to_nuke", False)
+            and not base_run.is_running(player)  # MECH-26: a runner walks on
         ):
             player.last_chosen_action = "hold"
             return [{"type": "hold", "actor": player}]
@@ -467,6 +468,13 @@ def plan_action(
     called_out = resupply_visit.call_out(player, all_alive, movement_ctx, second)
     if called_out and choice not in ("tag_player", "dodge"):
         choice = "hide"
+    # MECH-26: an Active Base runner on a range cell it can take captures.
+    if (
+        movement_ctx is not None
+        and player.base_in_reach
+        and base_run.is_running(player)
+    ):
+        choice = "capture_base"
     player.last_chosen_action = choice
 
     # MECH-17: on a map an only_move roll takes an Active non-support out of its hide.
