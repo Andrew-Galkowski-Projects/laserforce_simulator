@@ -29,7 +29,7 @@ from ..sim_helpers.combat import (
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
-from ..sim_helpers.base_run import start_on_nuke_fire, tick_base_run
+from ..sim_helpers.base_run import start_on_nuke_fire, tick_base_run, tick_draws
 from ..sim_helpers.board_flip import crossing, tick_flip
 from ..sim_helpers.down import record_down
 from ..sim_helpers.downed_option import overrides_stay_hidden, plan_is_live
@@ -1482,6 +1482,9 @@ class BatchSimulator:
                         prev_actions.get(id(actor), ""),
                         ctx.events,
                     )
+                # MECH-26b: a pair's pre-run and return Resupply draws, once a
+                # tick after the Advance (the shuffled order: serial == parallel).
+                tick_draws(int(second), all_alive, ctx)
 
             # MOVE-03: Overwatch resolution (BatchSimulator-only, ADR-0009).
             # Runs AFTER the Advance loop (so _last_step_cells is final for

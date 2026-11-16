@@ -84,6 +84,13 @@ class BaseRun:
     leg_target: Cell | None = None
     #: The log the start row went to; the end row goes there too.
     events: Any = None
+    #: MECH-26b, on the paired Ammo: the Medic's run it follows.
+    lead: BaseRun | None = None
+    #: MECH-26b, on the paired Ammo: the tick it found the Medic (None: not yet).
+    found_at: int | None = None
+    #: The reason ``end_base_run`` gave (None while the run lives); the
+    #: follower reads its leader's.
+    ended: str | None = None
 
 
 def squares_per_tick(player: Any, ctx: Any) -> float:
@@ -186,9 +193,13 @@ def start_on_nuke_fire(
 
     The eligible supports are the team's Medic and Ammo alive, placed, with no
     run, no started flip and a Base to take (``run_order``); none means no
-    draw. The roll is ``NUKE_RUN_CHANCE`` x their mean ``game_awareness / 50``,
-    then one ``stays`` roll. The leader, the Medic when eligible, else the
-    Ammo, runs alone (MECH-26a); a lone Ammo never stays."""
+    draw. The roll is ``NUKE_RUN_CHANCE`` x their mean ``game_awareness / 50``.
+    With both eligible, ``BOTH_RUN_CHANCE`` sends both, else one goes, the
+    Medic or the Ammo 50/50; then one ``stays`` roll shared by the run(s). The
+    leader is the Medic when it goes, else the lone Ammo, which never stays.
+    A pair's Ammo gets a follower run (``follow``, ``lead``), and the Medic's
+    run its ``partner`` and ``pre_draw_at``, ``PRE_DRAW_MIN_TICKS`` to
+    ``PRE_DRAW_MAX_TICKS`` before detonation (the next tick at the earliest)."""
     mc = ctx.movement_ctx
     if mc is None:
         return
@@ -207,8 +218,11 @@ def start_on_nuke_fire(
     awareness = sum(p.game_awareness / 50 for p in eligible) / len(eligible)
     if random.random() >= NUKE_RUN_CHANCE * awareness:
         return
+    eligible.sort(key=lambda p: p.role != "medic")  # the Medic first
+    if len(eligible) == 2 and random.random() >= BOTH_RUN_CHANCE:
+        eligible = [eligible[0] if random.random() < 0.5 else eligible[1]]
     stays = random.random() < RUN_STAY_CHANCE
-    leader = min(eligible, key=lambda p: p.role != "medic")
+    leader = eligible[0]
     run = BaseRun(
         trigger="nuke",
         bases=[],
@@ -220,6 +234,23 @@ def start_on_nuke_fire(
     )
     _plan_staging(leader, run, tick, window, mc)
     _begin(leader, run, tick, ctx.events)
+    if len(eligible) == 2:
+        ammo = eligible[1]
+        follower = BaseRun(
+            trigger="nuke",
+            bases=[],
+            started=tick,
+            stays=stays,
+            leg_started=detonation,
+            nuker=nuker,
+            detonation=detonation,
+            follow=leader,
+            lead=run,
+        )
+        run.partner = ammo
+        pre = random.randint(PRE_DRAW_MIN_TICKS, PRE_DRAW_MAX_TICKS)
+        run.pre_draw_at = max(tick + 1, detonation - pre)
+        _begin(ammo, follower, tick, ctx.events)
 
 
 def _staging_cell(player: Any, base: str, tick: int, reach: int, mc: Any) -> Cell:
@@ -266,6 +297,9 @@ def tick_base_run(
     run = player.base_run
     if run is None or player.cell_row is None or tick <= run.started:
         return
+    if run.lead is not None:
+        _tick_follower(player, run, tick, ctx, all_alive)
+        return
     if run.returning_to is not None:
         _tick_return(player, run, tick)
         return
@@ -285,6 +319,41 @@ def tick_base_run(
     if not _stay(player, run, tick, ctx, events):
         run.return_draw = True
         _start_return(player, run, tick, all_alive)
+
+
+def _sees_partner(player: Any, other: Any, ctx: Any) -> bool:
+    """*player* is within ``PAIR_SQUARES`` (Chebyshev) of *other* and sees it."""
+    if player.cell_row is None or other.cell_row is None:
+        return False
+    here, there = _here(player), _here(other)
+    near = max(abs(here[0] - there[0]), abs(here[1] - there[1])) <= PAIR_SQUARES
+    return near and bool(ctx.can_see(here, there))
+
+
+def _tick_follower(
+    player: Any, run: BaseRun, tick: int, ctx: Any, all_alive: list
+) -> None:
+    """The paired Ammo: the Medic's run ended by a Down or an Elimination ends
+    it ``partner_down``, by a stay ``stayed``; the Medic's return (or another
+    ending) starts its own return, cancelled with the Medic's. Outbound it has
+    no legs; it has found the Medic once within reach and in sight."""
+    lead = run.lead
+    assert lead is not None
+    if lead.ended in ("down", "eliminated"):
+        end_base_run(player, tick, "partner_down")
+        return
+    if lead.ended == "stayed":
+        end_base_run(player, tick, "stayed")
+        return
+    if run.returning_to is not None:
+        _tick_return(player, run, tick)
+        return
+    if lead.returning_to is not None or lead.ended is not None:
+        run.cancelled = lead.cancelled
+        _start_return(player, run, tick, all_alive)
+        return
+    if run.found_at is None and _sees_partner(player, run.follow, ctx):
+        run.found_at = tick
 
 
 def _move_legs(player: Any, run: BaseRun, tick: int) -> None:
@@ -350,6 +419,64 @@ def _tick_return(player: Any, run: BaseRun, tick: int) -> None:
         end_base_run(player, tick, "nuke_cancelled" if run.cancelled else "not_arrived")
 
 
+def _in_fuse(run: BaseRun, tick: int) -> bool:
+    """Before detonation, with a staging cell to wait at."""
+    return bool(run.detonation is not None and tick < run.detonation and run.staging)
+
+
+def _target(player: Any, run: BaseRun, ctx: Any, tick: int) -> Cell | None:
+    """The leader's target before the crossing: the return cell, the staging
+    cell in the fuse, else the current leg's nearest range cell (chosen once
+    per leg); None after the last leg."""
+    if run.returning_to is not None:
+        return run.returning_to
+    if _in_fuse(run, tick):
+        return run.staging
+    if run.leg >= len(run.bases):
+        return None
+    if run.leg_target is None:
+        walk = ctx.walk_distances(_here(player))
+        near = _nearest_range_cell(ctx, run.bases[run.leg], walk)
+        run.leg_target = near[1] if near is not None else None
+    return run.leg_target
+
+
+def _follower_goal(player: Any, run: BaseRun, ctx: Any, tick: int) -> Cell:
+    """The paired Ammo's goal: the Medic's cell until found; then, of the
+    cells within ``PAIR_SQUARES`` (Chebyshev) of the Medic that see it, the
+    one nearest by walk the Medic's target; the Medic's cell with none."""
+    medic = run.follow
+    there = _here(medic)
+    if run.found_at is None:
+        return there
+    assert run.lead is not None
+    target = _target(medic, run.lead, ctx, tick)
+    if target is None:
+        return there
+    if run.to_target is None or run.to_target.get(target) != 0:
+        run.to_target = ctx.walk_distances(target)  # cached per target
+    to = run.to_target
+    best = min(
+        (
+            (to[cell], cell)
+            for cell in _box(there, PAIR_SQUARES)
+            if cell in to and ctx.can_see(cell, there)
+        ),
+        default=None,
+    )
+    return best[1] if best is not None else there
+
+
+def _box(centre: Cell, radius: int) -> list[Cell]:
+    """The cells within *radius* (Chebyshev) of *centre*, in order."""
+    row, col = centre
+    return [
+        (r, c)
+        for r in range(row - radius, row + radius + 1)
+        for c in range(col - radius, col + radius + 1)
+    ]
+
+
 def base_run_goal(player: Any, ctx: Any, tick: int) -> Cell | None:
     """The run's goal: the staging cell in the fuse, then the current leg's
     nearest range cell, then the return cell. Crossing with remembered
@@ -359,19 +486,12 @@ def base_run_goal(player: Any, ctx: Any, tick: int) -> Cell | None:
     run = player.base_run
     if run is None:
         return None
-    if run.returning_to is not None:
-        target = run.returning_to
-    elif run.detonation is not None and tick < run.detonation and run.staging:
+    if run.lead is not None and run.returning_to is None:
+        return _follower_goal(player, run, ctx, tick)
+    if run.returning_to is None and _in_fuse(run, tick):
         return run.staging
-    elif run.leg < len(run.bases):
-        if run.leg_target is None:
-            walk = ctx.walk_distances(_here(player))
-            near = _nearest_range_cell(ctx, run.bases[run.leg], walk)
-            run.leg_target = near[1] if near is not None else None
-        if run.leg_target is None:
-            return None
-        target = run.leg_target
-    else:
+    target = _target(player, run, ctx, tick)
+    if target is None:
         return None
     watchers = remembered_enemy_cells(player, tick)
     if not watchers:
@@ -394,6 +514,54 @@ def base_run_goal(player: Any, ctx: Any, tick: int) -> Cell | None:
     return best[-1]
 
 
+def tick_draws(tick: int, players: list, rctx: Any) -> None:
+    """Once a tick after the Advance: each pair's Resupply draws. A Medic whose
+    run has a ``partner`` draws at ``pre_draw_at`` (the pre-run draw) and,
+    with ``return_draw`` set, once on the way back. Each draw is spent whether
+    it is made or skipped out of reach (``_pair_draw``)."""
+    for medic in players:
+        run = medic.base_run
+        if run is None or run.partner is None:
+            continue
+        if run.pre_draw_at is not None and tick >= run.pre_draw_at:
+            run.pre_draw_at = None
+            _pair_draw(medic, run.partner, tick, rctx)
+        elif run.return_draw:
+            run.return_draw = False
+            _pair_draw(medic, run.partner, tick, rctx)
+
+
+def _pair_draw(medic: Any, ammo: Any, tick: int, rctx: Any) -> None:
+    """In reach (both Active and placed, the Ammo within ``PAIR_SQUARES`` of
+    the Medic and seeing it), one draw: the Ammo tags the Medic under
+    ``DRAW_AMMO_TO_MEDIC``; a Mutual resupply under ``+ DRAW_MUTUAL``, both
+    halves this tick (the Medic's reset is lifted around its own Resupply so
+    it lands, then put back); else nothing. Out of reach, no draw."""
+    mc = rctx.movement_ctx
+    if mc is None or not (medic.is_active_at(tick) and ammo.is_active_at(tick)):
+        return
+    if not _sees_partner(ammo, medic, mc):
+        return
+    draw = random.random()
+    if draw < DRAW_AMMO_TO_MEDIC:
+        _give(ammo, medic, tick, rctx)
+    elif draw < DRAW_AMMO_TO_MEDIC + DRAW_MUTUAL:
+        before = medic.last_downed_time
+        _give(ammo, medic, tick, rctx)
+        reset = medic.last_downed_time
+        medic.last_downed_time = before
+        _give(medic, ammo, tick, rctx)
+        medic.last_downed_time = reset
+
+
+def _give(tagger: Any, receiver: Any, tick: int, rctx: Any) -> None:
+    """*tagger* shoots its Resupply at *receiver* (``attempt_resupply``)."""
+    from .combat import attempt_resupply  # combat imports this module
+
+    attempt_resupply(tagger, receiver, tick, ctx=rctx)
+    tagger.last_shot_time = tick
+
+
 def end_base_run(player: Any, tick: int, reason: BaseRunEndReason) -> None:
     """End *player*'s run for *reason* (one of ``BASE_RUN_END_REASONS``) and
     write its end row. The single ending path; ``round_probe`` wraps it."""
@@ -401,6 +569,8 @@ def end_base_run(player: Any, tick: int, reason: BaseRunEndReason) -> None:
         raise ValueError(f"unknown base run end reason {reason!r}")
     run = player.base_run
     player.base_run = None
+    if run is not None:
+        run.ended = reason  # a follower reads its leader's
     if run is not None and run.events is not None:
         run.events.base_run(
             player, tick, "end", run.trigger, run.bases, reason=reason, taken=run.taken

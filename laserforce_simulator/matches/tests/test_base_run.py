@@ -5,13 +5,19 @@ first), captures, then stays as a Board flip or walks back to its Heavy."""
 
 from __future__ import annotations
 
+import random
 from collections.abc import Callable
 
 import pytest
 
 from matches.sim_helpers import base_run, combat, pathfinding
 from matches.sim_helpers.base_run import (
+    BOTH_RUN_CHANCE,
+    DRAW_AMMO_TO_MEDIC,
+    DRAW_MUTUAL,
     NUKE_RUN_CHANCE,
+    PRE_DRAW_MAX_TICKS,
+    PRE_DRAW_MIN_TICKS,
     RETURN_ARRIVE_TICKS,
     RUN_LEG_ARRIVE_TICKS,
     BaseRun,
@@ -22,6 +28,7 @@ from matches.sim_helpers.base_run import (
     squares_per_tick,
     start_on_nuke_fire,
     tick_base_run,
+    tick_draws,
 )
 from matches.sim_helpers.board_flip import MAX_FLIPS_PER_ROUND, Flip
 from matches.sim_helpers.combat import plan_action
@@ -202,6 +209,10 @@ def _draws(monkeypatch: pytest.MonkeyPatch, *values: float) -> list[float]:
     return left
 
 
+#: MECH-26b: the pick draws that send the Medic alone (not both, then Medic).
+MEDIC_ALONE = (BOTH_RUN_CHANCE, 0.0)
+
+
 def _team(medic_cell: Cell = (2, 0), ammo_cell: Cell = (4, 0)) -> list[PlayerState]:
     """Blue: Commander, Medic, Ammo, Heavy (the Heavy remembered by both)."""
     cmd = _ps("blue_commander", "blue", (0, 0), role="commander")
@@ -275,7 +286,7 @@ class TestNukeRunEligibility:
     def test_a_pending_flip_is_eligible(self, monkeypatch: pytest.MonkeyPatch) -> None:
         team = _team()
         team[1].flip = Flip(from_cell=(2, 0))
-        _draws(monkeypatch, 0.0, 0.0)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.0)
         _fire(team, _rctx())
         assert team[1].base_run is not None
 
@@ -304,18 +315,9 @@ class TestNukeRunEligibility:
     ) -> None:
         team = _team()
         team[1].last_downed_time = T - 2
-        _draws(monkeypatch, 0.0, 0.0)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.0)
         _fire(team, _rctx())
         assert team[1].base_run is not None
-
-    def test_the_leader_is_the_medic_and_goes_alone(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        team = _team()
-        _draws(monkeypatch, 0.0, 0.0)
-        _fire(team, _rctx())
-        assert team[1].base_run is not None
-        assert team[2].base_run is None
 
 
 class TestTeamRoll:
@@ -334,10 +336,10 @@ class TestTeamRoll:
     ) -> None:
         team = _team()
         team[1].game_awareness = team[2].game_awareness = awareness
-        left = _draws(monkeypatch, 0.30, 0.0)
+        left = _draws(monkeypatch, 0.30, *MEDIC_ALONE, 0.0)
         _fire(team, _rctx())
         assert (team[1].base_run is not None) is runs
-        assert left == ([] if runs else [0.0])  # a miss draws nothing more
+        assert len(left) == (0 if runs else 3)  # a miss draws nothing more
 
     def test_the_mean_of_the_eligible_supports(
         self, monkeypatch: pytest.MonkeyPatch
@@ -345,7 +347,7 @@ class TestTeamRoll:
         # Mean (50 + 20) / 2 / 50 = 0.7: 0.39 x 0.7 = 0.273.
         team = _team()
         team[2].game_awareness = 20
-        _draws(monkeypatch, 0.27, 0.0)
+        _draws(monkeypatch, 0.27, *MEDIC_ALONE, 0.0)
         _fire(team, _rctx())
         assert team[1].base_run is not None
         team = _team()
@@ -369,7 +371,7 @@ class TestTeamRoll:
         self, monkeypatch: pytest.MonkeyPatch, draw: float, stays: bool
     ) -> None:
         team = _team()
-        _draws(monkeypatch, 0.0, draw)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, draw)
         _fire(team, _rctx())
         assert team[1].base_run is not None and team[1].base_run.stays is stays
 
@@ -384,7 +386,7 @@ class TestTeamRoll:
 class TestNukeRunStart:
     def test_the_run(self, monkeypatch: pytest.MonkeyPatch) -> None:
         team = _team()
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx(), fuse=4)
         run = team[1].base_run
         assert run is not None
@@ -401,7 +403,7 @@ class TestNukeRunStart:
         medic.is_hiding = medic.is_holding = True
         medic.hold_until = T + 20
         medic._committed_goal = ((0, 0), False, 0)
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx())
         assert (medic.is_hiding, medic.is_holding) == (False, False)
         assert medic.hold_until is None and medic._committed_goal is None
@@ -409,7 +411,7 @@ class TestNukeRunStart:
     def test_the_start_row(self, monkeypatch: pytest.MonkeyPatch) -> None:
         team = _team()
         ctx = _rctx()
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, ctx, fuse=4)
         (row,) = _rows(ctx.events)
         assert row["actor_id"] == team[1].player_id
@@ -435,7 +437,7 @@ class TestStaging:
         # Fuse 4 ticks at 3.75 squares a tick: 15 squares. With no enemy
         # remembered, (2, 15) is nearest the red range (2, 50).
         team = _team()
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx(), fuse=4)
         assert team[1].base_run is not None
         assert team[1].base_run.staging == (2, 15)
@@ -444,7 +446,7 @@ class TestStaging:
         # (2, 30) sees row 2: (1, 14) and (3, 14) are 37 from (2, 50).
         team = _team()
         _remember(team[1], _ps("red_scout", "red", (2, 30)), T)
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx(), fuse=4)
         assert team[1].base_run is not None
         assert team[1].base_run.staging == (1, 14)
@@ -456,7 +458,7 @@ class TestStaging:
         line.base_sight_data = {"red": frozenset({"0,50"})}
         team = _team(medic_cell=(0, 0), ammo_cell=(0, 1))
         _remember(team[1], _ps("red_scout", "red", (0, 30)), T)
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx(line), fuse=4)
         assert team[1].base_run is not None
         assert team[1].base_run.staging == (0, 0)
@@ -470,7 +472,7 @@ class TestStaging:
         mc = _bases(neutral_1=NEUTRAL_RANGE, red=frozenset({"2,55"}))
         team = _team()
         team[1].speed = 0
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx(mc), fuse=4)
         run = team[1].base_run
         assert run is not None
@@ -788,7 +790,7 @@ class TestSameTick:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         team = _team()
-        _draws(monkeypatch, 0.0, 0.9)
+        _draws(monkeypatch, 0.0, *MEDIC_ALONE, 0.9)
         _fire(team, _rctx())
         run = team[1].base_run
         assert run is not None
@@ -1030,6 +1032,527 @@ class TestRecordDown:
         assert ends == ["down"]
 
 
+def _randint(monkeypatch: pytest.MonkeyPatch, value: int) -> list[tuple[int, int]]:
+    """Pin ``random.randint`` in ``base_run`` to *value*; returns its calls."""
+    calls: list[tuple[int, int]] = []
+
+    def draw(low: int, high: int) -> int:
+        calls.append((low, high))
+        return value
+
+    monkeypatch.setattr(base_run.random, "randint", draw)
+    return calls
+
+
+class TestThePick:
+    """MECH-26b: with both eligible, ``BOTH_RUN_CHANCE`` sends both, else one
+    goes alone, the Medic or the Ammo 50/50. Draws: roll, pick(s), stays."""
+
+    @pytest.mark.parametrize("draw, both", [(BOTH_RUN_CHANCE - 0.01, True)])
+    def test_both_run_chance_sends_both(
+        self, monkeypatch: pytest.MonkeyPatch, draw: float, both: bool
+    ) -> None:
+        team = _team()
+        _randint(monkeypatch, 4)
+        left = _draws(monkeypatch, 0.0, draw, 0.9)
+        _fire(team, _rctx())
+        assert left == []
+        assert team[1].base_run is not None and team[2].base_run is not None
+
+    @pytest.mark.parametrize("pick, role", [(0.49, "medic"), (0.5, "ammo")])
+    def test_otherwise_one_goes_50_50(
+        self, monkeypatch: pytest.MonkeyPatch, pick: float, role: str
+    ) -> None:
+        team = _team()
+        left = _draws(monkeypatch, 0.0, BOTH_RUN_CHANCE, pick, 0.9)
+        _fire(team, _rctx())
+        assert left == []
+        runners = [p.role for p in team if p.base_run is not None]
+        assert runners == [role]
+
+    def test_a_lone_ammo_picked_returns(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team = _team()
+        _draws(monkeypatch, 0.0, BOTH_RUN_CHANCE, 0.5, 0.0)  # stays drawn True
+        _fire(team, _rctx())
+        run = team[2].base_run
+        assert run is not None and run.stays is False and run.follow is None
+
+    def test_the_medic_leads_whatever_the_roster_order(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        cmd, medic, ammo, heavy = _team()
+        _randint(monkeypatch, 4)
+        _draws(monkeypatch, 0.0, 0.0, 0.9)
+        _fire([cmd, ammo, medic, heavy], _rctx())
+        assert medic.base_run is not None and medic.base_run.partner is ammo
+        assert ammo.base_run is not None and ammo.base_run.follow is medic
+
+    def test_a_lone_medic_has_no_partner(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team = _team()
+        _draws(monkeypatch, 0.0, BOTH_RUN_CHANCE, 0.0, 0.9)
+        _fire(team, _rctx())
+        run = team[1].base_run
+        assert run is not None and run.partner is None and run.pre_draw_at is None
+
+
+def _fire_pair(
+    monkeypatch: pytest.MonkeyPatch,
+    team: list[PlayerState],
+    ctx: RoundContext,
+    fuse: int = 10,
+    pre: int = 4,
+    stays: float = 0.9,
+) -> list[tuple[int, int]]:
+    calls = _randint(monkeypatch, pre)
+    _draws(monkeypatch, 0.0, 0.0, stays)
+    _fire(team, ctx, fuse=fuse)
+    return calls
+
+
+class TestPairSetUp:
+    def test_the_ammo_follows_the_medic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team = _team()
+        _fire_pair(monkeypatch, team, _rctx())
+        medic, ammo = team[1], team[2]
+        assert medic.base_run is not None and ammo.base_run is not None
+        assert medic.base_run.partner is ammo and medic.base_run.follow is None
+        assert ammo.base_run.follow is medic and ammo.base_run.partner is None
+        assert ammo.base_run.bases == []
+        assert (ammo.base_run.trigger, ammo.base_run.started) == ("nuke", T)
+        assert ammo.base_run.nuker is team[0]
+        assert ammo.base_run.detonation == T + 10
+
+    def test_starting_the_follower_clears_its_hide(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        team = _team()
+        ammo = team[2]
+        ammo.is_hiding = ammo.is_holding = True
+        ammo.hold_until = T + 20
+        _fire_pair(monkeypatch, team, _rctx())
+        assert (ammo.is_hiding, ammo.is_holding, ammo.hold_until) == (
+            False,
+            False,
+            None,
+        )
+
+    def test_both_start_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team = _team()
+        ctx = _rctx()
+        _fire_pair(monkeypatch, team, ctx)
+        rows = _rows(ctx.events)
+        assert [r["actor_id"] for r in rows] == [team[1].player_id, team[2].player_id]
+        assert rows[1]["metadata"]["bases"] == []
+
+    @pytest.mark.parametrize("stays", [True, False])
+    def test_the_pair_shares_the_stay_roll(
+        self, monkeypatch: pytest.MonkeyPatch, stays: bool
+    ) -> None:
+        team = _team()
+        _fire_pair(monkeypatch, team, _rctx(), stays=0.0 if stays else 0.9)
+        assert team[1].base_run is not None and team[2].base_run is not None
+        assert team[1].base_run.stays is stays
+        assert team[2].base_run.stays is stays
+
+    def test_the_pre_run_draw_tick(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team = _team()
+        calls = _fire_pair(monkeypatch, team, _rctx(), fuse=10, pre=4)
+        assert calls == [(PRE_DRAW_MIN_TICKS, PRE_DRAW_MAX_TICKS)]
+        assert team[1].base_run is not None
+        assert team[1].base_run.pre_draw_at == T + 6
+
+    def test_the_pre_run_draw_is_at_least_the_next_tick(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        team = _team()
+        _fire_pair(monkeypatch, team, _rctx(), fuse=4, pre=8)
+        assert team[1].base_run is not None
+        assert team[1].base_run.pre_draw_at == T + 1
+
+
+def _pair_running(
+    team: list[PlayerState], bases: list[str] | None = None, **fields: object
+) -> tuple[BaseRun, BaseRun]:
+    """The Medic's run (``_running``) with the Ammo following it."""
+    medic, ammo = team[1], team[2]
+    lead = _running(medic, team[0], bases, partner=ammo, **fields)
+    follower = _running(ammo, team[0], bases=[], follow=medic, lead=lead)
+    follower.bases = []  # ``_running`` reads an empty list as the default
+    follower.started, follower.detonation = lead.started, lead.detonation
+    follower.stays = lead.stays
+    return lead, follower
+
+
+class TestFollower:
+    """The paired Ammo: found within ``PAIR_SQUARES`` and in sight; it ends
+    ``partner_down`` on the Medic's Down or Elimination, else takes the
+    Medic's stay or return."""
+
+    def test_it_has_no_legs_of_its_own(self, ends: list[str]) -> None:
+        team = _team()
+        _, follower = _pair_running(team)
+        _tick(team[2], team, T + RUN_LEG_ARRIVE_TICKS + 1)
+        assert team[2].base_run is follower and ends == []
+        assert follower.returning_to is None
+
+    @pytest.mark.parametrize(
+        "cell, found",
+        [((2, 4), True), ((2, 5), False), ((3, 2), False), ((0, 0), True)],
+    )
+    def test_found_within_4_squares_and_in_sight(self, cell: Cell, found: bool) -> None:
+        team = _team(ammo_cell=cell)
+        _, follower = _pair_running(team)
+        _tick(team[2], team, T + 1)
+        assert (follower.found_at == T + 1) is found
+
+    def test_found_once_stays_found(self) -> None:
+        team = _team(ammo_cell=(2, 4))
+        _, follower = _pair_running(team)
+        _tick(team[2], team, T + 1)
+        team[2].cell_col = 9
+        _tick(team[2], team, T + 2)
+        team[2].cell_col = 3  # in reach again: still the first find
+        _tick(team[2], team, T + 3)
+        assert follower.found_at == T + 1
+
+    @pytest.mark.parametrize("lives, first", [(5, "down"), (0, "eliminated")])
+    def test_partner_down(self, ends: list[str], lives: int, first: str) -> None:
+        team = _team()
+        _pair_running(team)
+        team[1].final_lives = lives
+        end_on_down(team[1], T)
+        _tick(team[2], team, T + 1)
+        assert ends == [first, "partner_down"]
+        assert team[2].base_run is None
+
+    def test_partner_down_while_returning(self, ends: list[str]) -> None:
+        team = _team()
+        _, follower = _pair_running(team)
+        follower.returning_to, follower.return_started = (4, 59), T
+        end_on_down(team[1], T)
+        _tick(team[2], team, T + 1)
+        assert ends == ["down", "partner_down"]
+
+    def test_it_takes_the_medics_stay(self, ends: list[str]) -> None:
+        team = _team(medic_cell=(2, 50))
+        _pair_running(team, ["red"], stays=True)
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T + 5)
+        _tick(team[2], team, T + 5)
+        assert ends == ["stayed", "stayed"]
+        assert team[2].flip is None
+
+    def test_it_takes_the_medics_return(self, ends: list[str]) -> None:
+        team = _team()
+        team[2].player_memory["blue_heavy"]["cell"] = (4, 40)
+        lead, follower = _pair_running(team, ["red"])
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T + 5)
+        assert lead.returning_to == (4, 59)
+        _tick(team[2], team, T + 5)
+        assert (follower.returning_to, follower.return_started) == ((4, 40), T + 5)
+        assert not follower.cancelled and ends == []
+
+    def test_a_cancelled_nuke_cancels_the_follower(self, ends: list[str]) -> None:
+        team = _team()
+        lead, follower = _pair_running(team, started=T - 5, detonation=T + 5)
+        follower.started, follower.detonation = T - 5, T + 5
+        team[0].final_lives = 0
+        _tick(team[2], team, T)  # the follower first: nothing yet
+        assert follower.returning_to is None
+        _tick(team[1], team, T)
+        _tick(team[2], team, T + 1)
+        assert lead.cancelled and follower.cancelled
+        assert follower.returning_to == (4, 59)
+
+    def test_the_medics_not_arrived_sends_it_back(self, ends: list[str]) -> None:
+        team = _team()
+        _, follower = _pair_running(team)
+        _tick(team[1], team, T + RUN_LEG_ARRIVE_TICKS + 1)
+        _tick(team[2], team, T + RUN_LEG_ARRIVE_TICKS + 1)
+        assert ends == ["not_arrived"]
+        assert follower.returning_to == (4, 59)
+
+    def test_its_own_return_ends_returned(self, ends: list[str]) -> None:
+        team = _team()
+        _, follower = _pair_running(team, ["red"])
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T + 5)
+        team[2].cell_row, team[2].cell_col = (4, 58)
+        _tick(team[2], team, T + 5)
+        _tick(team[2], team, T + 6)
+        assert ends == ["returned"]
+
+    def test_with_no_heavy_memory_it_ends_at_once(self, ends: list[str]) -> None:
+        team = _team()
+        team[2].player_memory.clear()
+        _pair_running(team, ["red"])
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T + 5)
+        _tick(team[2], team, T + 5)
+        assert ends == ["returned"]
+
+    def test_the_end_reason_is_kept_on_the_run(self) -> None:
+        team = _team()
+        run = _running(team[1], team[0])
+        end_base_run(team[1], T, "down")
+        assert run.ended == "down"
+
+
+class TestFollowerGoal:
+    """To the Medic until found; then the cell within ``PAIR_SQUARES`` that
+    sees the Medic nearest the Medic's target."""
+
+    def test_the_medics_cell_until_found(self) -> None:
+        team = _team(medic_cell=(2, 10), ammo_cell=(4, 0))
+        _pair_running(team)
+        assert base_run_goal(team[2], _bases(), T) == (2, 10)
+
+    def test_found_the_seeing_cell_nearest_the_medics_target(self) -> None:
+        # The Medic on (2, 10) heads for the red range (2, 50): of the cells
+        # within 4 that see it (row 2 and column 10), (2, 14) is nearest.
+        team = _team(medic_cell=(2, 10), ammo_cell=(2, 12))
+        _, follower = _pair_running(team)
+        follower.found_at = T - 1
+        assert base_run_goal(team[2], _bases(), T) == (2, 14)
+
+    def test_the_medics_target_in_the_fuse_is_its_staging_cell(self) -> None:
+        team = _team(medic_cell=(2, 10), ammo_cell=(2, 12))
+        _, follower = _pair_running(
+            team, started=T - 5, detonation=T + 5, staging=(0, 10)
+        )
+        follower.found_at = T - 1
+        assert base_run_goal(team[2], _bases(), T) == (0, 10)
+
+    def test_the_medics_return_cell(self) -> None:
+        team = _team(medic_cell=(2, 10), ammo_cell=(2, 12))
+        _, follower = _pair_running(team, returning_to=(2, 0), return_started=T)
+        follower.found_at = T - 1
+        assert base_run_goal(team[2], _bases(), T) == (2, 6)
+
+    def test_the_medics_cell_with_no_seeing_cell(self) -> None:
+        mc = _bases()
+        mc.sight_data = {}
+        team = _team(medic_cell=(2, 10), ammo_cell=(2, 12))
+        _, follower = _pair_running(team)
+        follower.found_at = T - 1
+        assert base_run_goal(team[2], mc, T) == (2, 10)
+
+    def test_no_crossing_while_it_follows(self) -> None:
+        team = _team(medic_cell=(2, 10), ammo_cell=(2, 12))
+        _, follower = _pair_running(team)
+        follower.found_at = T - 1
+        _remember(team[2], _ps("red_scout", "red", (2, 30)), T)
+        assert base_run_goal(team[2], _bases(), T) == (2, 14)
+
+    def test_returning_it_goes_to_its_own_return_cell(self) -> None:
+        team = _team(medic_cell=(2, 10), ammo_cell=(2, 12))
+        _, follower = _pair_running(team)
+        follower.returning_to, follower.return_started = (4, 59), T
+        assert base_run_goal(team[2], _bases(), T) == (4, 59)
+
+
+def _draw_pair(
+    medic_cell: Cell = (2, 10),
+    ammo_cell: Cell = (2, 12),
+    bases: list[str] | None = None,
+    **fields: object,
+) -> tuple[list[PlayerState], BaseRun, RoundContext]:
+    """A pair outbound with its pre-run draw due at T."""
+    team = _team(medic_cell=medic_cell, ammo_cell=ammo_cell)
+    for support in team[1:3]:
+        support.final_lives, support.final_shots = 5, 5
+        support.last_downed_time = T - 100
+    fields.setdefault("pre_draw_at", T)
+    lead, _ = _pair_running(team, bases, **fields)
+    return (
+        team,
+        lead,
+        RoundContext(events=EventLog(), movement_ctx=_bases(), all_alive=team),
+    )
+
+
+def _resupplies(ctx: RoundContext) -> list[tuple[str, str, str]]:
+    """(verb, giver's role, receiver's role) of each Resupply row."""
+    return [
+        (e["event_type"], e["metadata"]["actor_role"], e["metadata"]["target_role"])
+        for e in ctx.events.entries
+        if e["event_type"].startswith("resupply")
+    ]
+
+
+def _draw(monkeypatch: pytest.MonkeyPatch, value: float) -> list[float]:
+    """Pin the pair draw to *value*; the draws a landed Resupply makes after
+    it (the receiver's trail) come from a fixed generator. Returns the draws
+    made, the pinned one first."""
+    rest = random.Random(0)
+    made: list[float] = []
+
+    def draw() -> float:
+        made.append(value if not made else rest.random())
+        return made[-1]
+
+    monkeypatch.setattr(base_run.random, "random", draw)
+    return made
+
+
+class TestPairReach:
+    """A draw needs both Active and placed, the Ammo within ``PAIR_SQUARES`` of
+    the Medic and seeing it; out of reach it is skipped, and spent."""
+
+    def test_in_reach_it_draws(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair()
+        left = _draws(monkeypatch, 0.9)
+        tick_draws(T, team, ctx)
+        assert left == [] and lead.pre_draw_at is None
+
+    def test_not_before_its_tick(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair(pre_draw_at=T + 1)
+        _draws(monkeypatch)
+        tick_draws(T, team, ctx)
+        assert lead.pre_draw_at == T + 1
+
+    def _skipped(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        team: list[PlayerState],
+        lead: BaseRun,
+        ctx: RoundContext,
+    ) -> None:
+        _draws(monkeypatch)  # no draw at all
+        tick_draws(T, team, ctx)
+        assert lead.pre_draw_at is None  # spent
+        tick_draws(T + 1, team, ctx)
+        assert _resupplies(ctx) == []
+
+    def test_the_medic_not_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair()
+        team[1].last_downed_time = T - 3
+        self._skipped(monkeypatch, team, lead, ctx)
+
+    def test_the_ammo_not_active(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair()
+        team[2].last_downed_time = T - 3
+        self._skipped(monkeypatch, team, lead, ctx)
+
+    def test_the_ammo_5_squares_away(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair(ammo_cell=(2, 15))
+        self._skipped(monkeypatch, team, lead, ctx)
+
+    def test_within_4_but_not_seeing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair(ammo_cell=(3, 12))
+        self._skipped(monkeypatch, team, lead, ctx)
+
+    def test_the_ammo_unplaced(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair()
+        team[2].cell_row = team[2].cell_col = None
+        self._skipped(monkeypatch, team, lead, ctx)
+
+    def test_a_lone_medic_draws_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair()
+        lead.partner = None
+        _draws(monkeypatch)
+        tick_draws(T, team, ctx)
+        assert _resupplies(ctx) == []
+
+
+class TestDrawSplit:
+    """One ``random.random()``: Ammo tags Medic under 0.6, Mutual resupply
+    under 0.8, nothing from 0.8."""
+
+    def test_059_the_ammo_tags_the_medic(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, _, ctx = _draw_pair()
+        medic, ammo = team[1], team[2]
+        _draw(monkeypatch, 0.59)
+        tick_draws(T, team, ctx)
+        assert _resupplies(ctx) == [("resupply_ammo", "ammo", "medic")]
+        assert medic.last_downed_time == T  # only the Medic is reset
+        assert ammo.last_downed_time == T - 100
+
+    def test_079_a_mutual_resupply(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, _, ctx = _draw_pair()
+        medic, ammo = team[1], team[2]
+        _draw(monkeypatch, 0.79)
+        tick_draws(T, team, ctx)
+        assert sorted(_resupplies(ctx)) == [
+            ("resupply_ammo", "ammo", "medic"),
+            ("resupply_lives", "medic", "ammo"),
+        ]
+        # Both receivers reset in the same tick; the Medic's stamp is the new one.
+        assert (medic.last_downed_time, ammo.last_downed_time) == (T, T)
+        assert (medic.last_resupplied_at, ammo.last_resupplied_at) == (T, T)
+        assert not medic.is_active_at(T + 1) and not ammo.is_active_at(T + 1)
+
+    def test_080_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair()
+        _draws(monkeypatch, DRAW_AMMO_TO_MEDIC + DRAW_MUTUAL)
+        tick_draws(T, team, ctx)
+        assert _resupplies(ctx) == [] and lead.pre_draw_at is None
+        assert team[1].last_downed_time == T - 100
+
+    def test_the_givers_shot_their_resupply(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        team, _, ctx = _draw_pair()
+        _draw(monkeypatch, 0.79)
+        tick_draws(T, team, ctx)
+        assert (team[1].last_shot_time, team[2].last_shot_time) == (T, T)
+
+
+class TestReturnDraw:
+    def _returning(
+        self, return_draw: bool
+    ) -> tuple[list[PlayerState], BaseRun, RoundContext]:
+        team, lead, ctx = _draw_pair(
+            pre_draw_at=None,
+            bases=["red"],
+            taken=["red"],
+            leg=1,
+            returning_to=(4, 59),
+            return_started=T,
+            return_draw=return_draw,
+        )
+        return team, lead, ctx
+
+    def test_it_needs_return_draw(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = self._returning(return_draw=False)
+        _draws(monkeypatch)
+        tick_draws(T, team, ctx)
+        assert _resupplies(ctx) == []
+
+    def test_one_return_draw(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = self._returning(return_draw=True)
+        _draw(monkeypatch, 0.0)
+        tick_draws(T, team, ctx)
+        assert len(_resupplies(ctx)) == 1 and lead.return_draw is False
+        tick_draws(T + 20, team, ctx)  # spent: no second draw
+        assert len(_resupplies(ctx)) == 1
+
+    def test_the_last_capture_sets_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair(pre_draw_at=None, bases=["red"])
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T + 5)
+        _draw(monkeypatch, 0.0)
+        tick_draws(T + 5, team, ctx)
+        assert len(_resupplies(ctx)) == 1
+
+    def test_none_on_a_stay(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        team, lead, ctx = _draw_pair(
+            medic_cell=(2, 50), ammo_cell=(2, 48), pre_draw_at=None, bases=["red"]
+        )
+        lead.stays = True
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T + 5)
+        assert team[1].flip is not None
+        _draws(monkeypatch)
+        tick_draws(T + 5, team, ctx)
+        assert _resupplies(ctx) == [] and not lead.return_draw
+
+
+#: A Syracuse seed with a pair run whose draw lands (MECH-26b).
+PAIR_SEED = 3
+
+
 def _syracuse_round(seed: int) -> list[dict]:
     from matches.tests.test_missile_lock import _syracuse_round as play
 
@@ -1068,9 +1591,34 @@ class TestSyracuseRounds:
         assert any(e["event_type"] == "base_run" for e in first)
         assert first == _syracuse_round(6)
 
+    def test_a_pair_run_lands_a_draw(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """MECH-26b: the engine calls ``tick_draws`` after the Advance; Syracuse
+        seed PAIR_SEED has a pair run whose draw lands a Resupply."""
+        given: list[tuple[str, str, int]] = []
+        real = base_run._give
+
+        def give(tagger: PlayerState, receiver: PlayerState, tick: int, rctx) -> None:
+            given.append((tagger.role, receiver.role, tick))
+            real(tagger, receiver, tick, rctx)
+
+        monkeypatch.setattr(base_run, "_give", give)
+        log = _syracuse_round(PAIR_SEED)
+        assert given, f"no landed pair draw in Syracuse seed {PAIR_SEED}"
+        for tagger, _, tick in given:
+            assert any(
+                e["event_type"].startswith("resupply")
+                and e["timestamp"] == tick
+                and e["metadata"]["actor_role"] == tagger
+                for e in log
+            )
+        # The replay below covers the same round with its landed draw.
+        monkeypatch.undo()
+        assert log == _syracuse_round(PAIR_SEED)
+
     def test_serial_equals_parallel(self) -> None:
         from matches.round_probe import run_probe
         from matches.tests.test_dodge import _syracuse_ctx
 
         ctx = _syracuse_ctx()
-        assert run_probe(ctx, [3, 6], workers=1) == run_probe(ctx, [3, 6], workers=2)
+        seeds = sorted({3, 6, PAIR_SEED})  # PAIR_SEED: a landed pair draw
+        assert run_probe(ctx, seeds, workers=1) == run_probe(ctx, seeds, workers=2)
