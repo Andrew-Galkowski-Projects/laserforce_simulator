@@ -2728,6 +2728,31 @@ class TestRoundProbeCommand(TestCase):
         self.assertEqual(err.getvalue().splitlines(), ["round 1/2", "round 2/2"])
         self.assertNotIn("round 1/2", out.getvalue())
 
+    def test_the_command_line_refuses_while_a_heavy_run_holds_the_lock(self) -> None:
+        # MECH-26 retro: a suite and a 128-game probe overlapped.
+        import json
+        import os
+        import tempfile
+
+        from laserforce_simulator import heavy_lock
+        from matches.management.commands.round_probe import Command
+
+        with tempfile.TemporaryDirectory() as folder:
+            lock = Path(folder) / "heavy.lock"
+            held = {"pid": os.getpid(), "label": "run_suite [sqlite @abc]"}
+            lock.write_text(json.dumps(held))
+            err = StringIO()
+            with patch.object(heavy_lock, "LOCK_PATH", lock), patch(
+                "matches.round_probe.run_probe"
+            ) as run:
+                with self.assertRaises(SystemExit) as exited:
+                    Command(stdout=StringIO(), stderr=err).run_from_argv(
+                        ["manage.py", "round_probe", "--seeds", "1"]
+                    )
+            self.assertEqual(exited.exception.code, 3)
+            self.assertIn("run_suite [sqlite @abc]", err.getvalue())
+            run.assert_not_called()
+
     def test_no_progress_without_the_flag(self) -> None:
         err = StringIO()
         call_command("round_probe", "--seeds", "1", stdout=StringIO(), stderr=err)

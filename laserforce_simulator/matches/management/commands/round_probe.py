@@ -7,11 +7,14 @@ transaction, so nothing is written. Run it on two checkouts to compare them: see
 
 from __future__ import annotations
 
+import sys
 from math import sqrt
 from statistics import stdev
 from typing import Any, Callable, Iterable, Mapping
 
 from django.core.management.base import BaseCommand, CommandError, CommandParser
+
+from laserforce_simulator import heavy_lock
 
 from matches import lfstats_calibration as cal
 from matches.management.commands.lfstats_calibrate import (
@@ -754,6 +757,16 @@ class Command(BaseCommand):
         "sharing and the tag measures over seeded rounds, beside the real TDF "
         "targets."
     )
+
+    def run_from_argv(self, argv: list[str]) -> None:
+        """From the command line, hold the machine's heavy-run lock (MECH-26
+        retro); ``call_command`` (the tests) skips this path."""
+        try:
+            with heavy_lock.heavy_run("round_probe " + " ".join(argv[2:])):
+                super().run_from_argv(argv)
+        except heavy_lock.HeavyRunBusy as busy:
+            self.stderr.write(str(busy))
+            sys.exit(3)
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument(

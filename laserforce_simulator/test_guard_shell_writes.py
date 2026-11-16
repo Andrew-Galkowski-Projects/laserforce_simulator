@@ -190,6 +190,24 @@ class TestVariablePaths(TestCase):
         )
 
 
+class TestHeredocBodies(TestCase):
+    """MECH-26 retro: a `>` inside a heredoc body (`>= pre_draw_at`, `len(x)>0`)
+    was read as a redirect, so a body piped to `gh` or `python` was refused."""
+
+    def test_allows_a_comparison_inside_a_body_with_no_file_write(self) -> None:
+        for command in (
+            "gh issue comment 623 --body-file - <<'EOF'\nfires at the first tick `>= pre_draw_at`\nEOF",
+            f"S={SCRATCH}; python - a.jsonl <<'EOF' > $S/txt.txt\nif len(b)>0:\n    print(b)\nEOF",
+            "python - <<EOF\nx = 1 if a > b else 2\nEOF\necho done",
+        ):
+            with self.subTest(command=command):
+                self.assertIsNone(guard.refusal(command))
+
+    def test_still_refuses_a_repo_write_after_the_body(self) -> None:
+        command = "cat <<'EOF' > docs/x.md\na > b\nEOF\necho x >> notes.py"
+        self.assertEqual(guard.refusal(command), guard.MESSAGE)
+
+
 class TestHookProtocol(TestCase):
     def test_exit_code_2_with_a_message_blocks_the_call(self) -> None:
         payload = {
