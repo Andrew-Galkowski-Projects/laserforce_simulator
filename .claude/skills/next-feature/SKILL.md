@@ -114,7 +114,9 @@ at once with `E_UNEXPECTED`; CI's `E_ABORT` was a hang, and round 1 was re-asked
 task gets the same probe (`special-tasks.md`), and so does a deploy task's running stack; a
 port task maps its screens to routes first (`port-and-frontend.md`).
 Terms go into `GLOSSARY.md` as they settle; rulings that are hard to reverse
-become ADRs in `docs/adr/` (next free number).
+become ADRs in `docs/adr/` (next free number). Ask in `GLOSSARY.md`'s words; a
+new word goes in the round as a proposed entry with its definition (MECH-26's
+round 4 said "swap" undefined, and the owner spent a round asking what it meant).
 
 The PLAN.md section often already holds answers the owner gave earlier. Read
 them and don't re-ask; put them in the first round as settled.
@@ -205,6 +207,18 @@ Heavies or Scouts, and the ticket had to depart from the spec.
 Map each rule the spec gives to the prototype path that ran it. A rule on a path the
 prototype skipped is a new rule, so it gets its own prototype run: MECH-23's spec put
 hold-in-place on the Downed path as well, and the acceptance run missed M s9 and Tags.
+
+A new movement goal names, in the spec, each rule of `choose_goal_cell`'s priority order
+(`docs/agents/matches/sim-helpers.md#pathfindingpy`) it beats and each it yields to. MECH-26's
+spec missed the low Ammo's walk to its Medic, and review found it after two tickets built on it.
+
+A prototype ladder starts with a **null run**: the new rule's RNG draws made, its action
+skipped. It shows how far the draws alone move every guard. Each guard then sits at least
+two of the baseline's standard errors from it, or it is noise. Every run keeps every counter
+the prototype adds on, and its figures go to a scratchpad file, with only the deltas in
+chat. MECH-26's prototype ran 8 probes of 128 games over 7 hours: five grill rounds chased a
+Medic s9 guard of 52 against a baseline of 57.8 +/- 3.1, the null run that showed seed noise
+came seventh, and one run was repeated for counters its saved output lacked.
 
 Publish it as a GitHub issue titled `<TASK-ID>: <title>`, labelled
 `ready-for-agent`. Add `Spec: #<n>` under the task's heading in `PLAN.md`.
@@ -325,6 +339,12 @@ criterion met a "no docs" constraint and was skipped).
   and why, the output file's path, and the next step. CAL-03c's session ended
   after two 20-minute acceptance probes with the rule change they tested still
   uncommitted, and the results only in a scratchpad file.
+- **One heavy run at a time, on a still tree.** `run_suite.py` and `round_probe`
+  from the command line hold a machine-wide lock and refuse with exit 3 while
+  another one runs: wait for it, never run them side by side. Leave tracked
+  files alone until the run ends; `run_suite.py` warns when they changed, and
+  that run's result is void (MECH-26: an edit mid-run gave the workers new
+  code and the main process old, and the Postgres suite failed).
 - Right before each commit, run `/verify --mode branch` and fix every FAIL,
   mypy included: CI's lint job fails the PR on a mypy error on a changed line,
   and LFS-01's review spent a pass on 19 of them from four tickets.

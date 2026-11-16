@@ -100,6 +100,11 @@ Before starting tickets that run in parallel, prepare the integration tip yourse
 
 ## Merge each ticket (Step 6)
 
+Before merging, settle every gap the agent's report lists ("not covered", "can land", "left
+for later"): each one becomes a question for the owner, a test on this ticket, or a new ticket.
+MECH-26a reported a low Ammo's goals beating the run goal and a capture landing in the fuse;
+both merged unsettled, 26b and 26c built on them, and the spec review returned both as fixes.
+
 Merge each finished ticket branch yourself. When the integration tip moves while an
 implementer still runs, leave the agent alone and merge its ticket into the tip after it
 reports: a `SendMessage` waits for the agent's next tool round and resumes it even after its
@@ -131,6 +136,13 @@ Add these to each implementer prompt, beside `SKILL.md`'s shared constraints:
   `laserforce_simulator/.env` from the main checkout into your worktree (Django
   needs its `SECRET_KEY`); it stays uncommitted.
 - Run only your own test files; the full suite is the orchestrator's job.
+- **Wait in one call.** Run pytest in the foreground (timeout up to 600 s), or wait on a
+  background run with a single Monitor until-loop, and read its output once when it ends.
+  MECH-26c spent 12 Monitor and 7 TaskStop calls in 9 minutes on placeholder waits, and read
+  the same output files 7-8 times each.
+- **Read large files by range.** Grep a name first, then read the lines around it; a whole
+  read of `matches/round_probe.py` (63 KB) or the spec issue costs more than the ticket's
+  own edits. The orchestrator's prompt names the sections and line ranges the ticket touches.
 - When tickets run in parallel, they share one MCP Chrome. Open your own page
   with `new_page`, close only that page, and leave `close_mcp_browser.ps1` to
   the orchestrator, who runs it once after the last agent reports. This

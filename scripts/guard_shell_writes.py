@@ -9,7 +9,8 @@ fail with ``ENAMETOOLONG`` on Windows and PowerShell adds a BOM, so the project
 writes files with Write / Edit (CLAUDE.md, *Windows Shell Conventions*). Writes
 under a temp or scratchpad directory, and reads such as ``sed -n``, pass. A
 variable the command sets (``S=<scratchpad>; cat > "$S/x.json"``) is expanded
-before the target is checked; an unset one is not trusted.
+before the target is checked; an unset one is not trusted. A heredoc's body is
+not scanned: a ``>`` in it (``a > b``) is text, not a redirect (MECH-26 retro).
 
 Wired in ``.claude/settings.json``; reads the hook payload as JSON on stdin.
 """
@@ -79,8 +80,29 @@ def _is_scratch(path: str) -> bool:
     return bool(_SCRATCH.search(path.strip("'\"")))
 
 
+# A heredoc start with its tag: `<<EOF`, `<<-'EOF'`, `<< "EOF"`.
+_HEREDOC_TAG = re.compile(r"<<-?\s*(['\"]?)(\w+)\1")
+
+
+def _without_heredoc_bodies(command: str) -> str:
+    """``command`` with each heredoc's body and closing tag line removed, so a
+    ``>`` in the body (``a > b``, ``>= x``) is not read as a redirect (MECH-26
+    retro). The line that opens the heredoc, with its real redirects, stays."""
+    kept: list[str] = []
+    pending: list[str] = []
+    for line in command.split("\n"):
+        if pending:
+            if line.strip() == pending[0]:
+                pending.pop(0)
+            continue
+        kept.append(line)
+        pending.extend(match.group(2) for match in _HEREDOC_TAG.finditer(line))
+    return "\n".join(kept)
+
+
 def refusal(command: str) -> str | None:
     """The refusal message for ``command``, or ``None`` when it may run."""
+    command = _without_heredoc_bodies(command)
     if _CD.search(command):
         return CD_MESSAGE
     if _GIT_C.search(command):

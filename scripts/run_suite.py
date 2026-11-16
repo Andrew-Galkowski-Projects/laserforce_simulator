@@ -14,16 +14,24 @@ Usage::
 ``--rerun-failures`` re-runs each failed test by itself (``-n0``) and lists it
 as ``passes alone (likely flaky)`` or ``fails alone``.
 The exit status is the full run's pytest status.
+
+The output starts with ``[<backend> @<commit>]`` (``+uncommitted`` for a dirty
+tree) and warns when tracked files changed during the run. The run holds the
+machine's heavy-run lock (``laserforce_simulator/heavy_lock.py``) and refuses
+(exit 3) while another suite or probe holds it.
 """
 
 from __future__ import annotations
 
+import hashlib
+import importlib.util
 import os
 import re
 import subprocess
 import sys
 from pathlib import Path
-from typing import Callable
+from types import ModuleType
+from typing import Callable, NamedTuple
 
 _REPO = Path(__file__).resolve().parent.parent
 _POSTGRES_URL = "postgres://laserforce:laserforce@localhost:5433/laserforce_test"
@@ -74,6 +82,53 @@ def rerun_report(ids: list[str], run_alone: Callable[[str], int]) -> list[str]:
     return lines
 
 
+class TreeState(NamedTuple):
+    """The commit and a digest of the uncommitted diff ("" when clean)."""
+
+    head: str
+    diff_digest: str
+
+
+def run_label(backend: str, state: TreeState) -> str:
+    """``[sqlite @3896509]``, with ``+uncommitted`` for a dirty tree."""
+    dirty = "+uncommitted" if state.diff_digest else ""
+    return f"[{backend} @{state.head}{dirty}]"
+
+
+def drift_warning(before: TreeState, after: TreeState) -> str | None:
+    """A warning when the commit or the uncommitted diff changed mid-run."""
+    if before == after:
+        return None
+    return (
+        "WARNING: tracked files changed during the run; the main process and its "
+        "workers may have run different code. Rerun on a still tree."
+    )
+
+
+def _git(*args: str) -> str:
+    proc = subprocess.run(
+        ["git", *args], cwd=_REPO, capture_output=True, text=True, errors="replace"
+    )
+    return proc.stdout
+
+
+def tree_state() -> TreeState:
+    diff = _git("diff", "HEAD")
+    digest = hashlib.sha256(diff.encode()).hexdigest()[:12] if diff else ""
+    return TreeState(
+        head=_git("rev-parse", "--short", "HEAD").strip(), diff_digest=digest
+    )
+
+
+def _heavy_lock() -> ModuleType:
+    path = _DJANGO / "laserforce_simulator" / "heavy_lock.py"
+    spec = importlib.util.spec_from_file_location("heavy_lock", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _pytest(
     cmd: list[str], cwd: Path, env: dict[str, str]
 ) -> subprocess.CompletedProcess:
@@ -90,16 +145,34 @@ def _pytest(
 
 def main(argv: list[str]) -> int:
     env = dict(os.environ)
+    backend = "sqlite"
     if "--postgres" in argv:
         argv = [a for a in argv if a != "--postgres"]
         env["DATABASE_URL"] = _POSTGRES_URL
+        backend = "postgres"
     rerun = "--rerun-failures" in argv
     argv = [a for a in argv if a != "--rerun-failures"]
+    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
+    before = tree_state()
+    label = run_label(backend, before)
+    print(label, flush=True)
+    lock = _heavy_lock()
+    try:
+        with lock.heavy_run(f"run_suite {label}"):
+            return _run(argv, env, rerun, before)
+    except lock.HeavyRunBusy as busy:
+        print(busy)
+        return 3
+
+
+def _run(argv: list[str], env: dict[str, str], rerun: bool, before: TreeState) -> int:
     base = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider"]
     proc = _pytest([*base, "laserforce_simulator", "--tb=short", *argv], _REPO, env)
     output = proc.stdout + proc.stderr
-    sys.stdout.reconfigure(errors="replace")  # type: ignore[union-attr]
     print(condense(output))
+    warning = drift_warning(before, tree_state())
+    if warning:
+        print(warning)
     if rerun:
         # Node ids are relative to pytest's rootdir, the folder holding pytest.ini.
         def run_alone(node: str) -> int:

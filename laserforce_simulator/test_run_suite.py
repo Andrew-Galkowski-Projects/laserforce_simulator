@@ -112,3 +112,40 @@ class RerunReportTests(TestCase):
 
     def test_no_failures_reports_nothing(self) -> None:
         self.assertEqual(run_suite.rerun_report([], lambda node: 1), [])
+
+
+class RunLabelTests(TestCase):
+    """MECH-26 retro: two count lines in tasks/*.output, and no way to tell
+    which was SQLite or Postgres, or at which commit."""
+
+    def test_names_the_backend_and_the_commit(self) -> None:
+        state = run_suite.TreeState(head="3896509", diff_digest="")
+        self.assertEqual(run_suite.run_label("sqlite", state), "[sqlite @3896509]")
+
+    def test_marks_uncommitted_changes(self) -> None:
+        state = run_suite.TreeState(head="3896509", diff_digest="ab12")
+        self.assertEqual(
+            run_suite.run_label("postgres", state),
+            "[postgres @3896509+uncommitted]",
+        )
+
+
+class DriftWarningTests(TestCase):
+    """MECH-26 retro: edits landed mid-run, so the test process and its
+    workers ran different code and serial_equals_parallel failed."""
+
+    def test_same_tree_gives_no_warning(self) -> None:
+        state = run_suite.TreeState(head="abc", diff_digest="d1")
+        self.assertIsNone(run_suite.drift_warning(state, state))
+
+    def test_a_changed_diff_is_warned(self) -> None:
+        before = run_suite.TreeState(head="abc", diff_digest="d1")
+        after = run_suite.TreeState(head="abc", diff_digest="d2")
+        warning = run_suite.drift_warning(before, after)
+        assert warning is not None
+        self.assertIn("changed during the run", warning)
+
+    def test_a_new_commit_is_warned(self) -> None:
+        before = run_suite.TreeState(head="abc", diff_digest="")
+        after = run_suite.TreeState(head="def", diff_digest="")
+        self.assertIsNotNone(run_suite.drift_warning(before, after))
