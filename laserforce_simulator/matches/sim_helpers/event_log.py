@@ -33,7 +33,7 @@ at ``_flush_to_db`` time from ``PlayerState.movement_trail``. No
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Literal, Optional
 
 from .pending_events import LOCK_CANCEL_REASONS, LockCancelReason
 from .time_constants import LOCK_TICKS
@@ -477,6 +477,42 @@ class EventLog:
                 "metadata": _build_meta(
                     medic, target_row=target[0], target_col=target[1]
                 ),
+            }
+        )
+
+    def base_run(
+        self,
+        player,
+        tick: int,
+        phase: Literal["start", "end"],
+        trigger: str,
+        bases: list[str],
+        reason: Optional[str] = None,
+        taken: Optional[list[str]] = None,
+    ) -> None:
+        """Emit ``event_type='base_run'``: a Base run started or ended (MECH-26).
+        points_awarded=0, no target player; ``metadata`` is the actor block plus
+        ``phase``, ``trigger`` and the planned ``bases``, and on ``end`` the
+        ``reason`` and the ``taken`` bases."""
+        if not self._persist:
+            return
+        extras: dict[str, Any] = {
+            "phase": phase,
+            "trigger": trigger,
+            "bases": list(bases),
+        }
+        if phase == "end":
+            extras.update(reason=reason, taken=list(taken or []))
+        verb = "starts" if phase == "start" else "ends"
+        self._entries.append(
+            {
+                "event_type": "base_run",
+                "actor_id": player.player_id,
+                "target_id": None,
+                "timestamp": int(tick),
+                "points_awarded": 0,
+                "description": f"{player.name} {verb} a base run",
+                "metadata": _build_meta(player, **extras),
             }
         )
 
