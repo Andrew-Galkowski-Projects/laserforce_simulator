@@ -649,6 +649,15 @@ def _leash_goal(
     return nearest_cell(near, (player.cell_row, player.cell_col)) or target
 
 
+def _base_run_goal(player: Any, movement_ctx: Any, second: float) -> Any:
+    """MECH-26: the Base run's goal (``base_run.base_run_goal``); a goal clears
+    the committed goal, as every override does."""
+    goal = base_run.base_run_goal(player, movement_ctx, int(second))
+    if goal is not None:
+        player._committed_goal = None
+    return goal
+
+
 def _join_goal(
     player, all_alive: list, movement_ctx: "MapContext | None", second: float
 ) -> tuple[int, int] | None:
@@ -817,8 +826,10 @@ def choose_goal_cell(
     elif (
         player.role == "ammo"
         and player.final_lives <= support_survival.AMMO_SEEK_MEDIC_LIVES
+        and not running
     ):
         # CAL-03 rule 3: a low Ammo walks to its Medic, like the other roles.
+        # MECH-26: not a Base runner (a follower walks to its Medic anyway).
         medic = _find_role(all_alive, player.team_color, "medic")
         if medic and medic.cell_row is not None:
             player._committed_goal = None
@@ -833,9 +844,8 @@ def choose_goal_cell(
     if running and (
         plan_is_live(player, second) or not player.is_active_at(int(second))
     ):
-        run_goal = base_run.base_run_goal(player, movement_ctx, int(second))
+        run_goal = _base_run_goal(player, movement_ctx, second)
         if run_goal is not None:
-            player._committed_goal = None
             return run_goal
     downed = downed_goal(player, second, movement_ctx)
     if downed is not None:
@@ -854,9 +864,8 @@ def choose_goal_cell(
 
     # MECH-26: an Active Base runner, right after the flip.
     if running:
-        run_goal = base_run.base_run_goal(player, movement_ctx, int(second))
+        run_goal = _base_run_goal(player, movement_ctx, second)
         if run_goal is not None:
-            player._committed_goal = None
             return run_goal
 
     # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.

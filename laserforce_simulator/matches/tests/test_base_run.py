@@ -10,7 +10,7 @@ from collections.abc import Callable
 
 import pytest
 
-from matches.sim_helpers import base_run, combat, pathfinding
+from matches.sim_helpers import base_run, combat, pathfinding, support_survival
 from matches.sim_helpers.base_run import (
     BOTH_RUN_CHANCE,
     DRAW_AMMO_TO_MEDIC,
@@ -673,6 +673,25 @@ class TestEndings:
         _tick(medic, team, T + 5)
         assert ends == ["returned"]
 
+    def test_an_eliminated_heavys_memory_is_used(self) -> None:
+        """Review fix: the return reads the remembered Heavy cell even when
+        the Heavy is out (not in ``all_alive``)."""
+        team = _team()
+        medic = team[1]
+        team[3].final_lives = 0
+        run = _running(medic, team[0], bases=["red"])
+        medic.opposing_base_destroyed = True
+        _tick(medic, team[:3], T + 5)
+        assert run.returning_to == (4, 59)
+
+    def test_a_capture_in_the_fuse_starts_the_next_leg_at_detonation(self) -> None:
+        """Review fix: a leg's clock never starts before detonation."""
+        team, run = TestEndings()._in_fuse()
+        team[1].opposing_base_destroyed = True
+        _tick(team[1], team, T)
+        assert run.leg == 1
+        assert run.leg_started == T + 5
+
     def test_the_heavys_memory_is_used_however_stale(self) -> None:
         team = _team()
         medic = team[1]
@@ -1060,6 +1079,17 @@ class TestGoalOrder:
         assert _goal(ammo, team, _bases()) == (2, 50)
         ammo.base_run = None
         assert _goal(ammo, team, _bases()) == (0, 0)
+
+    def test_a_low_ammo_runner_keeps_its_route(self) -> None:
+        """Review fix: CAL-03 rule 3 (a low Ammo walks to its Medic) does not
+        take a lone Ammo runner off its route."""
+        team = _team(ammo_cell=(2, 0))
+        ammo = team[2]
+        ammo.final_lives = support_survival.AMMO_SEEK_MEDIC_LIVES
+        _running(ammo, team[0])
+        assert _goal(ammo, team, _bases()) == (2, 50)
+        ammo.base_run = None
+        assert _goal(ammo, team, _bases()) == (team[1].cell_row, team[1].cell_col)
 
 
 def _plan(

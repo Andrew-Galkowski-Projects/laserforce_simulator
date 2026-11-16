@@ -23,7 +23,7 @@ from . import board_flip
 from .downed_option import remembered_enemy_cells
 from .map_context import _NEUTRAL_BASE_TYPES
 from .modes import BASE_CAPTURE_SHOTS
-from .resupply_visit import manhattan
+from .resupply_visit import chebyshev, manhattan
 from .support_survival import own_teammate
 from .time_constants import RESPAWN_TICKS, TICK_SECONDS
 
@@ -93,7 +93,7 @@ class BaseRun:
     found_at: int | None = None
     #: The reason ``end_base_run`` gave (None while the run lives); the
     #: follower reads its leader's.
-    ended: str | None = None
+    ended: BaseRunEndReason | None = None
 
 
 def squares_per_tick(player: Any, ctx: Any) -> float:
@@ -238,22 +238,31 @@ def start_on_nuke_fire(
     _plan_staging(leader, run, tick, window, mc)
     _begin(leader, run, tick, ctx.events)
     if len(eligible) == 2:
-        ammo = eligible[1]
-        follower = BaseRun(
-            trigger="nuke",
-            bases=[],
-            started=tick,
-            stays=stays,
-            leg_started=detonation,
-            nuker=nuker,
-            detonation=detonation,
-            follow=leader,
-            lead=run,
-        )
-        run.partner = ammo
-        pre = random.randint(PRE_DRAW_MIN_TICKS, PRE_DRAW_MAX_TICKS)
-        run.pre_draw_at = max(tick + 1, detonation - pre)
-        _begin(ammo, follower, tick, ctx.events)
+        _start_follower(eligible[1], leader, run, tick, ctx.events)
+
+
+def _start_follower(
+    ammo: Any, medic: Any, lead: BaseRun, tick: int, events: Any
+) -> None:
+    """A pair's Ammo: a follower run on the Medic's *lead*, which gets its
+    ``partner`` and its ``pre_draw_at``, ``PRE_DRAW_MIN_TICKS`` to
+    ``PRE_DRAW_MAX_TICKS`` before detonation (the next tick at the earliest)."""
+    assert lead.detonation is not None
+    follower = BaseRun(
+        trigger="nuke",
+        bases=[],
+        started=tick,
+        stays=lead.stays,  # the shared roll (the leader of a pair is the Medic)
+        leg_started=lead.detonation,
+        nuker=lead.nuker,
+        detonation=lead.detonation,
+        follow=medic,
+        lead=lead,
+    )
+    lead.partner = ammo
+    pre = random.randint(PRE_DRAW_MIN_TICKS, PRE_DRAW_MAX_TICKS)
+    lead.pre_draw_at = max(tick + 1, lead.detonation - pre)
+    _begin(ammo, follower, tick, events)
 
 
 def streak_roll(player: Any, tick: int, ctx: Any, events: Any) -> bool:
@@ -358,8 +367,7 @@ def _sees_partner(player: Any, other: Any, ctx: Any) -> bool:
     if player.cell_row is None or other.cell_row is None:
         return False
     here, there = _here(player), _here(other)
-    near = max(abs(here[0] - there[0]), abs(here[1] - there[1])) <= PAIR_SQUARES
-    return near and bool(ctx.can_see(here, there))
+    return chebyshev(here, there) <= PAIR_SQUARES and bool(ctx.can_see(here, there))
 
 
 def _tick_follower(
@@ -390,14 +398,16 @@ def _tick_follower(
 
 def _move_legs(player: Any, run: BaseRun, tick: int) -> None:
     """Every planned base now destroyed is taken (mid-route too); the leg is
-    the first one not taken, and a new leg restarts its clock."""
+    the first one not taken, and a new leg restarts its clock (never before
+    detonation: a capture in the fuse leaves the next leg to start there)."""
     for base in run.bases:
         if base not in run.taken and _destroyed(player, base):
             run.taken.append(base)
     leg = next((i for i, b in enumerate(run.bases) if b not in run.taken), None)
     leg = len(run.bases) if leg is None else leg
     if leg != run.leg:
-        run.leg, run.leg_started, run.leg_target = leg, tick, None
+        start = tick if run.detonation is None else max(tick, run.detonation)
+        run.leg, run.leg_started, run.leg_target = leg, start, None
 
 
 def _stay(player: Any, run: BaseRun, tick: int, ctx: Any, events: Any) -> bool:
@@ -429,12 +439,14 @@ def _stay(player: Any, run: BaseRun, tick: int, ctx: Any, events: Any) -> bool:
 
 
 def _start_return(player: Any, run: BaseRun, tick: int, all_alive: list) -> None:
-    """Walk back to the cell *player* remembers for its Heavy, however stale;
-    with none the run ends at once."""
+    """Walk back to the cell *player* remembers for its Heavy, however stale,
+    eliminated or not (an eliminated Heavy is read by its engine tag id,
+    ``<team>_heavy``); with none the run ends at once."""
     heavy = own_teammate(player, "heavy", all_alive)
-    entry = player.player_memory.get(heavy.tag_id_key) if heavy is not None else None
+    key = heavy.tag_id_key if heavy is not None else f"{player.team_color}_heavy"
+    entry = player.player_memory.get(key)
     if not entry or entry.get("cell") is None:
-        end_base_run(player, tick, "nuke_cancelled" if run.cancelled else "returned")
+        end_base_run(player, tick, _cancelled_or(run, "returned"))
         return
     run.returning_to = (int(entry["cell"][0]), int(entry["cell"][1]))
     run.return_started = tick
@@ -446,9 +458,14 @@ def _tick_return(player: Any, run: BaseRun, tick: int) -> None:
     ``nuke_cancelled`` either way."""
     assert run.returning_to is not None and run.return_started is not None
     if manhattan(_here(player), run.returning_to) <= RETURN_NEAR_SQUARES:
-        end_base_run(player, tick, "nuke_cancelled" if run.cancelled else "returned")
+        end_base_run(player, tick, _cancelled_or(run, "returned"))
     elif tick - run.return_started > RETURN_ARRIVE_TICKS:
-        end_base_run(player, tick, "nuke_cancelled" if run.cancelled else "not_arrived")
+        end_base_run(player, tick, _cancelled_or(run, "not_arrived"))
+
+
+def _cancelled_or(run: BaseRun, reason: BaseRunEndReason) -> BaseRunEndReason:
+    """A cancelled nuke's run ends ``nuke_cancelled`` whatever ends it."""
+    return "nuke_cancelled" if run.cancelled else reason
 
 
 def _in_fuse(run: BaseRun, tick: int) -> bool:
