@@ -125,6 +125,10 @@ A support transfer of a resource to an ally — **Medic** gives **Lives**, **Amm
 **Combo resupply**:
 A single tick in which a requesting player receives both a **Lives** resupply and a **Shots** resupply, from a Medic and an Ammo together.
 
+**Mutual resupply**:
+The Medic and Ammo **Resupplying** each other at the same moment, so both packs reset together and both are untaggable for the next 4 seconds. Harder to coordinate than the Ammo alone tagging the Medic, which is the usual way to give the Medic a head start before a **Base run**.
+_Avoid_: "swap"; calling it a **Combo resupply** or a double (both supports Resupplying one third player)
+
 **Resupply request**:
 An action by any player signalling they need a **Resupply**, resolved at end of tick against eligible nearby support players. On a map round a Commander, Heavy or Scout makes one only on a **Resupply visit**.
 
@@ -197,12 +201,16 @@ Getting out of sight, then staying there. A hiding player walks up to 15 feet to
 _Avoid_: "hiding miss" (the flat 50% miss on a hider was retired by MECH-23); confusing it with **Hold**, which watches a sightline to shoot
 
 **Tag streak**:
-Three **Tags** in a row on the Medic while it is **Active**, each soon after the one before. It means the Medic's spot is not working, whether it was hiding or not, and sets off a **Board flip**.
+Three **Tags** in a row on the Medic while it is **Active**, each soon after the one before. It means the Medic's spot is not working, whether it was hiding or not, and sets off a **Board flip** or a **Base run**.
 _Avoid_: "failed hide" (the Medic need not be hiding); counting a Tag in the **Reset window**
 
 **Board flip**:
 After a **Tag streak**, the Medic slips out of sight to a hiding spot far across the arena from the enemies it remembers, stays there a while, then goes back to its usual place near its team. Its Ammo comes along on the **Ammo leash**. A Medic flips at most three times a **Round**; a **Resupply visit** still finds it there.
 _Avoid_: "retreat" (it may move toward the enemy base's end of the arena, just not into the enemy **Base**); reading it as the whole team moving
+
+**Base run**:
+A Medic or Ammo leaving its place to **Capture** every **Base** it has not yet taken, the farther one first and the nearer one on the way back. It starts when the support's Commander fires a **Nuke** (usually both supports together, the Ammo tagging the Medic just before the blast for a head start), using the **Fuse window** and the seconds the whole enemy team is down, or after a **Tag streak** in place of a **Board flip**. Afterwards the support either stays over there as a **Board flip** or goes back to where it last saw its Heavy and hides again.
+_Avoid_: "base rush" (the end-of-round push for bases by every role); reading a capture that happens to be in range as a Base run
 
 **Map scale**:
 How many real-world feet one square of a map's grid covers, from the map's drawing scale and its square size. Every distance and every player speed is set in feet and turned into squares by the Map scale, so a finer grid on the same map keeps the same real distances.

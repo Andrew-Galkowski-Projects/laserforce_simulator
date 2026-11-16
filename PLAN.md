@@ -196,15 +196,7 @@ MECH-24 (Missile dodge as an Action while being locked) is **[DONE]**; see `PLAN
 
 MECH-25 (Board flip: supports move across the arena when hiding fails) is **[DONE]**; see `PLAN-completed.md`.
 
-### MECH-26 · Base run by the supports (owner, 2026-11-12)
-
-From real play. Medic and Ammo run for one or both enemy **Bases**: (a) right after an allied
-nuke goes off, and (b) when hiding is not working, the same trigger as MECH-25's board flip.
-Afterwards a support either stays over there as a board flip (MECH-25) or, if not flipping, comes
-back to the last place it saw its Heavy and hides again. **Open for the grill:** the chance of a
-run and which stats set it; one Base or both, and in what order; whether both supports go; the
-stay-or-return choice; the real figures (support base captures per game in LFstats, the TDF
-logs' base events after a nuke). Depends on MECH-23 and MECH-25.
+MECH-26 (Base run by the supports) is **[DONE]**; see `PLAN-completed.md`.
 
 ### MECH-27 · Field of view: a heading and a sight cone (owner, 2026-11-12)
 
@@ -241,6 +233,24 @@ their Tag weight into Resupply (`weights.py`, the MECH-04 nuke blocks). **Open f
 whether the flag (or only its weight shift) needs not Active; what the goal override
 (`choose_goal_cell`'s nuke reaction) does for an Active player; the real figures to check against.
 
+### CAL-06 · Support base captures toward the real rate (MECH-26 grill, 2026-11-15)
+
+MECH-26's two triggers (an allied nuke, a Tag streak) lift support live captures from Medic 0.2 /
+Ammo 0.3 a round to about 0.7 / 0.7 (prototype 4b, 128 Test games); real Medics destroy 1.53 bases
+a game and Ammos 1.78, a third of them more than 60 s after any allied nuke and a quarter before
+the first. **Open for the grill:** what sends a support to a Base the rest of the time; the Ammo's
+within-10 s-of-a-nuke share (sim 33-43%, real 15%); the other roles' gap (Scout 0.7 against 1.81,
+Heavy 0.7 against 1.62). Depends on MECH-26.
+
+### MECH-30 · A Tag needs sight when it lands (MECH-26 grill, 2026-11-15)
+
+About 30% of Tags on the Medic land when the attacker no longer sees it, and in 21-25% of them no
+enemy sees the Medic at all at that moment (32 Test games, MECH-26's streak probe, in its `PLAN-completed.md` section).
+A Tag attempt is planned before the Advance and resolved after it with no fresh sight check
+(`_resolve_tag_attempts` calls `resolve_shot` directly). **Open for the grill:** whether the Tag is
+dropped, re-targeted or still fired as a miss when sight is lost; which other roles it hits; the
+effect on the Medic's Tag rate (13.2 a round, real 9.9) and on CAL-05.
+
 ### CAL-05 · The Medic is tagged at twice the real rate in the opening (owner, 2026-11-11)
 
 From CAL-04 (its section in `PLAN-completed.md` holds the numbers). The Medic loses ~12 of its 20 lives by minute 5
@@ -248,7 +258,11 @@ From CAL-04 (its section in `PLAN-completed.md` holds the numbers). The Medic lo
 real 62. 42% of Medic Downs land in the Reset window. Re-measure after MECH-23 first; then
 **open for the grill:** the Downed option for supports (leave the attacker's sight), whether the
 Medic's Defense cells are in enemy sight lines at the opening, and nukes (20% of sim Medic losses
-against 38% real).
+against 38% real). MECH-26's grill (2026-11-15): sim Tag streaks run 2.4x real (1.42 per Medic-round
+against 0.59), driven by the Medic's Tag rate; at a Tag the Medic is mostly mid-Resupply in the open
+(seen at 79% of its Tags against 7% of random ticks). Do MECH-30 first. MECH-26's prototype 4b:
+Medics that did not start a base run before minute 9 have s9 42.9% (those that did 52.8%; the
+null 53.9%); one suspect is a lone Ammo run leaving the Medic.
 
 LFS-01 (Tune the numbers so imported players reproduce their LFstats results) is **[DONE]**; see `PLAN-completed.md`.
 

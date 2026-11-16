@@ -189,6 +189,20 @@ class TestTimelineShape(_TimelineTestCase):
         self.assertEqual(row["event_type"], "board_flip")
         self.assertEqual(row["metadata"], {"target_row": 4, "target_col": 59})
 
+    def test_base_run_rows_are_included(self) -> None:
+        """MECH-26: a Base run's start and end show in the event log."""
+        start = {"phase": "start", "trigger": "nuke", "bases": ["red"]}
+        end = {**start, "phase": "end", "reason": "returned", "taken": ["red"]}
+        self.event(
+            timestamp=7, event_type="base_run", actor=self.red_med, metadata=start
+        )
+        self.event(
+            timestamp=30, event_type="base_run", actor=self.red_med, metadata=end
+        )
+        rows = self.data()["events"]
+        self.assertEqual([r["event_type"] for r in rows], ["base_run", "base_run"])
+        self.assertEqual([r["metadata"] for r in rows], [start, end])
+
     def test_events_in_timestamp_then_insertion_order(self) -> None:
         self.event(timestamp=20, description="late")
         self.event(timestamp=5, description="tie-first")

@@ -29,6 +29,7 @@ from ..sim_helpers.combat import (
     start_missile_lock as _start_missile_lock_shared,
     tick_missile_lock as _tick_missile_lock_shared,
 )
+from ..sim_helpers.base_run import start_on_nuke_fire, tick_base_run, tick_draws
 from ..sim_helpers.board_flip import crossing, tick_flip
 from ..sim_helpers.down import record_down
 from ..sim_helpers.downed_option import overrides_stay_hidden, plan_is_live
@@ -1443,6 +1444,14 @@ class BatchSimulator:
                         pending_nukes.append(
                             PendingNuke(complete_time=scheduled[1], player=scheduled[2])
                         )
+                        # MECH-26: the team rolls its Base run as the nuke fires.
+                        start_on_nuke_fire(
+                            actor,
+                            red_players if actor.team_color == "red" else blue_players,
+                            int(second),
+                            int(scheduled[1]),
+                            ctx,
+                        )
                         # The enemy team hears the activation through the MECH-04
                         # reaction flags next tick; it is not told where the
                         # Commander is (CAL #558, 2026-11-07).
@@ -1473,6 +1482,9 @@ class BatchSimulator:
                         prev_actions.get(id(actor), ""),
                         ctx.events,
                     )
+                # MECH-26b: a pair's pre-run and return Resupply draws, once a
+                # tick after the Advance (the shuffled order: serial == parallel).
+                tick_draws(int(second), all_alive, ctx)
 
             # MOVE-03: Overwatch resolution (BatchSimulator-only, ADR-0009).
             # Runs AFTER the Advance loop (so _last_step_cells is final for
@@ -1649,6 +1661,14 @@ class BatchSimulator:
             log = events if events is not None else EventLog(persist=False)
             tick_flip(player, second, movement_ctx, log)
             if crossing(player):  # a Down ends a started flip: no live plan
+                player.is_hiding = False
+                player.is_holding = False
+        # MECH-26: a Base run moves on or ends here, Downed or not; a runner
+        # neither hides nor holds.
+        if player.base_run is not None:
+            log = events if events is not None else EventLog(persist=False)
+            tick_base_run(player, second, movement_ctx, all_alive, log)
+            if player.base_run is not None:
                 player.is_hiding = False
                 player.is_holding = False
         chosen = getattr(player, "last_chosen_action", "")

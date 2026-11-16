@@ -823,6 +823,7 @@ class GameEvent(models.Model):
         ("team_elimination", "Team Eliminated"),
         ("nuke_cancelled", "Nuke Cancelled"),
         ("board_flip", "Board Flip"),
+        ("base_run", "Base Run"),
         ("medic_reset", "Medic Reset"),
     ]
 

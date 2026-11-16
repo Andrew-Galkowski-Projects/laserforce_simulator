@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 if TYPE_CHECKING:
     from .map_context import MapContext
 
-from . import board_flip, support_survival
+from . import base_run, board_flip, support_survival
 from .support_survival import SUPPORT_ROLES
 from .resupply_visit import chebyshev, freshest_callout, manhattan, nearest_cell
 from .downed_option import active_before_nuke, downed_goal, plan_is_live
@@ -649,6 +649,15 @@ def _leash_goal(
     return nearest_cell(near, (player.cell_row, player.cell_col)) or target
 
 
+def _base_run_goal(player: Any, movement_ctx: Any, second: float) -> Any:
+    """MECH-26: the Base run's goal (``base_run.base_run_goal``); a goal clears
+    the committed goal, as every override does."""
+    goal = base_run.base_run_goal(player, movement_ctx, int(second))
+    if goal is not None:
+        player._committed_goal = None
+    return goal
+
+
 def _join_goal(
     player, all_alive: list, movement_ctx: "MapContext | None", second: float
 ) -> tuple[int, int] | None:
@@ -748,7 +757,9 @@ def choose_goal_cell(
 
     # ── 0. CAL-04c Ammo leash: the first rule on a map; only a live Downed
     # option beats it. It sets only the goal (a hold or hide roll stays still).
-    if movement_ctx is not None and cell_row is not None:
+    # MECH-26: a Base runner skips it.
+    running = base_run.is_running(player)
+    if movement_ctx is not None and cell_row is not None and not running:
         leash = _leash_goal(player, all_alive, movement_ctx, second)
         if leash is not None:
             downed_first = downed_goal(player, second, movement_ctx)
@@ -815,8 +826,10 @@ def choose_goal_cell(
     elif (
         player.role == "ammo"
         and player.final_lives <= support_survival.AMMO_SEEK_MEDIC_LIVES
+        and not running
     ):
         # CAL-03 rule 3: a low Ammo walks to its Medic, like the other roles.
+        # MECH-26: not a Base runner (a follower walks to its Medic anyway).
         medic = _find_role(all_alive, player.team_color, "medic")
         if medic and medic.cell_row is not None:
             player._committed_goal = None
@@ -827,6 +840,13 @@ def choose_goal_cell(
 
     # ── 1a. MOVE-08: the Downed option's goal (Shuffle to cover / Make a
     # trail) while Downed; beats rule 9, 1b, the commitment and steps 2-4.
+    # MECH-26: a Downed or reset Base runner walks its route instead.
+    if running and (
+        plan_is_live(player, second) or not player.is_active_at(int(second))
+    ):
+        run_goal = _base_run_goal(player, movement_ctx, second)
+        if run_goal is not None:
+            return run_goal
     downed = downed_goal(player, second, movement_ctx)
     if downed is not None:
         return downed
@@ -841,6 +861,12 @@ def choose_goal_cell(
     if board_flip.is_flipping(player):
         player._committed_goal = None
         return board_flip.flip_goal(player, int(second), movement_ctx)
+
+    # MECH-26: an Active Base runner, right after the flip.
+    if running:
+        run_goal = _base_run_goal(player, movement_ctx, second)
+        if run_goal is not None:
+            return run_goal
 
     # CAL-03 rule 9: an Ammo away from its Medic for LINK_RETURN_TICKS goes back.
     link_goal = _link_return_goal(player, all_alive, movement_ctx, second)

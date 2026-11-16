@@ -18,6 +18,7 @@ from matches.sim_helpers.time_constants import (
 )
 
 if TYPE_CHECKING:
+    from matches.sim_helpers.base_run import BaseRun
     from matches.sim_helpers.board_flip import Flip
 
 
@@ -231,6 +232,8 @@ class PlayerState:
     tag_streak: list[int] = field(default_factory=list)
     flip: Optional["Flip"] = None
     flips_started: int = 0
+    # MECH-26: the live Base run (``base_run.BaseRun``), None without one.
+    base_run: Optional["BaseRun"] = None
 
     # MECH-10 Follow rule state (transient — not persisted to DB), managed
     # by ``follow_rule``: this player's open Trail (``follow_rule.Trail`` or
